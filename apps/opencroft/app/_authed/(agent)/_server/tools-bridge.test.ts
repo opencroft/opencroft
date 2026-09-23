@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { BackgroundTaskOwner, BackgroundTaskService } from '@/app/_authed/(background-tasks)/_server/types'
+import { ASYNC_SENTENCE, AWAITABLE_SENTENCE } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { opencroftLocalTools } from './tools-bridge'
 
@@ -120,7 +121,7 @@ async function ownerSeenByTaskStatus(
     throw new Error('not expected in this test')
   }
   const service: BackgroundTaskService = {
-    startNodeTask: unexpected,
+    startRunnerTask: unexpected,
     startInProcessTask: unexpected,
     get: unexpected,
     listForOwner: async (owner) => {
@@ -163,4 +164,32 @@ test('the session cannot be supplied as a tool argument', async () => {
     { sessionId: 'someone-elses-session', callerSessionId: 'someone-elses-session' },
   )
   assert.deepEqual(owners, [{ agent: 'Bridge Session Argument Agent' }])
+})
+
+// A graph-defined tool marked on its node is offered the way a static one is:
+// the bridge lists what the registry presents, not the node's raw declaration.
+test('a bridged agent-tool node marked awaitable offers background; one marked async says it answers later', async () => {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  const suffix = crypto.randomUUID().slice(0, 8)
+  const slug = `tools-bridge-marked-${suffix}`
+  const schema = JSON.stringify({ type: 'object', properties: { q: { type: 'string' } } })
+  const tool = (name: string, execution: string) => ({
+    id: `bridge-tool-${name}`,
+    type: 'agent-tool',
+    position: { x: 0, y: 0 },
+    data: { name, description: 'Look it up.', inputSchema: schema, requireApproval: false, execution },
+  })
+  const awaitable = `bridge_awaitable_${suffix}`
+  const asyncTool = `bridge_async_${suffix}`
+  await registry.create(slug, slug, { nodes: [tool(awaitable, 'awaitable'), tool(asyncTool, 'async')], edges: [] })
+
+  const tools = await opencroftLocalTools({})
+  const listedAwaitable = tools.find((t) => t.name === awaitable)
+  const listedAsync = tools.find((t) => t.name === asyncTool)
+  assert.ok(listedAwaitable && listedAsync, 'both are bridged')
+  assert.deepEqual(Object.keys(listedAwaitable.inputSchema), ['q', 'background', 'timeoutMinutes'])
+  assert.equal(listedAwaitable.description, `Look it up. ${AWAITABLE_SENTENCE}`)
+  assert.deepEqual(Object.keys(listedAsync.inputSchema), ['q'], 'an async tool asks nothing new')
+  assert.equal(listedAsync.description, `Look it up. ${ASYNC_SENTENCE}`)
 })

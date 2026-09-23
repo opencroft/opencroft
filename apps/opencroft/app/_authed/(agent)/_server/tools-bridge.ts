@@ -1,20 +1,11 @@
 import { adapterSupportsElicitation } from 'agent-client/agent-client'
-import {
-  type AskUserQuestionSpec,
-  contentToAnswers,
-  questionsToElicitation,
-} from 'agent-client/elicitation-form'
+import { type AskUserQuestionSpec, contentToAnswers, questionsToElicitation } from 'agent-client/elicitation-form'
 import { jsonSchemaToZodShape } from 'agent-client/json-schema'
 import type { LocalTool, ToolsCaller } from 'agent-client/mcp-server'
 
-import { getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
+import type { ListedTool } from '@/app/_authed/(mcp)/_server/execution-mode'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
-import {
-  getAgentToolDefinitions,
-  handleToolCall,
-  READ_ONLY_TOOLS,
-  toolDefinitions,
-} from '@/app/_authed/(mcp)/_server/tools'
+import { handleToolCall, listDynamicTools, READ_ONLY_TOOLS, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
@@ -70,12 +61,6 @@ async function callingAgentName(caller: ToolsCaller): Promise<string | null> {
   return matches.length === 1 ? (matches[0]?.name ?? null) : null
 }
 
-interface ToolDef {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown>
-}
-
 // The JSON-Schema-to-Zod conversion is the expensive half and does not depend
 // on who is calling, so it is cached; the LocalTool wrapper around it is not,
 // because its handler closes over the caller and a cached one would carry the
@@ -86,7 +71,7 @@ interface ConvertedTool {
   inputSchema: LocalTool['inputSchema']
 }
 
-function convert(def: ToolDef): ConvertedTool {
+function convert(def: ListedTool): ConvertedTool {
   return { name: def.name, description: def.description, inputSchema: jsonSchemaToZodShape(def.inputSchema) }
 }
 
@@ -126,17 +111,15 @@ function getStaticTools(): ConvertedTool[] {
 }
 
 // Extension-contributed tools and dynamic agent-tool graph nodes are re-read
-// on every call (see getExtensionToolDefinitions()/getAgentToolDefinitions())
-// so a tool installed, edited, or created on the canvas appears without an
-// app restart.
+// on every call (see listDynamicTools()) so a tool installed, edited, or
+// created on the canvas appears without an app restart — already presented, so
+// one marked `awaitable` or `async` reads here as it does over HTTP.
 // `caller` is required rather than defaulted: a default would silently stand in
 // for a call site that forgot to say who is asking, which is the one thing this
 // argument exists to make explicit. Callers with nobody to name pass `{}`.
 export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalTool[]> {
   const callerAgent = await callingAgentName(caller)
-  const staticNames = new Set(toolDefinitions.map((t) => t.name))
-  const extensionDefs = await getExtensionToolDefinitions(staticNames)
-  const dynamicDefs = await getAgentToolDefinitions(new Set(extensionDefs.map((t) => t.name)))
+  const dynamicDefs = await listDynamicTools()
   const sessionId = caller.sessionId
   // The session rides along with the agent, from the same bookkeeping: it is
   // how a tool reaches back into the conversation that called it — a
@@ -147,7 +130,7 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
   // but the tool path dies at the MCP request timeout and the native one
   // doesn't — offering both just lets the model pick the worse channel.
   const harnessAsks = adapterSupportsElicitation(caller.adapterId)
-  return [...getStaticTools(), ...extensionDefs.map(convert), ...dynamicDefs.map(convert)]
+  return [...getStaticTools(), ...dynamicDefs.map(convert)]
     .filter((tool) => !(tool.name === 'ask_user' && harnessAsks))
     .map((tool) => toLocalTool(tool, toolCaller))
     .map((tool) => (tool.name === 'ask_user' && sessionId ? sessionAskUserTool(tool, sessionId) : tool))

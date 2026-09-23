@@ -10,14 +10,22 @@
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
+import type { ExecutionMode } from '@opencroft/core'
+
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta } from '@/app/_authed/(approvals)/_server/with-approval'
+import type { AgentToolData } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-tool-shared'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { definitions as actionDefinitions, handlers as actionHandlers } from '@/app/_authed/(mcp)/_server/action-tools'
 import { definitions as appDefinitions, handlers as appHandlers } from '@/app/_authed/(mcp)/_server/app-tools'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { definitions as chatDefinitions, handlers as chatHandlers } from '@/app/_authed/(mcp)/_server/chat-tools'
 import { DbReadRefused, runBoundedRead } from '@/app/_authed/(mcp)/_server/db-read'
-import { type ListedTool, presentTool } from '@/app/_authed/(mcp)/_server/execution-mode'
+import {
+  type DeclaredTool,
+  type ListedTool,
+  presentTool,
+  readExecutionMode,
+} from '@/app/_authed/(mcp)/_server/execution-mode'
 import {
   definitions as extensionManagementDefinitions,
   handlers as extensionManagementHandlers,
@@ -28,10 +36,20 @@ import {
   handlers as mcpServerHandlers,
 } from '@/app/_authed/(mcp)/_server/mcp-server-tools'
 import { definitions as nodeDefinitions, handlers as nodeHandlers } from '@/app/_authed/(mcp)/_server/node-tools'
-import { definitions as remoteDefinitions, handlers as remoteHandlers } from '@/app/_authed/(mcp)/_server/remote-tools'
+import {
+  definitions as remoteDefinitions,
+  handlers as remoteHandlers,
+  backgroundRunners as remoteRunners,
+} from '@/app/_authed/(mcp)/_server/remote-tools'
 import { skillToolDefinitions, skillToolHandlers } from '@/app/_authed/(mcp)/_server/skill-tools'
 import { definitions as spaceDefinitions, handlers as spaceHandlers } from '@/app/_authed/(mcp)/_server/space-tools'
-import { definitions as taskDefinitions, handlers as taskHandlers } from '@/app/_authed/(mcp)/_server/task-tools'
+import {
+  type BackgroundRunnerAdapter,
+  callTool,
+  type ToolRun,
+  definitions as taskDefinitions,
+  handlers as taskHandlers,
+} from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, type GraphNode, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import {
@@ -162,11 +180,11 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Every static tool, as both surfaces list it: the HTTP route's `tools/list`
- * and the in-process bridge read this one array, so presenting a tool's
- * execution mode here is what keeps the two from describing it differently.
+ * Every static tool as its family declares it, `execution` included: the
+ * listing below turns that field into schema and description, and the registry
+ * reads it when a call arrives.
  */
-export const toolDefinitions: ListedTool[] = [
+const declaredTools: DeclaredTool[] = [
   ...sendToastDefinitions,
   ...chatDefinitions,
 
@@ -201,19 +219,32 @@ export const toolDefinitions: ListedTool[] = [
   ...skillToolDefinitions,
 
   ...askUserDefinitions,
-].map(presentTool)
+]
+
+/**
+ * Every static tool, as both surfaces list it: the HTTP route's `tools/list`
+ * and the in-process bridge read this one array, so presenting a tool's
+ * execution mode here is what keeps the two from describing it differently.
+ */
+export const toolDefinitions: ListedTool[] = declaredTools.map(presentTool)
+
+/**
+ * How callers wait for each static tool, taken from the declarations before
+ * `presentTool` drops the field — the listing and the dispatch read one
+ * source, so a tool cannot offer `background` and then ignore it. Absent: sync.
+ */
+const staticExecution = new Map<string, ExecutionMode>(
+  declaredTools.flatMap((tool) => (tool.execution ? [[tool.name, tool.execution] as const] : [])),
+)
 
 // ── Agent Tool: dynamic graph-defined tools ───────────────────────────
+//
+// An agent-tool node's data is what its inspector writes (AgentToolData, in
+// the core extension beside the node); read here as partial, because a graph
+// is edited by hand and by tools as well, and a field can be missing.
 
-interface AgentToolNodeData {
-  name: string
-  description: string
-  inputSchema: string
-  requireApproval: boolean
-}
-
-export async function getAgentToolDefinitions(extraReservedNames: Set<string> = new Set()) {
-  const defs: { name: string; description: string; inputSchema: Record<string, unknown> }[] = []
+export async function getAgentToolDefinitions(extraReservedNames: Set<string> = new Set()): Promise<DeclaredTool[]> {
+  const defs: DeclaredTool[] = []
 
   // Collect all existing static tool names (plus any caller-supplied reserved
   // names, e.g. extension-contributed tools) to avoid collisions
@@ -235,7 +266,7 @@ export async function getAgentToolDefinitions(extraReservedNames: Set<string> = 
           continue
         }
 
-        const d = (node.data ?? {}) as unknown as AgentToolNodeData
+        const d = (node.data ?? {}) as Partial<AgentToolData>
         const toolName = d.name?.trim()
         if (!toolName) {
           continue
@@ -255,6 +286,7 @@ export async function getAgentToolDefinitions(extraReservedNames: Set<string> = 
           // skip invalid JSON schema
         }
 
+        const execution = readExecutionMode(d.execution)
         defs.push({
           name: toolName,
           description: d.description || `Agent tool: ${toolName}`,
@@ -264,6 +296,7 @@ export async function getAgentToolDefinitions(extraReservedNames: Set<string> = 
               ...((inputSchema.properties as Record<string, unknown>) ?? {}),
             },
           },
+          ...(execution ? { execution } : {}),
         })
       }
     }
@@ -275,12 +308,91 @@ export async function getAgentToolDefinitions(extraReservedNames: Set<string> = 
 }
 
 /**
- * Execute an agent-tool node's connected handler script.
- * Returns the handler result or throws on error.
+ * The tools extensions and agent-tool nodes contribute, as both surfaces list
+ * them — the HTTP route's `tools/list` and the in-process bridge. Re-read on
+ * every call, so a tool installed, edited or drawn on the canvas shows without
+ * a restart; and presented exactly as the static ones are, so a tool marked in
+ * its manifest or on its node offers `background`, or says it answers later, in
+ * the same words, and `execution` itself reaches no caller.
  */
-interface AgentToolExecResult {
-  result: Record<string, unknown>
-  requiredApproval: boolean
+export async function listDynamicTools(): Promise<ListedTool[]> {
+  const staticNames = new Set(toolDefinitions.map((t) => t.name))
+  const extensionTools = await getExtensionToolDefinitions(staticNames)
+  const agentTools = await getAgentToolDefinitions(new Set(extensionTools.map((t) => t.name)))
+  const declared: DeclaredTool[] = [
+    ...extensionTools.map(({ name, description, inputSchema, execution }) => ({
+      name,
+      description,
+      inputSchema,
+      execution,
+    })),
+    ...agentTools,
+  ]
+  return declared.map(presentTool)
+}
+
+/** An agent-tool node a call names: the node, what it declares, and the space it is drawn in. */
+interface FoundAgentTool {
+  node: GraphNode
+  data: Partial<AgentToolData>
+  spaceSlug: string
+}
+
+/**
+ * The agent-tool node a call names — the first, across spaces, whose name is
+ * exactly the tool's. When there is none, the call named nothing any registry
+ * has, which is the MCP "method not found".
+ */
+async function findAgentTool(toolName: string): Promise<FoundAgentTool> {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  for (const space of registry.list()) {
+    const runtime = registry.getBySlug(space.slug)
+    if (!runtime) {
+      continue
+    }
+    const nodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes) as unknown as GraphNode[]
+    const node = nodes.find((n) => n.type === 'agent-tool' && n.data?.name === toolName)
+    if (node) {
+      return { node, data: (node.data ?? {}) as Partial<AgentToolData>, spaceSlug: space.slug }
+    }
+  }
+  throw { code: -32601, message: `Agent tool not found: ${toolName}` }
+}
+
+/**
+ * Run an agent-tool node's connected handler through the shared
+ * execution-context dispatcher (extension `handle` actions and built-in
+ * script-node handlers alike — see exec-dispatch.ts), and answer with what it
+ * returned.
+ *
+ * A failure throws, as any other tool's does: the surfaces turn a throw into an
+ * error result, and a background task fails with its message. Returned as
+ * plain text, it would read as the tool's answer — and its task as completed.
+ */
+export async function executeAgentTool(
+  toolNode: GraphNode,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const event = { params: args, context: { toolName } }
+  const { primary } = await dispatchExecutionContext({
+    sourceNodeId: toolNode.id,
+    sourceHandleId: 'exec-out',
+    event,
+  }).catch((err: unknown): never => {
+    if (err instanceof NoExecTargetError) {
+      throw new Error(`Agent tool "${toolName}" has no connected handler script.`)
+    }
+    throw new Error(`Agent tool "${toolName}" error: ${err instanceof Error ? err.message : String(err)}`)
+  })
+  if (primary.error) {
+    throw new Error(`Agent tool "${toolName}" error: ${primary.error}`)
+  }
+  if (typeof primary.body === 'object' && primary.body !== null) {
+    return textResult(JSON.stringify(primary.body))
+  }
+  return textResult(String(primary.body ?? ''))
 }
 
 export interface ToolCallOptions {
@@ -301,73 +413,6 @@ export interface ToolCallOptions {
    * none. See `ToolCallerContext`.
    */
   callerSessionId?: string
-}
-
-export async function executeAgentTool(
-  toolName: string,
-  args: Record<string, unknown>,
-  opts: ToolCallOptions = {},
-): Promise<AgentToolExecResult> {
-  const registry = getSpacesRegistry()
-  await registry.ensureLoaded()
-
-  // Find the agent-tool node across all spaces
-  for (const space of registry.list()) {
-    const runtime = registry.getBySlug(space.slug)
-    if (!runtime) {
-      continue
-    }
-
-    const nodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes) as unknown as GraphNode[]
-
-    const toolNode = nodes.find(
-      (n) => n.type === 'agent-tool' && ((n.data ?? {}) as Record<string, unknown>).name === toolName,
-    )
-    if (!toolNode) {
-      continue
-    }
-
-    // Check requireApproval
-    const d = (toolNode.data ?? {}) as unknown as AgentToolNodeData
-    const requiredApproval = d.requireApproval && !isYoloMode() && !opts.internal
-    if (requiredApproval) {
-      await awaitApproval({ tool: toolName, args, view: 'default', signal: opts.signal, spaceId: space.slug })
-    }
-
-    // Build event for the handler, then dispatch through the shared
-    // execution-context dispatcher (handles both extension `handle` actions
-    // and built-in script-node handlers — see exec-dispatch.ts).
-    const event = { params: args, context: { toolName: toolName } }
-
-    try {
-      const { primary } = await dispatchExecutionContext({
-        sourceNodeId: toolNode.id,
-        sourceHandleId: 'exec-out',
-        event,
-      })
-
-      if (primary.error) {
-        return { result: textResult(`Agent tool "${toolName}" error: ${primary.error}`), requiredApproval }
-      }
-      if (typeof primary.body === 'object' && primary.body !== null) {
-        return { result: textResult(JSON.stringify(primary.body)), requiredApproval }
-      }
-      return { result: textResult(String(primary.body ?? '')), requiredApproval }
-    } catch (err) {
-      if (err instanceof NoExecTargetError) {
-        return {
-          result: textResult(`Agent tool "${toolName}" has no connected handler script.`),
-          requiredApproval: false,
-        }
-      }
-      return {
-        result: textResult(`Agent tool "${toolName}" error: ${err instanceof Error ? err.message : String(err)}`),
-        requiredApproval,
-      }
-    }
-  }
-
-  throw { code: -32601, message: `Agent tool not found: ${toolName}` }
 }
 
 // ── Tool handler registry ──────────────────────────────────────────────
@@ -425,6 +470,39 @@ const handlers: Record<string, ToolHandler> = {
 }
 
 /**
+ * The background task runner (EXPERIMENTAL) adapters, by tool name — declared
+ * beside each family's definitions and handlers, as those are. A tool with one
+ * runs there when it runs in the background; every other tool that does runs
+ * in this process, and needs nothing registered for it.
+ */
+const backgroundRunners = new Map<string, BackgroundRunnerAdapter>(Object.entries(remoteRunners))
+
+/**
+ * Put one more static tool in the registry — declared as a family declares
+ * one, with an ordinary handler — and get back what takes it out again.
+ *
+ * For tests: what the registry does with a declaration can only be shown on a
+ * tool it dispatches, and none of the families has a plain handler to spare.
+ * The tool is dispatched, not listed — the listing is built once, at load.
+ */
+export function registerToolForTests(
+  tool: { name: string; execution?: ExecutionMode },
+  handler: ToolHandler,
+): () => void {
+  if (Object.hasOwn(handlers, tool.name)) {
+    throw new Error(`A tool named ${tool.name} is already registered.`)
+  }
+  handlers[tool.name] = handler
+  if (tool.execution) {
+    staticExecution.set(tool.name, tool.execution)
+  }
+  return () => {
+    Reflect.deleteProperty(handlers, tool.name)
+    staticExecution.delete(tool.name)
+  }
+}
+
+/**
  * Whether this tool queues for approval on the external MCP surface.
  *
  * Exported so the OTHER classification can be checked against it. `withApprovalRequired`
@@ -445,78 +523,89 @@ function rejectionResult(reason: string): Record<string, unknown> {
   return { content: [{ type: 'text' as const, text }], isError: true }
 }
 
+/**
+ * One tool, found by name in whichever registry has it — the static handlers,
+ * the extensions' manifests, the graph's agent-tool nodes — as a call needs it:
+ * whether it asks for approval and where, how its caller waits for it, and its
+ * own call.
+ */
+interface FoundTool {
+  /** Queues for approval on a surface that has the queue — before yolo mode and `internal` are weighed. */
+  gated: boolean
+  view?: string
+  /** The space its approval is shown in, when the tool fixes one; otherwise the call's own `space`. */
+  space?: string
+  execution: ExecutionMode | undefined
+  run: ToolRun
+  runner?: BackgroundRunnerAdapter
+}
+
+async function findTool(name: string, caller: ToolCallerContext): Promise<FoundTool> {
+  const handler = handlers[name]
+  if (handler) {
+    const meta = getApprovalMeta(handler)
+    return {
+      gated: meta !== undefined,
+      view: meta?.view,
+      execution: staticExecution.get(name),
+      // The signal is all a handler learns of running in the background;
+      // everything else it is handed is what a call in place gets.
+      run: (args, signal) => handler(args, signal ? { ...caller, signal } : caller),
+      runner: backgroundRunners.get(name),
+    }
+  }
+  const staticNames = new Set(toolDefinitions.map((t) => t.name))
+  const extensionTool = (await getExtensionToolDefinitions(staticNames)).find((t) => t.name === name)
+  if (extensionTool) {
+    return {
+      gated: extensionTool.requireApproval,
+      execution: extensionTool.execution,
+      run: (args) => executeExtensionTool(extensionTool.extensionId, name, args),
+    }
+  }
+  const agentTool = await findAgentTool(name)
+  return {
+    gated: Boolean(agentTool.data.requireApproval),
+    view: 'default',
+    // Asked in the space the node is drawn in, whatever the call says.
+    space: agentTool.spaceSlug,
+    execution: readExecutionMode(agentTool.data.execution),
+    run: (args) => executeAgentTool(agentTool.node, name, args),
+  }
+}
+
+/**
+ * Every tool call, from either surface: find the tool, ask for approval when it
+ * needs one, then run it the way its declaration says a caller waits for it —
+ * the one decorator in `callTool`, the same for all three kinds of tool.
+ */
 export async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
   opts: ToolCallOptions = {},
 ): Promise<Record<string, unknown>> {
   const start = Date.now()
-  const handler = handlers[name]
-  if (!handler) {
-    const staticNames = new Set(toolDefinitions.map((t) => t.name))
-    const extensionDef = (await getExtensionToolDefinitions(staticNames)).find((t) => t.name === name)
-    if (extensionDef) {
-      const approvalRequired = extensionDef.requireApproval && !isYoloMode() && !opts.internal
-      try {
-        if (approvalRequired) {
-          const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
-          await awaitApproval({ tool: name, args, signal: opts.signal, spaceId })
-        }
-        const result = await executeExtensionTool(extensionDef.extensionId, name, args)
-        await recordAudit({
-          tool: name,
-          args,
-          result,
-          status: approvalRequired ? 'approved' : 'auto-approved',
-          durationMs: Date.now() - start,
-        })
-        return result
-      } catch (e) {
-        if (e instanceof ApprovalRejectedError) {
-          await recordAudit({
-            tool: name,
-            args,
-            error: e.reason || '(no reason)',
-            status: 'rejected',
-            durationMs: Date.now() - start,
-          })
-          return rejectionResult(e.reason)
-        }
-        const err = e as { message?: string }
-        await recordAudit({
-          tool: name,
-          args,
-          error: err.message ?? String(e),
-          status: 'error',
-          durationMs: Date.now() - start,
-        })
-        throw e
-      }
-    }
-
-    // Fall back to graph-defined agent tools
-    const execResult = await executeAgentTool(name, args, opts)
-    await recordAudit({
-      tool: name,
-      args,
-      result: execResult.result as Record<string, unknown>,
-      status: execResult.requiredApproval ? 'approved' : 'auto-approved',
-      durationMs: Date.now() - start,
-    })
-    return execResult.result as Record<string, unknown>
+  const caller: ToolCallerContext = { agent: opts.callerAgent ?? null }
+  if (opts.callerSessionId) {
+    caller.sessionId = opts.callerSessionId
   }
-  const meta = getApprovalMeta(handler)
-  const approvalRequired = Boolean(meta) && !isYoloMode() && !opts.internal
+  const tool = await findTool(name, caller)
+  const approvalRequired = tool.gated && !isYoloMode() && !opts.internal
   try {
     if (approvalRequired) {
-      const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
-      await awaitApproval({ tool: name, args, view: meta?.view, signal: opts.signal, spaceId })
+      const spaceId = tool.space ?? (typeof args.space === 'string' ? await resolveSpace(args) : undefined)
+      await awaitApproval({ tool: name, args, view: tool.view, signal: opts.signal, spaceId })
     }
-    const caller: ToolCallerContext = { agent: opts.callerAgent ?? null }
-    if (opts.callerSessionId) {
-      caller.sessionId = opts.callerSessionId
-    }
-    const result = await handler(args, caller)
+    // Only past the approval, so what runs — in place or detached — is the
+    // call somebody said yes to, `background` included: the approval shows it.
+    const result = await callTool({
+      name,
+      execution: tool.execution,
+      args,
+      caller,
+      run: tool.run,
+      runner: tool.runner,
+    })
     await recordAudit({
       tool: name,
       args,

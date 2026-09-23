@@ -1,24 +1,33 @@
 /**
- * The background-task family: starting a task on a caller's behalf, and the two
- * tools that ask how one is doing and stop one.
+ * The background-task family: running a call as a background task on a
+ * caller's behalf, and the two tools that ask how one is doing and stop one.
  *
- * A background task is a call the caller did not wait for — `remote_exec` or
- * `remote_script` with `background: true`, or an action whose declaration says
- * callers never wait for it. The service in (background-tasks) owns everything
- * after the start: the record, watching the work, the timeout, and telling the
- * calling conversation how it ended. What lives here is the tool side of that —
- * turning a call into a start, and a record into text.
+ * A background task is a call the caller did not wait for: one to a tool or an
+ * action declared `async`, or declared `awaitable` and called with
+ * `background: true`. The service in (background-tasks) owns everything after
+ * the start — the record, watching the work, the timeout, and telling the
+ * calling conversation how it ended. What lives here is the tool side of that:
+ * reading a declaration to decide how a call runs, turning a call into a start,
+ * and a record into text.
+ *
+ * NO HANDLER TAKES PART. A handler is written to run in place — it takes its
+ * arguments and returns its result or throws — and a task runs that same
+ * handler, whose answer becomes the task's result. It never sees a task id,
+ * never starts a task, never says that one started: the id exists only between
+ * the platform and the caller. That is what lets a declaration alone put any
+ * tool or action in the background.
  */
 
 import type { ExecutionMode } from '@opencroft/core'
 
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
+import { isAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import type {
   BackgroundTaskOwner,
   BackgroundTaskRecord,
   BackgroundTaskService,
   CancelOutcome,
-  StartNodeTaskInput,
+  StartRunnerTaskInput,
 } from '@/app/_authed/(background-tasks)/_server/types'
 import {
   BACKGROUND_PARAM,
@@ -86,68 +95,209 @@ export function timeoutMsFrom(value: unknown): number | null {
 }
 
 /**
- * The one line a command task is known by: the caller's own description of it,
- * or failing that the command's first line.
+ * The one line a task is known by: the caller's own description of it, or
+ * failing that the first line of `fallback` — a command's, or what a tool's
+ * name and target say.
  */
-export function taskSummary(description: unknown, command: string): string {
+export function taskSummary(description: unknown, fallback: string): string {
   if (typeof description === 'string' && description.trim()) {
     return description.trim()
   }
-  const firstLine = command.split('\n').find((line) => line.trim()) ?? ''
+  const firstLine = fallback.split('\n').find((line) => line.trim()) ?? ''
   return firstLine.trim()
 }
 
 /**
- * What a call that started a task answers with, in place of a result.
+ * What a call that started a task answers with, in place of a result — one
+ * wording for every tool and every action.
  *
- * It says whether a notification is coming, because that decides what the
- * caller does next. With a session the result is delivered into the
- * conversation, and polling for it only spends turns. Without one — an MCP
- * client over HTTP — nothing will ever arrive, and implying otherwise leaves the
- * caller waiting for good.
+ * With a session it says only that the result will come, because it will: the
+ * service delivers it into the conversation when the task ends. Naming
+ * task_status or task_cancel here reads as an invitation, and an agent that
+ * takes it spends a turn checking on a task it has just started — if the start
+ * did not fail, the task is running. Without a session — an MCP client over
+ * HTTP — nothing will ever arrive, so the answer says so and hands over the one
+ * way that caller learns the result: polling by id. Implying otherwise would
+ * leave it waiting for good.
  */
 export function taskStartedText(record: BackgroundTaskRecord, owner: BackgroundTaskOwner): string {
-  const head = `Started background task ${record.taskId} — ${record.summary} (${timeoutText(record.timeoutMs)}).`
+  const summary = record.summary.trim()
+  const head = summary
+    ? `Started background task ${record.taskId} — ${/[.!?]$/.test(summary) ? summary : `${summary}.`}`
+    : `Started background task ${record.taskId}.`
   if (owner.sessionId) {
-    return (
-      `${head}\nIts result will arrive in this conversation when it ends, so there is no need to poll. ` +
-      'task_status shows how it is doing; task_cancel stops it.'
-    )
+    return `${head} Its result will arrive in this conversation when it ends.`
   }
+  // The one caller told about task_status: with no session nothing will
+  // arrive, so polling is the only way it ever learns the result. Nothing
+  // else is suggested -- a hint to check on or stop a task just started only
+  // invites a turn spent doing so.
   return (
-    `${head}\nNo notification will arrive: this caller has no session. ` +
-    `Poll task_status with taskId "${record.taskId}" for its state and output; task_cancel stops it.`
+    `${head} No notification will arrive: this caller has no session. ` +
+    `Poll task_status with taskId "${record.taskId}" for its state and output.`
   )
 }
 
+/** How one call runs: in place, or as a task with this limit. */
+export type CallRoute =
+  | { background: false; args: Record<string, unknown> }
+  | { background: true; args: Record<string, unknown>; timeoutMs: number | null }
+
 /**
- * Start a remote_exec or remote_script call as a node task. Called from inside
- * the handler, past the approval wrapper and past the same validation a call run
- * in place gets: a command run in the background is still a command somebody
- * approved.
+ * How one call runs, by what its tool or action declares — the one decision
+ * every tool, `call` and `app_call` share, so `background` means the same
+ * thing wherever a caller passes it.
+ *
+ * `async` is always a task, under the default limit: its schema offered no
+ * `timeoutMinutes`, so none is read, and nothing is taken out of arguments
+ * that are all the tool's own. `awaitable` is a task when the caller passed
+ * `background: true` — the boolean; the string "true" is a caller's slip, not
+ * its choice — and either way `background` and `timeoutMinutes` belong to the
+ * host, because the listing offered them, so they come out before the handler
+ * sees the arguments. Anything else, `sync` or a mode nobody declared, runs in
+ * place with its arguments untouched: a sync tool that takes a parameter
+ * called `background` owns it.
+ *
+ * A malformed timeout throws from here, so it is refused as the bad argument
+ * it is before anything has been claimed, started or run.
  */
-export async function startCommandTask(
+export function routeCall(execution: ExecutionMode | undefined, args: Record<string, unknown>): CallRoute {
+  if (execution === 'async') {
+    return { background: true, args, timeoutMs: DEFAULT_TIMEOUT_MINUTES * 60_000 }
+  }
+  if (execution !== 'awaitable') {
+    return { background: false, args }
+  }
+  const { [BACKGROUND_PARAM]: background, [TIMEOUT_MINUTES_PARAM]: timeoutMinutes, ...own } = args
+  if (background !== true) {
+    return { background: false, args: own }
+  }
+  return { background: true, args: own, timeoutMs: timeoutMsFrom(timeoutMinutes) }
+}
+
+// ── tools ────────────────────────────────────────────────────────────
+
+/**
+ * What a tool's runner adapter answers with: the command the background task
+ * runner is to leave running, where, and what the task is known by. Who it is
+ * for, the tool's name and the time limit are the registry's to add — an
+ * adapter starts nothing itself.
+ */
+export type RunnerCommand = Omit<StartRunnerTaskInput, 'owner' | 'name' | 'timeoutMs'>
+
+/**
+ * A tool's way onto the background task runner (EXPERIMENTAL): a command left
+ * detached on the node itself, which outlives this server and keeps its whole
+ * log there. Optional, and rare — only work that has to survive a restart or be
+ * followed live needs it. A tool without one runs in the background as an
+ * in-process task, which asks nothing of the tool at all.
+ *
+ * It is handed the call as the tool's handler would be, `background` and
+ * `timeoutMinutes` already taken out, and has to refuse what that handler
+ * refuses and claim what it claims before it names a command: a command run in
+ * the background is still one somebody approved, and still a write.
+ */
+export type BackgroundRunnerAdapter = (
+  args: Record<string, unknown>,
   caller: ToolCallerContext,
-  input: Omit<StartNodeTaskInput, 'owner'>,
-): Promise<Record<string, unknown>> {
+) => Promise<RunnerCommand>
+
+/**
+ * A tool's own call, as the registry makes it — the static handler, the
+ * extension's, or the agent-tool node's. `signal` is passed only when the call
+ * runs as a background task.
+ */
+export type ToolRun = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<Record<string, unknown>>
+
+/**
+ * What a backgrounded tool call runs against, for display: the terminal
+ * target, node or app address its arguments name, or '' when they name none.
+ * An app named by its uuid shows as nothing rather than as the uuid — the
+ * address is what a reader knows it by, and what `app_call` lists a task under.
+ */
+export function toolTaskTarget(args: Record<string, unknown>): string {
+  for (const value of [args.target, args.nodeId]) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  return typeof args.app === 'string' && isAppAddress(args.app) ? args.app : ''
+}
+
+/**
+ * A tool's answer as its task's result: the text it would have answered a
+ * caller with, verbatim, so the handler's ordinary output is the result and
+ * nothing is written for the task's sake. An answer flagged `isError` fails the
+ * task with that text as the reason — what the caller would have read in place.
+ * Content that is not text, an image, has no place in a task's result.
+ */
+export function taskResultOf(result: Record<string, unknown>): string {
+  const parts = Array.isArray(result.content) ? (result.content as { type?: unknown; text?: unknown }[]) : []
+  const text = parts
+    .flatMap((part) => (part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []))
+    .join('\n')
+  if (result.isError === true) {
+    throw new Error(text || 'The tool reported an error without a message.')
+  }
+  return text
+}
+
+/**
+ * Run one tool call the way its declaration says a caller waits for it — the
+ * decorator the registry puts around every tool it dispatches, static,
+ * extension-contributed or graph-defined, once the call is approved.
+ *
+ * In place the answer is the tool's own. In the background the answer is the
+ * task that started, and the same call is that task's work: through the tool's
+ * runner adapter when it registered one, otherwise in this process, where what
+ * the call answers with becomes the task's result (see `taskResultOf`).
+ */
+export async function callTool(input: {
+  name: string
+  execution: ExecutionMode | undefined
+  args: Record<string, unknown>
+  caller: ToolCallerContext
+  run: ToolRun
+  runner?: BackgroundRunnerAdapter
+}): Promise<Record<string, unknown>> {
+  const { name, caller, run, runner } = input
+  const route = routeCall(input.execution, input.args)
+  if (!route.background) {
+    return run(route.args)
+  }
+  const { args, timeoutMs } = route
   const owner = taskOwner(caller)
-  const record = await (await backgroundTaskService()).startNodeTask({ ...input, owner })
+  let record: BackgroundTaskRecord
+  if (runner) {
+    // The adapter's checks run before the service is asked: a call they
+    // refuse leaves no record behind.
+    const command = await runner(args, caller)
+    record = await (await backgroundTaskService()).startRunnerTask({ ...command, owner, name, timeoutMs })
+  } else {
+    const target = toolTaskTarget(args)
+    record = await (await backgroundTaskService()).startInProcessTask({
+      owner,
+      kind: 'tool',
+      name,
+      target,
+      summary: taskSummary(args.description, target ? `${name} on ${target}` : name),
+      timeoutMs,
+      run: async (signal) => taskResultOf(await run(args, signal)),
+    })
+  }
   return textResult(taskStartedText(record, owner))
 }
+
+// ── actions ──────────────────────────────────────────────────────────
 
 /** What an action call came to: its result, or the answer for the task started in its place. */
 export type ActionOutcome = { result: unknown } | { started: string }
 
 /**
  * Run one action the way its declaration says a caller waits for it — the part
- * of `call` and `app_call` that is the same for both.
- *
- * `async` is always a task. `awaitable` is one when the caller passed
- * `background: true`, and either way `background` and `timeoutMinutes` belong to
- * the host — the listing offered them — so they are taken out before the
- * handler sees `params`. Anything else, `sync` or an action nobody declared,
- * runs as it always has with `params` untouched: a sync action that takes a
- * parameter called `background` owns it.
+ * of `call` and `app_call` that is the same for both, and the same as every
+ * tool's: one routing (`routeCall`), one answer on a start (`taskStartedText`).
+ * An action always runs in this process when it runs in the background.
  */
 export async function callAction(input: {
   execution: ExecutionMode | undefined
@@ -156,25 +306,18 @@ export async function callAction(input: {
   task: { kind: 'node-action' | 'app-action'; name: string; target: string; summary: string }
   run: (params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>
 }): Promise<ActionOutcome> {
-  const { execution, caller, task, run } = input
-  let params = input.params
-  let timeoutMs: number | null = DEFAULT_TIMEOUT_MINUTES * 60_000
-  if (execution === 'awaitable') {
-    const { [BACKGROUND_PARAM]: background, [TIMEOUT_MINUTES_PARAM]: timeoutMinutes, ...own } = input.params
-    params = own
-    if (background !== true) {
-      return { result: await run(params) }
-    }
-    timeoutMs = timeoutMsFrom(timeoutMinutes)
-  } else if (execution !== 'async') {
-    return { result: await run(params) }
+  const { caller, task, run } = input
+  const route = routeCall(input.execution, input.params)
+  if (!route.background) {
+    return { result: await run(route.args) }
   }
+  const { args, timeoutMs } = route
   const owner = taskOwner(caller)
   const record = await (await backgroundTaskService()).startInProcessTask({
     owner,
     ...task,
     timeoutMs,
-    run: (signal) => run(params, signal),
+    run: (signal) => run(args, signal),
   })
   return { started: taskStartedText(record, owner) }
 }
@@ -225,27 +368,49 @@ function timingText(record: BackgroundTaskRecord, now: Date): string {
   return started
 }
 
+/**
+ * What ran, and the summary when it says more than that. A call with nothing
+ * to run against has no " on …"; a task started without a description is
+ * summarised by its tool's name and target, and saying those twice would only
+ * lengthen the line.
+ */
+function headline(record: BackgroundTaskRecord, separator: string): string {
+  const ran = record.target ? `${record.name} on ${record.target}` : record.name
+  return record.summary && record.summary !== ran ? `${ran}${separator}${record.summary}` : ran
+}
+
+/**
+ * What a task has to show for itself. A command on the runner writes a log,
+ * which the service keeps the END of, and whose whole lives on the node — the
+ * same target reaches it. Work in this process answers once, and what the
+ * service keeps is that answer: its result.
+ */
+function outputLines(record: BackgroundTaskRecord): string[] {
+  const kept = record.outputTail?.trimEnd()
+  const running = record.state === 'running'
+  if (record.runner === 'background-task-runner') {
+    const log = record.logPath ? [`Full log: remote_read target="${record.target}" path="${record.logPath}"`] : []
+    if (kept) {
+      return [...log, 'Output (the end of it):', kept]
+    }
+    return [...log, running ? 'No output yet.' : 'No output.']
+  }
+  if (kept) {
+    return ['Result:', kept]
+  }
+  return [running ? 'No result yet.' : 'No result.']
+}
+
 /** One task in full, as task_status prints it. */
 export function describeTask(record: BackgroundTaskRecord, now: Date): string {
   // A running task also says when it will be stopped; an ended one no longer has a deadline.
   const deadline = record.state === 'running' ? `; ${timeoutText(record.timeoutMs)}` : ''
-  const lines = [
+  return [
     `Task ${record.taskId}: ${stateText(record)}`,
-    `${record.name} on ${record.target} — ${record.summary}`,
+    headline(record, ' — '),
     `Timing: ${timingText(record, now)}${deadline}.`,
-  ]
-  // The tail is bounded by the service; the log is where the rest is, and it is
-  // on the node the command ran on — the same target reaches it.
-  if (record.logPath) {
-    lines.push(`Full log: remote_read target="${record.target}" path="${record.logPath}"`)
-  }
-  const tail = record.outputTail?.trimEnd()
-  if (tail) {
-    lines.push('Output tail:', tail)
-  } else {
-    lines.push(record.state === 'running' ? 'No output yet.' : 'No output.')
-  }
-  return lines.join('\n')
+    ...outputLines(record),
+  ].join('\n')
 }
 
 /** A caller's own tasks, newest first, as task_status prints them without a taskId. */
@@ -257,22 +422,20 @@ export function describeTaskList(records: BackgroundTaskRecord[], owner: Backgro
   const shown = records.slice(0, LIST_LIMIT)
   const lines = [`Background tasks started ${scope}, newest first:`]
   for (const record of shown) {
-    lines.push(
-      `${record.taskId} — ${stateText(record)} — ${record.name} on ${record.target}: ${record.summary} (${timingText(record, now)})`,
-    )
+    lines.push(`${record.taskId} — ${stateText(record)} — ${headline(record, ': ')} (${timingText(record, now)})`)
   }
   if (records.length > shown.length) {
     lines.push(`… and ${records.length - shown.length} older, not shown.`)
   }
-  lines.push("task_status with a taskId shows one task's output and log.")
+  lines.push('task_status with a taskId shows one task in full.')
   return lines.join('\n')
 }
 
 /**
  * What a cancel did, said as plainly as the service reported it. `requested` is
- * not `stopped`: an action handler inside this process can only be asked, and
- * one that ignores the request carries on — telling the caller it stopped would
- * be the one wrong answer here.
+ * not `stopped`: work running inside this process — a tool's handler or an
+ * action's — can only be asked, and one that ignores the request carries on;
+ * telling the caller it stopped would be the one wrong answer here.
  */
 export function cancelText(taskId: string, outcome: Exclude<CancelOutcome, 'unknown-task'>): string {
   switch (outcome) {
@@ -280,7 +443,7 @@ export function cancelText(taskId: string, outcome: Exclude<CancelOutcome, 'unkn
       return `Stopped background task ${taskId}.`
     case 'requested':
       return (
-        `Asked background task ${taskId} to stop. It is an action running inside this server, and one that ` +
+        `Asked background task ${taskId} to stop. It runs inside this server, and work that ` +
         'does not honour the request runs on until it ends by itself — task_status shows whether it has stopped.'
       )
     case 'not-running':
@@ -304,7 +467,7 @@ export const definitions = [
   {
     name: 'task_status',
     description:
-      'How background tasks are doing. With a taskId: that task’s state, when it started and how long it has run or took, its exit code or why it ended, the end of its output, and — for a command on a node — where its full log is. Without one: your own tasks, newest first. A background task is what remote_exec/remote_script with `background: true`, or an action that runs in the background, returns in place of a result.',
+      'How background tasks are doing. With a taskId: that task’s state, when it started and how long it has run or took, its exit code or why it ended, and its result — for a command on a node, the end of its output and where its full log is. Without one: your own tasks, newest first. A background task is what a call returns in place of a result when it runs in the background: a tool or action called with `background: true`, or one that always runs that way.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -318,7 +481,7 @@ export const definitions = [
   {
     name: 'task_cancel',
     description:
-      'Stop a background task. A command on a node is stopped; an action running inside this server is only asked to stop, and one that does not honour the request runs until it ends by itself — the reply says which happened. A task that has already ended is left as it was.',
+      'Stop a background task. A command on a node is stopped. Work running inside this server, a tool or an action, is only asked to stop, and if it does not honour the request it runs until it ends by itself; the reply says which happened. A task that has already ended is left as it was.',
     inputSchema: {
       type: 'object' as const,
       properties: {

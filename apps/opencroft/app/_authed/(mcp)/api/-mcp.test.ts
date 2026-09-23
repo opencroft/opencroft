@@ -66,3 +66,21 @@ test('the MCP route checks refuses() before calling handleMethod', async () => {
     'a refused caller must never reach handleMethod — the check has to gate the call, not follow it',
   )
 })
+
+// The listing, guarded the same way. Extension and graph tools reach an HTTP
+// caller presented — `background` offered, or the sentence said, and never
+// `execution` — only because tools/list takes them from the registry's
+// `listDynamicTools`, the list the in-process bridge serves too; what that list
+// holds is proved in background-calls.test.ts. What has to hold HERE is that
+// the route lists them no other way: before, it spread the raw declarations,
+// so a marked extension or graph tool reached HTTP callers unmarked.
+test('the MCP route lists extension and graph tools as the registry presents them', async () => {
+  const source = await readFile(join(import.meta.dirname, 'mcp.ts'), 'utf8')
+
+  assert.match(source, /\.\.\.\(await listDynamicTools\(\)\)/, 'tools/list must list the presented dynamic tools')
+  assert.doesNotMatch(
+    source,
+    /getExtensionToolDefinitions|getAgentToolDefinitions/,
+    'a raw declaration listed directly skips the presentation',
+  )
+})

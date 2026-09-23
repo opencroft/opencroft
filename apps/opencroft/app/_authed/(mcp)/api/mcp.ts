@@ -1,9 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { recordCaller, refuses, resolveCaller } from '@/app/_authed/(mcp)/_server/caller'
-import { getExtensionToolDefinitions } from '@/app/_authed/(mcp)/_server/extension-tools'
 import { mcpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
-import { getAgentToolDefinitions, handleToolCall, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
+import { handleToolCall, listDynamicTools, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
 
 type MCPRequest = {
   jsonrpc: '2.0'
@@ -43,18 +42,10 @@ async function handleMethod(
     case 'notifications/initialized':
       return null
 
-    case 'tools/list': {
-      const staticNames = new Set(toolDefinitions.map((t) => t.name))
-      const extensionTools = await getExtensionToolDefinitions(staticNames)
-      const agentTools = await getAgentToolDefinitions(new Set(extensionTools.map((t) => t.name)))
-      return {
-        tools: [
-          ...toolDefinitions,
-          ...extensionTools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
-          ...agentTools,
-        ],
-      }
-    }
+    case 'tools/list':
+      // Both lists already presented: an extension or graph tool marked
+      // `awaitable` or `async` reads here exactly as it does to the bridge.
+      return { tools: [...toolDefinitions, ...(await listDynamicTools())] }
 
     case 'tools/call': {
       const name = params?.name as string | undefined

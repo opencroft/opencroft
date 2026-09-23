@@ -13,8 +13,9 @@
  *   - `sync` is left as it was declared.
  *
  * Every listing presents through here — the tool list both the HTTP surface and
- * the in-process bridge serve, `list_actions` and `app_actions` — so each says
- * the same thing in the same words.
+ * the in-process bridge serve, static, extension-contributed and graph-defined
+ * tools alike, and `list_actions` and `app_actions` — so each says the same
+ * thing in the same words.
  */
 
 import type { ExecutionMode } from '@opencroft/core'
@@ -79,6 +80,17 @@ export const AWAITABLE_SENTENCE =
 /** The one sentence an `async` tool's or action's description gains. */
 export const ASYNC_SENTENCE =
   'Runs as a background task: the call returns a task id at once, and the result arrives in this conversation when it ends.'
+
+/**
+ * A mode read from where nothing checked it — a manifest entry, an agent-tool
+ * node's data — as one of the three, or undefined. Anything else is
+ * undeclared, which is `sync`: a misspelt mode must not reach the registry as
+ * though it were one, and the listing and the dispatch have to read the same
+ * answer from the same value.
+ */
+export function readExecutionMode(value: unknown): ExecutionMode | undefined {
+  return value === 'sync' || value === 'awaitable' || value === 'async' ? value : undefined
+}
 
 /** A tool as its family declares it: what a caller is shown, and how a caller waits for it. */
 export interface DeclaredTool {

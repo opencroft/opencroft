@@ -1,15 +1,20 @@
 /**
  * MCP tools contributed by extensions.
  *
- * Metadata (name/description/inputSchema/requireApproval) comes from each
- * extension's manifest `provides.mcpTools`, read via `getProvided` — no
- * bundle load required to list tools. The handler itself lives in the
- * extension's server module as `export const tools`, keyed by tool name,
- * and is only loaded (via `getExtensionModule`) when the tool is called.
+ * Metadata (name/description/inputSchema/requireApproval/execution) comes from
+ * each extension's manifest `provides.mcpTools` (`McpToolMeta` in
+ * `@opencroft/server`), read via `getProvided` — no bundle load required to
+ * list tools. The handler itself lives in the extension's server module as
+ * `export const tools`, keyed by tool name, and is only loaded (via
+ * `getExtensionModule`) when the tool is called.
  */
+
+import type { ExecutionMode } from '@opencroft/core'
+import type { McpToolMeta } from '@opencroft/server'
 
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
+import { readExecutionMode } from '@/app/_authed/(mcp)/_server/execution-mode'
 
 export interface ExtensionToolDefinition {
   name: string
@@ -17,14 +22,14 @@ export interface ExtensionToolDefinition {
   inputSchema: Record<string, unknown>
   extensionId: string
   requireApproval: boolean
+  /** How callers wait for it, as its manifest entry declares. Absent: sync. */
+  execution?: ExecutionMode
 }
 
-interface RawMcpToolManifestEntry {
-  name?: string
-  description?: string
-  inputSchema?: Record<string, unknown>
-  requireApproval?: boolean
-}
+// A manifest is JSON on disk, so nothing its type promises holds until it is
+// checked: every field is read as possibly absent, and `execution` as possibly
+// anything (see readExecutionMode).
+type RawMcpToolManifestEntry = Partial<McpToolMeta>
 
 /**
  * Enumerate extension-contributed MCP tools. `reservedNames` are the static
@@ -50,12 +55,14 @@ export async function getExtensionToolDefinitions(
     }
     seen.add(name)
 
+    const execution = readExecutionMode(value.execution)
     defs.push({
       name,
       description: value.description ?? `Extension tool: ${name}`,
       inputSchema: value.inputSchema ?? { type: 'object', properties: {} },
       extensionId,
       requireApproval: value.requireApproval ?? false,
+      ...(execution ? { execution } : {}),
     })
   }
 

@@ -12,7 +12,7 @@ import { resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
 import { listLocalExtensionsImpl } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
-import { startCommandTask, taskSummary, timeoutMsFrom } from '@/app/_authed/(mcp)/_server/task-tools'
+import { type BackgroundRunnerAdapter, taskSummary } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import {
   claimSlugForWrite,
@@ -933,6 +933,37 @@ function sliceLines(content: string, offset?: number, limit?: number): string {
   return lines.slice(start, end).join('\n')
 }
 
+/**
+ * Everything remote_exec and remote_script check and settle before they run a
+ * thing, whichever way they run: in place through their handlers, or detached
+ * through their runner adapters below. One helper, so the two paths refuse the
+ * same calls and claim the same directories — two copies drift, and the copy
+ * that drifts is the one nobody is watching.
+ *
+ * The order is part of it. A missing body is refused before anything is
+ * claimed; a malformed `timeoutMinutes` never gets this far, because the
+ * registry reads it before it calls the adapter. Only then is the target's
+ * directory claimed for the caller, and the target and working directory
+ * resolved.
+ */
+async function prepareRemoteRun(
+  args: Record<string, unknown>,
+  caller: ToolCallerContext,
+  field: 'command' | 'script',
+): Promise<{ body: string; ctx: Record<string, unknown>; cwd: string | undefined }> {
+  const body = args[field] as string | undefined
+  if (!body) {
+    fail(-32602, `Missing required param: ${field}`)
+  }
+  const cwd = args.cwd as string | undefined
+  // A command is opaque, so it counts as a write: there is no way to tell an
+  // inspection from an edit without interpreting a shell.
+  await claimForWrite(args, caller)
+  const { ctx } = await resolveTerminalContext(args)
+  const effectiveCwd = cwd ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined) : (ctx.cwd as string | undefined)
+  return { body, ctx, cwd: effectiveCwd }
+}
+
 export const handlers: Record<string, ToolHandler> = {
   // ── read (remote) ────────────────────────────────────────────────
   //
@@ -1070,41 +1101,15 @@ export const handlers: Record<string, ToolHandler> = {
   ),
 
   // ── exec (remote) ────────────────────────────────────────────────
+  //
+  // remote_exec and remote_script are declared `awaitable`, and their handlers
+  // know nothing of it: the registry routes a `background: true` call to their
+  // runner adapters below instead.
   remote_exec: withApprovalRequired(
     async (args, caller) => {
-      const command = args.command as string | undefined
-      if (!command) {
-        fail(-32602, 'Missing required param: command')
-      }
-      const background = args.background === true
-      // Read before the lease below is taken: a malformed timeout is a bad
-      // argument, and fails as one before anything is claimed for the caller.
-      const timeoutMs = background ? timeoutMsFrom(args.timeoutMinutes) : null
-      const cwd = args.cwd as string | undefined
-      // A command is opaque, so it counts as a write: there is no way to tell
-      // an inspection from an edit without interpreting a shell.
-      await claimForWrite(args, caller)
-      const { ctx } = await resolveTerminalContext(args)
-      const effectiveCwd = cwd
-        ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
-        : (ctx.cwd as string | undefined)
-      if (background) {
-        // Here, inside the approval wrapper and past the same checks as a call
-        // run in place: a detached command is still one somebody approved.
-        // Secrets go as names; the service puts their values in the process's
-        // environment when it starts it.
-        return startCommandTask(caller, {
-          name: 'remote_exec',
-          target: args.target as string,
-          command,
-          cwd: effectiveCwd,
-          secrets: args.secrets as string[] | undefined,
-          timeoutMs,
-          summary: taskSummary(args.description, command),
-        })
-      }
+      const { body: command, ctx, cwd } = await prepareRemoteRun(args, caller, 'command')
       const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
-      const { stdout, truncated } = await remoteExecDetailed(ctx, command, { cwd: effectiveCwd, env })
+      const { stdout, truncated } = await remoteExecDetailed(ctx, command, { cwd, env })
       return textResult(withTruncationNote(stdout, truncated, "narrow the command's output to see the rest"))
     },
     { view: 'remote_exec' },
@@ -1113,34 +1118,8 @@ export const handlers: Record<string, ToolHandler> = {
   // ── script (remote) ──────────────────────────────────────────────
   remote_script: withApprovalRequired(
     async (args, caller) => {
-      const script = args.script as string | undefined
-      if (!script) {
-        fail(-32602, 'Missing required param: script')
-      }
-      const background = args.background === true
-      const timeoutMs = background ? timeoutMsFrom(args.timeoutMinutes) : null
+      const { body: script, ctx, cwd: effectiveCwd } = await prepareRemoteRun(args, caller, 'script')
       const scriptArgs = (args.args as string[] | undefined) ?? []
-      const cwd = args.cwd as string | undefined
-      await claimForWrite(args, caller)
-      const { ctx } = await resolveTerminalContext(args)
-      const effectiveCwd = cwd
-        ? resolveRemoteFilePath(cwd, ctx.cwd as string | undefined)
-        : (ctx.cwd as string | undefined)
-      if (background) {
-        // The body and its positional arguments go separately, as the in-place
-        // path passes them: the node runs `bash script.sh <args>`, so $1… and
-        // bash's own line numbers are what a synchronous run would have seen.
-        return startCommandTask(caller, {
-          name: 'remote_script',
-          target: args.target as string,
-          command: script,
-          ...(scriptArgs.length > 0 ? { args: scriptArgs } : {}),
-          cwd: effectiveCwd,
-          secrets: args.secrets as string[] | undefined,
-          timeoutMs,
-          summary: taskSummary(args.description, script),
-        })
-      }
       const env = await resolveSecretsEnv(args.secrets as string[] | undefined)
       const tmpPath = `/tmp/opencroft-script-${crypto.randomUUID()}.sh`
       try {
@@ -1168,4 +1147,47 @@ export const handlers: Record<string, ToolHandler> = {
     },
     { view: 'remote_script' },
   ),
+}
+
+/**
+ * How remote_exec and remote_script run in the background: on the background
+ * task runner (EXPERIMENTAL), detached on the node the command is for, rather
+ * than as a promise in this server. A build or a deploy has to outlive a
+ * restart of the process that started it, and its log is worth following while
+ * it runs — neither of which an in-process task can offer.
+ *
+ * Reached only past the approval gate, and past the same checks the handlers
+ * make (`prepareRemoteRun`): a detached command is still one somebody approved.
+ */
+export const backgroundRunners: Record<string, BackgroundRunnerAdapter> = {
+  remote_exec: async (args, caller) => {
+    const { body: command, cwd } = await prepareRemoteRun(args, caller, 'command')
+    return {
+      target: args.target as string,
+      mode: 'command',
+      command,
+      cwd,
+      // Names, unresolved: the service puts their values in the process's
+      // environment when it starts it, and writes them nowhere on the node.
+      secrets: args.secrets as string[] | undefined,
+      summary: taskSummary(args.description, command),
+    }
+  },
+
+  remote_script: async (args, caller) => {
+    const { body: script, cwd } = await prepareRemoteRun(args, caller, 'script')
+    const scriptArgs = (args.args as string[] | undefined) ?? []
+    // The body and its positional arguments go separately, as the in-place
+    // path passes them: the node runs `bash script.sh <args>`, so $1… and
+    // bash's own line numbers are what a synchronous run would have seen.
+    return {
+      target: args.target as string,
+      mode: 'script',
+      command: script,
+      ...(scriptArgs.length > 0 ? { args: scriptArgs } : {}),
+      cwd,
+      secrets: args.secrets as string[] | undefined,
+      summary: taskSummary(args.description, script),
+    }
+  },
 }

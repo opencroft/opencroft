@@ -20,8 +20,12 @@ import {
   DEFAULT_TIMEOUT_MINUTES,
   presentAction,
   presentTool,
+  readExecutionMode,
 } from './execution-mode'
 import { toolDefinitions } from './tools'
+
+// After the barrel, and lazily: see task-tools.test.ts.
+const { backgroundRunners } = await import('./remote-tools')
 
 type Mode = 'sync' | 'awaitable' | 'async'
 
@@ -90,6 +94,28 @@ test('the registry both surfaces serve: remote_exec and remote_script offer the 
   const read = toolDefinitions.find((t) => t.name === 'remote_read')
   assert.ok(read)
   assert.equal('background' in properties(read.inputSchema), false)
+})
+
+test('a runner adapter is registered only for a tool that can run in the background', () => {
+  // One on a sync tool would never be reached: the registry consults it only
+  // for a call it has already decided to background.
+  const names = Object.keys(backgroundRunners)
+  assert.ok(names.length > 0, 'nothing to check')
+  for (const name of names) {
+    const tool = toolDefinitions.find((t) => t.name === name)
+    assert.ok(tool, `${name} is listed`)
+    const offersBackground = 'background' in properties(tool.inputSchema)
+    assert.ok(offersBackground || tool.description.endsWith(ASYNC_SENTENCE), `${name} never runs in the background`)
+  }
+})
+
+test('a mode read from a manifest or a node is one of the three, or none at all', () => {
+  for (const mode of ['sync', 'awaitable', 'async'] as const) {
+    assert.equal(readExecutionMode(mode), mode)
+  }
+  for (const value of ['asynch', 'Async', '', true, 1, null, undefined, { mode: 'async' }]) {
+    assert.equal(readExecutionMode(value), undefined, JSON.stringify(value))
+  }
 })
 
 // ── actions ──────────────────────────────────────────────────────────

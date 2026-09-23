@@ -25,10 +25,22 @@
  * ABSENT IS "NO SESSION", NOT "SOME SESSION". Same contract as `agent`: a tool
  * that needs one says there is none rather than picking one, and a value taken
  * from tool arguments would let any caller post into any conversation.
+ *
+ * `signal` is the one field no surface sets. The registry adds it when it runs
+ * the call as a background task — the tool is declared `async`, or `awaitable`
+ * and called with `background: true` — and it aborts when that task is
+ * cancelled or runs out of time. A call run in place never carries one.
+ *
+ * ADVISORY, NOT A STOP. Nothing halts a handler from outside: one that watches
+ * the signal can end early, one that ignores it runs on to its end — which is
+ * why a cancel of such a task reports that it asked, not that it stopped. A
+ * handler does not have to look at it to be run in the background.
  */
 export interface ToolCallerContext {
   agent: string | null
   sessionId?: string
+  /** Only while the call runs as a background task — see above. */
+  signal?: AbortSignal
 }
 
 /** Every tool handler's shape: the call's arguments, and who is making it. */

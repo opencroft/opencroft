@@ -1,6 +1,7 @@
 // The tool side of background tasks: what a caller is told when one starts, how
-// a task reads back, what a cancel reports, and how an action call is routed by
-// its declaration.
+// a task reads back, what a cancel reports, what a tool's answer becomes as a
+// task's result, and how an action call is routed by its declaration. How the
+// registry routes a tool call is background-calls.test.ts's, end to end.
 //
 // The service is a stand-in throughout, put in place through the module's own
 // seam: the real one writes records and starts processes on nodes, and what is
@@ -29,8 +30,10 @@ const {
   describeTaskList,
   formatDuration,
   substituteBackgroundTaskService,
+  taskResultOf,
   taskStartedText,
   timeoutMsFrom,
+  toolTaskTarget,
 } = await import('./task-tools')
 
 afterEach(() => substituteBackgroundTaskService(undefined))
@@ -46,6 +49,7 @@ function record(overrides: Partial<BackgroundTaskRecord> = {}): BackgroundTaskRe
     taskId: 'task-1',
     agent: null,
     kind: 'tool',
+    runner: 'background-task-runner',
     name: 'remote_exec',
     target: 'node_abc/terminal',
     summary: 'Run the test suite',
@@ -65,10 +69,17 @@ function fakeService(overrides: Partial<BackgroundTaskService> = {}) {
   const inProcess: StartInProcessTaskInput[] = []
   const owners: BackgroundTaskOwner[] = []
   const service: BackgroundTaskService = {
-    startNodeTask: async () => unused(),
+    startRunnerTask: async () => unused(),
     startInProcessTask: async (input) => {
       inProcess.push(input)
-      return record({ taskId: 'task-9', kind: input.kind, name: input.name, target: input.target })
+      return record({
+        taskId: 'task-9',
+        kind: input.kind,
+        runner: 'in-process',
+        name: input.name,
+        target: input.target,
+        summary: input.summary,
+      })
     },
     get: async () => unused(),
     listForOwner: async (owner) => {
@@ -113,26 +124,29 @@ test('a timeoutMinutes that is not a finite number of minutes, 0 or more, is ref
 
 // ── the answer to a start ────────────────────────────────────────────
 
-test('a caller with a session is told its result will come to it, and that polling is not needed', () => {
+test('a caller with a session is told only that the result will come to it', () => {
   const started = taskStartedText(record({ taskId: 'abc' }), { agent: 'Agent Solo', sessionId: 's-1' })
-  assert.match(started, /^Started background task abc — Run the test suite \(times out after 1h\)\./)
-  assert.match(started, /will arrive in this conversation when it ends, so there is no need to poll/)
-  assert.match(started, /task_status/)
-  assert.match(started, /task_cancel/)
-  assert.doesNotMatch(started, /No notification/)
+  assert.equal(
+    started,
+    'Started background task abc — Run the test suite. Its result will arrive in this conversation when it ends.',
+  )
+  // Named here, either one is an invitation to spend a turn on a task that has
+  // only just started — and that is running, or the start would have failed.
+  assert.doesNotMatch(started, /task_status|task_cancel/)
 })
 
 test('a caller without a session is told plainly that nothing will arrive, and to poll by id', () => {
   const started = taskStartedText(record({ taskId: 'abc' }), { agent: 'Agent Solo' })
+  assert.match(started, /^Started background task abc — Run the test suite\. /)
   assert.match(started, /No notification will arrive: this caller has no session\./)
   assert.match(started, /Poll task_status with taskId "abc"/)
   assert.doesNotMatch(started, /arrive in this conversation/)
 })
 
-test('the start names the limit the task was given, no limit included', () => {
+test('a summary that already ends a sentence is not given a second full stop', () => {
   const owner = { agent: null, sessionId: 's-1' }
-  assert.match(taskStartedText(record({ timeoutMs: 150_000 }), owner), /\(times out after 2m 30s\)/)
-  assert.match(taskStartedText(record({ timeoutMs: null }), owner), /\(no time limit\)/)
+  assert.match(taskStartedText(record({ summary: 'Deploy to eu.' }), owner), /— Deploy to eu\. Its result/)
+  assert.match(taskStartedText(record({ summary: 'Ship it!' }), owner), /— Ship it! Its result/)
 })
 
 test('durations read the way a person reads them', () => {
@@ -145,7 +159,7 @@ test('durations read the way a person reads them', () => {
 
 // ── task_status ──────────────────────────────────────────────────────
 
-test('a running node task: state, timing with its deadline, the log and how to read it, the tail', () => {
+test('a running runner task: state, timing with its deadline, the log and how to read it, the end of its output', () => {
   const described = describeTask(record({ logPath: '/tmp/task-1.log', outputTail: 'line 1\nline 2\n' }), at(725_000))
   assert.equal(
     described,
@@ -154,7 +168,7 @@ test('a running node task: state, timing with its deadline, the log and how to r
       'remote_exec on node_abc/terminal — Run the test suite',
       'Timing: started 2026-09-22T10:00:00Z, running for 12m 5s; times out after 1h.',
       'Full log: remote_read target="node_abc/terminal" path="/tmp/task-1.log"',
-      'Output tail:',
+      'Output (the end of it):',
       'line 1',
       'line 2',
     ].join('\n'),
@@ -175,12 +189,44 @@ test('an ended task says how it ended — exit code or reason — how long it to
   assert.match(stopped, /^Task task-1: stopped — timed out after 1h$/m)
 })
 
-test('an action task has no log to point at, and an empty tail is said, not left blank', () => {
-  const action = record({ kind: 'app-action', name: 'clone', target: 'dev.git', state: 'completed', finishedAt: at(1) })
+test('an in-process tool task that named nothing to run against: no target, and its result as the handler gave it', () => {
+  const task = record({
+    runner: 'in-process',
+    name: 'index_graph',
+    target: '',
+    summary: 'index_graph',
+    state: 'completed',
+    finishedAt: at(4_000),
+    outputTail: 'indexed 42 nodes\n',
+  })
+  assert.equal(
+    describeTask(task, at(5_000)),
+    [
+      'Task task-1: completed',
+      // Its summary was made from its name, so it is not said twice.
+      'index_graph',
+      'Timing: started 2026-09-22T10:00:00Z, took 4s.',
+      'Result:',
+      'indexed 42 nodes',
+    ].join('\n'),
+  )
+})
+
+test('an in-process task has no log to point at, and an empty result is said, not left blank', () => {
+  const action = record({
+    kind: 'app-action',
+    runner: 'in-process',
+    name: 'clone',
+    target: 'dev.git',
+    state: 'completed',
+    finishedAt: at(1),
+  })
   const described = describeTask(action, at(2))
-  assert.doesNotMatch(described, /Full log/)
-  assert.match(described, /^No output\.$/m)
-  assert.match(describeTask(record(), T0), /^No output yet\.$/m)
+  assert.match(described, /^clone on dev\.git — Run the test suite$/m)
+  assert.doesNotMatch(described, /Full log|Output/)
+  assert.match(described, /^No result\.$/m)
+  assert.match(describeTask(record({ runner: 'in-process' }), T0), /^No result yet\.$/m)
+  assert.match(describeTask(record(), T0), /^No output yet\.$/m, 'a runner task still says output')
 })
 
 test('a list: whose tasks, one line each in the order given, and where the detail is', () => {
@@ -193,8 +239,17 @@ test('a list: whose tasks, one line each in the order given, and where the detai
     'Background tasks started from this session, newest first:',
     'b — running — remote_exec on node_abc/terminal: Run the test suite (started 2026-09-22T10:00:00Z, running for 5m)',
     'a — completed, exit code 0 — remote_exec on node_abc/terminal: Run the test suite (started 2026-09-22T10:00:00Z, took 1m 2s)',
-    "task_status with a taskId shows one task's output and log.",
+    'task_status with a taskId shows one task in full.',
   ])
+})
+
+test('a listed task that named nothing to run against has no " on "', () => {
+  const listed = describeTaskList(
+    [record({ taskId: 'c', runner: 'in-process', name: 'index_graph', target: '', summary: 'Index the graph' })],
+    { agent: null, sessionId: 's-1' },
+    at(1_000),
+  )
+  assert.match(listed, /^c — running — index_graph: Index the graph \(started /m)
 })
 
 test('an empty list says which caller it looked for', () => {
@@ -265,7 +320,7 @@ test('each cancel outcome is reported as what it was', async () => {
     replies[outcome] = text(await handleToolCall('task_cancel', { taskId: 'task-3' }, { internal: true }))
   }
   assert.equal(replies.stopped, 'Stopped background task task-3.')
-  assert.match(replies.requested ?? '', /^Asked background task task-3 to stop\./)
+  assert.match(replies.requested ?? '', /^Asked background task task-3 to stop\. It runs inside this server/)
   assert.match(replies.requested ?? '', /does not honour the request runs on until it ends by itself/)
   assert.match(replies['not-running'] ?? '', /^Background task task-3 had already ended; nothing was stopped\./)
 })
@@ -282,6 +337,44 @@ test('task_cancel is gated like the other tools that change something; task_stat
   assert.equal(isApprovalGated('task_cancel'), true)
   assert.equal(READ_ONLY_TOOLS.has('task_cancel'), false)
   assert.equal(READ_ONLY_TOOLS.has('task_status'), true)
+})
+
+// ── a tool's answer, as a task's ────────────────────────────────────
+
+test('a tool task’s result is the text its call answered with, verbatim, and only that', () => {
+  assert.equal(taskResultOf({ content: [{ type: 'text', text: '  two spaces kept  ' }] }), '  two spaces kept  ')
+  assert.equal(
+    taskResultOf({
+      content: [
+        { type: 'text', text: 'first' },
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        { type: 'text', text: 'second' },
+      ],
+    }),
+    'first\nsecond',
+  )
+  assert.equal(taskResultOf({ content: [] }), '')
+})
+
+test('an answer flagged isError fails the task with its text as the reason', () => {
+  assert.throws(
+    () => taskResultOf({ content: [{ type: 'text', text: 'the index is locked' }], isError: true }),
+    (err: Error) => err instanceof Error && err.message === 'the index is locked',
+  )
+  assert.throws(() => taskResultOf({ content: [], isError: true }), /reported an error without a message/)
+})
+
+test('what a tool task runs against: a terminal target, a node, an app by its address — or nothing', () => {
+  assert.equal(toolTaskTarget({ target: 'node_1/terminal', nodeId: 'node_2' }), 'node_1/terminal')
+  assert.equal(toolTaskTarget({ nodeId: 'node_2' }), 'node_2')
+  assert.equal(toolTaskTarget({ app: 'dev.git' }), 'dev.git')
+  assert.equal(
+    toolTaskTarget({ app: '0b6c1f38-8f0e-4c55-9d7b-0a4c9c1d2e3f' }),
+    '',
+    'a uuid is not what a task is listed under',
+  )
+  assert.equal(toolTaskTarget({ target: '  ', query: 'x' }), '')
+  assert.equal(toolTaskTarget({}), '')
 })
 
 // ── routing an action by its declaration ─────────────────────────────
