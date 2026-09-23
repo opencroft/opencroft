@@ -197,6 +197,43 @@ test('a still-running tool call ships whole rather than being cut', () => {
   assert.equal(window.events.at(-1)?.kind, 'tool_update')
 })
 
+test('a tool call its turn never finished stops holding the window open at that turn end', () => {
+  // A cancelled turn: its tool call never reports a terminal status. Everything
+  // after it used to be one record, so a budget of 3 served the whole log.
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'cancelled' },
+    { kind: 'tool_call', toolCallId: 'orphan', title: 'orphan', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'orphan', status: 'in_progress' },
+    { kind: 'turn_end', stopReason: 'cancelled' },
+    ...turn('A', 3),
+    ...turn('B', 3),
+  ]
+  const window = tailByRecords(events, 3)
+  assert.equal(agentRecords(window), 3)
+  assert.equal(window.hasMore, true)
+  assert.ok(!window.events.some((e) => e.kind === 'tool_call' && e.toolCallId === 'orphan'))
+})
+
+test('the record a turn end closes still ends with it', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'cancelled' },
+    { kind: 'tool_call', toolCallId: 'orphan', title: 'orphan', status: 'pending' },
+    { kind: 'turn_end', stopReason: 'cancelled' },
+    ...turn('A', 1),
+  ]
+  // One record per page: the orphan's page carries its turn_end and none of A's
+  // work. (A's question rides along at its end -- a turn's question is free and
+  // belongs to whichever page reaches it, like every other one.)
+  let window = tailByRecords(events, 1)
+  while (window.hasMore && !window.events.some((e) => e.kind === 'turn_end')) {
+    window = pageBeforeByRecords(events, window.startIndex, 1)
+  }
+  assert.deepEqual(
+    window.events.filter((e) => e.kind !== 'user').map((e) => e.kind),
+    ['tool_call', 'turn_end'],
+  )
+})
+
 test('records <= 0 and an exhausted cursor both yield empty windows', () => {
   const events = turn('A', 3)
   assert.deepEqual(tailByRecords(events, 0).events, [])

@@ -149,6 +149,15 @@ function recordBoundaries(events: ChatEvent[], start: number, end: number): numb
       // An unrelated event arriving while a group is still open — merge it
       // into that still-open record rather than risk cutting the group.
       runKind = null
+      // Except that nothing is still open once its turn has ended. A turn that
+      // is cancelled or cut off leaves tool calls that never report a terminal
+      // status, and a group left open here would have no boundary after it for
+      // the rest of the log: every later turn became part of one "record", and
+      // a cold open served the whole tail from that point instead of its
+      // budget. The turn_end is the last event of the record it closes.
+      if (event.kind === 'turn_end') {
+        openGroups.clear()
+      }
       continue
     }
 
