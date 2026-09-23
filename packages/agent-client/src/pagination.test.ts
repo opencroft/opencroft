@@ -288,6 +288,57 @@ test('a failed turn end still counts, because it draws the failure', () => {
   assert.ok(!window.events.some((e) => e.kind === 'agent_message'), 'the failure is the one record')
 })
 
+// The turn that built a three-item plan one item at a time, as the bridge
+// reports it: a tool call, six plan events, the answer. Three things on screen.
+test('a plan built one item at a time is one record, like the one block it draws', () => {
+  const item = (n: number) => ({ content: `item ${n}`, status: 'pending' as const, priority: 'medium' as const })
+  const plan = (n: number): ChatEvent => ({ kind: 'plan', entries: Array.from({ length: n }, (_, i) => item(i + 1)) })
+  const events: ChatEvent[] = [
+    ...turn('earlier', 2),
+    { kind: 'user', text: 'make three items' },
+    ...closedTool('search'),
+    plan(1),
+    plan(1),
+    plan(2),
+    plan(2),
+    { kind: 'usage', used: 1 },
+    plan(3),
+    plan(3),
+    { kind: 'agent_message', text: 'done' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+  const window = tailByRecords(events, 3)
+  // The tool call, the plan, the answer -- the turn's question comes back as
+  // the header, and nothing of the turn before it is spent.
+  assert.equal(window.events[0]?.kind, 'tool_call')
+  assert.equal(window.header?.event.kind === 'user' ? window.header.event.text : null, 'make three items')
+  assert.equal(window.hasMore, true)
+})
+
+test('a plan cleared and started again is a new block, and a record again', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'plan', entries: [{ content: 'a', status: 'pending', priority: 'medium' }] },
+    { kind: 'plan', entries: [] },
+    { kind: 'plan', entries: [{ content: 'b', status: 'pending', priority: 'medium' }] },
+  ]
+  const window = tailByRecords(events, 1)
+  assert.equal(window.events.length, 1, 'the second plan alone fills a budget of one')
+})
+
+test('a subagent is a record where it first appears, and its state changes are free', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'agent_message', text: 'delegating' },
+    { kind: 'subagent', subagent: { subagentSessionId: 's', name: 'Helper', task: 'dig' } },
+    { kind: 'agent_message', text: 'waiting' },
+    { kind: 'subagent', subagent: { subagentSessionId: 's', name: 'Helper', task: 'dig', state: 'completed' } },
+  ]
+  // Budget 2: the subagent and the "waiting" chunk run (its update rides along).
+  const window = tailByRecords(events, 2)
+  assert.equal(window.events[0]?.kind, 'subagent')
+})
+
 test('records <= 0 and an exhausted cursor both yield empty windows', () => {
   const events = turn('A', 3)
   assert.deepEqual(tailByRecords(events, 0).events, [])

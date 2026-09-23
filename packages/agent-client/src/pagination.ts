@@ -132,6 +132,28 @@ function isStateEvent(event: ChatEvent): boolean {
   }
 }
 
+// The things the transcript draws ONCE and then patches where they stand: the
+// plan, each subagent, each background task, each compaction. Every event of
+// one carries its whole current state, and only the first places it -- the
+// rest update the same block (see the client's fold). So only a first sighting
+// is a record; an update is transparent, like a state event. Counted, a plan
+// built one item at a time spent a record per item: three list entries cost
+// six records of a budget meant for six things on screen.
+function entityOf(event: ChatEvent): string | null {
+  switch (event.kind) {
+    case 'plan':
+      return 'plan'
+    case 'subagent':
+      return `subagent:${event.subagent.subagentSessionId}`
+    case 'async_task':
+      return `task:${event.task.asyncTaskId}`
+    case 'compaction':
+      return `compaction:${event.compaction.compactionId}`
+    default:
+      return null
+  }
+}
+
 // Legal record-start indices within `events[start, end)` — the in-turn
 // counterpart of `turnStarts`, one level finer. A record is a singleton
 // event, a maximal run of same-kind streaming chunks (agent_message /
@@ -148,12 +170,26 @@ function isStateEvent(event: ChatEvent): boolean {
 function recordBoundaries(events: ChatEvent[], start: number, end: number): number[] {
   const boundaries: number[] = []
   const openGroups = new Set<string>()
+  const drawn = new Set<string>()
   let runKind: ChatEvent['kind'] | null = null
 
   for (let i = start; i < end; i++) {
     const event = events[i]
     if (isStateEvent(event)) {
       continue
+    }
+    const entity = entityOf(event)
+    if (entity !== null) {
+      // An empty plan retires the one on screen and draws nothing; the next
+      // plan after it is a new block, and a record again.
+      if (event.kind === 'plan' && event.entries.length === 0) {
+        drawn.delete(entity)
+        continue
+      }
+      if (drawn.has(entity)) {
+        continue
+      }
+      drawn.add(entity)
     }
     const id = groupId(event)
 
