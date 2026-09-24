@@ -17,6 +17,7 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from 'ui/sidebar'
+import { TooltipProvider } from 'ui/tooltip'
 import { Wordmark } from 'ui/wordmark'
 
 import { SpaceSidebarSection } from '@/app/_authed/(space)/_components/space-selector'
@@ -106,11 +107,34 @@ export function AppShell({ spaces, children }: Props) {
   return (
     <TitlebarProvider>
       <SidebarProvider style={{ '--sidebar-width': '24rem' } as React.CSSProperties}>
-        <Suspense fallback={null}>
-          <AppSidebar spaces={spaces} />
-        </Suspense>
-        <main className='flex flex-col w-full h-dvh'>{children}</main>
-        <RightSidebar />
+        {/*
+          The tooltip provider is here for two reasons, and its position (inside
+          SidebarProvider, around the Suspense boundary) is the second one.
+
+          1. Shared tooltip timing. The Radix-era SidebarProvider rendered a
+             TooltipProvider with no delay; the stock base-vega one renders none,
+             so the menu-button tooltips would each wait Base UI's own delay.
+
+          2. Hydration on a phone. SidebarProvider holds `isMobile`, which is
+             false on the server and flips to true in an effect on a narrow
+             screen. That state change re-renders SidebarProvider's own wrapper
+             <div>; when the Suspense boundary below is still dehydrated at that
+             moment and sits directly in that <div>, React hydrates it with the
+             new value, renders the mobile Sheet over the server's desktop
+             <div>, and throws "Hydration failed". A component between the
+             <div> and the boundary bails out of that re-render (its props are
+             unchanged), so the boundary hydrates with the server's value first
+             and only then takes the update. The Radix-era sidebar never hit
+             this: its state lived in a separate SidebarStateProvider, so the
+             wrapper <div> did not re-render when `isMobile` changed.
+        */}
+        <TooltipProvider>
+          <Suspense fallback={null}>
+            <AppSidebar spaces={spaces} />
+          </Suspense>
+          <main className='flex flex-col w-full h-dvh'>{children}</main>
+          <RightSidebar />
+        </TooltipProvider>
       </SidebarProvider>
     </TitlebarProvider>
   )
