@@ -28,6 +28,10 @@ interface FlowContextMenuProps {
   canPaste: boolean
 }
 
+// The stock CommandItem appends a selection check, invisible but still taking
+// room; nothing in this menu is ever checked.
+const ITEM_CLASS = '*:[svg:last-child]:hidden'
+
 function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
   const map = new Map<string, ResolvedNode[]>()
   for (const node of nodes) {
@@ -59,7 +63,7 @@ export function FlowContextMenu({
     <div
       ref={ref}
       data-canvas-menu
-      className='fixed z-50 w-[260px] rounded-md border bg-popover shadow-md'
+      className='fixed z-50 w-[260px] overflow-hidden rounded-md bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10'
       style={{ left: clamped.x, top: clamped.y }}
     >
       {/* Pinned above the searchable list, not inside it -- a cmdk CommandItem
@@ -67,20 +71,25 @@ export function FlowContextMenu({
           Paste has to stay reachable regardless of what's typed. This is
           also the only way to reach a copied node on a phone: there's no
           Ctrl+V there. */}
-      <button
-        type='button'
-        disabled={!canPaste}
-        onClick={() => {
-          onClose()
-          onPaste()
-        }}
-        className='flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent/50 disabled:pointer-events-none disabled:opacity-40'
-      >
-        <ClipboardPaste className='size-4' />
-        Paste
-      </button>
-      <div className='my-1 border-t' />
-      <Command>
+      <div className='p-1'>
+        <button
+          type='button'
+          disabled={!canPaste}
+          onClick={() => {
+            onClose()
+            onPaste()
+          }}
+          className='flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden hover:bg-muted disabled:pointer-events-none disabled:opacity-50'
+        >
+          <ClipboardPaste className='size-4' />
+          Paste
+        </button>
+      </div>
+      <div className='h-px bg-border' />
+      {/* Flush with the menu: the Command's own p-1 would inset its list, and
+          the list clips horizontally, so the separator below could never
+          reach the edges. The groups' p-1 keeps the rows in line with Paste. */}
+      <Command className='rounded-none! bg-transparent p-0'>
         <CommandInput placeholder='Add node...' autoFocus />
         <CommandList>
           <CommandEmpty>No nodes found.</CommandEmpty>
@@ -93,6 +102,7 @@ export function FlowContextMenu({
                     key={node.typeId}
                     value={`${category} ${node.name}`}
                     onSelect={() => onSelect(node.typeId)}
+                    className={ITEM_CLASS}
                   >
                     <Icon className='size-4' style={{ color: node.accent }} />
                     {node.name}
@@ -101,9 +111,9 @@ export function FlowContextMenu({
               })}
             </CommandGroup>
           ))}
-          <CommandSeparator />
+          <CommandSeparator className='mx-0' />
           <CommandGroup>
-            <CommandItem onSelect={onNewExtension}>
+            <CommandItem onSelect={onNewExtension} className={ITEM_CLASS}>
               <Plus className='size-4' />
               New extension...
             </CommandItem>

@@ -97,7 +97,7 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                 <ChevronDown className='ml-auto size-4 opacity-50' />
               </PopoverTrigger>
               <PopoverContent className='w-64 gap-0 p-0' side='bottom' align='start'>
-                <Command>
+                <Command className='p-0'>
                   <CommandInput value={query} onValueChange={setQuery} placeholder='Search spaces…' />
                   <CommandList>
                     <CommandEmpty>No spaces found.</CommandEmpty>
@@ -164,7 +164,7 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
               >
                 <Ellipsis />
               </DropdownMenuTrigger>
-              <DropdownMenuContent side='bottom' align='end'>
+              <DropdownMenuContent side='bottom' align='end' className='w-auto'>
                 <DropdownMenuItem disabled={!current} onClick={togglePin}>
                   {current?.pinned ? <PinOff /> : <Pin />}
                   {current?.pinned ? 'Unpin space' : 'Pin space'}

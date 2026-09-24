@@ -94,7 +94,7 @@ export function ConfigOptionsBar({ options, onSetOption, usage, lockedOptions, c
             <SelectTrigger size='sm' title={lockedOptions?.[option.id] ?? option.description ?? option.name}>
               <SelectValue placeholder={option.name} />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className='w-auto max-w-(--available-width) min-w-(--anchor-width)'>
               {flattenSelectOptions(option.options).map((entry) => (
                 <SelectItem key={entry.value} value={entry.value}>
                   {entry.name}

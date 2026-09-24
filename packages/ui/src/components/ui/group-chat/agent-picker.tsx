@@ -80,7 +80,7 @@ export function AgentPicker({
       </DropdownMenuTrigger>
       {/* side='top' because the bar this sits in is pinned to the bottom of a
           conversation -- a menu opening downward would open off-screen. */}
-      <DropdownMenuContent align='start' side='top' className='min-w-48'>
+      <DropdownMenuContent align='start' side='top' className='w-auto min-w-48'>
         {agents.map((agent) => {
           const isSelected = agent.nodeId === selectedAgentNodeId
           return (

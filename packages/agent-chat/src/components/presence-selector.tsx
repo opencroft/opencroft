@@ -154,9 +154,10 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
         <Activity className={`size-4 ${PRESENCE_COLOR[presence.kind]}`} />
       </PopoverTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its overlays
-          open upward from the start edge. */}
-      <PopoverContent align='start' side='top' className='w-64 gap-0 p-2'>
-        <div className='flex flex-col gap-0.5'>
+          open upward from the start edge. Dressed as the kit's menus are:
+          a p-1 inset, flush rows, a full-width divider. */}
+      <PopoverContent align='start' side='top' className='w-64 gap-0 p-1'>
+        <div className='flex flex-col'>
           {offered.map((entry) => (
             <button
               key={entry.kind}
@@ -166,7 +167,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
                 setOpen(false)
               }}
               className={cn(
-                'flex w-full items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent',
+                'flex w-full items-baseline justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
                 presence.kind === entry.kind && 'bg-accent font-medium',
               )}
             >
@@ -178,7 +179,8 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
             </button>
           ))}
         </div>
-        <div className={cn('mt-2 flex items-center gap-2 border-t pt-2', presence.kind === 'custom' && 'font-medium')}>
+        <div className='-mx-1 my-1 h-px bg-border' />
+        <div className={cn('flex items-center gap-2 px-2 py-1', presence.kind === 'custom' && 'font-medium')}>
           <Activity className={`size-4 shrink-0 ${PRESENCE_COLOR.custom}`} />
           <span className='text-sm'>Every</span>
           <Input
@@ -193,7 +195,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
                 applyCustom()
               }
             }}
-            className='h-7 w-16'
+            className='h-7 min-w-0 flex-1'
             aria-label='Custom reading interval, in minutes'
           />
           <span className='text-sm text-muted-foreground'>min</span>

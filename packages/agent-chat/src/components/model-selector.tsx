@@ -63,7 +63,7 @@ export function ModelSelector({ options, current, onSelect, lockedReason, classN
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
           upward from the start edge. */}
-      <DropdownMenuContent align='start' side='top'>
+      <DropdownMenuContent align='start' side='top' className='w-auto max-w-(--available-width)'>
         {options.map((option) => (
           <DropdownMenuItem
             key={option.value}

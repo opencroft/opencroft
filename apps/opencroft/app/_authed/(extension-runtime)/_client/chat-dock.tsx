@@ -120,7 +120,7 @@ function ModeMenu({ mode, onModeChange }: { mode: ChatDockMode; onModeChange: (m
       >
         <Icon />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align='end'>
+      <DropdownMenuContent align='end' className='w-auto'>
         <DropdownMenuRadioGroup value={mode} onValueChange={(value) => onModeChange(value as ChatDockMode)}>
           {MODES.map((option) => {
             const OptionIcon = MODE_ICONS[option]

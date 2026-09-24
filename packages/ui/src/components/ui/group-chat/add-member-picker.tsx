@@ -94,6 +94,11 @@ export function AddMemberPicker({
       )
     : []
 
+  // The stock CommandItem appends a selection check, invisible but still 24px
+  // wide, after the row's own trailing control. Nothing here is ever checked,
+  // so it is hidden rather than left as a gap at the right edge.
+  const itemClassName = '*:[svg:last-child]:hidden'
+
   const person = (entry: MemberCandidate) => (
     <>
       {/* One avatar atom for both kinds -- a person's avatar needs nothing an
@@ -122,6 +127,7 @@ export function AddMemberPicker({
                   key={principalKey(candidate)}
                   value={principalKey(candidate)}
                   disabled={adding}
+                  className={itemClassName}
                   onSelect={() => onAdd({ kind: candidate.kind, id: candidate.id })}
                 >
                   {person(candidate)}
@@ -135,7 +141,12 @@ export function AddMemberPicker({
         ) : (
           <CommandGroup heading={current.length === 1 ? '1 member' : `${current.length} members`}>
             {current.map((member) => (
-              <CommandItem key={principalKey(member)} value={principalKey(member)} onSelect={() => {}}>
+              <CommandItem
+                key={principalKey(member)}
+                value={principalKey(member)}
+                className={itemClassName}
+                onSelect={() => {}}
+              >
                 {person(member)}
                 {onRemove ? (
                   <Button

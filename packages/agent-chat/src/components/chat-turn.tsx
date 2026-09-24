@@ -630,7 +630,7 @@ function MessageMenu({
       >
         <Ellipsis className='size-3.5' />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align='end' className='min-w-36'>
+      <DropdownMenuContent align='end' className='w-auto min-w-36'>
         {onEdit && (
           <DropdownMenuItem onClick={onEdit} disabled={editDisabled}>
             <Pencil className='size-3.5' />

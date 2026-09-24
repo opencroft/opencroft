@@ -120,7 +120,7 @@ export function EffortSelector({ options, current, onSelect, lockedReason, class
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
           upward from the start edge. */}
-      <DropdownMenuContent align='start' side='top'>
+      <DropdownMenuContent align='start' side='top' className='w-auto max-w-(--available-width)'>
         {ordered.map((option) => (
           <DropdownMenuItem
             key={option}

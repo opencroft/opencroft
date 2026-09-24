@@ -21,6 +21,12 @@ interface NodeContextMenuProps {
   onClose: () => void
 }
 
+// The kit's menu dress (DropdownMenuContent / DropdownMenuItem): a p-1 inset,
+// rounded rows, a full-width separator.
+const ITEM_CLASS =
+  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden hover:bg-muted disabled:pointer-events-none disabled:opacity-50'
+const DESTRUCTIVE_CLASS = 'text-destructive hover:bg-destructive/10'
+
 const MENU_WIDTH = 200
 const MENU_MAX_HEIGHT = 400
 
@@ -89,13 +95,13 @@ export function NodeContextMenu({
     <div
       ref={ref}
       data-canvas-menu
-      className='fixed z-50 min-w-[180px] rounded-md border bg-popover py-1 shadow-lg'
+      className='fixed z-50 min-w-[180px] rounded-md bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10'
       style={{ left: clamped.x, top: clamped.y }}
     >
       {onDetails && (
         <button
           type='button'
-          className='flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent/50'
+          className={ITEM_CLASS}
           onClick={() => {
             onClose()
             onDetails()
@@ -107,7 +113,7 @@ export function NodeContextMenu({
       )}
       <button
         type='button'
-        className='flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent/50'
+        className={ITEM_CLASS}
         onClick={() => {
           onClose()
           onCopy()
@@ -118,7 +124,7 @@ export function NodeContextMenu({
       </button>
       <button
         type='button'
-        className='flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive transition-colors hover:bg-accent/50'
+        className={`${ITEM_CLASS} ${DESTRUCTIVE_CLASS}`}
         onClick={() => {
           onClose()
           onDelete()
@@ -127,7 +133,7 @@ export function NodeContextMenu({
         <Trash2 className='size-4' />
         Delete
       </button>
-      {items.length > 0 && <div className='my-1 border-t' />}
+      {items.length > 0 && <div className='-mx-1 my-1 h-px bg-border' />}
       {items.map((item) => {
         const Icon = resolveIcon(item.icon)
         const itemEnabled = enabled[item.id] ?? true
@@ -136,9 +142,7 @@ export function NodeContextMenu({
             key={item.id}
             type='button'
             disabled={!itemEnabled}
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-sm transition-colors hover:bg-accent/50 disabled:pointer-events-none disabled:opacity-40 ${
-              item.destructive ? 'text-destructive' : ''
-            }`}
+            className={item.destructive ? `${ITEM_CLASS} ${DESTRUCTIVE_CLASS}` : ITEM_CLASS}
             onClick={() => runExtensionItem(item)}
           >
             <Icon className='size-4' />
