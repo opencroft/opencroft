@@ -14,7 +14,7 @@ import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 // (mcp)/_server/tools.ts) directly in-process into agent-client's LocalTool
 // contract. agent-client then exposes these tools over the built-in 'local'
 // MCP server (ACP harness path) and directly in the native harness's toolset —
-// no network hop back into this app's own /api/mcp route for the agent's own
+// no network hop back into this app's own /mcp endpoint for the agent's own
 // tool calls, which used to need a container-URL rewrite to even be reachable.
 //
 // `internal: true` mirrors the `x-opencroft-internal` header the old HTTP

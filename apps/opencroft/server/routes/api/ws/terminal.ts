@@ -31,10 +31,10 @@ import { defineWebSocketHandler } from 'nitro/h3'
 // SessionManager.handleSocketClose, which no-ops when it finds none.
 //
 // GATING THIS DOES NOT CLOSE SHELL ACCESS. Agents reach a shell through
-// /api/mcp → remote_exec → terminal.exec, in-process, never through this
-// websocket. This closes the BROWSER path to a shell, which is real and worth
-// doing — but do not record it as "shell access is now protected". That is
-// the job of the /api/mcp gate, and it is not done by this file.
+// /mcp (or the in-process tool bridge) → remote_exec → terminal.exec,
+// in-process, never through this websocket. This closes the BROWSER path to a
+// shell; the other one is closed by /mcp refusing every caller without an MCP
+// token, not by anything in this file.
 export default defineWebSocketHandler({
   async open(peer) {
     const user = await getSessionUser(peer.request)

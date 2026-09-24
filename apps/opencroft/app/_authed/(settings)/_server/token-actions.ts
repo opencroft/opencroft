@@ -1,6 +1,7 @@
 // A signed-in person's OWN API tokens: create, list, revoke. Self-service
-// only — this never touches an agent token (subjectType 'agent'), and never
-// another person's (every query is scoped to the caller's own userId).
+// only — never another person's (every query is scoped to the caller's own
+// userId), and never an agent's MCP token, which lives in its own table and is
+// managed from the agent node.
 //
 // EVERY EXPORT IN THIS FILE MUST STAY A createServerFn. token-settings.tsx
 // imports this module, and it is a 'use client' component reached on every

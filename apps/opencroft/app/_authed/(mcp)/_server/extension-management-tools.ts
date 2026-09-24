@@ -35,6 +35,7 @@ import {
   requireCallingAgent,
   textResult,
 } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { agentRefName } from '@/app/_authed/(space)/_server/agents-impl'
 import { toastStore } from '@/lib/toast-store'
 
 export const definitions = [
@@ -428,7 +429,9 @@ export const handlers: Record<string, ToolHandler> = {
     }
     // Taking or releasing a folder is done AS someone: an unattributable
     // claim would name a holder nobody can be asked about.
-    const agent = requireCallingAgent(caller)
+    // Leases are held under a name, because a name is what the next agent to
+    // hit the folder is told to go and ask.
+    const agent = agentRefName(requireCallingAgent(caller))
     if (args.release === true) {
       const released = await releaseExtensionLease(slug, agent)
       return textResult(

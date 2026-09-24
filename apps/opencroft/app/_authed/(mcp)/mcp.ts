@@ -1,8 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { recordCaller, refuses, resolveCaller } from '@/app/_authed/(mcp)/_server/caller'
-import { mcpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
-import { handleToolCall, listDynamicTools, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
+import { recordCaller, resolveCaller } from '@/app/_authed/(mcp)/_server/caller'
+import {
+  handleToolCall,
+  listDynamicTools,
+  type ToolCallOptions,
+  toolDefinitions,
+} from '@/app/_authed/(mcp)/_server/tools'
 
 type MCPRequest = {
   jsonrpc: '2.0'
@@ -26,11 +30,7 @@ function mcpErr(id: number | string | null, code: number, message: string): MCPR
   return { jsonrpc: '2.0', id, error: { code, message } }
 }
 
-async function handleMethod(
-  method: string,
-  params: Record<string, unknown> | undefined,
-  opts: { signal?: AbortSignal; internal?: boolean; callerAgent?: string | null },
-) {
+async function handleMethod(method: string, params: Record<string, unknown> | undefined, opts: ToolCallOptions) {
   switch (method) {
     case 'initialize':
       return {
@@ -66,7 +66,15 @@ function generateSessionId(): string {
   return `opencroft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
+// The MCP endpoint, for clients outside this process. The app's own agents do
+// not come through here — they reach the same tools in-process through the
+// tool bridge, with no credential — so everything that arrives here is an
+// external client, and it is served only on an MCP token.
+//
+// Not session-gated, despite sitting under `_authed`: a server handler answers
+// before the router runs the layout's page gate. The token is the gate, and it
+// is checked below on every request, before any method runs.
+export const Route = createFileRoute('/_authed/(mcp)/mcp')({
   server: {
     handlers: {
       // Streamable HTTP: POST — handle JSON-RPC requests
@@ -78,17 +86,13 @@ export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
         }
 
         // Resolve whatever credential the caller presented and record that we
-        // saw them, in every mode including `require` — Stage B still needs
-        // the caller population recorded, refused requests included, or a
-        // spike in refusals after a rollout would be invisible everywhere
-        // except the client's own error, which is exactly the situation this
-        // observability exists to avoid.
+        // saw them — refused requests included, or a client whose token has
+        // expired or been deleted would be visible nowhere except its own
+        // error.
         //
         // The awaits are deliberate. A fire-and-forget write is one the
         // process can lose on exit, which would undercount exactly the rare
-        // caller this exists to find, and undercounting reads as "all
-        // accounted for". resolveCaller only runs when an Authorization
-        // header is present; recordCaller swallows its own errors.
+        // caller this exists to find. recordCaller swallows its own errors.
         const caller = await resolveCaller(request)
         await recordCaller({
           caller,
@@ -97,16 +101,14 @@ export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
           request,
         })
 
-        // Stage B. `observe` and `off` never reach this: `refuses`
-        // is false for both, by construction (see caller.ts). Only `require`
-        // can end the request here, and only for a caller that did not
-        // resolve to a credential we issued — present-and-valid callers are
-        // unaffected in every mode.
-        if (refuses(mcpAuthMode(), caller)) {
+        // Only an MCP token that resolves to an existing agent node gets past
+        // here, whatever the method — `initialize` and `tools/list` included,
+        // since the tool list describes what this instance can do.
+        if (caller.credential !== 'present' || !caller.agentNodeId) {
           const message =
             caller.credential === 'absent'
-              ? 'Missing credential — send Authorization: Bearer <token>.'
-              : 'Credential not recognised — it may be mistyped, revoked, or expired.'
+              ? 'Missing credential — send Authorization: Bearer <MCP token>.'
+              : 'Credential not recognised — it may be mistyped, deleted, expired, or not an MCP token.'
           return Response.json(mcpErr(body.id ?? null, -32001, message), { status: 401 })
         }
 
@@ -123,13 +125,13 @@ export const Route = createFileRoute('/_authed/(mcp)/api/mcp')({
           const result = await handleMethod(body.method, body.params as Record<string, unknown> | undefined, {
             signal: request.signal,
             internal: false,
-            // The agent behind the credential, when one resolved. This is the
-            // ONLY entry point that can know it — the in-process bridge has no
-            // credential to present — and it is passed as data rather than
-            // re-resolved downstream so there is exactly one place the identity
-            // is decided. A tool that acts on behalf of an agent refuses when
-            // this is null; see ToolCallerContext.
+            // The agent node the token was issued to, and its name for
+            // display. This is the ONLY entry point that can know the node —
+            // the in-process bridge has no credential to present — and it is
+            // passed as data rather than re-resolved downstream so there is
+            // exactly one place the identity is decided; see ToolCallerContext.
             callerAgent: caller.agent,
+            callerAgentNodeId: caller.agentNodeId,
           })
 
           // Notifications have no id and no response body

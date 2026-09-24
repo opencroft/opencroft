@@ -1,6 +1,7 @@
 import { db, groupChatThread, groupChatThreadArtifact } from '@opencroft/db'
 import { and, asc, eq } from 'drizzle-orm'
 
+import type { AgentRef } from '@/app/_authed/(space)/_server/agents-impl'
 import { GroupChatAccessError, requireAgentNode, requireGroupChatMember, resolveThreadForAgent } from './model'
 
 /**
@@ -55,8 +56,8 @@ function listForThread(threadId: string): Promise<ThreadArtifact[]> {
 }
 
 /** The thread's artifacts, for the calling agent. */
-export async function listArtifactsAsAgent(agentName: string, threadRef: string): Promise<ThreadArtifact[]> {
-  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
+export async function listArtifactsAsAgent(agent: AgentRef, threadRef: string): Promise<ThreadArtifact[]> {
+  const thread = await resolveThreadForAgent(await requireAgentNode(agent), threadRef)
   return listForThread(thread.id)
 }
 
@@ -73,11 +74,11 @@ export async function listArtifactsAsAgent(agentName: string, threadRef: string)
  * moved, so a reference cannot be used to write into a chat the agent is not in.
  */
 export async function writeArtifactAsAgent(
-  agentName: string,
+  agent: AgentRef,
   threadRef: string,
   input: { id?: string; title: string; content: string },
 ): Promise<ThreadArtifact> {
-  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
+  const thread = await resolveThreadForAgent(await requireAgentNode(agent), threadRef)
   const title = input.title.trim()
   const content = input.content.trim()
   if (!title) {
@@ -156,11 +157,11 @@ export function applyExactReplacement(
  * silently. `replaceAll` is how a caller says it meant every occurrence.
  */
 export async function editArtifactAsAgent(
-  agentName: string,
+  agent: AgentRef,
   threadRef: string,
   input: { id: string; oldString: string; newString: string; replaceAll?: boolean },
 ): Promise<ThreadArtifact> {
-  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
+  const thread = await resolveThreadForAgent(await requireAgentNode(agent), threadRef)
   if (!input.oldString) {
     throw new Error('oldString cannot be empty — use artifact_write to replace a note wholesale')
   }
@@ -187,8 +188,8 @@ export async function editArtifactAsAgent(
 }
 
 /** Remove a note. Scoped to the resolved thread, for the same reason writes are. */
-export async function deleteArtifactAsAgent(agentName: string, threadRef: string, id: string): Promise<void> {
-  const thread = await resolveThreadForAgent(await requireAgentNode(agentName), threadRef)
+export async function deleteArtifactAsAgent(agent: AgentRef, threadRef: string, id: string): Promise<void> {
+  const thread = await resolveThreadForAgent(await requireAgentNode(agent), threadRef)
   const deleted = await db
     .delete(groupChatThreadArtifact)
     .where(and(eq(groupChatThreadArtifact.id, id), eq(groupChatThreadArtifact.threadId, thread.id)))

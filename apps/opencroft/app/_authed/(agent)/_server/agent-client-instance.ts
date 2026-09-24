@@ -25,10 +25,11 @@ import { approvalStore } from '@/lib/approval-store'
 // skills — see tools-bridge.ts) are wired in-process via `tools`, exposed
 // through agent-client's built-in 'local' MCP server (ACP harness path) and
 // directly in the native harness's toolset. There is no network hop back into
-// this same process's /api/mcp route for the agent's own tool calls, so the
+// this same process's MCP endpoint for the agent's own tool calls, so the
 // container-reachability bug class that route needed a URL rewrite to work
-// around doesn't apply to these tools at all. /api/mcp itself is unchanged and
-// still serves genuinely external MCP clients.
+// around doesn't apply to these tools at all — and neither does the endpoint's
+// MCP-token requirement. The endpoint (/mcp) serves genuinely external MCP
+// clients only.
 //
 // Calls made through this bridge are marked internal (see tools-bridge.ts):
 // they bypass the MCP approval queue (the agent chat has its own permission

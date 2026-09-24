@@ -1,34 +1,34 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
-import { apiToken, db, mcpCaller } from '@opencroft/db'
+import { db, mcpCaller, mcpToken } from '@opencroft/db'
 import { and, eq, isNull, or, sql } from 'drizzle-orm'
 
-import type { McpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
-import { mcpAuthMode } from '@/app/_authed/(mcp)/_server/mcp-auth-mode'
 import { hashToken } from '@/app/_authed/(mcp)/_server/token-hash'
+import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
 /**
- * Who is calling the HTTP MCP surface.
+ * Who is calling the MCP endpoint.
  *
- * In Stage A (`observe`) this resolves and records and refuses nothing — the
- * point is to measure the caller population before anything depends on the
- * answer. Stage B (`require`) uses the same resolution to refuse; see
- * `refuses` below and mcp-auth-mode.ts for why the staging exists.
+ * The endpoint accepts exactly one credential: an MCP token, issued to one
+ * agent node. A caller resolves to that node — or to nobody, and the endpoint
+ * refuses nobody. A personal access token is not an MCP token and resolves to
+ * nobody here, because this reads the McpToken table and nothing else.
  */
 
 export type CredentialState = 'present' | 'absent' | 'unknown'
 
 export interface Caller {
   credential: CredentialState
+  /** The node's name as it read when the token resolved — for display. */
   agent: string | null
+  /** The identity: the agent node the token was issued to. */
+  agentNodeId: string | null
   tokenId: string | null
 }
 
-export const ANONYMOUS: Caller = { credential: 'absent', agent: null, tokenId: null }
+export const ANONYMOUS: Caller = { credential: 'absent', agent: null, agentNodeId: null, tokenId: null }
 
-// Re-exported so the request path has one obvious import, while the minting
-// script takes it from token-hash.ts directly — see the note there.
-export { hashToken }
+const UNRESOLVED: Caller = { credential: 'unknown', agent: null, agentNodeId: null, tokenId: null }
 
 /**
  * `Authorization: Bearer <token>` — the standard place, so an external MCP
@@ -47,13 +47,6 @@ function bearerFrom(request: Request): string | null {
 }
 
 export async function resolveCaller(request: Request): Promise<Caller> {
-  // `off` means off: no lookup, no database work, nothing to go wrong. The
-  // kill switch has to be able to take this code out of the request path
-  // entirely, not just stop it refusing things.
-  if (mcpAuthMode() === 'off') {
-    return ANONYMOUS
-  }
-
   const presented = bearerFrom(request)
   if (!presented) {
     return ANONYMOUS
@@ -62,28 +55,11 @@ export async function resolveCaller(request: Request): Promise<Caller> {
   try {
     return await lookup(presented)
   } catch (e) {
-    // A database that will not answer must not turn into a 500 on a surface
-    // this stage is only watching. Report the caller as unresolved and let the
-    // request through — the same outcome it would have had before any of this
-    // existed. Stage B has to make the opposite choice here, and that
-    // difference is the reason these two stages are separate deploys.
+    // Fails closed: a caller whose token could not be checked is a caller
+    // without an accepted token, and the endpoint refuses it like any other.
     console.error('[mcp-auth] token lookup failed, treating caller as unresolved', e)
-    return { credential: 'unknown', agent: null, tokenId: null }
+    return UNRESOLVED
   }
-}
-
-/**
- * Whether Stage B refuses this caller. `require` refuses anyone who did not
- * resolve to `present` — that covers both `absent` (no credential presented)
- * and `unknown` (presented, but not valid: unrecognised, revoked, expired, or
- * the lookup itself failed) alike, because a caller with no accepted
- * credential is a caller with no accepted credential regardless of which of
- * those it is. `observe` and `off` never refuse: `off` is the kill switch and
- * must not gain a refusal path, and `observe` is Stage A, whose entire point
- * is measuring the caller population before anything depends on the answer.
- */
-export function refuses(mode: McpAuthMode, caller: Caller): boolean {
-  return mode === 'require' && caller.credential !== 'present'
 }
 
 async function lookup(presented: string): Promise<Caller> {
@@ -93,23 +69,15 @@ async function lookup(presented: string): Promise<Caller> {
   // the comparison below is belt-and-braces against a future change that makes
   // this a scan.
   //
-  // Expiry is enforced HERE, alongside revokedAt, not by a background sweep —
-  // a personal token past its expiresAt must stop working the instant it is
-  // presented, not whenever a cleanup job next runs.
+  // Expiry is enforced HERE, not by a background sweep — a token past its
+  // expiresAt must stop working the instant it is presented, not whenever a
+  // cleanup job next runs. A deleted token has no row, so it fails the same
+  // lookup an unknown one does.
   const rows = await db
-    .select({
-      id: apiToken.id,
-      subjectType: apiToken.subjectType,
-      agentName: apiToken.agentName,
-      tokenHash: apiToken.tokenHash,
-    })
-    .from(apiToken)
+    .select({ id: mcpToken.id, agentNodeId: mcpToken.agentNodeId, tokenHash: mcpToken.tokenHash })
+    .from(mcpToken)
     .where(
-      and(
-        eq(apiToken.tokenHash, presentedHash),
-        isNull(apiToken.revokedAt),
-        or(isNull(apiToken.expiresAt), sql`${apiToken.expiresAt} > now()`),
-      ),
+      and(eq(mcpToken.tokenHash, presentedHash), or(isNull(mcpToken.expiresAt), sql`${mcpToken.expiresAt} > now()`)),
     )
     .limit(1)
 
@@ -117,9 +85,9 @@ async function lookup(presented: string): Promise<Caller> {
   if (!row) {
     // Presented something, and it does not resolve. Deliberately not the same
     // as presenting nothing — this is a client that WAS configured and is now
-    // wrong (revoked, rotated, expired, typo), which needs a person, not a
-    // rollout.
-    return { credential: 'unknown', agent: null, tokenId: null }
+    // wrong (deleted, expired, a personal token, a typo), which needs a
+    // person, not a rollout.
+    return UNRESOLVED
   }
 
   // Both sides are fixed-length hex of the same digest, so the lengths match
@@ -127,15 +95,18 @@ async function lookup(presented: string): Promise<Caller> {
   const a = Buffer.from(row.tokenHash, 'utf8')
   const b = Buffer.from(presentedHash, 'utf8')
   if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    return { credential: 'unknown', agent: null, tokenId: null }
+    return UNRESOLVED
   }
 
-  // `agent` here is specifically the agentName — a personal ('user') token
-  // resolves with agent: null. Stage A's observation exists to characterise
-  // /api/mcp's HTTP callers, which today are agents; a person's own token
-  // authenticating here is out of that scope and untested by this pass. Not
-  // silently papered over: recorded honestly rather than invented a label.
-  return { credential: 'present', agent: row.agentName, tokenId: row.id }
+  // The node has no relational row to cascade from, so a token can outlive
+  // the agent it was issued to. It resolves to nobody then, rather than to an
+  // identity no agent holds.
+  const node = (await listAgentNodesImpl()).find((candidate) => candidate.nodeId === row.agentNodeId)
+  if (!node) {
+    return UNRESOLVED
+  }
+
+  return { credential: 'present', agent: node.name || null, agentNodeId: row.agentNodeId, tokenId: row.id }
 }
 
 function fingerprintOf(parts: (string | null)[]): string {
@@ -151,9 +122,7 @@ function fingerprintOf(parts: (string | null)[]): string {
  *
  * `x-forwarded-for` is caller-controlled — anyone can claim any address. It is
  * recorded because behind the reverse proxy it is the only way to tell two
- * clients apart, and Stage A is counting distinct callers rather than deciding
- * anything. It must NOT be used for access control, in Stage B or anywhere
- * else.
+ * clients apart when counting them. It must NOT be used for access control.
  */
 function sourceOf(request: Request): string | null {
   const forwarded = request.headers.get('x-forwarded-for')
@@ -171,51 +140,28 @@ export interface ObservationInput {
 }
 
 /**
- * Record that this caller was seen, aggregating onto one row per distinct
- * (caller, method, tool) combination rather than one per request — NOT one row
- * per caller. A caller invoking two different tools produces two rows.
+ * Record that this caller was seen — refused ones included — aggregating onto
+ * one row per distinct (caller, method, tool) combination rather than one per
+ * request. NOT one row per caller: a caller invoking two different tools
+ * produces two rows. See McpCaller in the schema for why the grain is that.
  *
- * READING THIS FOR THE STAGE B DECISION. The gate is not "no unexpected
- * callers were seen" — that is a claim an empty result satisfies for the wrong
- * reason. It is "the set of agents observed MATCHES THE SET WE DELIBERATELY
- * ISSUED TO", and because the grain here is per-tool, that means the DISTINCT
- * agents across all rows — `SELECT DISTINCT agent FROM "McpCaller"` — not a
- * count of rows. Stated that way an empty observation fails closed, because an
- * empty set does not match a non-empty issued set.
+ * Also stamps the token's lastUsedAt, which is what tells a person looking at
+ * an agent's tokens which one a client is actually using.
  *
- * The case that still slips through is a SHORT BUT COMPLETE window: if every
- * issued agent happens to call within the first minutes of observing, the sets
- * match and the gate passes on far less data than intended — while the rare
- * caller this exists to find has not had time to appear. So require a minimum
- * elapsed window as well as a matching set, measured from the earliest
- * firstSeenAt rather than from when you started waiting.
- *
- * Never throws: Stage A must not be able to fail a request it is only
- * watching. A recording error is worth a log line and nothing more.
+ * Never throws: bookkeeping must not be able to fail a request. A recording
+ * error is worth a log line and nothing more.
  */
 export async function recordCaller({ caller, method, tool, request }: ObservationInput): Promise<void> {
-  if (mcpAuthMode() === 'off') {
-    return
-  }
-
   const sourceIp = sourceOf(request)
   const userAgent = request.headers.get('user-agent')
-  const fingerprint = fingerprintOf([caller.credential, caller.agent, method, tool, sourceIp, userAgent])
+  const fingerprint = fingerprintOf([caller.credential, caller.agentNodeId, method, tool, sourceIp, userAgent])
 
-  // A fixed prefix so the per-request trace is one command:
-  //
-  //     docker logs <container> 2>&1 | grep '^\[mcp-caller\]'
-  //
-  // The log is the raw material; McpCaller is the answer. This line is what you
-  // read when you want the sequence of individual calls — the table cannot give
-  // you that, because it deliberately collapses them. See the note on McpCaller
-  // in the schema for why the aggregate is the thing Stage A actually needs.
-  //
-  // `docker logs` also survives a restart in place but not a container recreate,
-  // and editing the node's `command` or `env` IS a recreate, so this stream
-  // resets on such a deploy change. The table does not.
+  // A fixed prefix so the per-request trace is one grep over the application
+  // log for lines starting `[mcp-caller]`. The log gives the sequence of
+  // individual calls; McpCaller gives the population, which the table cannot
+  // give you the other way round because it deliberately collapses them.
   console.log(
-    `[mcp-caller] credential=${caller.credential} agent=${caller.agent ?? '-'} method=${method} ` +
+    `[mcp-caller] credential=${caller.credential} agent=${caller.agentNodeId ?? '-'} method=${method} ` +
       `tool=${tool ?? '-'} ip=${sourceIp ?? '-'} ua=${JSON.stringify(userAgent ?? '-')}`,
   )
 
@@ -227,6 +173,7 @@ export async function recordCaller({ caller, method, tool, request }: Observatio
         fingerprint,
         credential: caller.credential,
         agent: caller.agent,
+        agentNodeId: caller.agentNodeId,
         method,
         tool,
         sourceIp,
@@ -241,7 +188,7 @@ export async function recordCaller({ caller, method, tool, request }: Observatio
       })
 
     if (caller.tokenId) {
-      await db.update(apiToken).set({ lastUsedAt: now }).where(eq(apiToken.id, caller.tokenId))
+      await db.update(mcpToken).set({ lastUsedAt: now }).where(eq(mcpToken.id, caller.tokenId))
     }
   } catch (e) {
     console.error('[mcp-auth] failed to record caller', e)

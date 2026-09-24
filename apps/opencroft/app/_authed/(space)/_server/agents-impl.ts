@@ -139,3 +139,20 @@ export function agentNodesNamed<T extends { name?: string }>(nodes: readonly T[]
   const trimmed = agentName.trim()
   return nodes.filter((node) => node.name === trimmed)
 }
+
+/**
+ * An agent as the surface that is calling on its behalf identified it.
+ *
+ * A string is a NAME — what a surface holding no credential can assert (the
+ * in-process tool bridge, from its session's bookkeeping) — and is looked up
+ * through `agentNodesNamed` wherever it is used. The object is an agent
+ * identified by its NODE, from a credential issued to that node; its `name` is
+ * the node's name as it read when the credential resolved, carried for display
+ * and never used to look the agent up again — two nodes may share it.
+ */
+export type AgentRef = string | { nodeId: string; name: string }
+
+/** The name to show for an agent, whichever way it was identified. */
+export function agentRefName(agent: AgentRef): string {
+  return typeof agent === 'string' ? agent.trim() : agent.name
+}

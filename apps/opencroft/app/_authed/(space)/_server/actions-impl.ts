@@ -12,7 +12,7 @@
 //
 // 2. IN-PROCESS CALLERS WITH NO SESSION. (mcp)/_server/tools.ts and
 //    graph-conflict-retry.ts call these operations directly, in-process, to
-//    serve MCP tool calls. /api/mcp is a bearer-token surface and carries no
+//    serve MCP tool calls. /mcp is a bearer-token surface and carries no
 //    session cookie by design. A session check placed in
 //    the only implementation therefore throws for every agent tool. That is
 //    exactly what happened: gating listSpaces/loadSpaceGraph/saveSpaceGraph

@@ -84,7 +84,12 @@ import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 // operator, it belongs in a server-side log, never in what is returned.
 const UNAVAILABLE = 'Not available'
 
-import { agentNodesNamed, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import {
+  type AgentRef,
+  agentNodesNamed,
+  agentRefName,
+  listAgentNodesImpl,
+} from '@/app/_authed/(space)/_server/agents-impl'
 import {
   authorForAgentNode,
   authorForPerson,
@@ -2395,8 +2400,8 @@ export type DeleteThreadAsAgentResult = { deleted: true } | { deleted: false; re
  * the caller can act on, and because a result the tests can assert on beats a
  * thrown message they would have to match by string.
  */
-export async function deleteThreadAsAgent(agentName: string, threadRef: string): Promise<DeleteThreadAsAgentResult> {
-  const agentNodeId = await requireAgentNode(agentName)
+export async function deleteThreadAsAgent(agent: AgentRef, threadRef: string): Promise<DeleteThreadAsAgentResult> {
+  const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   const addressedToCaller = row.agentNodeId === agentNodeId
   const startedByCaller = row.createdByAgentNodeId === agentNodeId
@@ -2668,21 +2673,29 @@ export interface AgentGroupChatRef {
 }
 
 /**
- * Resolve an agent name to its node id, or refuse the way every other lookup
- * here does.
+ * Resolve the calling agent to its node id, or refuse the way every other
+ * lookup here does.
+ *
+ * An agent identified by its node is already resolved: the surface that
+ * identified it found the node when the credential resolved, in the same
+ * request, and looking it up again by name could only land on a different node
+ * that shares the name.
  *
  * A NAME THAT MATCHES NOTHING IS A REFUSAL, not an empty result: a tool caller
  * who is not a recognised agent must be told so rather than handed a plausible
  * "you are in no group chats", which reads as an answer and is not one.
  */
-export async function requireAgentNode(agentName: string): Promise<string> {
+export async function requireAgentNode(agent: AgentRef): Promise<string> {
+  if (typeof agent !== 'string') {
+    return agent.nodeId
+  }
   // First match, for the same recorded reason `listGroupChatsForAgent` states:
   // agent names are a decided-unique namespace. An attribution path refuses on
   // a collision instead — a different policy over the same comparison, which is
   // why `agentNodesNamed` supplies only the comparison.
-  const match = agentNodesNamed(await listAgentNodesImpl(), agentName)[0]
+  const match = agentNodesNamed(await listAgentNodesImpl(), agent)[0]
   if (!match) {
-    throw new GroupChatAccessError('not-found', `No agent named "${agentName.trim()}" was found`)
+    throw new GroupChatAccessError('not-found', `No agent named "${agent.trim()}" was found`)
   }
   return match.nodeId
 }
@@ -2819,8 +2832,8 @@ export async function resolveThreadForAgent(agentNodeId: string, threadRef: stri
  * The membership gate is the query itself — chats are selected by this agent's
  * own membership row — so nothing here can return a chat the agent is not in.
  */
-export async function listGroupChatsForAgentView(agentName: string): Promise<AgentGroupChatRef[]> {
-  const agentNodeId = await requireAgentNode(agentName)
+export async function listGroupChatsForAgentView(agent: AgentRef): Promise<AgentGroupChatRef[]> {
+  const agentNodeId = await requireAgentNode(agent)
   const chats = await db
     .select({ id: groupChat.id, name: groupChat.name, topic: groupChat.topic })
     .from(groupChat)
@@ -2931,23 +2944,23 @@ export async function listGroupChatsForAgentView(agentName: string): Promise<Age
  * apart.
  */
 export async function sendMessageInThreadAsAgent(
-  agentName: string,
+  agent: AgentRef,
   threadRef: string,
   text: string,
   queue: QueueMode,
 ): Promise<void> {
-  const agentNodeId = await requireAgentNode(agentName)
+  const agentNodeId = await requireAgentNode(agent)
   const trimmed = text.trim()
   if (!trimmed) {
     throw new Error('A message needs some text')
   }
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
-  // The agent's HANDLE, not the name it is addressed by. `agentName` is a
+  // The agent's HANDLE, not the name it is addressed by. The name is a
   // display name -- free text, shared between accounts, changed by a rename --
   // and a message stamped with one resolves to nobody when it is read, so it
   // renders as that text with no face. The node id is already in hand one line
   // above; this is the same stamp a person's send makes, from the other source.
-  await deliverIntoThread(row, trimmed, { queue, sender: await authorForAgentNode(agentNodeId, agentName) })
+  await deliverIntoThread(row, trimmed, { queue, sender: await authorForAgentNode(agentNodeId, agentRefName(agent)) })
 }
 
 /**
@@ -3016,13 +3029,13 @@ async function agentMembersOfChat(groupChatId: string): Promise<Array<{ nodeId: 
  * about anyone else.
  */
 export async function startThreadAsAgent(
-  callerAgentName: string,
+  callerAgent: AgentRef,
   groupChatId: string,
   targetAgentName: string,
   firstMessage: string,
   opts?: { title?: string },
 ): Promise<StartThreadResult> {
-  const callerNodeId = await requireAgentNode(callerAgentName)
+  const callerNodeId = await requireAgentNode(callerAgent)
   // The caller's membership is the gate, and a chat that does not exist has no
   // members — so a bad id and a chat the caller is not in refuse identically,
   // with no existence check to leak the difference.
@@ -3049,7 +3062,7 @@ export async function startThreadAsAgent(
     // the opening message is FROM the one that started it, exactly as a later
     // message through `sendMessageInThreadAsAgent` is. Its handle, never the
     // display name it was addressed by — see authorForAgentNode.
-    sender: await authorForAgentNode(callerNodeId, callerAgentName),
+    sender: await authorForAgentNode(callerNodeId, agentRefName(callerAgent)),
   })
 }
 
@@ -3067,8 +3080,8 @@ export async function startThreadAsAgent(
  * through that shared delivery path (it talks to `requestCompact`
  * directly, same as `compactThread` does).
  */
-export async function compactThreadAsAgent(agentName: string, threadRef: string): Promise<ThreadCompactAck> {
-  const agentNodeId = await requireAgentNode(agentName)
+export async function compactThreadAsAgent(agent: AgentRef, threadRef: string): Promise<ThreadCompactAck> {
+  const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
@@ -3083,8 +3096,8 @@ export async function compactThreadAsAgent(agentName: string, threadRef: string)
  * agent has since left, matching `threadCompactStatus`'s own precedent (it
  * checks the requester's membership and nothing else either).
  */
-export async function threadCompactStatusAsAgent(agentName: string, threadRef: string): Promise<ThreadCompactStatus> {
-  const agentNodeId = await requireAgentNode(agentName)
+export async function threadCompactStatusAsAgent(agent: AgentRef, threadRef: string): Promise<ThreadCompactStatus> {
+  const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   return toThreadCompactStatus(getCompactStatus(row.sessionKey))
 }
@@ -3100,11 +3113,11 @@ export async function threadCompactStatusAsAgent(agentName: string, threadRef: s
  * the thread's transcript on screen.
  */
 export async function listThreadTurnsAsAgent(
-  agentName: string,
+  agent: AgentRef,
   threadRef: string,
   params?: { turns?: number; beforeIndex?: number },
 ): Promise<TurnsPage> {
-  const agentNodeId = await requireAgentNode(agentName)
+  const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   return turnsPageForSessionKey(row.sessionKey, { turns: params?.turns, beforeIndex: params?.beforeIndex })
 }

@@ -7,8 +7,8 @@
 
 import { claimExtensionLease, leaseRefusalMessage } from '@/app/_authed/(extension-runtime)/_server/extension-lease'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
-// MCP tool calls carry no session cookie by design (bearer-token surface,
-// not cookies), so every space operation reached from here must be the
+// MCP tool calls carry no session cookie by design (a bearer-token surface),
+// so every space operation reached from here must be the
 // plain `*Impl`, never the createServerFn wrapper in actions.ts. The wrappers
 // check the session; calling one in-process from a tool throws "Not signed
 // in" for a caller that was never supposed to have a session. That is exactly
@@ -16,6 +16,7 @@ import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 // implementations — it broke the read tools directly, and every graph-write
 // tool indirectly through withGraphConflictRetry's default load/save.
 import { getActiveSpaceSlugImpl, resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
+import type { AgentRef } from '@/app/_authed/(space)/_server/agents-impl'
 import { parseGraphAddress } from '@/app/_authed/(space)/_server/types'
 
 export const SPACE_PARAM = {
@@ -50,22 +51,28 @@ export interface ParsedEndpoint {
  * agent name taken from tool arguments would let any caller name any agent, and
  * a default would silently pick one.
  *
- * So a caller the surface could not identify is refused, whatever the reason —
- * no credential, a personal token, auth switched off, or a bridged call whose
- * session could not be attributed to exactly one agent.
+ * So a caller the surface could not identify is refused — today that is a
+ * bridged call whose session could not be attributed to exactly one agent,
+ * since the HTTP endpoint refuses a request without a valid token before any
+ * tool runs.
  *
  * Each surface asserts the identity from what only it can know, and neither
- * accepts one from the caller: the HTTP surface from the request's credential,
- * the in-process bridge from the session's own bookkeeping. Being internal
- * confers nothing on its own — an unattributable bridged call is refused here
- * exactly like an anonymous HTTP one.
+ * accepts one from the caller: the HTTP surface from the MCP token, which names
+ * the agent's NODE, the in-process bridge from the session's own bookkeeping,
+ * which names the agent. The node is returned wherever there is one, so a
+ * token-identified caller is never re-resolved by a name another node might
+ * share. Being internal confers nothing on its own — an unattributable bridged
+ * call is refused here exactly like an unidentified HTTP one would be.
  */
-export function requireCallingAgent(caller: ToolCallerContext): string {
+export function requireCallingAgent(caller: ToolCallerContext): AgentRef {
+  if (caller.agentNodeId) {
+    return { nodeId: caller.agentNodeId, name: caller.agent ?? '' }
+  }
   if (!caller.agent) {
     fail(
       -32603,
       'This tool acts as the calling agent, and this request did not identify one. ' +
-        'It has to be called with an agent credential over the HTTP MCP surface.',
+        'It has to be called with an MCP token issued to the agent.',
     )
   }
   return caller.agent

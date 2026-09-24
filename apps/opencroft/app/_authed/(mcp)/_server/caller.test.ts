@@ -1,44 +1,45 @@
 // Exercises credential resolution and caller recording against a real
 // (throwaway) database rather than a mock. What is worth proving is that the
 // table definitions, the migrations and the upsert actually agree — a mock
-// would hide exactly the disagreement that matters.
-//
-// PGLITE_PATH, DB_MIGRATIONS_DIR and OPENCROFT_DATA_DIR are set before
-// importing anything that touches the db package: `@opencroft/db` opens the
-// connection and migrates at import time, so the environment has to be in
-// place first.
+// would hide exactly the disagreement that matters. See @opencroft/db's
+// test-env for how this stays off the shared dev/production database.
+import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test, { after } from 'node:test'
+import test from 'node:test'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-caller-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'packages', 'db', 'migrations')
-process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
-process.env.OPENCROFT_MCP_AUTH = 'observe'
-delete process.env.DATABASE_URL
+import { db, mcpCaller, mcpToken, user } from '@opencroft/db'
+import { and, eq } from 'drizzle-orm'
 
-const { apiToken, db, mcpCaller } = await import('@opencroft/db')
-const { hashToken, recordCaller, refuses, resolveCaller } = await import('./caller')
-const { KILL_SWITCH_PATH, mcpAuthMode, resetKillSwitchCache } = await import('./mcp-auth-mode')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
+import { createTokenForUser } from '@/app/_authed/(settings)/_server/token-actions-impl'
+import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
+import { recordCaller, resolveCaller } from './caller'
+import { createMcpToken, deleteMcpToken } from './mcp-tokens'
 
 function req(headers: Record<string, string> = {}): Request {
-  return new Request('http://localhost:9999/api/mcp', { method: 'POST', headers })
+  return new Request('http://localhost:9999/mcp', { method: 'POST', headers })
 }
 
-async function mint(agent: string, token: string): Promise<string> {
-  const [row] = await db
-    .insert(apiToken)
-    .values({ subjectType: 'agent', agentName: agent, tokenHash: hashToken(token) })
-    .returning({ id: apiToken.id })
-  return row.id
+function bearer(token: string): Request {
+  return req({ authorization: `Bearer ${token}` })
+}
+
+/** A space holding one agent node per name; returns their node ids in order. */
+async function agentNodes(names: string[]): Promise<string[]> {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  const slug = `caller-test-${crypto.randomUUID()}`
+  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
+  const ids = names.map((_, i) => `caller-agent-${i}-${crypto.randomUUID()}`)
+  await registry.saveGraph(space.slug, {
+    nodes: names.map((name, i) => ({ id: ids[i], type: 'agent', position: { x: 0, y: 0 }, data: { name } })),
+    edges: [],
+  })
+  return ids
+}
+
+async function mint(agentNodeId: string, expiresAt: string | null = null): Promise<string> {
+  return (await createMcpToken(agentNodeId, { name: 'test', expiresAt })).token
 }
 
 /** Run `fn` and return every `[mcp-caller]` line it emitted. */
@@ -58,68 +59,147 @@ async function captureLog(fn: () => Promise<void>): Promise<string[]> {
 
 test('no Authorization header resolves as absent, not unknown', async () => {
   const caller = await resolveCaller(req())
-  assert.equal(caller.credential, 'absent')
-  assert.equal(caller.agent, null)
+  assert.deepEqual(caller, { credential: 'absent', agent: null, agentNodeId: null, tokenId: null })
 })
 
-test('a minted token resolves to its agent', async () => {
-  await mint('alice', 'oc_test_valid_token')
-  const caller = await resolveCaller(req({ authorization: 'Bearer oc_test_valid_token' }))
+test('an MCP token resolves to the agent node it was issued to, and that node’s name', async () => {
+  const [nodeId] = await agentNodes(['Caller Alice'])
+  const token = await mint(nodeId)
+
+  const caller = await resolveCaller(bearer(token))
+
   assert.equal(caller.credential, 'present')
-  assert.equal(caller.agent, 'alice')
+  assert.equal(caller.agentNodeId, nodeId)
+  assert.equal(caller.agent, 'Caller Alice')
+  assert.ok(caller.tokenId)
+})
+
+test('an MCP token carries the ocm_ prefix, so it cannot be mistaken for a personal token', async () => {
+  const [nodeId] = await agentNodes(['Caller Prefix'])
+  assert.match(await mint(nodeId), /^ocm_/)
+})
+
+// Two nodes may share a name. The identity has to be the node the token was
+// issued to — resolving through the name could land on the other one.
+test('a token issued to one of two same-named agents resolves to that one', async () => {
+  const [first, second] = await agentNodes(['Caller Twin', 'Caller Twin'])
+  const caller = await resolveCaller(bearer(await mint(second)))
+
+  assert.equal(caller.agentNodeId, second)
+  assert.notEqual(caller.agentNodeId, first)
 })
 
 test('the Bearer scheme is matched case-insensitively, as RFC 7235 requires', async () => {
-  const caller = await resolveCaller(req({ authorization: 'bearer oc_test_valid_token' }))
+  const [nodeId] = await agentNodes(['Caller Case'])
+  const token = await mint(nodeId)
+  const caller = await resolveCaller(req({ authorization: `bearer ${token}` }))
   assert.equal(caller.credential, 'present')
-  assert.equal(caller.agent, 'alice')
 })
 
 // The distinction this asserts is the whole point of having three states:
 // `unknown` is a client that WAS configured and is now wrong, `absent` is a
-// client nobody has touched. Collapsing them would make the Stage A logs
-// unreadable in exactly the case that matters.
+// client nobody has touched.
 test('an unrecognised token resolves as unknown, distinct from absent', async () => {
-  const caller = await resolveCaller(req({ authorization: 'Bearer oc_never_minted' }))
-  assert.equal(caller.credential, 'unknown')
-  assert.equal(caller.agent, null)
+  const caller = await resolveCaller(bearer('ocm_never_minted'))
+  assert.deepEqual(caller, { credential: 'unknown', agent: null, agentNodeId: null, tokenId: null })
 })
 
-test('a revoked token stops resolving', async () => {
-  const { eq } = await import('drizzle-orm')
-  const id = await mint('grace', 'oc_test_to_be_revoked')
+test('a deleted token stops resolving on the next request', async () => {
+  const [nodeId] = await agentNodes(['Caller Deleted'])
+  const created = await createMcpToken(nodeId, { name: 'to-delete', expiresAt: null })
 
-  const before = await resolveCaller(req({ authorization: 'Bearer oc_test_to_be_revoked' }))
-  assert.equal(before.credential, 'present', 'must work before revocation, or the test proves nothing')
+  const before = await resolveCaller(bearer(created.token))
+  assert.equal(before.credential, 'present', 'must work before deletion, or the test proves nothing')
 
-  await db.update(apiToken).set({ revokedAt: new Date() }).where(eq(apiToken.id, id))
+  await deleteMcpToken(nodeId, created.id)
 
-  const after_ = await resolveCaller(req({ authorization: 'Bearer oc_test_to_be_revoked' }))
-  assert.equal(after_.credential, 'unknown')
-  assert.equal(after_.agent, null)
+  assert.equal((await resolveCaller(bearer(created.token))).credential, 'unknown')
+})
+
+test('an expired token stops resolving on its own', async () => {
+  const [nodeId] = await agentNodes(['Caller Expiring'])
+  const created = await createMcpToken(nodeId, { name: 'to-expire', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+  assert.equal((await resolveCaller(bearer(created.token))).credential, 'present', 'live before it is aged out')
+
+  // createMcpToken refuses a past expiry, so an expired token is only
+  // reachable by aging one out.
+  await db
+    .update(mcpToken)
+    .set({ expiresAt: new Date(Date.now() - 1000) })
+    .where(eq(mcpToken.id, created.id))
+
+  assert.equal((await resolveCaller(bearer(created.token))).credential, 'unknown')
+})
+
+test('a token whose agent node no longer exists resolves to nobody', async () => {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  const slug = `caller-test-gone-${crypto.randomUUID()}`
+  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
+  const nodeId = `caller-agent-gone-${crypto.randomUUID()}`
+  await registry.saveGraph(space.slug, {
+    nodes: [{ id: nodeId, type: 'agent', position: { x: 0, y: 0 }, data: { name: 'Caller Gone' } }],
+    edges: [],
+  })
+  const token = await mint(nodeId)
+  assert.equal((await resolveCaller(bearer(token))).credential, 'present', 'live while the node exists')
+
+  await registry.saveGraph(space.slug, { nodes: [], edges: [] })
+
+  const caller = await resolveCaller(bearer(token))
+  assert.equal(caller.credential, 'unknown')
+  assert.equal(caller.agentNodeId, null)
+})
+
+test('a personal access token does not resolve here, however valid it is', async () => {
+  const userId = crypto.randomUUID()
+  await db.insert(user).values({ id: userId, name: 'Caller Person', email: `${userId}@example.test` })
+  const personal = await createTokenForUser(userId, { name: 'laptop' })
+
+  assert.equal((await resolveCaller(bearer(personal.token))).credential, 'unknown')
 })
 
 // Rotation with a single credential means a window where the old token is dead
 // and the new one is not yet configured. Several live tokens per agent is what
 // removes that window, so it is worth a test rather than an assumption.
 test('an agent can hold several live tokens at once', async () => {
-  await mint('carol', 'oc_test_carol_one')
-  await mint('carol', 'oc_test_carol_two')
+  const [nodeId] = await agentNodes(['Caller Carol'])
+  const first = await resolveCaller(bearer(await mint(nodeId)))
+  const second = await resolveCaller(bearer(await mint(nodeId)))
 
-  const first = await resolveCaller(req({ authorization: 'Bearer oc_test_carol_one' }))
-  const second = await resolveCaller(req({ authorization: 'Bearer oc_test_carol_two' }))
-
-  assert.equal(first.credential, 'present')
-  assert.equal(second.credential, 'present')
-  assert.equal(first.agent, 'carol')
-  assert.equal(second.agent, 'carol')
+  assert.equal(first.agentNodeId, nodeId)
+  assert.equal(second.agentNodeId, nodeId)
   assert.notEqual(first.tokenId, second.tokenId)
 })
 
+test('issuing a token to a node that is not an agent is refused', async () => {
+  await assert.rejects(() => createMcpToken(`not-an-agent-${crypto.randomUUID()}`, { name: 'x', expiresAt: null }), {
+    message: /only be issued to an agent node/,
+  })
+})
+
+test('an expiry must be a date ahead, or explicitly null for never', async () => {
+  const [nodeId] = await agentNodes(['Caller Expiry Rules'])
+  await assert.rejects(() => createMcpToken(nodeId, { name: 'x', expiresAt: '2020-01-01' }), { message: /future/ })
+  await assert.rejects(() => createMcpToken(nodeId, { name: 'x', expiresAt: 'soon' }), { message: /Invalid expiry/ })
+  // An absent expiry is not "never": only an explicit null says that.
+  await assert.rejects(
+    () => createMcpToken(nodeId, { name: 'x' } as unknown as { name: string; expiresAt: string | null }),
+    { message: /Invalid expiry/ },
+  )
+})
+
+test('deleting through another node’s id fails as if the token did not exist, and deletes nothing', async () => {
+  const [owner, other] = await agentNodes(['Caller Owner', 'Caller Other'])
+  const created = await createMcpToken(owner, { name: 'owned', expiresAt: null })
+
+  await assert.rejects(() => deleteMcpToken(other, created.id), { message: /not found/ })
+  assert.equal((await resolveCaller(bearer(created.token))).credential, 'present')
+})
+
 test('repeat calls from one caller aggregate onto a single row', async () => {
-  const { and, eq } = await import('drizzle-orm')
   const request = req({ 'user-agent': 'probe/1.0', 'x-forwarded-for': '10.0.0.7' })
-  const caller = { credential: 'absent' as const, agent: null, tokenId: null }
+  const caller = { credential: 'absent' as const, agent: null, agentNodeId: null, tokenId: null }
 
   for (let i = 0; i < 3; i++) {
     await recordCaller({ caller, method: 'tools/list', tool: null, request })
@@ -137,8 +217,7 @@ test('repeat calls from one caller aggregate onto a single row', async () => {
 })
 
 test('callers differing only by user agent are recorded separately', async () => {
-  const { eq } = await import('drizzle-orm')
-  const caller = { credential: 'absent' as const, agent: null, tokenId: null }
+  const caller = { credential: 'absent' as const, agent: null, agentNodeId: null, tokenId: null }
 
   await recordCaller({ caller, method: 'initialize', tool: null, request: req({ 'user-agent': 'alpha/1' }) })
   await recordCaller({ caller, method: 'initialize', tool: null, request: req({ 'user-agent': 'beta/1' }) })
@@ -148,8 +227,7 @@ test('callers differing only by user agent are recorded separately', async () =>
 })
 
 test('tool name is part of the caller identity, so per-tool usage is visible', async () => {
-  const { eq } = await import('drizzle-orm')
-  const caller = { credential: 'absent' as const, agent: null, tokenId: null }
+  const caller = { credential: 'absent' as const, agent: null, agentNodeId: null, tokenId: null }
   const request = req({ 'user-agent': 'tooler/1' })
 
   await recordCaller({ caller, method: 'tools/call', tool: 'remote_exec', request })
@@ -160,50 +238,26 @@ test('tool name is part of the caller identity, so per-tool usage is visible', a
   assert.deepEqual(rows.map((r) => r.tool).sort(), ['list_nodes', 'remote_exec'])
 })
 
-test('a resolved token has its lastUsedAt stamped', async () => {
-  const { eq } = await import('drizzle-orm')
-  const caller = await resolveCaller(req({ authorization: 'Bearer oc_test_valid_token' }))
+test('a resolved caller is recorded by its node, and its token’s lastUsedAt is stamped', async () => {
+  const [nodeId] = await agentNodes(['Caller Stamper'])
+  const caller = await resolveCaller(bearer(await mint(nodeId)))
   await recordCaller({ caller, method: 'tools/list', tool: null, request: req({ 'user-agent': 'stamper/1' }) })
 
-  const [row] = await db
+  const [token] = await db
     .select()
-    .from(apiToken)
-    .where(eq(apiToken.id, caller.tokenId as string))
-  assert.ok(row.lastUsedAt, 'lastUsedAt must be set, or a stale token is indistinguishable from a live one')
-})
+    .from(mcpToken)
+    .where(eq(mcpToken.id, caller.tokenId as string))
+  assert.ok(token.lastUsedAt, 'lastUsedAt must be set, or a stale token is indistinguishable from a live one')
 
-// The kill switch is the recovery path for Stage B, when refusing the wrong
-// caller would take out dispatch and there would be no way to report it. If it
-// does not work, none of the staging is worth anything.
-test('the kill switch file turns the whole thing off, with no restart', async () => {
-  const { mkdir } = await import('node:fs/promises')
-  assert.equal(mcpAuthMode(), 'observe', 'precondition: configured mode is observe')
-
-  await mkdir(join(workdir, 'data'), { recursive: true })
-  await writeFile(KILL_SWITCH_PATH, '')
-  resetKillSwitchCache()
-
-  assert.equal(mcpAuthMode(), 'off')
-
-  // A valid token must now resolve as anonymous: `off` has to take this code
-  // out of the request path entirely, not merely stop it refusing things.
-  const caller = await resolveCaller(req({ authorization: 'Bearer oc_test_valid_token' }))
-  assert.equal(caller.credential, 'absent')
-  assert.equal(caller.agent, null)
-
-  const before = (await db.select().from(mcpCaller)).length
-  await recordCaller({ caller, method: 'tools/list', tool: null, request: req({ 'user-agent': 'killed/1' }) })
-  assert.equal((await db.select().from(mcpCaller)).length, before, 'nothing may be recorded while off')
-
-  await rm(KILL_SWITCH_PATH)
-  resetKillSwitchCache()
-  assert.equal(mcpAuthMode(), 'observe', 'removing the file must restore the configured mode')
+  const [row] = await db.select().from(mcpCaller).where(eq(mcpCaller.userAgent, 'stamper/1'))
+  assert.equal(row.agentNodeId, nodeId)
+  assert.equal(row.agent, 'Caller Stamper')
 })
 
 // The log carries the per-request trace that the table deliberately collapses,
 // so its shape is a contract rather than a debugging aid.
 test('every observed request emits exactly one [mcp-caller] line', async () => {
-  const caller = { credential: 'absent' as const, agent: null, tokenId: null }
+  const caller = { credential: 'absent' as const, agent: null, agentNodeId: null, tokenId: null }
   const request = req({ 'user-agent': 'liner/1.0', 'x-forwarded-for': '10.0.0.9' })
 
   const lines = await captureLog(async () => {
@@ -216,33 +270,12 @@ test('every observed request emits exactly one [mcp-caller] line', async () => {
   assert.equal(lines[0], '[mcp-caller] credential=absent agent=- method=tools/list tool=- ip=10.0.0.9 ua="liner/1.0"')
 })
 
-// Stage B: `refuses` is the one decision the route defers to.
-// Exercised directly against every (mode, credential) pair rather than only
-// the cases expected to matter, because the property that must hold is "only
-// `require` + not-`present`", and the only way to be sure nothing else
-// accidentally satisfies that is to check the whole table.
-test('refuses is true only for require mode with a non-present credential', () => {
-  const present = { credential: 'present' as const, agent: 'carol', tokenId: 'x' }
-  const absent = { credential: 'absent' as const, agent: null, tokenId: null }
-  const unknown = { credential: 'unknown' as const, agent: null, tokenId: null }
-
-  for (const mode of ['off', 'observe'] as const) {
-    assert.equal(refuses(mode, present), false, `${mode} must never refuse a present credential`)
-    assert.equal(refuses(mode, absent), false, `${mode} must never refuse`)
-    assert.equal(refuses(mode, unknown), false, `${mode} must never refuse`)
-  }
-
-  assert.equal(refuses('require', present), false, 'require must not refuse a caller holding a valid credential')
-  assert.equal(refuses('require', absent), true, 'require must refuse a caller who presented nothing')
-  assert.equal(refuses('require', unknown), true, 'require must refuse a caller whose credential did not resolve')
-})
-
 // A user agent with a space or a quote must not be able to forge extra fields
 // in a line someone greps and eyeballs.
 test('the user agent is quoted, so it cannot forge fields in the line', async () => {
   const [line] = await captureLog(async () => {
     await recordCaller({
-      caller: { credential: 'absent', agent: null, tokenId: null },
+      caller: { credential: 'absent', agent: null, agentNodeId: null, tokenId: null },
       method: 'initialize',
       tool: null,
       request: req({ 'user-agent': 'evil/1 credential=present agent=admin' }),

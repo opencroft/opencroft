@@ -52,16 +52,22 @@ import appCss from '@/app/globals.css?url'
 //                                    that already has a session by the time
 //                                    any extension UI renders
 //
+// TOKEN-GATED, not session-gated:
+//
+//   /mcp                            the MCP endpoint. Serves only a caller
+//                                    presenting an MCP token — a credential
+//                                    issued to one agent node from that node's
+//                                    settings — and refuses everything else,
+//                                    personal access tokens included, with a
+//                                    401 before any method runs. Session
+//                                    answers "is a browser signed in"; this
+//                                    answers "which agent is this", which an
+//                                    external MCP client needs and has no
+//                                    cookie for. An MCP token opens nothing
+//                                    else: no /api route reads a bearer.
+//
 // STILL DELIBERATELY OPEN — not caution, a different question:
 //
-//   /api/mcp                        bearer-token surface,
-//                                    not a session one. Session answers "is a
-//                                    browser signed in"; this answers "does
-//                                    this caller hold a credential we issued",
-//                                    which is what an external MCP client and
-//                                    an agent both need and neither has a
-//                                    cookie for. SHELL ACCESS IS CLOSED WHEN
-//                                    THIS IS, AND NOT BEFORE — still todo.
 //   /api/auth/*                     the auth handler itself (necessarily open
 //                                    — signing in is how a session is made)
 //   /api/route/$                    a USER'S OWN "API Route" canvas node.
@@ -103,14 +109,13 @@ import appCss from '@/app/globals.css?url'
 // false sense of closure:
 //
 //   /api/ws/terminal is reached ONLY by packages/terminal's xterm client.
-//   Agents never touch it. `remote_exec` arrives over /api/mcp, and remoteExec
-//   resolves the core extension's terminal.exec and calls it IN-PROCESS.
+//   Agents never touch it. `remote_exec` arrives over the MCP endpoint (or the
+//   in-process tool bridge), and remoteExec resolves the core extension's
+//   terminal.exec and calls it IN-PROCESS.
 //
-// So gating the websocket closed the BROWSER path to a shell and left the
-// capability wide open behind an easier endpoint. SHELL ACCESS IS CLOSED WHEN
-// /api/mcp IS CLOSED, AND NOT BEFORE — that is still todo, is the harder half,
-// and is tracked separately. Do not read the terminal gate as having protected
-// shell access.
+// So gating the websocket closed only the BROWSER path to a shell. The other
+// path is closed by /mcp refusing every caller without an MCP token — which
+// makes an MCP token shell access, and it should be handled like one.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const Route = createRootRoute({

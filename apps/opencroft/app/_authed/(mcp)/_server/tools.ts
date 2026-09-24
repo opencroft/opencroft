@@ -401,12 +401,17 @@ export interface ToolCallOptions {
   internal?: boolean
   /**
    * The agent name behind the caller, when the surface resolved one: the HTTP
-   * surface from the request's credential, the in-process bridge from the
-   * session's own bookkeeping. Absent from any surface that can assert
-   * neither, and tools that need it refuse rather than guess — see
+   * surface from the node its MCP token was issued to, the in-process bridge
+   * from the session's own bookkeeping. Absent from any surface that can
+   * assert neither, and tools that need it refuse rather than guess — see
    * `ToolCallerContext`.
    */
   callerAgent?: string | null
+  /**
+   * The agent's node, where the surface identified it by node rather than by
+   * name — only the HTTP surface, from the MCP token. See `ToolCallerContext`.
+   */
+  callerAgentNodeId?: string
   /**
    * The calling session's id. Only the in-process bridge can assert one, from
    * the session's own bookkeeping; the HTTP surface has no session and passes
@@ -586,6 +591,9 @@ export async function handleToolCall(
 ): Promise<Record<string, unknown>> {
   const start = Date.now()
   const caller: ToolCallerContext = { agent: opts.callerAgent ?? null }
+  if (opts.callerAgentNodeId) {
+    caller.agentNodeId = opts.callerAgentNodeId
+  }
   if (opts.callerSessionId) {
     caller.sessionId = opts.callerSessionId
   }

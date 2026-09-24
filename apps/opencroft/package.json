@@ -15,7 +15,6 @@
     "build": "npm run check:server-fn-shape && vite build && npm run check:client-bundle",
     "check:client-bundle": "node scripts/check-client-bundle.mjs",
     "check:server-fn-shape": "node scripts/check-server-fn-colocation.mjs",
-    "mint-token": "npx tsx scripts/mint-token.ts",
     "start": "vite preview",
     "update": "npx shadcn@latest add @croftcn/all --all --overwrite"
   },

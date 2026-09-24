@@ -59,6 +59,20 @@ test('a bridged call carries the identity of the session it came from', async ()
   assert.notEqual(result.isError, true, `the tool refused instead of resolving the caller: ${JSON.stringify(result)}`)
 })
 
+// The bridge is the app's own agents reaching their tools in-process. It never
+// presented a credential and must not start needing one now that the HTTP
+// endpoint takes MCP tokens only: the table is empty here, and the call is
+// still attributed from the session alone.
+test('a bridged call needs no MCP token', async () => {
+  const { db, mcpToken } = await import('@opencroft/db')
+  await spaceWithAgents(['Bridge Tokenless Agent'])
+  assert.equal((await db.select().from(mcpToken)).length, 0, 'precondition: no MCP token exists at all')
+
+  const result = await callAgentActingTool({ mcpIdentity: 'bridge-tokenless-agent' })
+
+  assert.notEqual(result.isError, true, `the bridge refused without a token: ${JSON.stringify(result)}`)
+})
+
 test('a bridged call from a session with no identity is refused, not defaulted', async () => {
   await spaceWithAgents(['Bridge Unidentified Agent'])
 

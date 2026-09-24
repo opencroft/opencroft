@@ -45,7 +45,7 @@ export async function listTokensForUser(userId: string): Promise<MyToken[]> {
       revokedAt: apiToken.revokedAt,
     })
     .from(apiToken)
-    .where(and(eq(apiToken.subjectType, 'user'), eq(apiToken.userId, userId)))
+    .where(eq(apiToken.userId, userId))
     .orderBy(desc(apiToken.createdAt))
 
   return rows.map((r) => ({
@@ -94,15 +94,15 @@ export async function createTokenForUser(userId: string, input: CreateTokenInput
     throw new Error('Expiry must be in the future')
   }
 
-  // Same shape as the agent-token minting script: oc_ prefix, 32 bytes of
-  // CSPRNG, base64url. One format for every bearer credential in the app, so
-  // a reader never has to ask which kind of token they are looking at.
+  // 32 bytes of CSPRNG, base64url, behind a prefix naming the kind: `oc_` here,
+  // `ocm_` for an agent's MCP token, so a reader can tell which kind of token
+  // they are looking at without looking it up.
   const { randomBytes } = await import('node:crypto')
   const token = `oc_${randomBytes(32).toString('base64url')}`
 
   const [row] = await db
     .insert(apiToken)
-    .values({ subjectType: 'user', userId, name, expiresAt, tokenHash: hashToken(token) })
+    .values({ userId, name, expiresAt, tokenHash: hashToken(token) })
     .returning({ id: apiToken.id })
 
   return { id: row.id, token }
@@ -123,7 +123,7 @@ export async function revokeTokenForUser(userId: string, id: string): Promise<{ 
   const [row] = await db
     .update(apiToken)
     .set({ revokedAt: new Date() })
-    .where(and(eq(apiToken.id, id), eq(apiToken.subjectType, 'user'), eq(apiToken.userId, userId)))
+    .where(and(eq(apiToken.id, id), eq(apiToken.userId, userId)))
     .returning({ revokedAt: apiToken.revokedAt })
 
   if (!row?.revokedAt) {

@@ -12,12 +12,12 @@ import { getRequest } from '@tanstack/react-start/server'
 // terminal websocket both use — one seam answering "who is this", not a third
 // mechanism to keep in sync with the other two.
 //
-// NOT applied to every /api/* route. Two categories are excluded on purpose,
-// and gating them would be a real regression, not caution:
+// NOT applied to every route. Three are excluded on purpose, and gating them
+// would be a real regression, not caution:
 //
-//   /api/mcp                    bearer-token surface, not a
-//                                session one — session and token answer
-//                                different questions, see caller.ts
+//   /mcp                        the MCP endpoint, gated by an MCP token instead
+//                                — session and token answer different
+//                                questions, see caller.ts
 //   /api/route/$                a user's own "API Route" canvas node: the
 //                                whole feature is being a webhook target for
 //                                whatever external caller the user configured

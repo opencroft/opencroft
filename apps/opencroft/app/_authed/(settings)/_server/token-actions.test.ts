@@ -34,7 +34,7 @@ async function makeUser(email: string): Promise<string> {
 }
 
 function req(token: string): Request {
-  return new Request('http://localhost:9999/api/mcp', { headers: { authorization: `Bearer ${token}` } })
+  return new Request('http://localhost:9999/mcp', { headers: { authorization: `Bearer ${token}` } })
 }
 
 test('the created token is returned once and is not stored anywhere retrievable', async () => {
@@ -109,32 +109,26 @@ test("one user cannot list or revoke another user's token", async () => {
   )
 })
 
-test('revoking takes effect immediately against the same verification path /api/mcp uses', async () => {
+// The two tests that stood here proved revocation and expiry against the MCP
+// endpoint's resolver, which was then the one place a personal token was
+// accepted. The endpoint now takes MCP tokens only, so that path refuses a
+// personal token whatever its state; what is left to prove here is that
+// revoking is recorded, and that a live personal token does not open it.
+test('revoking marks the token revoked, and it stays listed', async () => {
   const userId = await makeUser('frank@example.test')
   const created = await createTokenForUser(userId, { name: 'to-be-revoked' })
 
-  const before = await resolveCaller(req(created.token))
-  assert.equal(before.credential, 'present', 'must resolve before revocation, or this test proves nothing')
+  const { revokedAt } = await revokeTokenForUser(userId, created.id)
 
-  await revokeTokenForUser(userId, created.id)
-
-  const after_ = await resolveCaller(req(created.token))
-  assert.equal(after_.credential, 'unknown', 'a revoked personal token must stop resolving immediately, no cache')
+  const listed = (await listTokensForUser(userId)).find((t) => t.id === created.id)
+  assert.equal(listed?.revokedAt, revokedAt, 'a revoked token must still be listed, showing when it was revoked')
 })
 
-test('an expired personal token stops resolving on its own, without being revoked', async () => {
+test('a live personal token does not resolve on the MCP endpoint', async () => {
   const userId = await makeUser('grace@example.test')
-  const created = await createTokenForUser(userId, { name: 'to-expire' })
-
-  // Backdate it directly — createTokenForUser refuses a past expiresAt at
-  // creation time, so an already-expired token is only reachable by aging one
-  // out, which is exactly what happens in production over 90 days.
-  const { eq } = await import('drizzle-orm')
-  await db
-    .update(apiToken)
-    .set({ expiresAt: new Date(Date.now() - 1000) })
-    .where(eq(apiToken.id, created.id))
+  const created = await createTokenForUser(userId, { name: 'not-for-mcp' })
 
   const result = await resolveCaller(req(created.token))
-  assert.equal(result.credential, 'unknown', 'an expired token must resolve as unknown, same as a revoked one')
+  assert.equal(result.credential, 'unknown', 'a personal token must never identify an MCP caller')
+  assert.equal(result.agentNodeId, null)
 })

@@ -41,22 +41,20 @@ test('the MCP route does not take `internal` from the request', async () => {
   )
 })
 
-// Stage B wiring. `refuses`/`mcpAuthMode` are unit-tested for
-// their actual behaviour in caller.test.ts; what has to be proved HERE, at
-// the route, is the ordering — the decision runs, and it runs before any tool
-// gets a chance to execute. A request-level test cannot observe that ordering
-// from the outside (a refused request and one that reached `handleMethod` and
-// then also failed look the same from outside without deep, brittle response
-// introspection), so this asserts it structurally, matching this file's
-// existing approach for `internal: false` above.
-test('the MCP route checks refuses() before calling handleMethod', async () => {
+// Which callers are refused is proved through real requests in
+// -mcp-auth.test.ts. What a request cannot show from outside is ORDER: a
+// refused request and one that reached `handleMethod` and then also failed
+// look alike without deep, brittle response introspection. So the ordering is
+// asserted structurally, matching this file's approach for `internal: false`
+// above — the caller is recorded, then checked, and only then served.
+test('the MCP route checks the credential after recording it and before calling handleMethod', async () => {
   const source = await readFile(join(import.meta.dirname, 'mcp.ts'), 'utf8')
 
-  const refusalIndex = source.search(/if\s*\(\s*refuses\(/)
+  const refusalIndex = source.search(/if\s*\(\s*caller\.credential\s*!==\s*'present'/)
   const recordCallerIndex = source.indexOf('await recordCaller(')
   const handleMethodIndex = source.indexOf('await handleMethod(')
 
-  assert.ok(refusalIndex !== -1, 'the route must call refuses() to decide whether to serve a require-mode caller')
+  assert.ok(refusalIndex !== -1, 'the route must refuse a caller whose credential is not present')
   assert.ok(
     recordCallerIndex !== -1 && recordCallerIndex < refusalIndex,
     'the caller must be recorded before the refusal decision, so a refused request is still observed',

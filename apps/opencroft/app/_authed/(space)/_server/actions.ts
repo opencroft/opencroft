@@ -31,7 +31,7 @@ import type { GraphData, SpaceExport, SpaceSummary } from '@/app/_authed/(space)
 // without ever rendering the page that links to it. So the check has to exist
 // at this layer. But it must exist ONLY at this layer: (mcp)/_server/tools.ts
 // and graph-conflict-retry.ts call the implementations in-process to serve
-// MCP tool calls, and /api/mcp is a bearer-token surface carrying no session
+// MCP tool calls, and /mcp is a bearer-token surface carrying no session
 // cookie by design. Putting the check in the shared implementation instead
 // threw "Not signed in" for every agent tool — including, through
 // withGraphConflictRetry's default load/save, all seven graph-write tools.
