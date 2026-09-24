@@ -44,19 +44,22 @@ export function ModelSelector({ options, current, onSelect, lockedReason, classN
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild disabled={Boolean(lockedReason)}>
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className={className ?? 'size-7 shrink-0'}
-          // Without this the composer loses focus the moment this is clicked.
-          onMouseDown={(e) => e.preventDefault()}
-          title={title}
-          aria-label={title}
-        >
-          <Brain className='size-4' />
-        </Button>
+      <DropdownMenuTrigger
+        disabled={Boolean(lockedReason)}
+        render={
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className={className ?? 'size-7 shrink-0'}
+            // Without this the composer loses focus the moment this is clicked.
+            onMouseDown={(e) => e.preventDefault()}
+            title={title}
+            aria-label={title}
+          />
+        }
+      >
+        <Brain className='size-4' />
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
           upward from the start edge. */}
@@ -64,7 +67,7 @@ export function ModelSelector({ options, current, onSelect, lockedReason, classN
         {options.map((option) => (
           <DropdownMenuItem
             key={option.value}
-            onSelect={() => onSelect(option.value)}
+            onClick={() => onSelect(option.value)}
             className={option.value === current ? 'font-medium' : undefined}
           >
             {option.label}

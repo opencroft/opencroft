@@ -69,11 +69,9 @@ export function CreateGroupChatAction() {
         }
       }}
     >
-      <DialogTrigger asChild>
-        <Button size='sm' variant='outline'>
-          <Plus className='size-3.5' />
-          New group chat
-        </Button>
+      <DialogTrigger render={<Button size='sm' variant='outline' />}>
+        <Plus className='size-3.5' />
+        New group chat
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

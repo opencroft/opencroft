@@ -143,6 +143,11 @@ function extractSlots(children: React.ReactNode): Slots {
 export interface AdaptivePopupProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  // Handed to the dialog/drawer trigger as its `render` element, so the trigger
+  // draws nothing of its own and merges its handlers and ref onto this one. It
+  // has to be a single element that spreads the props it is given and forwards
+  // its ref -- a native <button> (or the kit's Button) as Base UI triggers
+  // expect. Anything else (a string, a fragment) renders no trigger at all.
   trigger?: React.ReactNode
   contentClassName?: string
   children: React.ReactNode
@@ -184,15 +189,8 @@ function AdaptivePopup({
   if (isMobile) {
     return (
       <Drawer open={open} onOpenChange={onOpenChange}>
-        {trigger && <DrawerTrigger asChild>{trigger}</DrawerTrigger>}
-        <DrawerContent
-          className="flex flex-col min-h-[97dvh]"
-          onAnimationEnd={(e) => {
-            const el = e.currentTarget as HTMLDivElement
-            el.style.transform = ""
-            el.style.willChange = "auto"
-          }}
-        >
+        {React.isValidElement(trigger) && <DrawerTrigger render={trigger} />}
+        <DrawerContent className="flex flex-col min-h-[97dvh]">
           <DrawerTitle className="sr-only">Dialog</DrawerTitle>
           {drawerHead}
           {subHeader}
@@ -210,7 +208,7 @@ function AdaptivePopup({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
+      {React.isValidElement(trigger) && <DialogTrigger render={trigger} />}
       <DialogContent
         className={cn(
           "flex flex-col p-0 gap-0 overflow-hidden sm:max-w-4xl",

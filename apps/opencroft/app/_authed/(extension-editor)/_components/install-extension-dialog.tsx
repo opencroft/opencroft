@@ -124,7 +124,22 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
           </div>
           <div className='flex flex-col gap-1.5'>
             <Label htmlFor='install-auth'>Authentication (private repos)</Label>
-            <Select value={storeId} onValueChange={setStoreId} disabled={busy}>
+            <Select
+              value={storeId}
+              items={[
+                { value: NO_AUTH, label: 'None (public repo)' },
+                ...stores.map((store) => ({
+                  value: store.storeId,
+                  label: `Secret ${store.storeId.slice(-6)} (${store.keys.join(', ')})`,
+                })),
+              ]}
+              onValueChange={(v) => {
+                if (v !== null) {
+                  setStoreId(v)
+                }
+              }}
+              disabled={busy}
+            >
               <SelectTrigger id='install-auth'>
                 <SelectValue placeholder='None (public repo)' />
               </SelectTrigger>

@@ -103,7 +103,14 @@ export function AgentSpeechTab({
         <div className='flex flex-col gap-1'>
           <Label>Voice</Label>
           {voices.length > 0 ? (
-            <Select value={data.voice ?? ''} onValueChange={(v: string) => updateData({ voice: v })}>
+            <Select
+              value={data.voice ?? ''}
+              onValueChange={(v) => {
+                if (v !== null) {
+                  updateData({ voice: v })
+                }
+              }}
+            >
               <SelectTrigger>
                 <SelectValue placeholder='Select a voice' />
               </SelectTrigger>
@@ -204,7 +211,12 @@ export function AgentSpeechTab({
           <Label>PCM Bit Depth</Label>
           <Select
             value={String(data.pcmBitDepth ?? 16)}
-            onValueChange={(v: string) => updateData({ pcmBitDepth: Number(v) === 32 ? 32 : 16 })}
+            items={{ '16': 'int16 LE (OpenAI)', '32': 'float32 LE (Qwen)' }}
+            onValueChange={(v) => {
+              if (v !== null) {
+                updateData({ pcmBitDepth: Number(v) === 32 ? 32 : 16 })
+              }
+            }}
           >
             <SelectTrigger>
               <SelectValue />
@@ -222,7 +234,7 @@ export function AgentSpeechTab({
             min={0}
             max={4800}
             step={24}
-            onValueChange={(v: number[]) => updateData({ trimStartSamples: v[0] })}
+            onValueChange={(v) => updateData({ trimStartSamples: Array.isArray(v) ? v[0] : v })}
           />
         </div>
         <div className='flex flex-col gap-1'>
@@ -232,7 +244,7 @@ export function AgentSpeechTab({
             min={0}
             max={4800}
             step={24}
-            onValueChange={(v: number[]) => updateData({ trimEndSamples: v[0] })}
+            onValueChange={(v) => updateData({ trimEndSamples: Array.isArray(v) ? v[0] : v })}
           />
         </div>
       </div>

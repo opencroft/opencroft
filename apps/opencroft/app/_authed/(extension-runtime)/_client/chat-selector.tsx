@@ -153,16 +153,18 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
           }
         }}
       >
-        <PopoverTrigger asChild>
-          <Button
-            variant='ghost'
-            size={size ?? 'icon-xs'}
-            aria-label='Choose a chat'
-            title='Choose a chat'
-            className={className}
-          >
-            <MessageCircleMore />
-          </Button>
+        <PopoverTrigger
+          render={
+            <Button
+              variant='ghost'
+              size={size ?? 'icon-xs'}
+              aria-label='Choose a chat'
+              title='Choose a chat'
+              className={className}
+            />
+          }
+        >
+          <MessageCircleMore />
         </PopoverTrigger>
         <PopoverContent side='bottom' align='end' className='w-72 p-0'>
           {/* The same Command dress the space selector's menu wears — borderless
@@ -236,10 +238,15 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
             the id is what the link needs. */}
           {chatId ? (
             <div className='border-t p-1'>
-              <Button asChild variant='ghost' size='sm' className='w-full justify-center' onClick={close}>
-                <Link to='/group-chats/$groupChatId' params={{ groupChatId: chatId }}>
-                  More
-                </Link>
+              <Button
+                render={<Link to='/group-chats/$groupChatId' params={{ groupChatId: chatId }} />}
+                nativeButton={false}
+                variant='ghost'
+                size='sm'
+                className='w-full justify-center'
+                onClick={close}
+              >
+                More
               </Button>
             </div>
           ) : null}

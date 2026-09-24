@@ -82,7 +82,7 @@ function ExtensionGroup({
         <Puzzle className='h-4 w-4 shrink-0' aria-hidden='true' />
         <span className='flex-1 text-left'>{entry.extensionName}</span>
         <ChevronRight
-          className='h-4 w-4 transition-transform duration-200 group-data-[state=open]/ext:rotate-90'
+          className='h-4 w-4 transition-transform duration-200 group-data-open/ext:rotate-90'
           aria-hidden='true'
         />
       </CollapsibleTrigger>

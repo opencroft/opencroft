@@ -137,35 +137,37 @@ function FileRow({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className='flex items-center gap-3 px-3 py-2 hover:bg-accent/50 rounded-md cursor-pointer text-sm'
-          onClick={() => isDir && !isRenaming && onNavigate(entry.path)}
-          onContextMenu={(e) => e.stopPropagation()}
-        >
-          {isDir ? (
-            <Folder className='h-4 w-4 text-muted-foreground shrink-0' />
-          ) : (
-            <File className='h-4 w-4 text-muted-foreground shrink-0' />
-          )}
-          {isRenaming ? (
-            <InlineInput initial={entry.name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
-          ) : (
-            <span
-              className='flex-1 truncate'
-              onDoubleClick={(e) => {
-                e.stopPropagation()
-                onRenameStart()
-              }}
-            >
-              {entry.name}
-            </span>
-          )}
-          <span className='text-muted-foreground w-20 text-right'>{formatSize(entry.size)}</span>
-          <span className='text-muted-foreground w-40 text-right hidden md:block'>
-            {entry.modified ? new Date(entry.modified).toLocaleString() : '-'}
+      <ContextMenuTrigger
+        render={
+          <div
+            className='flex items-center gap-3 px-3 py-2 hover:bg-accent/50 rounded-md cursor-pointer text-sm'
+            onClick={() => isDir && !isRenaming && onNavigate(entry.path)}
+            onContextMenu={(e) => e.stopPropagation()}
+          />
+        }
+      >
+        {isDir ? (
+          <Folder className='h-4 w-4 text-muted-foreground shrink-0' />
+        ) : (
+          <File className='h-4 w-4 text-muted-foreground shrink-0' />
+        )}
+        {isRenaming ? (
+          <InlineInput initial={entry.name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
+        ) : (
+          <span
+            className='flex-1 truncate'
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              onRenameStart()
+            }}
+          >
+            {entry.name}
           </span>
-        </div>
+        )}
+        <span className='text-muted-foreground w-20 text-right'>{formatSize(entry.size)}</span>
+        <span className='text-muted-foreground w-40 text-right hidden md:block'>
+          {entry.modified ? new Date(entry.modified).toLocaleString() : '-'}
+        </span>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onClick={onRenameStart}>
@@ -419,7 +421,10 @@ export function FileBrowser() {
         </div>
       )}
       <ContextMenu>
-        <ContextMenuTrigger asChild>
+        {/* The trigger is its own flex column around the scroll area rather
+            than rendering as it: ScrollContent does not forward a ref or
+            arbitrary props to its root. */}
+        <ContextMenuTrigger render={<div className='flex min-h-0 flex-1 flex-col' />}>
           <ScrollContent>
             {fm.loading ? (
               <div className='flex items-center justify-center py-12'>

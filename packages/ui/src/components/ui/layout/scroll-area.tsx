@@ -1,13 +1,24 @@
-import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area'
+import { ScrollArea as ScrollAreaPrimitive } from '@base-ui/react/scroll-area'
 
 import { cn } from 'ui/lib/utils'
 
-interface ScrollAreaProps extends React.ComponentProps<typeof ScrollAreaPrimitive.Root> {
+interface ScrollAreaProps extends Omit<ScrollAreaPrimitive.Root.Props, 'className'> {
+  className?: string
   innerClassName?: string
+  // Lands on the viewport -- the element that actually scrolls -- not on the
+  // root, so a host can read and drive `scrollTop` through it.
   ref?: React.Ref<HTMLDivElement>
   onScroll?: React.UIEventHandler<HTMLDivElement>
 }
 
+// The viewport holds exactly ONE wrapper, and it is this component's own: the
+// Base UI content part, drawn as a flex column and carrying `innerClassName`.
+// (Radix used to insert a `display: table` div of its own between the viewport
+// and this wrapper; Base UI inserts nothing, so there is no second layer to
+// force into shape any more.) A host that needs the content to fill the
+// viewport's height -- to bottom-anchor a short conversation, say -- passes
+// `innerClassName='min-h-full'`; the wrapper is also reachable as
+// `[data-slot=scroll-area-content]`.
 export function ScrollArea({ className, innerClassName, children, ref, onScroll, ...props }: ScrollAreaProps) {
   return (
     <ScrollAreaPrimitive.Root data-slot='scroll-area' className={cn('relative min-h-0', className)} {...props}>
@@ -17,7 +28,9 @@ export function ScrollArea({ className, innerClassName, children, ref, onScroll,
         data-slot='scroll-area-viewport'
         className='focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1'
       >
-        <div className={cn('flex flex-col', innerClassName)}>{children}</div>
+        <ScrollAreaPrimitive.Content data-slot='scroll-area-content' className={cn('flex flex-col', innerClassName)}>
+          {children}
+        </ScrollAreaPrimitive.Content>
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
       <ScrollAreaPrimitive.Corner />
@@ -37,10 +50,11 @@ export function ScrollBar({
   className,
   orientation = 'vertical',
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>) {
+}: Omit<ScrollAreaPrimitive.Scrollbar.Props, 'className'> & { className?: string }) {
   return (
-    <ScrollAreaPrimitive.ScrollAreaScrollbar
+    <ScrollAreaPrimitive.Scrollbar
       data-slot='scroll-area-scrollbar'
+      data-orientation={orientation}
       orientation={orientation}
       className={cn(
         'flex touch-none p-px transition-colors select-none',
@@ -50,10 +64,7 @@ export function ScrollBar({
       )}
       {...props}
     >
-      <ScrollAreaPrimitive.ScrollAreaThumb
-        data-slot='scroll-area-thumb'
-        className='relative flex-1 rounded-full bg-border'
-      />
-    </ScrollAreaPrimitive.ScrollAreaScrollbar>
+      <ScrollAreaPrimitive.Thumb data-slot='scroll-area-thumb' className='relative flex-1 rounded-full bg-border' />
+    </ScrollAreaPrimitive.Scrollbar>
   )
 }

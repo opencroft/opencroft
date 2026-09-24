@@ -2,17 +2,18 @@
 // in a real DOM.
 //
 // This is the composition that broke in the shipped build: `ChatListItem` hands `ListRow`
-// to `<ContextMenuTrigger asChild>`, Radix clones the child and injects
-// `onContextMenu` onto it, and a child that destructures a fixed prop list and
-// spreads nothing drops that handler on the floor. The trigger is then wired to
+// to the context-menu trigger as its `render` element, the trigger renders the
+// row in its place and merges `onContextMenu` onto it, and a child that
+// destructures a fixed prop list and spreads nothing drops that handler on the
+// floor. The trigger is then wired to
 // nothing and the menu never opens -- no error, no warning, and the row still
 // selects on click, so the row itself looks fine.
 //
 // Nothing that ran caught it and nothing that ran could have. Prop-by-prop
 // equality of the row's public surface is structurally blind here, because the
 // props ARE identical -- what changed is what they are attached to, an element
-// before the extraction and a component after it. `asChild` composition is not
-// expressible in the types, so typecheck has nothing to say. And the design-kit
+// before the extraction and a component after it. `render` composition is not
+// checked by the types (any element is accepted), so typecheck has nothing to say. And the design-kit
 // preview renders the row on its own, never inside a trigger, so the kit's own
 // validation does not exercise the composition at all.
 //
@@ -43,9 +44,13 @@ const dom = await installDomEnvironment()
 // from jsdom, so it is stubbed; the rest exist on the jsdom window and are
 // merely not copied onto `globalThis`, so they are bridged from it. Bridging
 // rather than using Node's own is the load-bearing part for the event
-// constructors: jsdom's `dispatchEvent` rejects an event built from Node's
-// global `CustomEvent` as "not of type Event", and Radix builds several while
-// the menu opens.
+// constructors and the abort signal: jsdom's `dispatchEvent` rejects an event
+// built from Node's global `CustomEvent` as "not of type Event", and its
+// `addEventListener` rejects a `signal` from Node's `AbortController` as "not of
+// type AbortSignal" -- and the Base UI trigger passes one of those while the
+// menu opens. The opening menu also schedules its transition in an animation
+// frame, which is why those two are bound to the window alongside
+// `getComputedStyle`.
 class FakeResizeObserver {
   observe() {}
   unobserve() {}
@@ -57,10 +62,21 @@ const globals = globalThis as unknown as Record<string, unknown>
 
 globals.ResizeObserver = FakeResizeObserver
 win.ResizeObserver = FakeResizeObserver
-for (const name of ['Event', 'CustomEvent', 'MouseEvent', 'KeyboardEvent', 'DOMRect', 'MutationObserver']) {
+for (const name of [
+  'Event',
+  'CustomEvent',
+  'MouseEvent',
+  'KeyboardEvent',
+  'DOMRect',
+  'MutationObserver',
+  'AbortController',
+  'AbortSignal',
+]) {
   globals[name] = win[name]
 }
-globals.getComputedStyle = (win.getComputedStyle as (...args: unknown[]) => unknown).bind(win)
+for (const name of ['getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame']) {
+  globals[name] = (win[name] as (...args: unknown[]) => unknown).bind(win)
+}
 
 const { act, createRef } = await import('react')
 const { createRoot } = await import('react-dom/client')
@@ -121,7 +137,7 @@ test('right-clicking a row inside a context-menu trigger opens the menu', async 
   }
 })
 
-test('a row puts the props and the ref an asChild trigger injects onto its own element', async () => {
+test('a row puts the props and the ref a render-prop trigger injects onto its own element', async () => {
   const ref = createRef<HTMLDivElement>()
   const injected: string[] = []
   const { unmount } = await mount(

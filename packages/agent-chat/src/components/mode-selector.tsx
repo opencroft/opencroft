@@ -116,23 +116,26 @@ export function ModeSelector({ options, current, onSelect, lockedReason, classNa
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild disabled={locked}>
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className={className ?? 'size-7 shrink-0'}
-          // Without this the composer loses focus the moment this is clicked.
-          onMouseDown={(e) => e.preventDefault()}
-          title={title}
-          aria-label={title}
-        >
-          {Icon ? (
-            <Icon className={`size-4 ${colour}`} />
-          ) : (
-            <span className='text-xs font-medium'>{labelOf(current).slice(0, 1).toUpperCase()}</span>
-          )}
-        </Button>
+      <DropdownMenuTrigger
+        disabled={locked}
+        render={
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className={className ?? 'size-7 shrink-0'}
+            // Without this the composer loses focus the moment this is clicked.
+            onMouseDown={(e) => e.preventDefault()}
+            title={title}
+            aria-label={title}
+          />
+        }
+      >
+        {Icon ? (
+          <Icon className={`size-4 ${colour}`} />
+        ) : (
+          <span className='text-xs font-medium'>{labelOf(current).slice(0, 1).toUpperCase()}</span>
+        )}
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
           upward from the start edge. */}
@@ -142,7 +145,7 @@ export function ModeSelector({ options, current, onSelect, lockedReason, classNa
           return (
             <DropdownMenuItem
               key={option}
-              onSelect={() => onSelect(option)}
+              onClick={() => onSelect(option)}
               className={option === current ? 'font-medium' : undefined}
             >
               {ItemIcon ? (

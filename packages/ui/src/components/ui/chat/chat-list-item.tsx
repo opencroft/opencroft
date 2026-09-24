@@ -43,10 +43,11 @@ interface ChatListItemProps {
   // placement is what lets a host take the menu's timing over, and for the tap
   // it owes the row in exchange.
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void
-  // Disables the context-menu trigger, which does two things at once: the menu
-  // stops opening by itself on a touch long-press, and -- the part that matters
-  // -- the primitive clears any timer it had already armed, in an effect keyed
-  // on this prop. A host running its own press uses that to take the menu's
+  // Disables the context menu: it stops opening by itself on right-click or a
+  // touch long-press, and its trigger declines to arm that long-press on
+  // `touchstart`. It does not clear a long-press already armed, so it has to be
+  // true before the touch starts -- set it from `onPointerDown` above. A host
+  // running its own press uses that to take the menu's
   // timing over: hold this true for the gesture, then release it at the moment
   // the menu should appear and dispatch a `contextmenu` once the render has
   // landed. Being a render rather than an event, it does not depend on which
@@ -107,13 +108,13 @@ export const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 // behaviour. Desktop is untouched: right-click opens the menu, native HTML5 DnD
 // drags the whole row.
 //
-// The menu's own trigger stays enabled on every pointer type, including touch:
-// the primitive anchors the menu to the point it captures while handling the
-// event, so disabling it leaves nothing to anchor to and the menu lands at the
-// viewport origin instead of the row. Its built-in touch long-press rides along
-// with that and cannot be switched off separately -- a host that wants the menu
-// on a schedule of its own suppresses the long-press by cancelling the
-// `pointerdown` before the trigger sees it, which is what `chat-list` does.
+// The primitive anchors the menu to the point it captures while handling the
+// `contextmenu` event, so a menu that is disabled when that event arrives has
+// nothing to anchor to. Its built-in touch long-press rides along with that and
+// cannot be switched off separately -- a host that wants the menu on a schedule
+// of its own disables it (`menuDisabled`) from the row's `pointerdown`, before
+// the `touchstart` that would arm the long-press, and enables it again just
+// before dispatching its own `contextmenu`. That is what `chat-list` does.
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.

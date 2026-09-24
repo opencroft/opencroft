@@ -310,7 +310,15 @@ export function SecretsStoreInspector({
             placeholder='32'
             className='h-7 text-xs w-16'
           />
-          <Select value={genFormat} onValueChange={(v: SecretFormat) => setGenFormat(v)}>
+          <Select
+            value={genFormat}
+            items={{ alphanumeric: 'Alphanumeric', symbols: 'With symbols' }}
+            onValueChange={(v) => {
+              if (v !== null) {
+                setGenFormat(v)
+              }
+            }}
+          >
             <SelectTrigger className='h-7 text-xs w-32'>
               <SelectValue />
             </SelectTrigger>

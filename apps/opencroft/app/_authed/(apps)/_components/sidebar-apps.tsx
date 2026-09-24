@@ -49,11 +49,12 @@ export function SidebarApps({ spaceSlug }: { spaceSlug: string }) {
         const label = instance.name || meta?.title || instance.appSlug
         return (
           <SidebarMenuSubItem key={instance.id}>
-            <SidebarMenuSubButton asChild isActive={pathname === `/space/${spaceSlug}/app/${instance.slug}`}>
-              <Link to='/space/$slug/app/$app' params={{ slug: spaceSlug, app: instance.slug }}>
-                <Icon />
-                <span>{label}</span>
-              </Link>
+            <SidebarMenuSubButton
+              render={<Link to='/space/$slug/app/$app' params={{ slug: spaceSlug, app: instance.slug }} />}
+              isActive={pathname === `/space/${spaceSlug}/app/${instance.slug}`}
+            >
+              <Icon />
+              <span>{label}</span>
             </SidebarMenuSubButton>
           </SidebarMenuSubItem>
         )

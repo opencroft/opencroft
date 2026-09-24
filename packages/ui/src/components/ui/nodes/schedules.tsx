@@ -585,7 +585,14 @@ function ScheduleEditor({
               onChange={(e) => set({ every: e.target.value === '' ? 1 : Number(e.target.value) })}
               className='h-7 w-14 text-[11px]'
             />
-            <Select value={editor.unit} onValueChange={(v) => set({ unit: v as ScheduleUnit })}>
+            <Select
+              value={editor.unit}
+              onValueChange={(v) => {
+                if (v !== null) {
+                  set({ unit: v as ScheduleUnit })
+                }
+              }}
+            >
               <SelectTrigger className='h-7 w-24 text-[11px]'>
                 <SelectValue />
               </SelectTrigger>
@@ -724,14 +731,16 @@ function RunHistoryRow({ entry }: { entry: RunHistoryEntry }) {
           <span className='ml-auto shrink-0 text-[11px] text-muted-foreground'>{entry.duration}</span>
         ) : null}
         {expandable ? (
-          <CollapsibleTrigger asChild>
-            <button
-              type='button'
-              aria-label='Show error detail'
-              className='inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground'
-            >
-              <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
-            </button>
+          <CollapsibleTrigger
+            render={
+              <button
+                type='button'
+                aria-label='Show error detail'
+                className='inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground'
+              />
+            }
+          >
+            <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
           </CollapsibleTrigger>
         ) : null}
       </div>

@@ -1,5 +1,16 @@
 "use client"
 
+// OpenCroft's sidebar: the shadcn base-vega sidebar plus what several sidebars
+// on one page need, which the stock component cannot do without editing it.
+// SidebarContext is private to the stock file, so the stock primitive cannot be
+// extended from outside; this is a separate component so the stock one stays
+// upstream and updatable.
+//
+// Differences from stock (keep this list true when re-basing on a newer stock):
+// - SidebarStateProvider: the state without the layout wrapper.
+// - storageKey: the cookie key, per instance.
+// - keyboardShortcut: per instance, null for none, matched on the physical key.
+
 import * as React from "react"
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
@@ -53,19 +64,47 @@ function useSidebar() {
   return context
 }
 
-function SidebarProvider({
-  defaultOpen = true,
-  open: openProp,
-  onOpenChange: setOpenProp,
-  className,
-  style,
-  children,
-  ...props
-}: React.ComponentProps<"div"> & {
+type SidebarStateProps = {
   defaultOpen?: boolean
   open?: boolean
   onOpenChange?: (open: boolean) => void
-}) {
+  /**
+   * Cookie key this sidebar remembers its state under. Defaults to the shared
+   * one, so a lone sidebar behaves exactly as the stock one.
+   *
+   * A second sidebar on the same page needs its own: two of them sharing one
+   * cookie means collapsing either overwrites what the other remembered.
+   */
+  storageKey?: string
+  /**
+   * Letter that toggles this sidebar when held with meta or control (e.g.
+   * `"b"`). Matched against the PHYSICAL key (`KeyboardEvent.code`), not the
+   * character a keypress produces, so it still fires on a non-English layout
+   * where that key types a different character. Pass `null` for no shortcut,
+   * so a second sidebar does not answer the same keystroke as the first.
+   */
+  keyboardShortcut?: string | null
+}
+
+/**
+ * A sidebar's state, with no markup of its own.
+ *
+ * `SidebarProvider` puts a full-width flex row around this for a page whose
+ * sidebar is the layout. A second sidebar joining a row that already exists
+ * needs the state and not the wrapper: another full-width flex container
+ * nested inside the row would change that layout rather than join it.
+ *
+ * Renders no tooltip provider either; menu-button tooltips expect one above
+ * them.
+ */
+function SidebarStateProvider({
+  defaultOpen = true,
+  open: openProp,
+  onOpenChange: setOpenProp,
+  storageKey = SIDEBAR_COOKIE_NAME,
+  keyboardShortcut = SIDEBAR_KEYBOARD_SHORTCUT,
+  children,
+}: SidebarStateProps & { children?: React.ReactNode }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
 
@@ -83,9 +122,9 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      document.cookie = `${storageKey}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
     },
-    [setOpenProp, open]
+    [setOpenProp, open, storageKey]
   )
 
   // Helper to toggle the sidebar.
@@ -93,13 +132,18 @@ function SidebarProvider({
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open)
   }, [isMobile, setOpen, setOpenMobile])
 
-  // Adds a keyboard shortcut to toggle the sidebar.
+  // Adds a keyboard shortcut to toggle the sidebar. `code`, not `key`: `key` is
+  // the character a keypress produces, which changes with the layout, so
+  // matching on it stops working the moment someone switches off a US layout.
+  // `code` names the physical key ("KeyB" is "KeyB" everywhere).
   React.useEffect(() => {
+    if (!keyboardShortcut) {
+      return
+    }
+    const code = `Key${keyboardShortcut.toUpperCase()}`
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey)
-      ) {
+      if (event.code === code && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         toggleSidebar()
       }
@@ -107,7 +151,7 @@ function SidebarProvider({
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [toggleSidebar])
+  }, [toggleSidebar, keyboardShortcut])
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.
@@ -126,8 +170,33 @@ function SidebarProvider({
     [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
   )
 
+  return <SidebarContext.Provider value={contextValue}>{children}</SidebarContext.Provider>
+}
+
+/**
+ * A sidebar together with the layout row it lives in: the state above, plus
+ * the full-width flex wrapper that the sidebar and the page content share.
+ * Where a row already exists, use `SidebarStateProvider` instead.
+ */
+function SidebarProvider({
+  defaultOpen,
+  open,
+  onOpenChange,
+  storageKey,
+  keyboardShortcut,
+  className,
+  style,
+  children,
+  ...props
+}: React.ComponentProps<"div"> & SidebarStateProps) {
   return (
-    <SidebarContext.Provider value={contextValue}>
+    <SidebarStateProvider
+      defaultOpen={defaultOpen}
+      open={open}
+      onOpenChange={onOpenChange}
+      storageKey={storageKey}
+      keyboardShortcut={keyboardShortcut}
+    >
       <div
         data-slot="sidebar-wrapper"
         style={
@@ -145,7 +214,7 @@ function SidebarProvider({
       >
         {children}
       </div>
-    </SidebarContext.Provider>
+    </SidebarStateProvider>
   )
 }
 
@@ -718,6 +787,7 @@ export {
   SidebarProvider,
   SidebarRail,
   SidebarSeparator,
+  SidebarStateProvider,
   SidebarTrigger,
   useSidebar,
 }

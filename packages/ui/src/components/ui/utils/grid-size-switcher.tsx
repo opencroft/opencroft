@@ -34,10 +34,8 @@ export function GridSizeSwitcher({ value, onChange, buttonSize = 'default', alig
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant='outline' size={buttonSize}>
-          <LayoutGrid className='h-4 w-4' />
-        </Button>
+      <PopoverTrigger render={<Button variant='outline' size={buttonSize} />}>
+        <LayoutGrid className='h-4 w-4' />
       </PopoverTrigger>
       <PopoverContent align={align} className='w-40 p-2'>
         <div className='flex flex-col gap-1'>

@@ -332,66 +332,68 @@ export function ContextRing({
 
   return (
     <Popover defaultOpen={defaultOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type='button'
-          aria-label={ariaLabel}
-          className={cn(
-            // A real target: it is pressable, so it says so on hover and takes
-            // focus visibly. Same footprint as before -- the disc sits inside
-            // the space the ring already occupied, so nothing around it moves.
-            'relative inline-flex size-7 items-center justify-center rounded-full outline-none transition-colors',
-            'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
-            // A last-known reading, not a live one. De-emphasis rather than a
-            // separate treatment, so it reads as the same control in a quieter
-            // state -- and it reverts the instant a live reading replaces it.
-            asOf ? 'opacity-60' : null,
-            className,
-          )}
-        >
-          {/* Decorative. The button already carries the reading as its
-              accessible name, so leaving the ring announceable would say the
-              same thing twice.
+      <PopoverTrigger
+        render={
+          <button
+            type='button'
+            aria-label={ariaLabel}
+            className={cn(
+              // A real target: it is pressable, so it says so on hover and takes
+              // focus visibly. Same footprint as before -- the disc sits inside
+              // the space the ring already occupied, so nothing around it moves.
+              'relative inline-flex size-7 items-center justify-center rounded-full outline-none transition-colors',
+              'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
+              // A last-known reading, not a live one. De-emphasis rather than a
+              // separate treatment, so it reads as the same control in a quieter
+              // state -- and it reverts the instant a live reading replaces it.
+              asOf ? 'opacity-60' : null,
+              className,
+            )}
+          />
+        }
+      >
+        {/* Decorative. The button already carries the reading as its
+            accessible name, so leaving the ring announceable would say the
+            same thing twice.
 
-              Spelled `aria-hidden='true'` rather than bare: the two are the
-              same attribute once React renders them, but the a11y lint only
-              recognises the explicit form and reads the bare one as no
-              annotation at all. */}
-          <svg aria-hidden='true' className='pointer-events-none absolute inset-0 size-7 -rotate-90' viewBox='0 0 24 24'>
-            <circle cx='12' cy='12' r={radius} fill='none' strokeWidth='2.5' style={{ stroke: 'var(--border)' }} />
-            <circle
-              cx='12'
-              cy='12'
-              r={radius}
-              fill='none'
-              strokeWidth='2.5'
-              strokeLinecap='round'
-              strokeDasharray={`${dash} ${circumference - dash}`}
-              style={{ stroke }}
-            />
-          </svg>
-          {/* The numeral follows the ring only into danger. Warning is an amber
-              token, and amber text at 10px is a contrast problem rather than a
-              signal -- the ring itself carries that state, where a 2.5px stroke
-              against the track has the contrast to spare. */}
-          {compacting ? (
-            // The ring's own loader, in place of the numerals -- reusing the
-            // spinner compaction already shows elsewhere rather than adding a
-            // second one. The fill keeps drawing the pre-compaction usage
-            // underneath it, so the ring itself never goes blank.
-            <Loader2 aria-hidden className='pointer-events-none relative size-3 animate-spin text-muted-foreground' />
-          ) : (
-            <span
-              className={cn(
-                'pointer-events-none relative tabular-nums',
-                state === 'danger' ? 'font-medium text-destructive' : 'text-muted-foreground',
-              )}
-              style={{ fontSize: 10 }}
-            >
-              {pct}
-            </span>
-          )}
-        </button>
+            Spelled `aria-hidden='true'` rather than bare: the two are the
+            same attribute once React renders them, but the a11y lint only
+            recognises the explicit form and reads the bare one as no
+            annotation at all. */}
+        <svg aria-hidden='true' className='pointer-events-none absolute inset-0 size-7 -rotate-90' viewBox='0 0 24 24'>
+          <circle cx='12' cy='12' r={radius} fill='none' strokeWidth='2.5' style={{ stroke: 'var(--border)' }} />
+          <circle
+            cx='12'
+            cy='12'
+            r={radius}
+            fill='none'
+            strokeWidth='2.5'
+            strokeLinecap='round'
+            strokeDasharray={`${dash} ${circumference - dash}`}
+            style={{ stroke }}
+          />
+        </svg>
+        {/* The numeral follows the ring only into danger. Warning is an amber
+            token, and amber text at 10px is a contrast problem rather than a
+            signal -- the ring itself carries that state, where a 2.5px stroke
+            against the track has the contrast to spare. */}
+        {compacting ? (
+          // The ring's own loader, in place of the numerals -- reusing the
+          // spinner compaction already shows elsewhere rather than adding a
+          // second one. The fill keeps drawing the pre-compaction usage
+          // underneath it, so the ring itself never goes blank.
+          <Loader2 aria-hidden className='pointer-events-none relative size-3 animate-spin text-muted-foreground' />
+        ) : (
+          <span
+            className={cn(
+              'pointer-events-none relative tabular-nums',
+              state === 'danger' ? 'font-medium text-destructive' : 'text-muted-foreground',
+            )}
+            style={{ fontSize: 10 }}
+          >
+            {pct}
+          </span>
+        )}
       </PopoverTrigger>
       <PopoverContent align='start' side='top' className='w-56 p-0'>
         <div className='flex flex-col gap-0.5 p-3'>

@@ -54,10 +54,8 @@ export function AddItemButton({ buttonText, placeholder, onAdd }: AddItemButtonP
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size='icon' title={buttonText} variant={'outline'}>
-          <Plus className='h-4 w-4' />
-        </Button>
+      <DialogTrigger render={<Button size='icon' title={buttonText} variant={'outline'} />}>
+        <Plus className='h-4 w-4' />
       </DialogTrigger>
       <DialogContent className='sm:max-w-2xl'>
         <DialogHeader>

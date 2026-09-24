@@ -69,7 +69,7 @@ async function mountInRow(): Promise<void> {
     root.render(
       createElement(
         SidebarProvider,
-        { storageKey: 'left_sidebar_state' },
+        null,
         createElement('div', { 'data-testid': 'page-content' }),
         createElement(RightSidebar, null),
       ),

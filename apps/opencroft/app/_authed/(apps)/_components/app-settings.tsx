@@ -246,8 +246,12 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
           </p>
           <Flex row withGaps className='w-full max-w-md'>
             <Select
-              value={transferTarget || undefined}
+              value={transferTarget || null}
+              items={spaces.filter((s) => s.slug !== spaceSlug).map((s) => ({ value: s.slug, label: s.name }))}
               onValueChange={(value) => {
+                if (value === null) {
+                  return
+                }
                 setTransferTarget(value)
                 setTransferError(undefined)
               }}

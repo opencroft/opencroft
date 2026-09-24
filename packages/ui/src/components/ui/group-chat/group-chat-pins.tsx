@@ -90,7 +90,7 @@ export function GroupChatPins({
 
   return (
     <Collapsible
-      // Uncontrolled unless the host passes `open`: Radix holds the state
+      // Uncontrolled unless the host passes `open`: Base UI holds the state
       // either way, so there is no second copy of it here to drift.
       defaultOpen={defaultOpen}
       open={open}
@@ -106,7 +106,7 @@ export function GroupChatPins({
             <Pin className='size-3.5 shrink-0' aria-hidden='true' />
             <span className='truncate'>{summary}</span>
             <ChevronRight
-              className='size-3.5 shrink-0 transition-transform group-data-[state=open]/pins:rotate-90'
+              className='size-3.5 shrink-0 transition-transform group-data-open/pins:rotate-90'
               aria-hidden='true'
             />
           </CollapsibleTrigger>

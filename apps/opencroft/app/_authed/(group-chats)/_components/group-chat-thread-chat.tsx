@@ -479,20 +479,22 @@ export function GroupChatThreadChat({
     return <>{renderFrame({ conversation, composer, work })}</>
   }
   // The default (embedded) frame: the same scroll-and-pin arrangement the
-  // kit's thread framing keeps, minus its chrome. The scroll-area selector
-  // forces Radix's internal viewport wrapper into a filling flex column —
-  // without it a short conversation top-anchors and the sticky composer has
-  // nothing to pin against; see the kit framing's own note on this exact
-  // selector.
+  // kit's thread framing keeps, minus its chrome. The scroll area's viewport
+  // renders its children directly, so the wrapper inside it is the filling
+  // flex column — without it a short conversation top-anchors and the sticky
+  // composer has nothing to pin against; see the kit framing's own note on
+  // this arrangement.
   return (
     <div className='flex h-full min-h-0 flex-col'>
-      <ScrollArea className='min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!flex [&_[data-radix-scroll-area-viewport]>div]:!flex-col [&_[data-radix-scroll-area-viewport]>div]:!min-h-full'>
-        <Flex expanded justify='end'>
-          {conversation}
-        </Flex>
-        <StickySection side='bottom' fade>
-          <CommandBarFrame>{composer}</CommandBarFrame>
-        </StickySection>
+      <ScrollArea className='min-h-0 flex-1'>
+        <div className='flex min-h-full flex-col'>
+          <Flex expanded justify='end'>
+            {conversation}
+          </Flex>
+          <StickySection side='bottom' fade>
+            <CommandBarFrame>{composer}</CommandBarFrame>
+          </StickySection>
+        </div>
       </ScrollArea>
     </div>
   )

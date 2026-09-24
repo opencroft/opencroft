@@ -61,8 +61,9 @@ export const SelectionBadge = forwardRef<HTMLQuoteElement, SelectionBadgeProps>(
       ref={ref}
       // Spread first, this component's own presentation after. A composer slot
       // is exactly the sort of place something gets wrapped in a tooltip or a
-      // menu trigger later, and an `asChild` parent renders no element of its
-      // own -- it clones this one and injects its handlers and its ref onto it.
+      // menu trigger later, and a parent that takes this as its `render` element
+      // draws no element of its own -- it renders this one and merges its
+      // handlers and its ref onto it.
       // A component that destructured a fixed prop list and spread nothing
       // would drop them on the floor: no error, no warning, a trigger wired to
       // nothing. This declares no handler of its own at this level, so there is

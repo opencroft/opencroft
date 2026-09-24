@@ -30,7 +30,15 @@ export function SshKeySelector({ value, onChange }: SshKeySelectorProps) {
   }
 
   return (
-    <Select value={value || '__none'} onValueChange={(v) => onChange(v === '__none' ? '' : v)}>
+    <Select
+      value={value || '__none'}
+      items={[{ value: '__none', label: 'No key' }, ...keys.map((k) => ({ value: k.path, label: k.name }))]}
+      onValueChange={(v) => {
+        if (v !== null) {
+          onChange(v === '__none' ? '' : v)
+        }
+      }}
+    >
       <SelectTrigger>
         <SelectValue placeholder='No key' />
       </SelectTrigger>

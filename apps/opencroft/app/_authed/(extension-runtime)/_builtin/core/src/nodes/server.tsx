@@ -88,7 +88,18 @@ function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v:
   }
 
   return (
-    <Select value={value || '__none'} onValueChange={(v) => onChange(v === '__none' ? '' : v)}>
+    <Select
+      value={value || '__none'}
+      items={[
+        { value: '__none', label: 'No key' },
+        ...keys.map((k) => ({ value: k.ref, label: `${k.name} (${k.type})` })),
+      ]}
+      onValueChange={(v) => {
+        if (v !== null) {
+          onChange(v === '__none' ? '' : v)
+        }
+      }}
+    >
       <SelectTrigger className='h-7 text-xs'>
         <SelectValue placeholder='No key' />
       </SelectTrigger>

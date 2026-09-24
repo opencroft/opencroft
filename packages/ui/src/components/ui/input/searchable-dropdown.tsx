@@ -72,17 +72,19 @@ export function SearchableDropdown({
       {label && <Label>{label}</Label>}
       <Popover open={open} onOpenChange={setOpen}>
         <div className='relative'>
-          <PopoverTrigger asChild>
-            <Button
-              variant='outline'
-              role='combobox'
-              aria-expanded={open}
-              aria-label='Select option'
-              className={cn('w-full justify-between pr-10', !value && 'text-muted-foreground')}
-            >
-              {value || placeholder}
-              <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
-            </Button>
+          <PopoverTrigger
+            render={
+              <Button
+                variant='outline'
+                role='combobox'
+                aria-expanded={open}
+                aria-label='Select option'
+                className={cn('w-full justify-between pr-10', !value && 'text-muted-foreground')}
+              />
+            }
+          >
+            {value || placeholder}
+            <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
           </PopoverTrigger>
           {value && (
             <button

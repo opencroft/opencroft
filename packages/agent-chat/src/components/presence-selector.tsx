@@ -137,19 +137,21 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
 
   return (
     <Popover open={open} onOpenChange={openChange}>
-      <PopoverTrigger asChild>
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className={className ?? 'size-7 shrink-0'}
-          // Without this the composer loses focus the moment this is clicked.
-          onMouseDown={(e) => e.preventDefault()}
-          title={title}
-          aria-label={title}
-        >
-          <Activity className={`size-4 ${PRESENCE_COLOR[presence.kind]}`} />
-        </Button>
+      <PopoverTrigger
+        render={
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className={className ?? 'size-7 shrink-0'}
+            // Without this the composer loses focus the moment this is clicked.
+            onMouseDown={(e) => e.preventDefault()}
+            title={title}
+            aria-label={title}
+          />
+        }
+      >
+        <Activity className={`size-4 ${PRESENCE_COLOR[presence.kind]}`} />
       </PopoverTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its overlays
           open upward from the start edge. */}

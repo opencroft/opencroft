@@ -72,20 +72,21 @@ function SpaceSettingsPage() {
               {SECTIONS.map((entry) => (
                 <Button
                   key={entry.id}
-                  asChild
+                  // The whole search is replaced: switching sections drops
+                  // the other section's state (the Apps tab), and the
+                  // default section is carried as no param at all.
+                  render={
+                    <Link
+                      to='/space/$slug/settings'
+                      params={{ slug: space.slug }}
+                      search={entry.id === 'general' ? {} : { section: entry.id }}
+                    />
+                  }
+                  nativeButton={false}
                   variant='ghost'
                   className={cn('w-full justify-start', section === entry.id && 'bg-muted font-medium')}
                 >
-                  {/* The whole search is replaced: switching sections drops
-                      the other section's state (the Apps tab), and the
-                      default section is carried as no param at all. */}
-                  <Link
-                    to='/space/$slug/settings'
-                    params={{ slug: space.slug }}
-                    search={entry.id === 'general' ? {} : { section: entry.id }}
-                  >
-                    {entry.label}
-                  </Link>
+                  {entry.label}
                 </Button>
               ))}
             </Flex>

@@ -60,8 +60,34 @@ export function TerminalSelector({
 
   return (
     <Select
-      value={value || (allowNone ? NONE : undefined)}
-      onValueChange={(next) => onChange(next === NONE ? '' : next)}
+      value={value || (allowNone ? NONE : null)}
+      // The trigger shows the chosen row's label, not its raw target: the
+      // same labels the rows below render.
+      items={[
+        ...(allowNone ? [{ value: NONE, label: 'None' }] : []),
+        ...(!known && value
+          ? [
+              {
+                value,
+                label: (
+                  <>
+                    <TerminalRef target={value} />
+                    {loading ? null : ' (unavailable)'}
+                  </>
+                ),
+              },
+            ]
+          : []),
+        ...options.map((option) => ({
+          value: option.target,
+          label: spaceSlug ? option.title : `${option.title} · ${option.spaceSlug}`,
+        })),
+      ]}
+      onValueChange={(next) => {
+        if (next !== null) {
+          onChange(next === NONE ? '' : next)
+        }
+      }}
       disabled={disabled}
     >
       <SelectTrigger aria-busy={loading}>

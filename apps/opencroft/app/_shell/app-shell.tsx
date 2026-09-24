@@ -57,11 +57,13 @@ function AppSidebar({ spaces }: { spaces: SpaceSummary[] }) {
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton asChild tooltip='Chats' isActive={pathname.startsWith('/group-chats')}>
-                <Link to='/group-chats'>
-                  <MessagesSquare />
-                  <span>Chats</span>
-                </Link>
+              <SidebarMenuButton
+                render={<Link to='/group-chats' />}
+                tooltip='Chats'
+                isActive={pathname.startsWith('/group-chats')}
+              >
+                <MessagesSquare />
+                <span>Chats</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -70,21 +72,25 @@ function AppSidebar({ spaces }: { spaces: SpaceSummary[] }) {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild tooltip='Extensions' isActive={pathname.startsWith('/extensions')}>
-              <Link to='/extensions'>
-                <Puzzle />
-                <span>Extensions</span>
-              </Link>
+            <SidebarMenuButton
+              render={<Link to='/extensions' />}
+              tooltip='Extensions'
+              isActive={pathname.startsWith('/extensions')}
+            >
+              <Puzzle />
+              <span>Extensions</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild tooltip='Settings' isActive={pathname.startsWith('/settings')}>
-              <Link to='/settings'>
-                <SettingsIcon />
-                <span>Settings</span>
-              </Link>
+            <SidebarMenuButton
+              render={<Link to='/settings' />}
+              tooltip='Settings'
+              isActive={pathname.startsWith('/settings')}
+            >
+              <SettingsIcon />
+              <span>Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

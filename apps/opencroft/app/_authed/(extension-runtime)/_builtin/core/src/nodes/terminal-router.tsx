@@ -192,7 +192,15 @@ export function TerminalRouterTerminalTab({ nodeId, data }: { nodeId: string; da
   return (
     <div className='flex h-full min-h-0 flex-col gap-2'>
       {routes.length > 1 ? (
-        <Select value={route.id} onValueChange={(next: string) => inspectorIntent.setInstance(nodeId, next)}>
+        <Select
+          value={route.id}
+          items={routes.map((r) => ({ value: r.id, label: <TerminalRef target={r.target} /> }))}
+          onValueChange={(next) => {
+            if (next !== null) {
+              inspectorIntent.setInstance(nodeId, next)
+            }
+          }}
+        >
           <SelectTrigger size='sm' className='w-full'>
             <SelectValue />
           </SelectTrigger>

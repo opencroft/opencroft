@@ -109,7 +109,15 @@ export function useAssistant(assistantId?: string): OpenAIAssistantData | null {
 export function AssistantSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const list = useAssistantsList()
   return (
-    <Select value={value || '__none'} onValueChange={(v: string) => onChange(v === '__none' ? '' : v)}>
+    <Select
+      value={value || '__none'}
+      items={[{ value: '__none', label: 'No assistant' }, ...list.map((a) => ({ value: a.id, label: a.data.name || a.id }))]}
+      onValueChange={(v) => {
+        if (v !== null) {
+          onChange(v === '__none' ? '' : v)
+        }
+      }}
+    >
       <SelectTrigger>
         <SelectValue placeholder='No assistant' />
       </SelectTrigger>

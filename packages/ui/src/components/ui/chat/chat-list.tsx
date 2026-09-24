@@ -303,14 +303,15 @@ function dragPayload(p: Press): Drag {
 // primitive captures the point it anchors the menu to while handling that
 // event -- disabling it (tried once) took the anchor away with the timing and
 // the menu opened at the viewport origin. What it does NOT get to keep is its
-// own touch long-press, which runs on a fixed ~700ms of its own, ahead of
-// ours: while the row is being driven by touch its trigger is `disabled`,
-// which both stops that long-press and clears any timer already armed, in an
-// effect the primitive keys on that prop. At our delay the trigger is enabled
+// own touch long-press, which runs on a fixed 500ms of its own, armed on
+// `touchstart`: while the row is being driven by touch its menu is `disabled`
+// (set from `pointerdown`, which lands before that `touchstart`), and a disabled
+// menu declines to arm the long-press at all. At our delay the menu is enabled
 // again and the `contextmenu` is dispatched from an effect, once that render
-// has been committed and it is listening. (Left alone it is unreliable rather than harmful -- the
-// primitive clears it on ANY pointermove, with no tolerance, so a finger's
-// jitter usually destroys it. Usually is not a guarantee.) Cancelling
+// has been committed and it is listening. (Base UI does NOT clear a long-press
+// timer already armed when `disabled` flips on, and cancels one only on a move
+// past 10px, so it is setting the flag before the touch starts that keeps it
+// out -- not tearing it down afterwards.) Cancelling
 // `pointerdown` also suppresses the click the browser would synthesise from a
 // tap, so the press owns selection: a release that never dragged and never
 // reached the menu timer selects the chat, or toggles the folder, from `end`.
@@ -340,8 +341,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   // told apart from one the primitive raised by itself. See `handleMenuOpen`.
   const ownMenuDispatchRef = useRef(false)
   // True once the row is being driven by touch or pen. While it is, the menu
-  // trigger is disabled, which both stops its own long-press and clears any
-  // timer it had already armed.
+  // is disabled, so its trigger never arms its own long-press on `touchstart`.
   const [touchInput, setTouchInput] = useState(false)
   // The row whose menu should open, and where. Setting it re-enables that row's
   // trigger; the effect below dispatches the `contextmenu` once that render has
@@ -465,13 +465,9 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   }
 
   // Stops the context-menu trigger arming its own touch long-press, so the menu
-  // stays on our schedule instead of the primitive's fixed one.
-  //
-  // This has to be handed to the element the trigger is attached to -- the row
-  // itself, and the folder header's toggle -- not to an ancestor. The trigger
-  // composes its own handler behind a `defaultPrevented` check and runs the
-  // element's handler first, so cancelling here lands before that check on the
-  // same event; anything further up is a separate listener and does not.
+  // stays on our schedule instead of the primitive's fixed one: noting touch
+  // input here disables the menu, and `pointerdown` lands before the
+  // `touchstart` on which the trigger would arm that long-press.
   //
   // Which input the row is being used with right now, taken from the event
   // rather than from a `(pointer: coarse)` media query -- that query describes
@@ -567,7 +563,8 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   // point it anchors the menu to -- disabling the trigger (tried once) removed
   // that capture along with the timing, and the menu opened at the viewport
   // origin instead of the row. Dispatching keeps the capture and leaves us the
-  // timing, since the trigger's own long-press is suppressed at `pointerdown`.
+  // timing, since the trigger's own long-press is kept out by the menu being
+  // disabled from `pointerdown` until we arm it.
   const openRowMenuAt = (x: number, y: number) => {
     if (typeof document === 'undefined') return
     const el = document.elementFromPoint(x, y) as HTMLElement | null

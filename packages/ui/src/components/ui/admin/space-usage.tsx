@@ -503,15 +503,13 @@ export function SpaceUsage({
           />
           {period.kind === 'custom' ? (
             <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-              <PopoverTrigger asChild>
-                <Button type='button' variant='outline' size='sm' className='gap-1.5 font-normal'>
-                  <CalendarIcon aria-hidden='true' className='size-3.5' />
-                  {period.from && period.to
-                    ? `${formatDay(period.from)} – ${formatDay(period.to)}`
-                    : period.from
-                      ? `${formatDay(period.from)} – …`
-                      : 'Pick dates'}
-                </Button>
+              <PopoverTrigger render={<Button type='button' variant='outline' size='sm' className='gap-1.5 font-normal' />}>
+                <CalendarIcon aria-hidden='true' className='size-3.5' />
+                {period.from && period.to
+                  ? `${formatDay(period.from)} – ${formatDay(period.to)}`
+                  : period.from
+                    ? `${formatDay(period.from)} – …`
+                    : 'Pick dates'}
               </PopoverTrigger>
               <PopoverContent align='start' className='w-auto p-0'>
                 {/* Opens on the data's own month rather than the calendar's

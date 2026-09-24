@@ -39,14 +39,11 @@ export function ChatArea({ children, className }: ChatAreaProps) {
         // its whole purpose, so being sized BY its content is a contradiction —
         // it grows instead of scrolling.
         'flex-1 min-w-0',
-        '[&_[data-radix-scroll-area-viewport]>div]:!flex',
-        '[&_[data-radix-scroll-area-viewport]>div]:!flex-col',
-        '[&_[data-radix-scroll-area-viewport]>div]:!min-h-full',
         // Safari pushes scrollTop *beyond its valid range* while rubber-banding,
         // and the restore reads scrollTop — so `none` rather than `contain`,
         // which would stop chaining but leave the out-of-range reads. Also keeps
         // the top of the list from scrolling the page behind it.
-        '[&_[data-radix-scroll-area-viewport]]:[overscroll-behavior:none]',
+        '[&_[data-slot=scroll-area-viewport]]:[overscroll-behavior:none]',
         // Own the scroll correction outright. Chrome and Firefox implement CSS
         // scroll anchoring and shift scrollTop themselves when content is
         // inserted above the anchor node — on top of the shift we apply, which
@@ -67,11 +64,14 @@ export function ChatArea({ children, className }: ChatAreaProps) {
         // Also forward cover: Safari has announced anchoring for 27, which
         // would otherwise change this component's behaviour without us touching
         // it.
-        '[&_[data-radix-scroll-area-viewport]]:[overflow-anchor:none]',
+        '[&_[data-slot=scroll-area-viewport]]:[overflow-anchor:none]',
         className,
       )}
     >
-      {children}
+      {/* The viewport renders its children directly, so the filling flex
+          column the content lays out in is this wrapper: a short list still
+          spans the whole height, and the sticky bars have it to pin against. */}
+      <div className='flex min-h-full flex-col'>{children}</div>
     </ScrollArea>
   )
 }

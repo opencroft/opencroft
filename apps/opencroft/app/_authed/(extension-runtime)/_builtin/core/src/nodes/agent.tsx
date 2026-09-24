@@ -305,7 +305,14 @@ function LocalProfileFields({
             </Button>
           ) : null}
         </div>
-        <Select value={data.model || ''} onValueChange={(v: string) => updateData({ model: v })}>
+        <Select
+          value={data.model || ''}
+          onValueChange={(v) => {
+            if (v !== null) {
+              updateData({ model: v })
+            }
+          }}
+        >
           <SelectTrigger className='h-8 text-xs'>
             <SelectValue placeholder='Select model…' />
           </SelectTrigger>
@@ -325,7 +332,12 @@ function LocalProfileFields({
           <Label className='text-xs'>API key secret</Label>
           <Select
             value={data.apiKeySecret || NO_SECRET}
-            onValueChange={(v: string) => updateData({ apiKeySecret: v === NO_SECRET ? '' : v })}
+            items={{ [NO_SECRET]: 'None' }}
+            onValueChange={(v) => {
+              if (v !== null) {
+                updateData({ apiKeySecret: v === NO_SECRET ? '' : v })
+              }
+            }}
           >
             <SelectTrigger className='h-8 text-xs'>
               <SelectValue placeholder='None' />
@@ -351,7 +363,12 @@ function LocalProfileFields({
           <Label className='text-xs'>Reasoning effort</Label>
           <Select
             value={data.reasoningEffort || NO_REASONING}
-            onValueChange={(v: string) => updateData({ reasoningEffort: v === NO_REASONING ? '' : v })}
+            items={{ [NO_REASONING]: 'Default' }}
+            onValueChange={(v) => {
+              if (v !== null) {
+                updateData({ reasoningEffort: v === NO_REASONING ? '' : v })
+              }
+            }}
           >
             <SelectTrigger className='h-8 text-xs'>
               <SelectValue />
@@ -665,7 +682,15 @@ function ProfileSelect({
   return (
     <div className='flex flex-col gap-1'>
       <Label className='text-xs'>{label}</Label>
-      <Select value={value || ''} onValueChange={onChange}>
+      <Select
+        value={value || ''}
+        items={options}
+        onValueChange={(v) => {
+          if (v !== null) {
+            onChange(v)
+          }
+        }}
+      >
         <SelectTrigger className='h-8 text-xs'>
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>

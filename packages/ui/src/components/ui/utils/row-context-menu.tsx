@@ -1,6 +1,6 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { isValidElement, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
 
 import {
@@ -22,8 +22,12 @@ export interface RowMenuEntry {
 }
 
 export interface RowContextMenuProps {
-  // The row. It becomes the trigger, so it keeps its own click, keyboard and
-  // drag behaviour -- this adds a menu to a row rather than wrapping it in one.
+  // The row. It becomes the trigger -- handed to the trigger's `render`, so the
+  // trigger draws no element of its own and merges its handlers and ref onto
+  // the row's -- and it keeps its own click, keyboard and drag behaviour: this
+  // adds a menu to a row rather than wrapping it in one. The row therefore has
+  // to spread the props it is given and forward its ref (ListRow does). Anything
+  // that is not a single element is wrapped in the trigger's own `<div>`.
   children: ReactNode
   entries?: RowMenuEntry[]
   // The canonical destructive Delete, always last. Given as its own prop rather
@@ -32,9 +36,12 @@ export interface RowContextMenuProps {
   // reason this component exists. The kit never confirms: what is being
   // destroyed, and whether that is worth a dialog, is the host's knowledge.
   onDelete?: () => void
-  // Locks the trigger. The primitive also clears any touch long-press timer it
-  // had already armed, in an effect keyed on this -- which is how a host that
-  // runs its own press gesture takes the menu's timing over.
+  // Locks the menu (Base UI takes `disabled` on the context-menu root, not the
+  // trigger). While it is set the trigger ignores `contextmenu` and declines to
+  // arm its touch long-press on `touchstart` -- which is how a host that runs its
+  // own press gesture takes the menu's timing over. It does NOT clear a
+  // long-press timer already armed before it was set, so a host has to set it
+  // before the touch starts (a `pointerdown` on the row is early enough).
   disabled?: boolean
   // A notification, not a handle. The context-menu primitive owns its open
   // state and takes no controlled `open`: it opens from a `contextmenu` event
@@ -64,10 +71,12 @@ export function RowContextMenu({ children, entries, onDelete, disabled = false, 
   }
 
   return (
-    <ContextMenu onOpenChange={onOpenChange}>
-      <ContextMenuTrigger asChild disabled={disabled}>
-        {children}
-      </ContextMenuTrigger>
+    <ContextMenu onOpenChange={onOpenChange} disabled={disabled}>
+      {isValidElement(children) ? (
+        <ContextMenuTrigger render={children} />
+      ) : (
+        <ContextMenuTrigger>{children}</ContextMenuTrigger>
+      )}
       {/* `min-w-32` is the scale utility for 8rem -- the identical width the
           three copies spelled as an arbitrary `min-w-[8rem]`. A scale class is
           a literal, so it always renders; an arbitrary one renders only where

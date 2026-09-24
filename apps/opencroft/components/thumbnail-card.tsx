@@ -25,20 +25,22 @@ export const ThumbnailCard = React.memo(function ThumbnailCard({
 }: ThumbnailCardProps) {
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className={`relative bg-muted rounded-lg overflow-hidden cursor-pointer transition-all aspect-[2/3] ${isSelected ? 'ring-4 ring-primary' : 'hover:shadow-lg'}`}
-          onClick={onClick}
-        >
-          <img
-            src={`${imageSrc}?t=${imageKey || 0}`}
-            alt={`${name} thumbnail`}
-            className='object-cover'
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+      <ContextMenuTrigger
+        render={
+          <div
+            className={`relative bg-muted rounded-lg overflow-hidden cursor-pointer transition-all aspect-[2/3] ${isSelected ? 'ring-4 ring-primary' : 'hover:shadow-lg'}`}
+            onClick={onClick}
           />
-          <div className='absolute bottom-0 left-0 right-0 bg-background/50 text-foreground p-2 text-shadow-xs text-shadow-accent'>
-            <div className='text-sm font-medium truncate'>{name}</div>
-          </div>
+        }
+      >
+        <img
+          src={`${imageSrc}?t=${imageKey || 0}`}
+          alt={`${name} thumbnail`}
+          className='object-cover'
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+        <div className='absolute bottom-0 left-0 right-0 bg-background/50 text-foreground p-2 text-shadow-xs text-shadow-accent'>
+          <div className='text-sm font-medium truncate'>{name}</div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>

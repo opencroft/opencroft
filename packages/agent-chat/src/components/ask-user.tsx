@@ -399,11 +399,10 @@ export function AskUrl({ message, url, onDone, onCancel }: AskUrlProps) {
         <span className='min-w-0 flex-1 whitespace-pre-wrap wrap-break-word'>{message}</span>
       </div>
       <div className='flex items-center gap-2'>
-        <Button size='sm' asChild>
-          <a href={url} target='_blank' rel='noreferrer noopener'>
-            <ExternalLink className='size-3.5' />
-            Open
-          </a>
+        {/* biome-ignore lint/a11y/useAnchorContent: the anchor is the element the Button renders AS -- its content is the Button's children below, which Base UI's render merges into it */}
+        <Button size='sm' render={<a href={url} target='_blank' rel='noreferrer noopener' />} nativeButton={false}>
+          <ExternalLink className='size-3.5' />
+          Open
         </Button>
         <Button size='sm' variant='outline' onClick={onDone}>
           Done

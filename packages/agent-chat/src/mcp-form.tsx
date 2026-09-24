@@ -70,7 +70,14 @@ export function McpServerForm({
           <FieldLabel>Transport</FieldLabel>
           <Select
             value={config.transport}
-            onValueChange={(value) => onConfigChange({ transport: value as McpTransport })}
+            // Base UI reports a cleared selection as `null`; the three transports
+            // below are the only values on offer, so ignore it rather than
+            // casting null into a transport.
+            onValueChange={(value) => {
+              if (value !== null) {
+                onConfigChange({ transport: value as McpTransport })
+              }
+            }}
           >
             <SelectTrigger className='w-full'>
               <SelectValue />

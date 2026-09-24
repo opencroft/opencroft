@@ -80,7 +80,16 @@ export function ConfigOptionsBar({ options, onSetOption, usage, lockedOptions, c
             key={option.id}
             value={option.currentValue}
             disabled={Boolean(lockedOptions?.[option.id])}
-            onValueChange={(value) => onSetOption(option.id, value)}
+            // The trigger shows an entry's name, not its raw value.
+            items={flattenSelectOptions(option.options).map((entry) => ({ value: entry.value, label: entry.name }))}
+            // Base UI reports a cleared selection as `null`, which a fixed list
+            // of advertised values never produces -- ignore it rather than
+            // sending an empty value back to the agent.
+            onValueChange={(value) => {
+              if (value !== null) {
+                onSetOption(option.id, value)
+              }
+            }}
           >
             <SelectTrigger size='sm' title={lockedOptions?.[option.id] ?? option.description ?? option.name}>
               <SelectValue placeholder={option.name} />

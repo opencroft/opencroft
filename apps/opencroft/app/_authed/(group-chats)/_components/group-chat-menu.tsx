@@ -134,16 +134,18 @@ export function GroupChatMenu({ groupChatId, members, directory, agents }: Props
         }
       }}
     >
-      <PopoverTrigger asChild>
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          aria-label={`Chat menu — members (${members.length})`}
-          title='Members'
-        >
-          <EllipsisVertical />
-        </Button>
+      <PopoverTrigger
+        render={
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon-sm'
+            aria-label={`Chat menu — members (${members.length})`}
+            title='Members'
+          />
+        }
+      >
+        <EllipsisVertical />
       </PopoverTrigger>
       {/* The same dress the space selector's and the chat selector's menus
           wear: a Command with its search on a divider and flat rows, no inset

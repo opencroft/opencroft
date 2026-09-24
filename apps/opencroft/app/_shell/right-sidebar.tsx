@@ -1,7 +1,7 @@
 'use client'
 
 import { type ComponentType, useState } from 'react'
-import { Sidebar, SidebarContent, SidebarStateProvider } from 'ui/components/ui/sidebar'
+import { Sidebar, SidebarContent, SidebarStateProvider } from 'ui/components/ui/layout/app-sidebar'
 import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
 
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'

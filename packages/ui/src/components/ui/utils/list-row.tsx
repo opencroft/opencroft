@@ -5,12 +5,13 @@ import type { ComponentPropsWithRef, PointerEvent as ReactPointerEvent, ReactNod
 import { cn } from 'ui/lib/utils'
 
 // Everything a plain `<div>` takes, on top of the row's own props. That is not
-// convenience. This row gets handed to `asChild` triggers -- a context menu
-// today, a tooltip or a dropdown as easily -- and such a trigger renders no
-// element of its own: it clones its child and injects onto it the handlers and
-// the ref its behaviour depends on. A child that names a fixed set of props and
-// spreads nothing drops them, and the trigger is then wired to nothing. No
-// error, no warning, and the menu simply never opens.
+// convenience. This row gets handed to Base UI triggers as their `render`
+// element -- a context menu today, a tooltip or a dropdown as easily -- and such
+// a trigger renders no element of its own: it clones the element it is given
+// and merges onto it the handlers and the ref its behaviour depends on. A row
+// that names a fixed set of props and spreads nothing drops them, and the
+// trigger is then wired to nothing. No error, no warning, and the menu simply
+// never opens.
 //
 // `title`, `children` and `onSelect` are dropped from the inherited set: a div
 // names all three as well, with different meanings, and inheriting them would
@@ -43,20 +44,25 @@ export interface ListRowProps extends Omit<ComponentPropsWithRef<'div'>, 'title'
   disabled?: boolean
   onSelect?: () => void
   // Lands on the row element itself, which is also the element a wrapping
-  // context-menu trigger attaches to. That placement is the point: the trigger
-  // arms its own touch long-press behind a `defaultPrevented` check and runs
-  // this handler first, so a host that cancels the event here suppresses that
-  // long-press and keeps the menu on its own schedule. Nothing else reaches the
-  // trigger in time -- an ancestor does not.
+  // context-menu trigger attaches to. `pointerdown` fires before the
+  // `touchstart` on which the Base UI context-menu trigger arms its touch
+  // long-press, so this is where a host learns in time what input is driving
+  // the row -- early enough to disable the menu (row-context-menu's `disabled`)
+  // before that long-press is armed, and keep the menu on its own schedule.
+  // (Unlike Radix, the trigger does not skip its handler on `defaultPrevented`;
+  // cancelling this event does not stop the long-press. A handler that must
+  // stop a trigger's own handler calls `event.preventBaseUIHandler()` on the
+  // same event the trigger listens to.)
   //
   // Cancelling `pointerdown` also suppresses the click the browser would
-  // synthesise from a tap, so a host that uses this owes the row its tap: it
+  // synthesise from a tap, so a host that cancels it owes the row its tap: it
   // has to act on selection itself. That is why this is passed in rather than
   // done here -- whatever takes the click away answers for it.
   //
-  // Named rather than left to the spread below because a trigger injects one of
-  // these too, and the two have to compose in this order. A trigger's `asChild`
-  // merge already does that composing before this component is called.
+  // Named rather than left to the spread below because a trigger may inject one
+  // of these too, and the two have to compose. The trigger's `render` merge
+  // (Base UI `mergeProps`) already does that composing -- the row's own handler
+  // first, the trigger's after -- before this component is called.
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void
   className?: string
 }
@@ -75,7 +81,7 @@ export interface ListRowProps extends Omit<ComponentPropsWithRef<'div'>, 'title'
 // two lists had simply never made it.
 //
 // It renders one real element and puts everything it is given on it. A row that
-// is the child of an `asChild` trigger IS that trigger; anything it fails to
+// is the `render` element of a trigger IS that trigger; anything it fails to
 // forward is a piece of the trigger's behaviour that silently does not exist.
 //
 // This is the TOP-LEVEL row. A row nested inside one -- smaller type, tighter
@@ -104,8 +110,9 @@ export function ListRow({
       // the role, the touch handling and the active treatment are this
       // component's to decide, not a caller's. What this spread carries is
       // everything a wrapping trigger injects that this file does not name --
-      // `onContextMenu`, the pointer handlers behind a touch long press,
-      // `data-state` -- and that is the whole reason it is here.
+      // `onContextMenu`, the touch handlers behind a long press, the trigger's
+      // state attributes (`data-popup-open` and the like) -- and that is the
+      // whole reason it is here.
       {...rest}
       ref={ref}
       role='button'

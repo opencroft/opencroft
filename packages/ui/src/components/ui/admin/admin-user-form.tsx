@@ -117,7 +117,14 @@ export function AdminUserForm({
 
         <Field data-invalid={roleError ? true : undefined}>
           <FieldLabel htmlFor={roleId}>Role</FieldLabel>
-          <Select value={role} onValueChange={onRoleChange}>
+          <Select
+            value={role}
+            onValueChange={(value) => {
+              if (value !== null) {
+                onRoleChange(value)
+              }
+            }}
+          >
             <SelectTrigger id={roleId} aria-invalid={roleError ? true : undefined}>
               <SelectValue placeholder='Select a role' />
             </SelectTrigger>

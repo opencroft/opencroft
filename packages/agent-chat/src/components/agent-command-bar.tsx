@@ -855,33 +855,37 @@ export function AgentCommandBar({
               `hasConfigs` so it disappears entirely once nothing is left. */}
           {hasConfigs ? (
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type='button'
-                  size='icon'
-                  variant='ghost'
-                  className={commandBarControlClass}
-                  onMouseDown={(e) => e.preventDefault()}
-                  title={settingsTitle}
-                  aria-label={settingsTitle}
-                >
-                  <SlidersHorizontal className='size-4' />
-                </Button>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type='button'
+                    size='icon'
+                    variant='ghost'
+                    className={commandBarControlClass}
+                    onMouseDown={(e) => e.preventDefault()}
+                    title={settingsTitle}
+                    aria-label={settingsTitle}
+                  />
+                }
+              >
+                <SlidersHorizontal className='size-4' />
               </DropdownMenuTrigger>
               <DropdownMenuContent align='start' side='top' className='w-60'>
                 {configs
                   ? configs.map((config, index) => (
                       <Fragment key={config.id}>
                         {index > 0 ? <DropdownMenuSeparator /> : null}
-                        <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>
-                          {config.label}
-                        </DropdownMenuLabel>
                         <DropdownMenuRadioGroup
                           value={config.value}
                           onValueChange={(next) => {
                             if (onConfigChange) onConfigChange(config.id, next)
                           }}
                         >
+                          {/* Inside the radio group: a menu label is a group label
+                              and needs a group around it to render. */}
+                          <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>
+                            {config.label}
+                          </DropdownMenuLabel>
                           {config.options.map((option) => (
                             <DropdownMenuRadioItem key={option.value} value={option.value} className='min-w-0'>
                               <span className='flex min-w-0 flex-col'>

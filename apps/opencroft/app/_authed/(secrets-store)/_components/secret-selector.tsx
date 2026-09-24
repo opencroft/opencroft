@@ -54,8 +54,13 @@ export function SecretSelector({ value, onChange, allowNone, placeholder, disabl
 
   return (
     <Select
-      value={value || (allowNone ? NONE : undefined)}
-      onValueChange={(next) => onChange(next === NONE ? '' : next)}
+      value={value || (allowNone ? NONE : null)}
+      items={allowNone ? [{ value: NONE, label: 'None' }, ...options] : options}
+      onValueChange={(next) => {
+        if (next !== null) {
+          onChange(next === NONE ? '' : next)
+        }
+      }}
       disabled={disabled}
     >
       <SelectTrigger>

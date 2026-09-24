@@ -235,7 +235,15 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
           placeholder='Key name'
           className='flex-1 h-7 text-xs'
         />
-        <Select value={newType} onValueChange={setNewType}>
+        <Select
+          value={newType}
+          items={{ ed25519: 'Ed25519', rsa: 'RSA', ecdsa: 'ECDSA' }}
+          onValueChange={(v) => {
+            if (v !== null) {
+              setNewType(v)
+            }
+          }}
+        >
           <SelectTrigger className='h-7 text-xs w-24'>
             <SelectValue />
           </SelectTrigger>

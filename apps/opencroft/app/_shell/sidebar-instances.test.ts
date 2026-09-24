@@ -1,6 +1,12 @@
 // Two sidebars on one page must not share what they remember, and must not
 // both answer the same keystroke.
 //
+// These live in ui/components/ui/layout/app-sidebar, the project's own sidebar:
+// the stock shadcn sidebar is kept exactly as upstream serves it, and it has no
+// per-instance key or shortcut. The application shell's main sidebar is the
+// stock one; the right-hand panel host is this one. The last test pins that
+// real composition.
+//
 // The persistence key and the shortcut key used to be module constants, which
 // encoded an assumption that there would only ever be one sidebar. Mounted
 // twice, both wrote the same cookie, so collapsing either overwrote what the
@@ -39,7 +45,8 @@ Object.defineProperty(globalThis.document, 'cookie', {
 // After the DOM exists, never before — react-dom binds to the globals it finds.
 const { act, createElement } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { SidebarProvider, SidebarStateProvider, useSidebar } = await import('ui/components/ui/sidebar')
+const { SidebarProvider, SidebarStateProvider, useSidebar } = await import('ui/components/ui/layout/app-sidebar')
+const stock = await import('ui/components/ui/sidebar')
 
 after(() => dom.cleanup())
 
@@ -254,4 +261,55 @@ test('the state provider keeps its own persistence, exactly as the full one does
 
   await act(async () => toggle?.())
   assert.deepEqual(cookieWrites, ['right_sidebar_state=false'], 'writes its own key, not the row’s')
+})
+
+// What the shell actually mounts: the STOCK sidebar owns the row, the shared
+// cookie and the shared chord; the panel host on the right is the project
+// sidebar with its own key and no shortcut. Each reads its own context, so the
+// two cannot reach each other's state at all.
+test('the stock row sidebar and the project panel sidebar keep separate state, keys and shortcut', async () => {
+  const mounted: Mounted = { open: { left: true, right: true }, toggle: {} }
+
+  function LeftProbe() {
+    const sidebar = stock.useSidebar()
+    mounted.open.left = sidebar.open
+    mounted.toggle.left = sidebar.toggleSidebar
+    return null
+  }
+
+  function RightProbe() {
+    const sidebar = useSidebar()
+    mounted.open.right = sidebar.open
+    mounted.toggle.right = sidebar.toggleSidebar
+    return null
+  }
+
+  const root = createRoot(dom.container)
+  after(() => {
+    act(() => root.unmount())
+  })
+  await act(async () => {
+    root.render(
+      createElement(
+        stock.SidebarProvider,
+        null,
+        createElement(LeftProbe, null),
+        createElement(
+          SidebarStateProvider,
+          { storageKey: 'right_sidebar_state', keyboardShortcut: null },
+          createElement(RightProbe, null),
+        ),
+      ),
+    )
+  })
+
+  await act(async () => mounted.toggle.right?.())
+  assert.deepEqual(cookieWrites, ['right_sidebar_state=false'], 'the panel host writes only its own key')
+  assert.equal(mounted.open.left, true, 'collapsing the panel host leaves the row sidebar open')
+
+  cookieWrites.length = 0
+  await pressShortcut('b')
+  assert.equal(mounted.open.left, false, 'the row sidebar answers the shared chord')
+  assert.equal(mounted.open.right, false, 'the panel host stays as it was: it declined the chord')
+  assert.deepEqual(cookieWrites, ['sidebar_state=false'], 'the row sidebar writes the shared key')
 })

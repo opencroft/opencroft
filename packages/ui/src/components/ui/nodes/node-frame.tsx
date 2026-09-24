@@ -64,11 +64,9 @@ function NodeErrorTooltip({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider delay={200}>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <div>{children}</div>
-        </TooltipTrigger>
+        <TooltipTrigger render={<div />}>{children}</TooltipTrigger>
         {/* `nodrag nopan` are the canvas's own opt-out classes. They are inert
             anywhere else, and without them selecting the error text would drag
             the node instead. */}

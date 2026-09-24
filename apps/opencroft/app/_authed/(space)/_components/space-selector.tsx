@@ -91,12 +91,10 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                 }
               }}
             >
-              <PopoverTrigger asChild>
-                <SidebarMenuButton tooltip='Spaces'>
-                  <SpaceIcon icon={current?.icon} className='size-5' />
-                  <span>{current?.name ?? 'Spaces'}</span>
-                  <ChevronDown className='ml-auto size-4 opacity-50' />
-                </SidebarMenuButton>
+              <PopoverTrigger render={<SidebarMenuButton tooltip='Spaces' />}>
+                <SpaceIcon icon={current?.icon} className='size-5' />
+                <span>{current?.name ?? 'Spaces'}</span>
+                <ChevronDown className='ml-auto size-4 opacity-50' />
               </PopoverTrigger>
               <PopoverContent className='w-64 p-0' side='bottom' align='start'>
                 <Command>
@@ -142,7 +140,8 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                 </Command>
                 <div className='border-t p-1'>
                   <Button
-                    asChild
+                    render={<Link to='/spaces' />}
+                    nativeButton={false}
                     variant='ghost'
                     size='sm'
                     className='w-full justify-center'
@@ -151,16 +150,16 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                       setQuery('')
                     }}
                   >
-                    <Link to='/spaces'>More</Link>
+                    More
                   </Button>
                 </div>
               </PopoverContent>
             </Popover>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant='ghost' size='icon' className='size-8 shrink-0' aria-label='Space menu'>
-                  <Ellipsis />
-                </Button>
+              <DropdownMenuTrigger
+                render={<Button variant='ghost' size='icon' className='size-8 shrink-0' aria-label='Space menu' />}
+              >
+                <Ellipsis />
               </DropdownMenuTrigger>
               <DropdownMenuContent side='bottom' align='end'>
                 <DropdownMenuItem disabled={!current} onClick={togglePin}>
@@ -168,11 +167,9 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                   {current?.pinned ? 'Unpin space' : 'Pin space'}
                 </DropdownMenuItem>
                 {current ? (
-                  <DropdownMenuItem asChild>
-                    <Link to='/space/$slug/settings' params={{ slug: current.slug }}>
-                      <Settings />
-                      Space settings
-                    </Link>
+                  <DropdownMenuItem render={<Link to='/space/$slug/settings' params={{ slug: current.slug }} />}>
+                    <Settings />
+                    Space settings
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem disabled>

@@ -101,7 +101,8 @@ export function AgentToolInspector({
         <Label className='text-xs'>Execution</Label>
         <Select
           value={execution.value}
-          onValueChange={(v: string) => {
+          items={EXECUTION_CHOICES}
+          onValueChange={(v) => {
             const chosen = EXECUTION_CHOICES.find((choice) => choice.value === v)
             if (chosen) {
               updateData({ execution: chosen.value })

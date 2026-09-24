@@ -127,27 +127,18 @@ export function GroupChatThreadFraming({
   }, [])
   const conversation = (
     <>
-      {/* TWO wrappers sit between the scroll viewport and this file's JSX, and
-          both have to fill the viewport's height or the bottom anchoring below
-          stops working with nothing reporting it: Radix inserts one of its own
-          inside the viewport, and this scroll area wraps whatever it is given
-          in a flex column of its own. The selector forces the first into a
-          filling flex column; innerClassName makes the second grow inside it.
-          With either one missing, `Flex expanded justify='end'` has no ancestor
-          with a real height to fill, and both (a) a short conversation renders
-          top-anchored with the composer floating right after it instead of
-          glued to the true bottom, and (b) StickySection has nothing to stay
-          pinned against.
-
-          The plain primitive has only Radix's wrapper, so the selector alone is
-          enough there -- which is why the 1:1 chat's ChatArea, the same
-          mechanism reused rather than re-implemented, carries the selector and
-          no innerClassName. The difference is which scroll area is in play, not
-          the arrangement. */}
-      <ScrollArea
-        className='min-h-0 flex-1 [&_[data-radix-scroll-area-viewport]>div]:!flex [&_[data-radix-scroll-area-viewport]>div]:!flex-col [&_[data-radix-scroll-area-viewport]>div]:!min-h-full'
-        innerClassName='flex-1'
-      >
+      {/* The wrapper between the scroll viewport and this file's JSX has to
+          fill the viewport's height or the bottom anchoring below stops working
+          with nothing reporting it. There is exactly one: this scroll area's own
+          content column (Base UI inserts no wrapper of its own inside the
+          viewport, where Radix used to add a second one that needed forcing
+          into shape by a selector). `min-h-full` makes that column at least as
+          tall as the viewport. Without it, `Flex expanded justify='end'` has no
+          ancestor with a real height to fill, and both (a) a short conversation
+          renders top-anchored with the composer floating right after it instead
+          of glued to the true bottom, and (b) StickySection has nothing to stay
+          pinned against. */}
+      <ScrollArea className='min-h-0 flex-1' innerClassName='min-h-full'>
         {/* Bottom-anchored, exactly like the 1:1 chat's ChatContent: with few
             messages the conversation sits at the bottom of the viewport, not
             the top, and scrolls up from there as it grows. No inner padded Flex

@@ -83,27 +83,29 @@ export function ThreadWorkControl({ work, size = 'icon', className }: ThreadWork
   const label = work.liveCount > 0 ? `Background tasks, ${work.liveCount} running` : 'Background tasks'
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type='button'
-          variant='ghost'
-          size={size}
-          aria-label={label}
-          title={label}
-          className={cn('relative', className)}
-        >
-          <ListTodo />
-          {work.liveCount > 0 ? (
-            // Overlaid on the corner rather than beside the icon, so the button
-            // keeps the exact footprint of its neighbours whatever the count.
-            <span
-              aria-hidden
-              className='absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground'
-            >
-              {work.liveCount}
-            </span>
-          ) : null}
-        </Button>
+      <PopoverTrigger
+        render={
+          <Button
+            type='button'
+            variant='ghost'
+            size={size}
+            aria-label={label}
+            title={label}
+            className={cn('relative', className)}
+          />
+        }
+      >
+        <ListTodo />
+        {work.liveCount > 0 ? (
+          // Overlaid on the corner rather than beside the icon, so the button
+          // keeps the exact footprint of its neighbours whatever the count.
+          <span
+            aria-hidden
+            className='absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground'
+          >
+            {work.liveCount}
+          </span>
+        ) : null}
       </PopoverTrigger>
       <PopoverContent align='end' className='w-72 p-1'>
         <div className='flex max-h-72 flex-col gap-0.5 overflow-y-auto'>

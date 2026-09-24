@@ -219,7 +219,12 @@ function ScheduleCard({
         />
         <Select
           value={draft.intervalUnit}
-          onValueChange={(value) => save({ ...draft, intervalUnit: value as BackupIntervalUnit })}
+          items={UNIT_OPTIONS}
+          onValueChange={(value) => {
+            if (value !== null) {
+              save({ ...draft, intervalUnit: value as BackupIntervalUnit })
+            }
+          }}
         >
           <SelectTrigger className='w-32' aria-label='Interval unit'>
             <SelectValue />

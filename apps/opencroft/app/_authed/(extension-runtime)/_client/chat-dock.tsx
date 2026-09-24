@@ -115,10 +115,10 @@ function ModeMenu({ mode, onModeChange }: { mode: ChatDockMode; onModeChange: (m
   const Icon = MODE_ICONS[mode]
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant='ghost' size='icon' aria-label='Panel position' title='Panel position'>
-          <Icon />
-        </Button>
+      <DropdownMenuTrigger
+        render={<Button variant='ghost' size='icon' aria-label='Panel position' title='Panel position' />}
+      >
+        <Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>
         <DropdownMenuRadioGroup value={mode} onValueChange={(value) => onModeChange(value as ChatDockMode)}>

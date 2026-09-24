@@ -5,6 +5,7 @@
    `@source` is resolved relative to THIS file, so the app never needs to know
    the ui package's internal layout (and Tailwind otherwise skips node_modules). */
 @import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 @import './theme.css';
 
 @source './components';

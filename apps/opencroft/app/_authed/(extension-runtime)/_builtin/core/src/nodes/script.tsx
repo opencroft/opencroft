@@ -207,7 +207,14 @@ function SecretsPicker({ value, onChange }: { value: string; onChange: (next: st
         </div>
       ) : null}
       {remaining.length > 0 ? (
-        <Select value='' onValueChange={(v: string) => add(v)}>
+        <Select
+          value=''
+          onValueChange={(v) => {
+            if (v !== null) {
+              add(v)
+            }
+          }}
+        >
           <SelectTrigger className='h-7 text-xs'>
             <SelectValue placeholder='Add secret…' />
           </SelectTrigger>

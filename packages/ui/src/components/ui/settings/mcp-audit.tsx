@@ -423,7 +423,15 @@ export function McpAudit({
       </div>
 
       <div className='flex items-center gap-3'>
-        <Select value={tool ?? ALL} onValueChange={(value) => onToolChange(value === ALL ? undefined : value)}>
+        <Select
+          value={tool ?? ALL}
+          items={[{ value: ALL, label: 'All tools' }, ...tools.map((name) => ({ value: name, label: name }))]}
+          onValueChange={(value) => {
+            if (value !== null) {
+              onToolChange(value === ALL ? undefined : value)
+            }
+          }}
+        >
           <SelectTrigger className='w-64'>
             <SelectValue placeholder='Tool' />
           </SelectTrigger>
@@ -436,7 +444,15 @@ export function McpAudit({
             ))}
           </SelectContent>
         </Select>
-        <Select value={status} onValueChange={(value) => onStatusChange(value as AuditStatusFilter)}>
+        <Select
+          value={status}
+          items={STATUS_OPTIONS}
+          onValueChange={(value) => {
+            if (value !== null) {
+              onStatusChange(value as AuditStatusFilter)
+            }
+          }}
+        >
           <SelectTrigger className='w-48'>
             <SelectValue placeholder='Status' />
           </SelectTrigger>
@@ -473,7 +489,7 @@ export function McpAudit({
           checked={sleepEnabled}
           onCheckedChange={onToggleSleep}
           aria-label='Toggle sleep mode'
-          className='shrink-0 data-[state=checked]:bg-amber-500'
+          className='shrink-0 data-checked:bg-amber-500'
         />
       </div>
 
@@ -500,7 +516,7 @@ export function McpAudit({
           checked={yoloEnabled}
           onCheckedChange={onToggleYolo}
           aria-label='Toggle YOLO mode'
-          className='shrink-0 data-[state=checked]:bg-red-500'
+          className='shrink-0 data-checked:bg-red-500'
         />
       </div>
 

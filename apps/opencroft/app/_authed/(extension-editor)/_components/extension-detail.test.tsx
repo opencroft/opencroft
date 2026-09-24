@@ -26,9 +26,9 @@ const dom = await installDomEnvironment()
 
 // Opening a group of actions reaches for three window methods by bare name, and
 // all three exist on the jsdom window without being copied onto the global
-// object: Radix's presence reads the content's computed style, and the
-// collapsible measures its content in an animation frame and cancels that frame
-// on unmount. Bridged and bound to the window, so this describes the real
+// object: Base UI's collapsible panel reads the content's computed style, and
+// measures and restores its layout in an animation frame that it cancels on
+// unmount. Bridged and bound to the window, so this describes the real
 // environment rather than standing in for a result.
 const win = globalThis.window as unknown as Record<string, unknown>
 const globals = globalThis as unknown as Record<string, unknown>

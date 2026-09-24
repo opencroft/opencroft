@@ -55,26 +55,28 @@ export function AgentPicker({
   const selected = agents.find((a) => a.nodeId === selectedAgentNodeId)
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type='button'
-          disabled={disabled}
-          className={cn(
-            'inline-flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50',
-            className,
-          )}
-          title={selected ? `Thread with ${selected.name}` : 'Choose an agent'}
-        >
-          {selected ? (
-            <AgentAvatar avatar={selected.avatarUrl} name={selected.name} size='sm' />
-          ) : (
-            <span className='size-6' aria-hidden />
-          )}
-          <span className='max-w-32 truncate'>
-            {selected ? selected.name : <span className='text-muted-foreground'>{placeholder ?? 'Select agent'}</span>}
-          </span>
-          <ChevronDown className='size-3.5 shrink-0 text-muted-foreground' />
-        </button>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        render={
+          <button
+            type='button'
+            className={cn(
+              'inline-flex h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-xs text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50',
+              className,
+            )}
+            title={selected ? `Thread with ${selected.name}` : 'Choose an agent'}
+          />
+        }
+      >
+        {selected ? (
+          <AgentAvatar avatar={selected.avatarUrl} name={selected.name} size='sm' />
+        ) : (
+          <span className='size-6' aria-hidden />
+        )}
+        <span className='max-w-32 truncate'>
+          {selected ? selected.name : <span className='text-muted-foreground'>{placeholder ?? 'Select agent'}</span>}
+        </span>
+        <ChevronDown className='size-3.5 shrink-0 text-muted-foreground' />
       </DropdownMenuTrigger>
       {/* side='top' because the bar this sits in is pinned to the bottom of a
           conversation -- a menu opening downward would open off-screen. */}
@@ -82,7 +84,7 @@ export function AgentPicker({
         {agents.map((agent) => {
           const isSelected = agent.nodeId === selectedAgentNodeId
           return (
-            <DropdownMenuItem key={agent.nodeId} onSelect={() => onSelectAgent(agent.nodeId)} className='gap-2'>
+            <DropdownMenuItem key={agent.nodeId} onClick={() => onSelectAgent(agent.nodeId)} className='gap-2'>
               <AgentAvatar avatar={agent.avatarUrl} name={agent.name} size='sm' />
               <span className='min-w-0 flex-1 truncate'>{agent.name}</span>
               {isSelected ? <Check className='size-3.5 shrink-0 text-primary' /> : null}

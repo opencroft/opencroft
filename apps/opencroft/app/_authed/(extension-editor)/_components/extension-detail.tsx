@@ -154,7 +154,7 @@ function DetailGroup({ label, count, children }: { label: string; count: number;
       <CollapsibleTrigger className='flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground'>
         <ChevronRight
           aria-hidden='true'
-          className='size-3.5 shrink-0 transition-transform group-data-[state=open]/detailgroup:rotate-90'
+          className='size-3.5 shrink-0 transition-transform group-data-open/detailgroup:rotate-90'
         />
         {count} {label}
         {count === 1 ? '' : 's'}

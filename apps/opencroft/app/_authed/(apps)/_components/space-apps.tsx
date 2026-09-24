@@ -93,15 +93,22 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                         The accessible name carries the new tab too, because
                         the icon only announces it to people who can see it;
                         the visible tooltip stays the short form. */}
-                    <Button asChild variant='ghost' size='icon' aria-label='Open in a new tab' title='Open'>
-                      <Link
-                        to='/space/$slug/app/$app'
-                        params={{ slug: spaceSlug, app: instance.slug }}
-                        target='_blank'
-                        rel='noopener noreferrer'
-                      >
-                        <ExternalLink />
-                      </Link>
+                    <Button
+                      render={
+                        <Link
+                          to='/space/$slug/app/$app'
+                          params={{ slug: spaceSlug, app: instance.slug }}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        />
+                      }
+                      nativeButton={false}
+                      variant='ghost'
+                      size='icon'
+                      aria-label='Open in a new tab'
+                      title='Open'
+                    >
+                      <ExternalLink />
                     </Button>
                   </Flex>
                 )

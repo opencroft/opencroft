@@ -154,7 +154,14 @@ function McpServerRow({
           className='h-7 text-xs'
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ name: e.target.value })}
         />
-        <Select value={config.transport} onValueChange={(v: string) => onChange({ transport: v as McpTransport })}>
+        <Select
+          value={config.transport}
+          onValueChange={(v) => {
+            if (v !== null) {
+              onChange({ transport: v })
+            }
+          }}
+        >
           <SelectTrigger className='h-7 w-24 text-xs'>
             <SelectValue />
           </SelectTrigger>

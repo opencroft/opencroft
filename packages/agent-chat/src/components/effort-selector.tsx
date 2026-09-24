@@ -101,19 +101,22 @@ export function EffortSelector({ options, current, onSelect, lockedReason, class
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild disabled={Boolean(lockedReason)}>
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className={className ?? 'size-7 shrink-0'}
-          // Without this the composer loses focus the moment this is clicked.
-          onMouseDown={(e) => e.preventDefault()}
-          title={title}
-          aria-label={title}
-        >
-          <EffortIcon option={current} />
-        </Button>
+      <DropdownMenuTrigger
+        disabled={Boolean(lockedReason)}
+        render={
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className={className ?? 'size-7 shrink-0'}
+            // Without this the composer loses focus the moment this is clicked.
+            onMouseDown={(e) => e.preventDefault()}
+            title={title}
+            aria-label={title}
+          />
+        }
+      >
+        <EffortIcon option={current} />
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
           upward from the start edge. */}
@@ -121,7 +124,7 @@ export function EffortSelector({ options, current, onSelect, lockedReason, class
         {ordered.map((option) => (
           <DropdownMenuItem
             key={option}
-            onSelect={() => onSelect(option)}
+            onClick={() => onSelect(option)}
             className={option === current ? 'font-medium' : undefined}
           >
             <EffortIcon option={option} />

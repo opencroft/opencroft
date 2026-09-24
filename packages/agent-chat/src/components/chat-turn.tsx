@@ -616,17 +616,19 @@ function MessageMenu({
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type='button'
-          size='icon'
-          variant='ghost'
-          className='h-5 w-5 shrink-0'
-          title='Message actions'
-          aria-label='Message actions'
-        >
-          <Ellipsis className='size-3.5' />
-        </Button>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='h-5 w-5 shrink-0'
+            title='Message actions'
+            aria-label='Message actions'
+          />
+        }
+      >
+        <Ellipsis className='size-3.5' />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='min-w-36'>
         {onEdit && (

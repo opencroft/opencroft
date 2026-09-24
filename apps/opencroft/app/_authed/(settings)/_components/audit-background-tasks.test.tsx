@@ -17,11 +17,6 @@ import type { McpAuditBackgroundTask } from 'ui/settings/mcp-audit'
 import { installDomEnvironment } from '@/test-support/dom-environment'
 
 const dom = await installDomEnvironment()
-// The page's filters are Radix selects, which build their closed-state portal
-// target as a bare `new DocumentFragment()`; the environment does not put that
-// constructor on the global object, and React reports its absence only as an
-// empty AggregateError.
-Object.assign(globalThis, { DocumentFragment: window.DocumentFragment })
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')

@@ -52,7 +52,18 @@ export function AgentProfilePicker({ profiles, activeId, onSelect, onCreate, onD
     <Field>
       <FieldLabel>Profile</FieldLabel>
       <Flex row className='gap-2'>
-        <Select value={activeId} onValueChange={onSelect}>
+        <Select
+          value={activeId}
+          // The trigger shows a profile's name, not its id.
+          items={profiles.map((entry) => ({ value: entry.id, label: entry.name }))}
+          // Base UI reports a cleared selection as `null`; every item here has
+          // a real id, so ignore it rather than selecting nothing.
+          onValueChange={(value) => {
+            if (value !== null) {
+              onSelect(value)
+            }
+          }}
+        >
           <SelectTrigger className='w-full'>
             <SelectValue placeholder='Select profile' />
           </SelectTrigger>
@@ -146,7 +157,12 @@ export function AgentPresetForm({
         <FieldLabel>Provider</FieldLabel>
         <Select
           value={selection.providerId}
-          onValueChange={(value) => onSelectionChange({ providerId: value, adapterId: '', model: '' })}
+          items={AGENT_PROVIDERS.map((entry) => ({ value: entry.id, label: entry.label }))}
+          onValueChange={(value) => {
+            if (value !== null) {
+              onSelectionChange({ providerId: value, adapterId: '', model: '' })
+            }
+          }}
         >
           <SelectTrigger className='w-full'>
             <SelectValue placeholder='Select provider' />
@@ -165,7 +181,12 @@ export function AgentPresetForm({
         <FieldLabel>Harness</FieldLabel>
         <Select
           value={selection.adapterId}
-          onValueChange={(value) => onSelectionChange({ adapterId: value })}
+          items={adapters.map((adapter) => ({ value: adapter.id, label: adapter.label }))}
+          onValueChange={(value) => {
+            if (value !== null) {
+              onSelectionChange({ adapterId: value })
+            }
+          }}
           disabled={!adapters.length}
         >
           <SelectTrigger className='w-full'>
@@ -281,7 +302,15 @@ export function AgentPresetForm({
             // adapters now default to 'medium' (see resolveReasoningEffort in
             // agent-client.ts). Existing profiles with '' still mean "unset"
             // and pick up that new default, which is the intended migration.
-            onValueChange={(value) => onSelectionChange({ reasoningEffort: value })}
+            onValueChange={(value) => {
+              if (value !== null) {
+                onSelectionChange({ reasoningEffort: value })
+              }
+            }}
+            items={[
+              { value: 'off', label: 'Off' },
+              ...reasoningOptions.map((level) => ({ value: level, label: level[0].toUpperCase() + level.slice(1) })),
+            ]}
           >
             <SelectTrigger className='w-full'>
               <SelectValue />
