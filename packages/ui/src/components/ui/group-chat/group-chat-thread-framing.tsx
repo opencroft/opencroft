@@ -227,8 +227,8 @@ export function GroupChatThreadFraming({
               rearranged one, and re-lays-out from scratch each time. */}
           <ResizablePanel
             id='conversation'
-            defaultSize={openArtifact ? 68 : 100}
-            minSize={20}
+            defaultSize={openArtifact ? '68%' : '100%'}
+            minSize='20%'
             className='flex min-w-0 flex-col'
           >
             {conversation}
@@ -240,7 +240,7 @@ export function GroupChatThreadFraming({
                   acceptable for a width: it adjusts a layout that already
                   works, it is not a route to something otherwise unreachable. */}
               <ResizableHandle withHandle />
-              <ResizablePanel id='artifact' defaultSize={32} minSize={20} className='flex min-w-0 flex-col'>
+              <ResizablePanel id='artifact' defaultSize='32%' minSize='20%' className='flex min-w-0 flex-col'>
                 <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
               </ResizablePanel>
             </>
