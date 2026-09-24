@@ -44,13 +44,18 @@ const MODE_ICON = {
 }
 
 // Literal classes only — a constructed name would not survive the build.
+// Each colour sets the stroke as well: the stock DropdownMenuItem recolours
+// every descendant to accent-foreground while an item is focused (hover
+// focuses it), the icon's <path> included, and lucide strokes with
+// currentColor -- so the grade went white exactly while pointed at. A concrete
+// stroke on the <svg> is inherited as a colour, not re-resolved per path.
 const MODE_COLOR = {
-  auto: 'text-violet-500',
-  plan: 'text-primary',
-  'manual-edits': 'text-green-500',
-  'accept-edits': 'text-amber-500',
-  'reject-edits': 'text-orange-500',
-  bypass: 'text-destructive',
+  auto: 'text-violet-500 stroke-violet-500',
+  plan: 'text-primary stroke-primary',
+  'manual-edits': 'text-green-500 stroke-green-500',
+  'accept-edits': 'text-amber-500 stroke-amber-500',
+  'reject-edits': 'text-orange-500 stroke-orange-500',
+  bypass: 'text-destructive stroke-destructive',
 }
 
 const MODE_LABEL = {
@@ -110,7 +115,7 @@ export function ModeSelector({ options, current, onSelect, lockedReason, classNa
     ? 'text-destructive animate-pulse'
     : isKnown(current)
       ? MODE_COLOR[current]
-      : 'text-muted-foreground'
+      : 'text-muted-foreground stroke-muted-foreground'
   const title = lockedReason ?? `Permission mode: ${labelOf(current)}`
   const ordered = [...options].sort((a, b) => orderOf(a) - orderOf(b))
 

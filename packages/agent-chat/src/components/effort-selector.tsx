@@ -27,14 +27,19 @@ export type EffortOption = Effort | (string & {})
 //
 // `default` is the neutral foreground rather than a literal white, which would
 // disappear on a light theme while reading as white in dark mode as intended.
+// Each colour sets the stroke as well: the stock DropdownMenuItem recolours
+// every descendant to accent-foreground while an item is focused (hover
+// focuses it), the icon's <path> included, and lucide strokes with
+// currentColor -- so the grade went white exactly while pointed at. A concrete
+// stroke on the <svg> is inherited as a colour, not re-resolved per path.
 const EFFORT_COLOR = {
-  max: 'text-blue-500',
-  extra: 'text-purple-500',
-  high: 'text-red-500',
-  medium: 'text-yellow-500',
-  low: 'text-green-500',
-  default: 'text-foreground',
-  off: 'text-foreground',
+  max: 'text-blue-500 stroke-blue-500',
+  extra: 'text-purple-500 stroke-purple-500',
+  high: 'text-red-500 stroke-red-500',
+  medium: 'text-yellow-500 stroke-yellow-500',
+  low: 'text-green-500 stroke-green-500',
+  default: 'text-foreground stroke-foreground',
+  off: 'text-foreground stroke-foreground',
 }
 
 const EFFORT_LABEL = {
@@ -64,7 +69,7 @@ function labelOf(option: EffortOption): string {
 }
 
 function colourOf(option: EffortOption): string {
-  return isKnown(option) ? EFFORT_COLOR[option] : 'text-muted-foreground'
+  return isKnown(option) ? EFFORT_COLOR[option] : 'text-muted-foreground stroke-muted-foreground'
 }
 
 // `off` is not a grade on the dial — it is an instruction not to think — so it
