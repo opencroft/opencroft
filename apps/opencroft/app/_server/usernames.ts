@@ -46,8 +46,8 @@ function toPrincipal(row: {
     return { kind: 'user', id: row.userId }
   }
   // A row whose discriminant and id columns disagree. Consistency between
-  // them is application-side here, as it is for ApiToken and
-  // GroupChatMember, so a contradictory row is possible and is treated as
+  // them is application-side here, as it is for GroupChatMember, so a
+  // contradictory row is possible and is treated as
   // unresolvable rather than guessed at.
   return null
 }

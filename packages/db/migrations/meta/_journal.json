@@ -253,6 +253,13 @@
       "when": 1790124277614,
       "tag": "0035_add_background_task_runner",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790208409021,
+      "tag": "0036_add_mcp_token",
+      "breakpoints": true
     }
   ]
 }

@@ -295,46 +295,33 @@ export const usageRollupDay = pgTable(
   ],
 )
 
-// Bearer credentials for the API surfaces. Humans also get cookie sessions;
-// this is the credential for everything a cookie cannot reach — agents,
-// external MCP clients, and now a signed-in person's own personal tokens.
+// A signed-in person's own bearer credentials — the personal access tokens of
+// the account screen. Created by someone who is signed in and dies with the
+// account. Personal tokens require an expiry (enforced app-side, not here) — a
+// forgotten one in shell history should stop working on its own.
+//
+// Agents do NOT hold these. An agent's credential is an McpToken, a separate
+// kind with its own table: it identifies an agent node on the MCP endpoint and
+// nowhere else, while this one identifies a person and never opens the MCP
+// endpoint. Two tables rather than a discriminant, because the two are refused
+// by each other's surface — a lookup that can only ever find one kind cannot
+// be tricked into accepting the other.
 //
 // Only the hash is stored. We only ever look up by a presented value, so there
 // is no reason to be able to read a token back — and a table we cannot read
 // back is one that leaks nothing if it is dumped.
 //
-// ONE TABLE, TWO KINDS OF PRINCIPAL, DISCRIMINATED BY `subjectType` — not two
-// mechanisms. Two code paths answering "is this bearer valid" is how one of
-// them gets a bug the other's tests do not catch.
-//
-//   'user'   userId is set (references user.id, cascades on delete), agentName
-//            is null. Created by someone who is signed in; dies with the
-//            account. Personal tokens require an expiry (enforced app-side,
-//            not here) — a forgotten one in shell history should stop working
-//            on its own.
-//
-//   'agent'  agentName is set, userId is null. Has to be mintable WITHOUT a
-//            session: on a fail-closed deployment there is no session until
-//            BETTER_AUTH_SECRET is provisioned and setup is done, so if agent
-//            credentials were personal tokens, issuing the first one would
-//            need the auth the token exists to bootstrap. No expiry by
-//            default — an unattended credential expiring on a date nobody
-//            remembers takes out dispatch; rotation is the answer instead.
-//
-// Several live tokens per subject is deliberate either way. With a single
-// credential, rotation means a window where the old token is dead and the new
-// one is not yet configured. Many live tokens make rotation
-// issue → reconfigure → revoke, with no gap.
+// Several live tokens per person is deliberate. With a single credential,
+// rotation means a window where the old token is dead and the new one is not
+// yet configured. Many live tokens make rotation issue → reconfigure → revoke,
+// with no gap.
 export const apiToken = pgTable(
   'ApiToken',
   {
     id: text().primaryKey().notNull().$defaultFn(uuid),
-    // 'user' | 'agent' — see the table comment. Not an enum: this is an
-    // application-level discriminant, and Postgres enums are painful to widen
-    // later if a third kind ever shows up.
-    subjectType: text().notNull(),
-    userId: text().references(() => user.id, { onDelete: 'cascade' }),
-    agentName: text(),
+    userId: text()
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
     // Free text set by whoever creates the token, to tell one of theirs from
     // another when revoking — "laptop", "rotation-2026-08". Never a secret.
     name: text().default('').notNull(),
@@ -344,16 +331,46 @@ export const apiToken = pgTable(
     revokedAt: timestamp({ withTimezone: true, mode: 'date' }),
     expiresAt: timestamp({ withTimezone: true, mode: 'date' }),
   },
-  (t) => [
-    uniqueIndex('ApiToken_tokenHash_key').on(t.tokenHash),
-    index('ApiToken_agentName_idx').on(t.agentName),
-    index('ApiToken_userId_idx').on(t.userId),
-  ],
+  (t) => [uniqueIndex('ApiToken_tokenHash_key').on(t.tokenHash), index('ApiToken_userId_idx').on(t.userId)],
+)
+
+// An agent's credential on the MCP endpoint, and the only credential that
+// endpoint accepts. Each one names the agent NODE it speaks for — by id, not by
+// display name, because a name is free text two nodes can share and a rename
+// would otherwise move a live credential onto whichever agent took the name.
+//
+// `agentNodeId` is not a foreign key: an agent is a node in a space graph's
+// JSON with no relational row, the same reason it is not one on `Username`.
+// A token whose node is gone resolves to nobody and is refused at the endpoint.
+//
+// Created from the agent node's own settings by a signed-in person; never
+// mintable over MCP, so an agent cannot issue itself a second identity.
+// `expiresAt` null means the person creating it chose "never" — unlike a
+// personal token, where a missing expiry is not an option. Revoking deletes the
+// row: there is no revoked state to keep, because a revoked credential answers
+// exactly like one that never existed.
+//
+// Only the hash is stored, for the reason on ApiToken above, and many live
+// tokens per agent is deliberate for the same rotation reason.
+export const mcpToken = pgTable(
+  'McpToken',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    agentNodeId: text().notNull(),
+    // Free text, to tell one of an agent's tokens from another when deleting
+    // one — "laptop client", "ci". Never a secret.
+    name: text().notNull(),
+    tokenHash: text().notNull(),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp({ withTimezone: true, mode: 'date' }),
+    expiresAt: timestamp({ withTimezone: true, mode: 'date' }),
+  },
+  (t) => [uniqueIndex('McpToken_tokenHash_key').on(t.tokenHash), index('McpToken_agentNodeId_idx').on(t.agentNodeId)],
 )
 
 // Every username ever held, by either kind of account. ONE TABLE, TWO KINDS
 // OF PRINCIPAL, DISCRIMINATED BY `principalType` — the same shape
-// `GroupChatMember` and `ApiToken` already use, and for the same reason.
+// `GroupChatMember` already uses, and for the same reason.
 //
 // A username identifies an account. It is not a name and not a credential:
 // the display name stays editable and non-unique, the email stays the login.
@@ -383,8 +400,7 @@ export const username = pgTable(
     id: text().primaryKey().notNull().$defaultFn(uuid),
     username: text().notNull(),
     // 'user' | 'agent' — see the table comment. Not an enum, matching the
-    // choice already made for ApiToken.subjectType and
-    // GroupChatMember.principalType.
+    // choice already made for GroupChatMember.principalType.
     principalType: text().notNull(),
     userId: text().references(() => user.id, { onDelete: 'cascade' }),
     agentNodeId: text(),
@@ -419,22 +435,27 @@ export const username = pgTable(
   ],
 )
 
-// DISTINCT (caller, method, tool) COMBINATIONS SEEN ON THE HTTP MCP SURFACE,
+// DISTINCT (caller, method, tool) COMBINATIONS SEEN ON THE MCP ENDPOINT,
 // maintained by the database.
 //
 // This is not a log with a schema bolted on, and that distinction is the reason
-// it is a table at all. Stage A's question is "which clients exist" — this
-// stores the material for that answer directly, rather than making it a grep
-// over however much log happens to still be around.
+// it is a table at all. "Which clients reach this endpoint, and which of them
+// are being refused" is a population question — this stores the material for
+// that answer directly, rather than making it a grep over however much log
+// happens to still be around. Refused requests are recorded too: a client
+// that was configured and has since gone wrong (an expired or deleted token)
+// is otherwise visible only in that client's own error.
 //
 // THE GRAIN IS NOT ONE ROW PER CALLER. `fingerprintOf` keys on credential,
-// agent, method, tool, sourceIp and userAgent together, so one caller invoking
-// two different tools is TWO rows here, not one. That is deliberate — losing
-// per-tool visibility would hide a caller who is only entitled to some tools —
-// but it means the Stage B question ("does the observed agent set match the
-// issued set") is answered by a query that GROUPS BY agent across these rows,
-// not by counting rows. `SELECT DISTINCT agent FROM "McpCaller"`, not
-// `SELECT agent, count(*) ...`.
+// agent node, method, tool, sourceIp and userAgent together, so one caller
+// invoking two different tools is TWO rows here, not one. That is deliberate —
+// losing per-tool visibility would hide a caller who is only entitled to some
+// tools — but it means "which agents call in" is a query that GROUPS BY
+// agentNodeId across these rows, not a count of rows.
+//
+// `agent` is the node's name as it read when the row was first written, kept
+// for a person reading the table; `agentNodeId` is the identity. A renamed
+// agent keeps aggregating onto its existing rows under the old name.
 //
 // It still grows boundedly under traffic: the number of rows is bounded by
 // (callers × tools actually used), not by request volume, so a caller hitting
@@ -466,6 +487,7 @@ export const mcpCaller = pgTable(
     // touched yet. They call for opposite responses.
     credential: text().notNull(),
     agent: text(),
+    agentNodeId: text(),
     method: text().notNull(),
     tool: text(),
     sourceIp: text(),
@@ -555,9 +577,9 @@ export const groupChat = pgTable(
 //            an automated sender's authority goes unaccounted.
 //
 // Consistency between principalType and which id column is set is enforced
-// application-side, not by a CHECK constraint — the same choice already made
-// for ApiToken's subjectType/userId/agentName triple, so this does not
-// introduce a stricter pattern than the one beside it.
+// application-side, not by a CHECK constraint — the same choice made for
+// Username's principalType, so this does not introduce a stricter pattern than
+// the one beside it.
 //
 // The per-kind unique indexes below rely on Postgres treating NULL as distinct
 // from every other NULL: the (groupChatId, userId) index only ever collides
