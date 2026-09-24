@@ -5,10 +5,23 @@ import { useId } from 'react'
 import { Button } from 'ui/components/ui/button'
 import { Field, FieldError, FieldGroup, FieldLabel } from 'ui/components/ui/field'
 import { Input } from 'ui/components/ui/input'
+import { NativeSelect, NativeSelectOption } from 'ui/components/ui/native-select'
+
+export interface ApiTokenExpiryOption {
+  value: string
+  label: string
+}
 
 export interface ApiTokenCreateFormProps {
   name: string
   onNameChange: (value: string) => void
+  // The lifetimes on offer, in the order shown. Omitted, the form has no expiry
+  // field and the lifetime is the host's alone. Which lifetimes exist -- and
+  // whether "never" is one of them -- is the host's to decide.
+  expiryOptions?: ApiTokenExpiryOption[]
+  // The chosen option's value.
+  expiry?: string
+  onExpiryChange?: (value: string) => void
   // Reports that the user asked to create the token. The form validates nothing
   // and generates no secret -- the host creates the token and feeds the value
   // into the reveal that follows.
@@ -24,9 +37,9 @@ export interface ApiTokenCreateFormProps {
 }
 
 // The create half of the API token flow, with no page frame around it: name the
-// token, then create it. Just the form -- the one-time secret reveal that
-// follows is its own component, because that moment is a different design
-// problem from a labelled input.
+// token, pick its lifetime when the host offers a choice, then create it. Just
+// the form -- the one-time secret reveal that follows is its own component,
+// because that moment is a different design problem from a labelled input.
 //
 // Fully controlled and free of the stack it came from: no form library, no
 // router, no auth client. Values arrive as props, every outcome leaves as a
@@ -34,6 +47,9 @@ export interface ApiTokenCreateFormProps {
 export function ApiTokenCreateForm({
   name,
   onNameChange,
+  expiryOptions,
+  expiry,
+  onExpiryChange,
   onSubmit,
   nameError,
   error,
@@ -41,6 +57,7 @@ export function ApiTokenCreateForm({
   className,
 }: ApiTokenCreateFormProps) {
   const nameId = useId()
+  const expiryId = useId()
 
   return (
     <form
@@ -64,6 +81,24 @@ export function ApiTokenCreateForm({
           />
           <FieldError>{nameError}</FieldError>
         </Field>
+
+        {expiryOptions ? (
+          <Field>
+            <FieldLabel htmlFor={expiryId}>Expires</FieldLabel>
+            <NativeSelect
+              id={expiryId}
+              name='expiry'
+              value={expiry}
+              onChange={(event) => onExpiryChange?.(event.target.value)}
+            >
+              {expiryOptions.map((option) => (
+                <NativeSelectOption key={option.value} value={option.value}>
+                  {option.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </Field>
+        ) : null}
 
         {/* Renders nothing at all when there is no message, so it can stay
             mounted rather than being conditionally spliced into the group. */}
