@@ -207,3 +207,13 @@ test('a bridged agent-tool node marked awaitable offers background; one marked a
   assert.deepEqual(Object.keys(listedAsync.inputSchema), ['q'], 'an async tool asks nothing new')
   assert.equal(listedAsync.description, `Look it up. ${ASYNC_SENTENCE}`)
 })
+
+// agent-client registers its own `skill`, filtered by the agent's role; the
+// registry's copy reaching it as well would be a second tool of the same name,
+// which the MCP server refuses to register.
+test('the bridged toolset leaves the skill tool to agent-client', async () => {
+  const names = (await opencroftLocalTools({})).map((t) => t.name)
+
+  assert.ok(!names.includes('skill'), 'the registry skill tool must not reach the bridge')
+  assert.ok(names.includes('skill_list'), 'the rest of the skill family still does')
+})

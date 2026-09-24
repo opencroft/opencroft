@@ -1,4 +1,6 @@
-import { readSkills, type SkillConfig, writeSkills } from '@/app/_authed/(agent)/_server/skill-store'
+import { loadSkills, SKILL_TOOL_NAME, skillToolDescription } from 'agent-client/mcp-server'
+
+import { readSkills, type SkillConfig, skillBodyHandler, writeSkills } from '@/app/_authed/(agent)/_server/skill-store'
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 
@@ -18,6 +20,21 @@ export function formatSkillCatalog(skills: SkillConfig[]): string {
 }
 
 export const skillToolDefinitions = [
+  // The same instrument, name and wording the app's own agents get from
+  // agent-client, so a skill can be read from this surface too, not only
+  // listed and written. The bridge leaves this one out: agent-client registers
+  // its own, filtered by the agent's role.
+  {
+    name: SKILL_TOOL_NAME,
+    description: skillToolDescription(),
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        skills: { type: 'array', items: { type: 'string' }, description: 'Names of the skills to load' },
+      },
+      required: ['skills'],
+    },
+  },
   {
     name: 'skill_list',
     description: 'List available skills (name and description) for the skill tool.',
@@ -69,6 +86,13 @@ export const skillToolDefinitions = [
 ]
 
 export const skillToolHandlers: Record<string, ToolHandler> = {
+  // No role permissions exist on this surface, so every skill is readable, as
+  // every skill is already listed by skill_list.
+  [SKILL_TOOL_NAME]: async (args) => {
+    const names = Array.isArray(args.skills) ? args.skills.filter((name) => typeof name === 'string') : []
+    return textResult(await loadSkills(names, skillBodyHandler, undefined))
+  },
+
   skill_list: async () => {
     const skills = await readSkills()
     if (skills.length === 0) {

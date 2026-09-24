@@ -1,7 +1,7 @@
 import { adapterSupportsElicitation } from 'agent-client/agent-client'
 import { type AskUserQuestionSpec, contentToAnswers, questionsToElicitation } from 'agent-client/elicitation-form'
 import { jsonSchemaToZodShape } from 'agent-client/json-schema'
-import type { LocalTool, ToolsCaller } from 'agent-client/mcp-server'
+import { type LocalTool, SKILL_TOOL_NAME, type ToolsCaller } from 'agent-client/mcp-server'
 
 import type { ListedTool } from '@/app/_authed/(mcp)/_server/execution-mode'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -130,7 +130,11 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
   // but the tool path dies at the MCP request timeout and the native one
   // doesn't — offering both just lets the model pick the worse channel.
   const harnessAsks = adapterSupportsElicitation(caller.adapterId)
+  // The registry's `skill` is for external clients: agent-client registers its
+  // own under the same name, filtered by the agent's role, and a second one
+  // would collide with it.
   return [...getStaticTools(), ...dynamicDefs.map(convert)]
+    .filter((tool) => tool.name !== SKILL_TOOL_NAME)
     .filter((tool) => !(tool.name === 'ask_user' && harnessAsks))
     .map((tool) => toLocalTool(tool, toolCaller))
     .map((tool) => (tool.name === 'ask_user' && sessionId ? sessionAskUserTool(tool, sessionId) : tool))
