@@ -166,7 +166,7 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
         >
           <MessageCircleMore />
         </PopoverTrigger>
-        <PopoverContent side='bottom' align='end' className='w-72 p-0'>
+        <PopoverContent side='bottom' align='end' className='w-72 gap-0 p-0'>
           {/* The same Command dress the space selector's menu wears — borderless
             search on a divider, flat rows — so the two header menus read as one
             family. Filtering stays this component's own (the query narrows

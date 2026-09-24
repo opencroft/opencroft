@@ -155,7 +155,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
       </PopoverTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its overlays
           open upward from the start edge. */}
-      <PopoverContent align='start' side='top' className='w-64 p-2'>
+      <PopoverContent align='start' side='top' className='w-64 gap-0 p-2'>
         <div className='flex flex-col gap-0.5'>
           {offered.map((entry) => (
             <button

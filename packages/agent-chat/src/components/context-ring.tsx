@@ -395,7 +395,7 @@ export function ContextRing({
           </span>
         )}
       </PopoverTrigger>
-      <PopoverContent align='start' side='top' className='w-56 p-0'>
+      <PopoverContent align='start' side='top' className='w-56 gap-0 p-0'>
         <div className='flex flex-col gap-0.5 p-3'>
           <span className='text-xs text-muted-foreground'>Context</span>
           <span

@@ -1,7 +1,7 @@
 'use client'
 
 import { Link, useLocation, useRouter } from '@tanstack/react-router'
-import { Check, ChevronDown, Ellipsis, Pin, PinOff, Settings } from 'lucide-react'
+import { ChevronDown, Ellipsis, Pin, PinOff, Settings } from 'lucide-react'
 import { type MouseEvent, useEffect, useState } from 'react'
 import { Button } from 'ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/command'
@@ -96,7 +96,7 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                 <span>{current?.name ?? 'Spaces'}</span>
                 <ChevronDown className='ml-auto size-4 opacity-50' />
               </PopoverTrigger>
-              <PopoverContent className='w-64 p-0' side='bottom' align='start'>
+              <PopoverContent className='w-64 gap-0 p-0' side='bottom' align='start'>
                 <Command>
                   <CommandInput value={query} onValueChange={setQuery} placeholder='Search spaces…' />
                   <CommandList>
@@ -113,7 +113,11 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                         <CommandItem
                           key={space.id}
                           value={`${space.name} ${space.slug}`}
-                          className='p-0'
+                          // The stock item draws its own check at the row's end and
+                          // shows it for data-checked -- so the row marks the current
+                          // space through it rather than carrying a second icon.
+                          data-checked={space.slug === slug}
+                          className='p-0 pr-2'
                           onSelect={() => select(space)}
                         >
                           <Link
@@ -131,7 +135,6 @@ export function SpaceSidebarSection({ spaces }: { spaces: SpaceSummary[] }) {
                           >
                             <SpaceIcon icon={space.icon} className='size-5' />
                             {space.name}
-                            <Check className={`ml-auto ${space.slug === slug ? 'opacity-100' : 'opacity-0'}`} />
                           </Link>
                         </CommandItem>
                       ))}

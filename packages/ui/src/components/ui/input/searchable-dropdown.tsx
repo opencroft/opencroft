@@ -1,6 +1,6 @@
 'use client'
 
-import { Check, ChevronsUpDown, X } from 'lucide-react'
+import { ChevronsUpDown, X } from 'lucide-react'
 import * as React from 'react'
 
 import { Button } from 'ui/components/ui/button'
@@ -119,13 +119,13 @@ export function SearchableDropdown({
                         {group.options.map((option) => (
                           <CommandItem
                             key={option}
+                            data-checked={value === option}
                             value={option}
                             keywords={[option, group.label]}
                             onSelect={() => commit(option)}
                             style={group.color ? { color: group.color } : {}}
                           >
                             {option}
-                            <Check className={cn('ml-auto h-4 w-4', value === option ? 'opacity-100' : 'opacity-0')} />
                           </CommandItem>
                         ))}
                       </CommandGroup>,
@@ -139,15 +139,13 @@ export function SearchableDropdown({
                           {subgroup.options.map((option) => (
                             <CommandItem
                               key={option}
+                              data-checked={value === option}
                               value={option}
                               keywords={[option, subgroup.label, group.label]}
                               onSelect={() => commit(option)}
                               style={group.color ? { color: group.color } : {}}
                             >
                               {option}
-                              <Check
-                                className={cn('ml-auto h-4 w-4', value === option ? 'opacity-100' : 'opacity-0')}
-                              />
                             </CommandItem>
                           ))}
                         </CommandGroup>,
@@ -162,12 +160,12 @@ export function SearchableDropdown({
                   {options.map((option) => (
                     <CommandItem
                       key={option}
+                      data-checked={value === option}
                       value={option}
                       onSelect={() => commit(option)}
                       style={optionColors[option] ? { color: optionColors[option] } : {}}
                     >
                       {option}
-                      <Check className={cn('ml-auto h-4 w-4', value === option ? 'opacity-100' : 'opacity-0')} />
                     </CommandItem>
                   ))}
                 </CommandGroup>
