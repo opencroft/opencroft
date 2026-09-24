@@ -145,6 +145,17 @@ export function DiffEditor({ current, next }: DiffEditorProps) {
         disposable.dispose()
       }
       disposablesRef.current = []
+      // @monaco-editor/react 4.7 disposes the models before the editor that
+      // still shows them, which Monaco 0.55 answers with "TextModel got disposed
+      // before DiffEditorWidget model got reset". So the models are kept out of
+      // its hands (`keepCurrent*Model` below) and released here instead —
+      // detached first. This runs before the library's own unmount cleanup,
+      // since React runs a parent's cleanups before its children's.
+      const editor = editorRef.current
+      const models = editor?.getModel()
+      editor?.setModel(null)
+      models?.original.dispose()
+      models?.modified.dispose()
       editorRef.current = null
     },
     [],
@@ -181,6 +192,8 @@ export function DiffEditor({ current, next }: DiffEditorProps) {
           language='json'
           original={current}
           modified={next}
+          keepCurrentOriginalModel
+          keepCurrentModifiedModel
           theme={dark ? 'vs-dark' : 'vs'}
           onMount={handleMount}
           loading={<div className='h-14 w-full animate-pulse bg-muted' />}
