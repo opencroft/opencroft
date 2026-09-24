@@ -105,7 +105,7 @@ test('an MCP token is read from X-API-Key', async () => {
 
 // A reverse proxy's basic auth occupies Authorization; the token has to get
 // through beside it.
-test('X-API-Key is read when Authorization carries a proxy\u2019s Basic credential', async () => {
+test('X-API-Key is read when Authorization carries a proxy’s Basic credential', async () => {
   const [nodeId] = await agentNodes(['Caller Behind Proxy'])
   const token = await mint(nodeId)
   const caller = await resolveCaller(req({ authorization: 'Basic dXNlcjpwYXNz', 'x-api-key': token }))
@@ -115,7 +115,9 @@ test('X-API-Key is read when Authorization carries a proxy\u2019s Basic credenti
 
 test('X-API-Key wins over a Bearer token when both are sent', async () => {
   const [first, second] = await agentNodes(['Caller Key Wins', 'Caller Bearer Loses'])
-  const caller = await resolveCaller(req({ 'x-api-key': await mint(first), authorization: `Bearer ${await mint(second)}` }))
+  const caller = await resolveCaller(
+    req({ 'x-api-key': await mint(first), authorization: `Bearer ${await mint(second)}` }),
+  )
   assert.equal(caller.agentNodeId, first)
 })
 
@@ -146,7 +148,10 @@ test('a deleted token stops resolving on the next request', async () => {
 
 test('an expired token stops resolving on its own', async () => {
   const [nodeId] = await agentNodes(['Caller Expiring'])
-  const created = await createMcpToken(nodeId, { name: 'to-expire', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+  const created = await createMcpToken(nodeId, {
+    name: 'to-expire',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  })
   assert.equal((await resolveCaller(bearer(created.token))).credential, 'present', 'live before it is aged out')
 
   // createMcpToken refuses a past expiry, so an expired token is only

@@ -133,8 +133,8 @@ export function AgentTokensTab({ nodeId }: { nodeId: string }) {
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
         <p className='text-[10px] text-muted-foreground'>
-          An MCP client connects to <span className='font-mono'>{window.location.origin}/mcp</span> with{' '}
-          the header <span className='font-mono'>X-API-Key: &lt;token&gt;</span> (or{' '}
+          An MCP client connects to <span className='font-mono'>{window.location.origin}/mcp</span> with the header{' '}
+          <span className='font-mono'>X-API-Key: &lt;token&gt;</span> (or{' '}
           <span className='font-mono'>Authorization: Bearer &lt;token&gt;</span>) and acts as this agent — including
           running commands on the hosts this agent can reach. Treat a token like a password.
         </p>
