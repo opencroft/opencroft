@@ -107,7 +107,7 @@ export const Route = createFileRoute('/_authed/(mcp)/mcp')({
         if (caller.credential !== 'present' || !caller.agentNodeId) {
           const message =
             caller.credential === 'absent'
-              ? 'Missing credential — send Authorization: Bearer <MCP token>.'
+              ? 'Missing credential — send X-API-Key: <MCP token> (or Authorization: Bearer <MCP token>).'
               : 'Credential not recognised — it may be mistyped, deleted, expired, or not an MCP token.'
           return Response.json(mcpErr(body.id ?? null, -32001, message), { status: 401 })
         }

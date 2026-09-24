@@ -31,13 +31,21 @@ export const ANONYMOUS: Caller = { credential: 'absent', agent: null, agentNodeI
 const UNRESOLVED: Caller = { credential: 'unknown', agent: null, agentNodeId: null, tokenId: null }
 
 /**
- * `Authorization: Bearer <token>` — the standard place, so an external MCP
- * client can carry a credential using configuration it already has rather than
- * a bespoke header. (A bespoke header is also what the `x-opencroft-internal`
- * mistake looked like, and that one turned out to be a free privilege
- * escalation for anyone who guessed the name.)
+ * `X-API-Key: <token>` first, then `Authorization: Bearer <token>`.
+ *
+ * `Authorization` is often already taken before a request reaches us — a
+ * reverse proxy's basic auth uses it — so a client behind one could not send
+ * both. `X-API-Key` is the widely used alternative and any MCP client can set
+ * it. Bearer stays accepted because it is where the MCP spec itself puts a
+ * credential, and a non-Bearer `Authorization` (a proxy's Basic) is ignored.
+ * (Never a bespoke `x-opencroft-*` name: the `x-opencroft-internal` mistake
+ * was a free privilege escalation for anyone who guessed the name.)
  */
-function bearerFrom(request: Request): string | null {
+function credentialFrom(request: Request): string | null {
+  const apiKey = request.headers.get('x-api-key')?.trim()
+  if (apiKey) {
+    return apiKey
+  }
   const header = request.headers.get('authorization')
   if (!header) {
     return null
@@ -47,7 +55,7 @@ function bearerFrom(request: Request): string | null {
 }
 
 export async function resolveCaller(request: Request): Promise<Caller> {
-  const presented = bearerFrom(request)
+  const presented = credentialFrom(request)
   if (!presented) {
     return ANONYMOUS
   }

@@ -96,6 +96,34 @@ test('the Bearer scheme is matched case-insensitively, as RFC 7235 requires', as
   assert.equal(caller.credential, 'present')
 })
 
+test('an MCP token is read from X-API-Key', async () => {
+  const [nodeId] = await agentNodes(['Caller Api Key'])
+  const caller = await resolveCaller(req({ 'x-api-key': await mint(nodeId) }))
+  assert.equal(caller.credential, 'present')
+  assert.equal(caller.agentNodeId, nodeId)
+})
+
+// A reverse proxy's basic auth occupies Authorization; the token has to get
+// through beside it.
+test('X-API-Key is read when Authorization carries a proxy\u2019s Basic credential', async () => {
+  const [nodeId] = await agentNodes(['Caller Behind Proxy'])
+  const token = await mint(nodeId)
+  const caller = await resolveCaller(req({ authorization: 'Basic dXNlcjpwYXNz', 'x-api-key': token }))
+  assert.equal(caller.credential, 'present')
+  assert.equal(caller.agentNodeId, nodeId)
+})
+
+test('X-API-Key wins over a Bearer token when both are sent', async () => {
+  const [first, second] = await agentNodes(['Caller Key Wins', 'Caller Bearer Loses'])
+  const caller = await resolveCaller(req({ 'x-api-key': await mint(first), authorization: `Bearer ${await mint(second)}` }))
+  assert.equal(caller.agentNodeId, first)
+})
+
+test('a Basic Authorization header alone is no credential at all', async () => {
+  const caller = await resolveCaller(req({ authorization: 'Basic dXNlcjpwYXNz' }))
+  assert.equal(caller.credential, 'absent')
+})
+
 // The distinction this asserts is the whole point of having three states:
 // `unknown` is a client that WAS configured and is now wrong, `absent` is a
 // client nobody has touched.
