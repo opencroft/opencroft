@@ -89,7 +89,7 @@
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
     "jsdom": "^30.0.1",
-    "shadcn": "^3.3.1",
+    "shadcn": "^4.21.0",
     "tsx": "^4.21.0",
     "typescript": "^5"
   }
