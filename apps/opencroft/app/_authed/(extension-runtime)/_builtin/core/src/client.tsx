@@ -16,6 +16,7 @@ import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-i
 import { AgentMcpTab } from './nodes/agent-mcp'
 import { AgentSkillsTab } from './nodes/agent-skills'
 import { AgentSpeechTab } from './nodes/agent-speech'
+import { AgentTokensTab } from './nodes/agent-tokens'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
 import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
 import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
@@ -398,6 +399,13 @@ export default defineExtension({
           component: AgentSpeechRecognitionTab as unknown as never,
         },
         { id: 'mcp', label: 'MCP', icon: 'Wrench', fullHeight: true, component: AgentMcpTab as unknown as never },
+        {
+          id: 'tokens',
+          label: 'Tokens',
+          icon: 'KeyRound',
+          fullHeight: true,
+          component: AgentTokensTab as unknown as never,
+        },
         {
           id: 'skills',
           label: 'Skills',

@@ -511,6 +511,14 @@ export const actions = {
   'agent.oauthSubmitCode': (params: { loginId?: string; code?: string }) =>
     submitOauthCode(String(params?.loginId ?? ''), String(params?.code ?? '')),
   'agent.oauthDisconnect': (adapterId: string) => disconnectOauth(String(adapterId ?? '')),
+  // The agent's credentials for the MCP endpoint (the node's Tokens tab). The
+  // plaintext comes back from create only; list never carries it. `input` is
+  // passed through as sent: an absent expiry must be refused by the host's
+  // validation, not defaulted here to "never".
+  'agent.listMcpTokens': (nodeId: string) => host.mcpTokens.list(String(nodeId ?? '')),
+  'agent.createMcpToken': (nodeId: string, input: { name: string; expiresAt: string | null }) =>
+    host.mcpTokens.create(String(nodeId ?? ''), input),
+  'agent.deleteMcpToken': (nodeId: string, id: string) => host.mcpTokens.delete(String(nodeId ?? ''), String(id ?? '')),
   'tts.capabilities': (params: { baseUrl?: string; apiKey?: string; headers?: HeaderPair[] }) =>
     ttsCapabilities(params),
 }

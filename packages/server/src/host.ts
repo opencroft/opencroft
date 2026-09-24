@@ -82,6 +82,31 @@ export interface HostExecContextApi {
   ): Promise<{ primary: unknown; results: unknown[] }>
 }
 
+/** One of an agent node's MCP tokens, as listed. Dates are ISO strings; a null `expiresAt` never expires. The token itself is not here and cannot be read back. */
+export interface HostMcpTokenInfo {
+  id: string
+  name: string
+  createdAt: string
+  lastUsedAt: string | null
+  expiresAt: string | null
+}
+
+/**
+ * The credentials that identify an agent node on the MCP endpoint. A token is
+ * issued to one agent node and authenticates as that agent there and nowhere
+ * else. Calls are not authorised here -- whatever invokes these must already
+ * have established a signed-in person, because issuing a token is issuing an
+ * agent's identity.
+ */
+export interface HostMcpTokensApi {
+  /** The node's tokens, newest first. */
+  list(agentNodeId: string): Promise<HostMcpTokenInfo[]>
+  /** Issue a token; `expiresAt` null means it never expires. The plaintext `token` is returned here once and never again. Refused when the node is not an agent. */
+  create(agentNodeId: string, input: { name: string; expiresAt: string | null }): Promise<{ id: string; token: string }>
+  /** Delete one of the node's tokens. It stops working on the next request that presents it. */
+  delete(agentNodeId: string, id: string): Promise<void>
+}
+
 /** A stored secret with its decrypted value. */
 export interface SecretRecord {
   id: string
@@ -141,6 +166,7 @@ export interface ExtensionServerHost {
   /** The calling extension's own added App instances (see `AppsExport` in this package). */
   apps: HostAppsApi
   sendMessage: HostSendMessageApi
+  mcpTokens: HostMcpTokensApi
   execContext: HostExecContextApi
   /**
    * Fire-and-forget push to all connected clients; received in extension

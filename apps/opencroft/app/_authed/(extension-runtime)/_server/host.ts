@@ -5,7 +5,7 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
-import type { ExtensionServerHost, HostSecretsApi } from '@opencroft/server'
+import type { ExtensionServerHost, HostMcpTokensApi, HostSecretsApi } from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
   exec,
@@ -35,6 +35,7 @@ import {
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { mcpTokensApi } from '@/app/_authed/(mcp)/_server/mcp-tokens'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
@@ -749,6 +750,8 @@ export interface ExtensionHost {
    *  create, envelope composition, hidden-by-default registration) — the same
    *  mechanism its `text-in` wiring uses, not a parallel implementation. */
   sendMessage: HostSendMessageApi
+  /** An agent node's credentials for the MCP endpoint — see the package declaration. */
+  mcpTokens: HostMcpTokensApi
   /**
    * Fire-and-forget push to all connected clients; received in extension
    * client code via getStream(extensionId, 'events').
@@ -861,6 +864,7 @@ export function createHost(extensionId: string): ExtensionHost {
     storage: storageApi(extensionId),
     apps: appsApi(extensionId),
     sendMessage: sendMessageApi,
+    mcpTokens: mcpTokensApi,
     events: {
       broadcast: (name, payload) => {
         toastStore.broadcast({ type: 'extension_event', extensionId, name, payload })
