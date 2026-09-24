@@ -262,13 +262,13 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
           <ResizablePanel defaultSize='20%' minSize='150px'>
             {filesPane}
           </ResizablePanel>
-          <ResizableHandle withHandle className='cursor-col-resize' />
+          <ResizableHandle withHandle />
           <ResizablePanel defaultSize={previewOpen ? '50%' : '80%'} minSize='300px'>
             {codePane}
           </ResizablePanel>
           {previewOpen ? (
             <>
-              <ResizableHandle withHandle className='cursor-col-resize' />
+              <ResizableHandle withHandle />
               <ResizablePanel defaultSize='30%' minSize='150px'>
                 {previewPane}
               </ResizablePanel>
