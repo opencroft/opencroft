@@ -1,5 +1,6 @@
 import { readAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
 import { requireSession } from '@/app/_server/require-session'
+import { ensureServerStarted } from '@/server/startup'
 
 // One stored picture, as the bytes an <img> draws -- what the transcript shows
 // for a message that carried it (see attachmentSrc in _lib/attachment-src).
@@ -21,6 +22,13 @@ export async function attachmentResponse(request: Request, id: string): Promise<
   if (!key) {
     return Response.json({ error: 'key is required' }, { status: 400 })
   }
+  // The key is a thread key, and those are moved to their current form at
+  // server start (see ensureServerStarted). A picture asked for before that has
+  // finished would be looked up under a key that is about to change, miss, and
+  // draw as its name -- so this waits, as the app's own request entry does.
+  // After the session gate: who is asking does not depend on thread keys, and
+  // a refused request has no reason to start the server's background work.
+  await ensureServerStarted()
   const picture = await readAttachment(key, id)
   if (!picture) {
     return Response.json({ error: 'Attachment not found' }, { status: 404 })
