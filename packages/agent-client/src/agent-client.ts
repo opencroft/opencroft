@@ -555,6 +555,9 @@ interface ClientStore {
       // elicitation/complete notification names, since the agent never
       // learns our requestId.
       elicitationId?: string
+      // Raised while a turn of its session was in flight, so it ends with
+      // that turn (see cancelTurnAsks).
+      turnBound: boolean
     }
   >
   // Native-harness conversation state, owned here (not in the harness closure)
@@ -790,6 +793,28 @@ function emit(sessionId: string, event: ChatEvent): void {
     try {
       onEventHook(sessionId, event, session.meta.sessionKey)
     } catch {}
+  }
+}
+
+function hasTurnInFlight(sessionId: string): boolean {
+  return (store.sessions.get(sessionId)?.activeTurns ?? 0) > 0
+}
+
+// An ask raised inside a turn belongs to that turn: once the turn has ended or
+// is being stopped, nothing is left to read its answer. The agent cannot tell
+// us it stopped waiting — the SDK's client dispatch hands createElicitation the
+// request params alone, never the request's cancellation signal — so an agent
+// that gave up (its own timeout, a cancelled turn) would leave the card open
+// forever. The turn's end is the boundary we do observe. Settling it as a
+// cancel is also what closes the card, and an answer that arrives afterwards
+// finds no pending entry and is dropped, like any answer to a settled ask.
+function cancelTurnAsks(sessionId: string): void {
+  for (const [requestId, pending] of store.pendingElicitations) {
+    if (pending.sessionId === sessionId && pending.turnBound) {
+      store.pendingElicitations.delete(requestId)
+      pending.resolve({ action: 'cancel' })
+      emit(sessionId, { kind: 'ask_user_resolved', requestId })
+    }
   }
 }
 
@@ -1687,6 +1712,7 @@ export function buildClient(
           sessionId,
           resolve,
           ...(urlMode ? { elicitationId: urlMode.elicitationId } : {}),
+          turnBound: hasTurnInFlight(sessionId),
         })
         emit(sessionId, {
           kind: 'ask_user',
@@ -2629,12 +2655,22 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // Only a signal: it does not touch activeTurns or the queue. Whatever ends
   // the cancelled turn's in-flight prompt is what actually drains it (see
   // settleTurn), which is why a push queues rather than delivering directly.
+  //
+  // The one thing it does settle is the turn's open questions, the way the
+  // protocol has a client answer its pending permission requests on cancel:
+  // whether the turn then ends is up to the agent, and a stopped turn's card
+  // must not wait on that. After the signal, so the agent already knows the
+  // turn is stopping when the cancelled answer reaches it.
   async function cancelSession(sessionId: string): Promise<void> {
     if (!store.sessions.has(sessionId)) {
       return
     }
-    const connection = await connectionForSession(sessionId)
-    await connection.cancel({ sessionId })
+    try {
+      const connection = await connectionForSession(sessionId)
+      await connection.cancel({ sessionId })
+    } finally {
+      cancelTurnAsks(sessionId)
+    }
   }
 
   // Hand one prompt to the agent. The in-flight counter is incremented
@@ -3368,6 +3404,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (session.activeTurns > 0) {
       return
     }
+    // Before turn_end, so the transcript closes the turn's open questions
+    // inside the turn that asked them.
+    cancelTurnAsks(sessionId)
     // The turn boundary is the authoritative end of everything the turn
     // delegated: the harness holds the prompt open while its subagents run and
     // settles only once they have drained (or the turn was cancelled, which
@@ -3807,7 +3846,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // send deciding whether there's actually a turn worth cancelling) and has
     // no reason to resolve it back to a selection.sessionKey first.
     hasActiveTurn(sessionId: string): boolean {
-      return (store.sessions.get(sessionId)?.activeTurns ?? 0) > 0
+      return hasTurnInFlight(sessionId)
     },
 
     // Whether the session has live background work its harness reported — a
@@ -5123,6 +5162,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
                 ? ((response as { content?: Record<string, ElicitationContentValue> | null }).content ?? {})
                 : null,
             ),
+          turnBound: hasTurnInFlight(sessionId),
         })
         emit(sessionId, {
           kind: 'ask_user',

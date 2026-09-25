@@ -11,6 +11,7 @@ import {
   type QueueStore,
 } from './agent-client'
 import type { AgentConnection } from './connection'
+import { CODEX_USER_INPUT_FORM } from './elicitation-form.fixtures'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
@@ -1900,6 +1901,119 @@ test('a host-raised askUser and a url elicitation both await the user until they
   await completeElicitation({ elicitationId: 'elic-awaiting' })
   await login
   assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:host'), 'completed by the agent, no longer awaiting')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// codex-acp's request_user_input form (see elicitation-form.fixtures). Its
+// request is session-scoped and names the Codex item as its tool call.
+function raiseCodexAsk(sessionId: string) {
+  const { createElicitation } = buildClient(() => sessionId, 'local')
+  assert.ok(createElicitation)
+  return createElicitation({ mode: 'form', sessionId, toolCallId: 'codex-item-1', ...CODEX_USER_INPUT_FORM })
+}
+
+function asksIn(events: ChatEvent[]) {
+  return events.filter((event): event is Extract<ChatEvent, { kind: 'ask_user' }> => event.kind === 'ask_user')
+}
+
+function resolutionsOf(events: ChatEvent[], requestId: string): number {
+  return events.filter((event) => event.kind === 'ask_user_resolved' && event.requestId === requestId).length
+}
+
+test('a codex form answers under its question and note keys, and no event carries the secret', async () => {
+  const h = await setup('openclaw')
+  const response = raiseCodexAsk(h.sessionId)
+  const ask = asksIn(h.events).at(-1)
+  assert.ok(ask)
+  assert.equal(ask.message, 'Codex needs your input to continue.')
+  assert.deepEqual(ask.form, CODEX_USER_INPUT_FORM.requestedSchema)
+  // The content object the ask renderer builds for this form (agent-chat's
+  // ask-user tests pin that side): the pick, the note under its own key, the
+  // secret under the question's.
+  const content = { target: 'None of the above', target_note: 'the canary stack', token: 'tok-SECRET-1' }
+  h.client.resolveElicitation(ask.requestId, content)
+  const answered = await response
+  assert.deepEqual(answered, { action: 'accept', content })
+  assert.deepEqual(Object.keys((answered as { content: object }).content).sort(), ['target', 'target_note', 'token'])
+  // What the transcript records of the answer is that there was one.
+  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: ask.requestId })
+  assert.ok(!JSON.stringify(h.events).includes('tok-SECRET-1'))
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an ask raised in a turn closes as cancelled when the turn ends, and a late answer is dropped', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:asks:turn-end' })
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const agentAsk = raiseCodexAsk(h.sessionId)
+  const hostAsk = h.client.askUser(h.sessionId, { message: 'Which way?' })
+  const [agentEvent, hostEvent] = asksIn(h.events)
+  assert.ok(agentEvent && hostEvent)
+
+  // The agent stopped waiting (codex-acp's own timeout) and ended the turn;
+  // nothing but the turn's end says so.
+  h.endTurn()
+  await settle()
+  assert.deepEqual(await agentAsk, { action: 'cancel' })
+  assert.equal(await hostAsk, null)
+  const turnEnd = h.events.findIndex((event) => event.kind === 'turn_end')
+  for (const { requestId } of [agentEvent, hostEvent]) {
+    const closed = h.events.findIndex((event) => event.kind === 'ask_user_resolved' && event.requestId === requestId)
+    assert.ok(closed >= 0 && closed < turnEnd, 'closed inside the turn that asked')
+    assert.equal(h.client.pendingRequestSessionId(requestId), undefined)
+  }
+  assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:turn-end'))
+  const folded = foldEvents(h.events).filter((message) => message.kind === 'ask')
+  assert.deepEqual(
+    folded.map((message) => message.kind === 'ask' && message.resolved),
+    [true, true],
+  )
+
+  // The reader answers the card they still had open: nothing reaches the
+  // agent a second time and the transcript does not close it twice.
+  h.client.resolveElicitation(agentEvent.requestId, { target: 'Staging', token: 'late' })
+  assert.equal(resolutionsOf(h.events, agentEvent.requestId), 1)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('stopping a turn closes its ask at once, without waiting for the agent to end the turn', async () => {
+  // The default seeded cancel does NOT end the turn: an agent still blocked on
+  // the answer it asked for.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const response = raiseCodexAsk(h.sessionId)
+  const ask = asksIn(h.events).at(-1)
+  assert.ok(ask)
+  await h.client.cancel(h.sessionId)
+  assert.deepEqual(await response, { action: 'cancel' })
+  assert.equal(resolutionsOf(h.events, ask.requestId), 1)
+  assert.ok(!h.events.some((event) => event.kind === 'turn_end'), 'the turn itself is still the agent’s to end')
+  h.endTurn()
+  await settle()
+  assert.equal(resolutionsOf(h.events, ask.requestId), 1, 'the turn end finds nothing left to close')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an ask raised with no turn in flight is left open by the next turn’s end', async () => {
+  // A request-scoped elicitation raised while a session is set up (an OAuth
+  // login, say) belongs to no turn, so no turn's end is its end.
+  const h = await setup('openclaw')
+  const { createElicitation, completeElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation && completeElicitation)
+  const login = createElicitation({
+    mode: 'url',
+    sessionId: h.sessionId,
+    message: 'Authenticate',
+    url: 'https://example.invalid/login',
+    elicitationId: 'elic-outside-turn',
+  })
+  const ask = asksIn(h.events).at(-1)
+  assert.ok(ask)
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+  assert.equal(h.client.pendingRequestSessionId(ask.requestId), h.sessionId)
+  await completeElicitation({ elicitationId: 'elic-outside-turn' })
+  assert.deepEqual(await login, { action: 'accept' })
   await h.client.deleteSession(h.sessionId)
 })
 

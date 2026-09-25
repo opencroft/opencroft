@@ -13,7 +13,9 @@
  * - nothing is required — the reader can skip, matching the built-in tools.
  *
  * Encoder and decoder live together for the same reason queue-tags' do: split
- * apart they drift, and a drifted pair silently loses answers.
+ * apart they drift, and a drifted pair silently loses answers. The readers of
+ * per-field `_meta` markers live here too, because a renderer has to recognise
+ * the markers other bridges stamp as well as the one this encoder does.
  */
 
 import type { ElicitationContentValue, ElicitationSchema } from './types'
@@ -25,6 +27,43 @@ import type { ElicitationContentValue, ElicitationSchema } from './types'
  * pairs customs for agent-sent and host-sent forms alike.
  */
 export const CUSTOM_ANSWER_META_KEY = '_askUserQuestionCustomAnswer'
+
+/**
+ * The `_meta` key codex-acp stamps on the fields of a `request_user_input`
+ * form: `{ isOther, isSecret }` on a question, and
+ * `{ questionId, role: 'user_note', isSecret }` on the note field it adds
+ * beside a question that accepts an answer outside its options.
+ */
+const CODEX_META_KEY = 'codex'
+
+function metaEntry(property: unknown, key: string): Record<string, unknown> | undefined {
+  const meta = (property as { _meta?: unknown } | null | undefined)?._meta
+  const entry = meta && typeof meta === 'object' ? (meta as Record<string, unknown>)[key] : undefined
+  return entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : undefined
+}
+
+/**
+ * The key of the question a field is the free-text answer box of, or null for
+ * a field that is a question of its own. Either bridge convention marks one.
+ * Only where it RENDERS moves: the box still answers under its own key, which
+ * is the key the agent reads it back from.
+ */
+export function customAnswerTarget(property: unknown): string | null {
+  const custom = metaEntry(property, CUSTOM_ANSWER_META_KEY)
+  if (custom?.isCustomAnswer === true && typeof custom.questionId === 'string') {
+    return custom.questionId
+  }
+  const codex = metaEntry(property, CODEX_META_KEY)
+  if (codex?.role === 'user_note' && typeof codex.questionId === 'string') {
+    return codex.questionId
+  }
+  return null
+}
+
+/** Whether a field asks for a secret, whose value must not be shown as typed. */
+export function isSecretField(property: unknown): boolean {
+  return metaEntry(property, CODEX_META_KEY)?.isSecret === true
+}
 
 export interface AskUserQuestionSpec {
   /** Short label — the tab caption, and the key the folded answers use. */

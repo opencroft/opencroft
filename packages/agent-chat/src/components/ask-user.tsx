@@ -1,6 +1,6 @@
 'use client'
 
-import { CUSTOM_ANSWER_META_KEY } from 'agent-client/elicitation-form'
+import { customAnswerTarget, isSecretField } from 'agent-client/elicitation-form'
 import type { ElicitationContentValue, ElicitationSchema } from 'agent-client/types'
 import { Check, ExternalLink, MessageCircleQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useState } from 'react'
@@ -22,15 +22,20 @@ import { Markdown } from './markdown'
 // one answer shape, and the two paths cannot drift apart.
 
 /** One tab: a question field, with its paired free-text "Other" box when the
- * schema marked one (see CUSTOM_ANSWER_META_KEY). */
+ * schema marked one (see customAnswerTarget). */
 export interface AskUserField {
   key: string
   title: string
   description?: string
   required: boolean
+  // Typed masked. Set only when the schema marked the field (see
+  // isSecretField), and likewise `customSecret` for its paired box, which
+  // carries its own marker.
+  secret?: true
   // The paired custom field's KEY — its answer travels under this key, apart
   // from the picks, exactly as the schema declared it.
   customKey?: string
+  customSecret?: true
   kind:
     | { type: 'select'; options: { value: string; label: string; description?: string }[] }
     | { type: 'multi'; options: { value: string; label: string; description?: string }[] }
@@ -66,33 +71,34 @@ function enumOptions(raw: unknown): { value: string; label: string; description?
   return options.length > 0 ? options : null
 }
 
-function customAnswerTarget(property: unknown): string | null {
-  const meta = (property as { _meta?: Record<string, unknown> | null })?._meta
-  const marker = meta?.[CUSTOM_ANSWER_META_KEY] as { questionId?: unknown; isCustomAnswer?: unknown } | undefined
-  return marker?.isCustomAnswer === true && typeof marker.questionId === 'string' ? marker.questionId : null
-}
-
 /**
  * Fold an elicitation schema into tabs. A field marked as another field's
  * custom-answer box folds INTO that field's tab; everything else becomes a tab
  * of its own. Unknown property types degrade to a text input rather than
  * vanishing — a field the reader cannot see is an answer the agent never gets.
+ * For the same reason a box naming a question the schema does not have stays
+ * a tab of its own.
  */
 export function askFields(schema: ElicitationSchema): AskUserField[] {
   const required = new Set(schema.required ?? [])
-  const entries = Object.entries(schema.properties ?? {})
+  const properties = schema.properties ?? {}
+  const entries = Object.entries(properties)
+  const pairedTarget = (property: unknown): string | null => {
+    const target = customAnswerTarget(property)
+    return target !== null && Object.hasOwn(properties, target) ? target : null
+  }
   // A plain record, not a Map: the design kit's live preview resolves bare
   // identifiers by name, and an icon called Map shadows the global there.
   const customFor: Record<string, string> = {}
   for (const [key, property] of entries) {
-    const target = customAnswerTarget(property)
+    const target = pairedTarget(property)
     if (target) {
       customFor[target] = key
     }
   }
   const fields: AskUserField[] = []
   for (const [key, property] of entries) {
-    if (customAnswerTarget(property)) {
+    if (pairedTarget(property)) {
       continue
     }
     const record = property as PropertyRecord
@@ -104,7 +110,9 @@ export function askFields(schema: ElicitationSchema): AskUserField[] {
       title,
       ...(description ? { description } : {}),
       required: required.has(key),
+      ...(isSecretField(property) ? { secret: true as const } : {}),
       ...(customKey ? { customKey } : {}),
+      ...(customKey && isSecretField(properties[customKey]) ? { customSecret: true as const } : {}),
     }
     if (record.type === 'string') {
       const options = enumOptions(record.oneOf) ?? enumOptions(record.enum)
@@ -368,6 +376,8 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
         </div>
       ) : (
         <Input
+          type={field.secret ? 'password' : undefined}
+          autoComplete={field.secret ? 'off' : undefined}
           value={typeof state.values[field.key] === 'string' ? (state.values[field.key] as string) : ''}
           onChange={(event) => setValue(field.key, event.target.value)}
           onKeyDown={onInputKeyDown}
@@ -380,6 +390,8 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
       {/* The question's own "Other" box, when the schema declared one */}
       {field.customKey ? (
         <Input
+          type={field.customSecret ? 'password' : undefined}
+          autoComplete={field.customSecret ? 'off' : undefined}
           value={customText}
           onChange={(event) => setCustom(field.key, event.target.value)}
           onKeyDown={onInputKeyDown}

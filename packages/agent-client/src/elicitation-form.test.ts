@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { contentToAnswers, questionsToElicitation } from './elicitation-form'
+import { contentToAnswers, customAnswerTarget, isSecretField, questionsToElicitation } from './elicitation-form'
+import { CODEX_USER_INPUT_FORM } from './elicitation-form.fixtures'
 
 const QUESTIONS = [
   { title: 'Approach', question: 'Which approach?', options: ['fast', 'thorough'] },
@@ -45,4 +46,27 @@ test('contentToAnswers folds picks and customs back under the question titles', 
 test('an unanswered question folds to an empty string, a custom alone stands in for picks', () => {
   const answers = contentToAnswers(QUESTIONS, { question_0_custom: 'my own way' })
   assert.deepEqual(answers, { Approach: 'my own way', Scope: '' })
+})
+
+test('customAnswerTarget pairs the encoder’s custom box and codex-acp’s note field alike', () => {
+  const { schema } = questionsToElicitation(QUESTIONS)
+  const properties = schema.properties ?? {}
+  assert.equal(customAnswerTarget(properties.question_0_custom), 'question_0')
+  assert.equal(customAnswerTarget(properties.question_0), null)
+
+  const codex = CODEX_USER_INPUT_FORM.requestedSchema.properties
+  assert.equal(customAnswerTarget(codex.target_note), 'target')
+  assert.equal(customAnswerTarget(codex.target), null)
+  assert.equal(customAnswerTarget(codex.token), null)
+  // A codex field in any other role is not a note, questionId or not.
+  assert.equal(customAnswerTarget({ type: 'string', _meta: { codex: { questionId: 'target' } } }), null)
+})
+
+test('isSecretField reads codex-acp’s isSecret, and nothing else marks a field secret', () => {
+  const codex = CODEX_USER_INPUT_FORM.requestedSchema.properties
+  assert.equal(isSecretField(codex.token), true)
+  assert.equal(isSecretField(codex.target), false)
+  assert.equal(isSecretField(codex.target_note), false)
+  assert.equal(isSecretField({ type: 'string', _meta: { codex: { isSecret: 'yes' } } }), false)
+  assert.equal(isSecretField({ type: 'string' }), false)
 })
