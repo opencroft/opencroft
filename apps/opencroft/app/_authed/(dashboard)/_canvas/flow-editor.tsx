@@ -20,7 +20,7 @@ import {
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
 
-import { Box, GripVertical, Move } from 'lucide-react'
+import { Box, Move } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -37,6 +37,7 @@ import '@/app/_authed/(dashboard)/_canvas/flow-editor.css'
 
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { LogoLoader } from 'ui/logo-loader'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizable'
 import { useSidebar } from 'ui/sidebar'
 
 import { ExtensionsStateContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
@@ -59,6 +60,7 @@ import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import { findTakenGraphIds } from '@/app/_authed/(space)/_server/actions'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
+import { useRememberedLayout } from '@/app/_lib/layout-storage'
 import { AppSidebar } from '@/app/_shell/app-sidebar'
 import { newGraphId } from '@/lib/graph-id'
 import { cn } from '@/lib/utils'
@@ -145,8 +147,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [extensionsSettled, setExtensionsSettled] = useState(false)
   const [extensionsVersion, setExtensionsVersion] = useState(0)
   const [menu, setMenu] = useState<MenuState | null>(null)
-  const [inspectorWidth, setInspectorWidth] = useState(420)
-  const [resizing, setResizing] = useState(false)
   const [inspectorExpanded, setInspectorExpanded] = useState(false)
   const [browserTab, setBrowserTab] = useState<BrowserTab>('outline')
   const inspector = useInspectorState()
@@ -259,6 +259,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
   // The right-hand panel exists only for something to inspect.
   const inspectorOpen = selected !== null || Boolean(inspector.inspectorNode)
+  // Docked beside the canvas on a desktop, resized by the same handle as a
+  // docked chat and remembered per browser; covering the screen when expanded
+  // or on a phone.
+  const inspectorDocked = inspectorOpen && !isMobile && !inspectorExpanded
+  const inspectorCovers = inspectorOpen && (inspectorExpanded || (isMobile && mobileInspectorVisible))
+  const inspectorLayout = useRememberedLayout('graph-inspector', inspectorDocked ? ['canvas', 'inspector'] : ['canvas'])
 
   // Hand the selected node to the surrounding selection scope, when there is
   // one. A dashboard mounts none, and `useOptionalSelection` answering null
@@ -734,27 +740,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [addNodeAt, screenToFlowPosition],
   )
 
-  const startInspectorResize = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault()
-      const startX = e.clientX
-      const startWidth = inspectorWidth
-      setResizing(true)
-      const onMove = (ev: PointerEvent) => {
-        const next = Math.max(320, Math.min(window.innerWidth - 320, startWidth + (startX - ev.clientX)))
-        setInspectorWidth(next)
-      }
-      const onUp = () => {
-        setResizing(false)
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [inspectorWidth],
-  )
-
   const updateNodeData = useCallback(
     (nodeId: string, patch: Record<string, unknown>) => {
       setNodes((nds) => {
@@ -1055,6 +1040,23 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     )
   }
 
+  const inspectorPanel = (
+    <NodeInspector
+      node={selected}
+      expanded={inspectorExpanded}
+      override={inspector.inspectorNode}
+      updateNodeData={updateNodeData}
+      onDeselect={() => {
+        deselect()
+        if (isMobile) {
+          setMobileInspectorVisible(false)
+        }
+      }}
+      onEditExtension={openEditor}
+      onExpandedChange={setInspectorExpanded}
+    />
+  )
+
   return (
     // Provided here rather than folded into `nodeTypes`: the node component map
     // is memoised on the set of node types, so feeding either of these through
@@ -1067,8 +1069,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     // been written to, and a wrapper resolves its component during render.
     <ExtensionsStateContext.Provider value={extensionsState}>
       <InspectorContext.Provider value={{ setNode: inspector.setNode }}>
-        <div className='flex h-full w-full'>
-          <div className='flex-1 relative min-w-0'>
+        <ResizablePanelGroup
+          className='h-full w-full'
+          defaultLayout={inspectorLayout.defaultLayout}
+          onLayoutChanged={inspectorLayout.onLayoutChanged}
+        >
+          <ResizablePanel id='canvas' minSize='30%' className='relative min-w-0'>
             <div
               role='application'
               className='dashboard-mvp-flow absolute inset-0'
@@ -1179,7 +1185,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               extensionsVersion={extensionsVersion}
             />
             <McpRequestNotifications onOpen={openMcpRequests} />
-          </div>
+          </ResizablePanel>
           <AppSidebar>
             <NodeBrowser
               tab={browserTab}
@@ -1196,51 +1202,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               }}
             />
           </AppSidebar>
-          {inspectorOpen && (!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
-            // The handle resizes by pointer only. Satisfying the a11y rules on it means a
-            // focusable separator with a value and arrow-key resizing, which is a new
-            // behaviour rather than a lint fix; until that is built the handle stays as it is.
-            // biome-ignore lint/a11y/useFocusableInteractive: pointer-only resize handle, see above
-            // biome-ignore lint/a11y/useSemanticElements: an <hr> cannot hold the grip
-            <div
-              onPointerDown={startInspectorResize}
-              // biome-ignore lint/a11y/useAriaPropsForRole: aria-valuenow belongs with keyboard resizing, see above
-              role='separator'
-              aria-orientation='vertical'
-              aria-label='Resize inspector'
-              className={`relative w-px bg-border cursor-col-resize flex items-center justify-center after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 hover:bg-primary/60 transition-colors ${resizing ? 'bg-primary/80' : ''}`}
-            >
-              <div className='bg-border z-10 flex h-4 w-3 items-center justify-center rounded-xs border'>
-                <GripVertical className='size-2.5' />
-              </div>
-            </div>
+          {inspectorDocked && <ResizableHandle withHandle />}
+          {inspectorDocked && (
+            <ResizablePanel id='inspector' defaultSize='420px' minSize='20rem' maxSize='70%' className='min-w-0'>
+              {inspectorPanel}
+            </ResizablePanel>
           )}
-          {inspectorOpen && (!isMobile || mobileInspectorVisible || inspectorExpanded) && (
-            <div
-              className={
-                inspectorExpanded || (isMobile && mobileInspectorVisible)
-                  ? 'fixed inset-0 z-50'
-                  : 'h-full border-l shrink-0 max-w-6xl min-w-md'
-              }
-              style={inspectorExpanded || (isMobile && mobileInspectorVisible) ? undefined : { width: inspectorWidth }}
-            >
-              <NodeInspector
-                node={selected}
-                expanded={inspectorExpanded}
-                override={inspector.inspectorNode}
-                updateNodeData={updateNodeData}
-                onDeselect={() => {
-                  deselect()
-                  if (isMobile) {
-                    setMobileInspectorVisible(false)
-                  }
-                }}
-                onEditExtension={openEditor}
-                onExpandedChange={setInspectorExpanded}
-              />
-            </div>
-          )}
-        </div>
+        </ResizablePanelGroup>
+        {inspectorCovers && <div className='fixed inset-0 z-50'>{inspectorPanel}</div>}
       </InspectorContext.Provider>
     </ExtensionsStateContext.Provider>
   )
