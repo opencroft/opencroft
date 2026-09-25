@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react'
 import { CodeBlock } from 'agent-chat/components/code-block'
 import { CodeBlockEditor } from 'agent-chat/components/code-block-editor'
-import { Markdown } from 'agent-chat/components/markdown'
+import { Markdown, markdownDirectiveBlocks } from 'agent-chat/components/markdown'
 import { MermaidDiagram } from 'agent-chat/components/mermaid-diagram'
 import type * as icons from 'lucide-react'
 import * as React from 'react'
@@ -385,6 +385,12 @@ export const extensionUiApi = {
   // more: the `rel="noopener noreferrer"` it puts on every link is a security
   // property, and a second copy of the renderer loses it with no symptom.
   Markdown,
+  // The documentation blocks that renderer draws (callouts, spoilers, tabs),
+  // as remark plugins plus element renderers, for a surface whose own
+  // `react-markdown` it cannot replace. Shared so those blocks look and parse
+  // exactly as they do in `Markdown`, and so `MarkdownEditor` below writes
+  // nothing such a surface shows as raw `:::`.
+  markdownDirectiveBlocks,
   // The other end of that renderer: the product's one markdown WYSIWYG, which
   // both the skills editor and the documentation extension's page editor now
   // are. Shared because TipTap is a large dependency to bundle per extension,

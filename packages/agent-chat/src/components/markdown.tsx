@@ -107,18 +107,36 @@ function TabElement({ children }: TabElementProps) {
   return <>{children}</>
 }
 
-// `Components` only knows HTML's element names; the blocks' own names are added
-// alongside it.
-const markdownComponents = {
+/**
+ * The documentation blocks, as the two halves `react-markdown` takes: the
+ * remark plugins that read them, and the renderers for the elements those
+ * plugins produce.
+ *
+ * For a surface that renders markdown with its own `react-markdown` for a
+ * reason of its own -- a page that stamps source positions onto what it
+ * renders, say -- and still has to show the blocks exactly as this component
+ * does. Add the plugins after your own and spread the components into yours.
+ * `Markdown` itself is built from this, so the two cannot drift apart.
+ */
+export const markdownDirectiveBlocks = {
+  remarkPlugins: [remarkDirective, remarkDirectiveBlocks],
+  // `Components` only knows HTML's element names; the blocks' own names are
+  // keys beside them.
+  components: {
+    [DIRECTIVE_ELEMENTS.callout]: CalloutElement,
+    [DIRECTIVE_ELEMENTS.spoiler]: SpoilerElement,
+    [DIRECTIVE_ELEMENTS.tabs]: TabsElement,
+    [DIRECTIVE_ELEMENTS.tab]: TabElement,
+  } as Components,
+}
+
+const markdownComponents: Components = {
   a: MarkdownLink,
   pre: MarkdownPre,
-  [DIRECTIVE_ELEMENTS.callout]: CalloutElement,
-  [DIRECTIVE_ELEMENTS.spoiler]: SpoilerElement,
-  [DIRECTIVE_ELEMENTS.tabs]: TabsElement,
-  [DIRECTIVE_ELEMENTS.tab]: TabElement,
-} as Components
+  ...markdownDirectiveBlocks.components,
+}
 
-const remarkPlugins = [remarkGfm, remarkDirective, remarkDirectiveBlocks]
+const remarkPlugins = [remarkGfm, ...markdownDirectiveBlocks.remarkPlugins]
 
 // What survives in an inline rendering: the spans a sentence can carry. A
 // block construct is unwrapped to its text rather than dropped, so nothing the

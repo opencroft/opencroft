@@ -45,13 +45,53 @@ export const DIRECTIVE_ELEMENTS = {
   tab: 'markdown-tab',
 } as const
 
-function isCalloutKind(name: string): name is MarkdownCalloutKind {
+export function isCalloutKind(name: string): name is MarkdownCalloutKind {
   return (MARKDOWN_CALLOUT_KINDS as readonly string[]).includes(name)
 }
 
-function attribute(node: ContainerDirective, name: string): string | undefined {
+/**
+ * The one attribute a block reads, by directive name, or undefined for a
+ * block that reads none. A directive's label -- `:::note[Heads up]`, the form
+ * Docusaurus writes titles in -- stands in for it when the attribute is
+ * absent.
+ */
+export function blockAttribute(name: string): 'title' | 'summary' | 'label' | undefined {
+  if (isCalloutKind(name)) {
+    return 'title'
+  }
+  if (name === SPOILER_DIRECTIVE) {
+    return 'summary'
+  }
+  if (name === TAB_DIRECTIVE) {
+    return 'label'
+  }
+  return undefined
+}
+
+function textOf(node: RootContent): string {
+  if ('value' in node) {
+    return node.value
+  }
+  return 'children' in node ? node.children.map(textOf).join('') : ''
+}
+
+/**
+ * What a block's heading says: its attribute, else its label as plain text.
+ * The label is taken out of the body either way -- it is the heading's, and
+ * left in place it would show as a stray first paragraph.
+ */
+function headingOf(node: ContainerDirective, name: string): string | undefined {
+  const first = node.children[0]
+  const label = first?.type === 'paragraph' && first.data?.directiveLabel ? first : undefined
+  if (label) {
+    node.children.shift()
+  }
   const value = node.attributes?.[name]
-  return typeof value === 'string' && value !== '' ? value : undefined
+  if (typeof value === 'string' && value !== '') {
+    return value
+  }
+  const text = label ? textOf(label).trim() : ''
+  return text === '' ? undefined : text
 }
 
 /**
@@ -79,9 +119,9 @@ function plain(node: ContainerDirective) {
 
 function transformContainer(node: ContainerDirective, parent: Parent) {
   if (isCalloutKind(node.name)) {
-    claim(node, DIRECTIVE_ELEMENTS.callout, { kind: node.name, title: attribute(node, 'title') })
+    claim(node, DIRECTIVE_ELEMENTS.callout, { kind: node.name, title: headingOf(node, 'title') })
   } else if (node.name === SPOILER_DIRECTIVE) {
-    claim(node, DIRECTIVE_ELEMENTS.spoiler, { summary: attribute(node, 'summary') })
+    claim(node, DIRECTIVE_ELEMENTS.spoiler, { summary: headingOf(node, 'summary') })
   } else if (node.name === TABS_DIRECTIVE && node.children.length > 0 && node.children.every(isTab)) {
     claim(node, DIRECTIVE_ELEMENTS.tabs)
   } else if (
@@ -89,7 +129,7 @@ function transformContainer(node: ContainerDirective, parent: Parent) {
     parent.type === 'containerDirective' &&
     parent.data?.hName === DIRECTIVE_ELEMENTS.tabs
   ) {
-    claim(node, DIRECTIVE_ELEMENTS.tab, { label: attribute(node, 'label') })
+    claim(node, DIRECTIVE_ELEMENTS.tab, { label: headingOf(node, 'label') })
   } else {
     // Includes a `tabs` holding anything besides tabs, and a `tab` outside
     // one: shown as their content, so nothing the author wrote is dropped.

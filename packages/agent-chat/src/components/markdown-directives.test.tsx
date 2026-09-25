@@ -31,6 +31,24 @@ test('a callout title attribute replaces the kind name', () => {
   assert.equal(visibleText(html), 'Before you upgradeBack up first.')
 })
 
+test('a directive label is the heading when no attribute names one', () => {
+  assert.equal(visibleText(render(':::note[Heads *up*]\nBody.\n:::')), 'Heads upBody.')
+  assert.match(render(':::details[Full log]\nhidden\n:::'), /<span>Full log<\/span>/)
+  const tabs = render('::::tabs\n:::tab[npm]\nx\n:::\n::::')
+  assert.match(tabs, /role="tab"[^>]*>npm</)
+})
+
+test('the attribute wins over the label, and the label never shows in the body', () => {
+  assert.equal(visibleText(render(':::tip[From label]{title="From attribute"}\nBody.\n:::')), 'From attributeBody.')
+})
+
+test('an unknown directive keeps its label as content', () => {
+  assert.equal(
+    render(':::someday[Later]\nBody.\n:::'),
+    '<div class="prose-chat"><div><p>Later</p><p>Body.</p></div></div>',
+  )
+})
+
 test('details renders a native disclosure with its summary', () => {
   const html = render(':::details{summary="Full log"}\nline one\n:::')
   assert.match(html, /^<div class="prose-chat"><details class="[^"]*">/)

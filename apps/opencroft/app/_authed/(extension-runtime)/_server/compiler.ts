@@ -473,6 +473,7 @@ export const TerminalRef = __ui.TerminalRef;
 export const CodeBlock = __ui.CodeBlock;
 export const CodeBlockEditor = __ui.CodeBlockEditor;
 export const Markdown = __ui.Markdown;
+export const markdownDirectiveBlocks = __ui.markdownDirectiveBlocks;
 export const MarkdownEditor = __ui.MarkdownEditor;
 export const MermaidDiagram = __ui.MermaidDiagram;
 export const legacy = {

@@ -125,6 +125,25 @@ export interface MarkdownProps {
  */
 export declare const Markdown: FC<MarkdownProps>
 
+/**
+ * The documentation blocks `Markdown` draws -- callouts (`:::note` …
+ * `:::caution`), `:::details` spoilers and `::::tabs` of `:::tab` -- for a
+ * surface that has to keep its own `react-markdown`: add `remarkPlugins` after
+ * your own plugins and spread `components` into yours. Any other directive
+ * then renders as its plain content, as it does in `Markdown`, and what
+ * `MarkdownEditor` writes never shows as raw `:::`.
+ *
+ * Typed loosely on purpose: the plugins are unified plugins and the
+ * components take `react-markdown`'s element props, and naming those types here
+ * would tie this package to both libraries' versions.
+ */
+export declare const markdownDirectiveBlocks: {
+  // biome-ignore lint/suspicious/noExplicitAny: unified plugin signatures vary by plugin
+  remarkPlugins: ((...args: any[]) => any)[]
+  // biome-ignore lint/suspicious/noExplicitAny: react-markdown element props, see above
+  components: Record<string, ComponentType<any>>
+}
+
 export interface CodeBlockEditorProps {
   /** The code being edited. Controlled — the caller holds it. */
   value: string
@@ -188,8 +207,9 @@ export declare const MermaidDiagram: FC<MermaidDiagramProps>
 /**
  * A group of toolbar controls. Named rather than listed one by one so a surface
  * can ask for less without enumerating buttons it does not know about yet.
+ * `blockMenu` is the Blocks menu: callouts, spoiler, tabs, table and divider.
  */
-export type MarkdownEditorToolbarGroup = 'history' | 'marks' | 'headings' | 'blocks' | 'links' | 'table'
+export type MarkdownEditorToolbarGroup = 'history' | 'marks' | 'headings' | 'blocks' | 'links' | 'table' | 'blockMenu'
 
 export interface MarkdownEditorProps {
   /** The markdown being edited. Controlled — the caller holds it. */

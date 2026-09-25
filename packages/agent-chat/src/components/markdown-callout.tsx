@@ -1,5 +1,15 @@
-import { Info, Lightbulb, type LucideIcon, MessageSquareWarning, OctagonAlert, TriangleAlert } from 'lucide-react'
+import {
+  ChevronDown,
+  Info,
+  Lightbulb,
+  type LucideIcon,
+  MessageSquareWarning,
+  OctagonAlert,
+  TriangleAlert,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
+import { Button } from 'ui/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/components/ui/dropdown-menu'
 import { cn } from 'ui/lib/utils'
 
 export type MarkdownCalloutKind = 'note' | 'tip' | 'important' | 'warning' | 'caution'
@@ -49,6 +59,11 @@ const TONES: Record<MarkdownCalloutKind, Tone> = {
 /** Every kind, in the order a picker offers them. */
 export const MARKDOWN_CALLOUT_KINDS = Object.keys(TONES) as MarkdownCalloutKind[]
 
+/** A kind's own name and icon, for anything that offers the kinds as a choice. */
+export function markdownCalloutKind(kind: MarkdownCalloutKind): { title: string; icon: LucideIcon } {
+  return { title: TONES[kind].title, icon: TONES[kind].icon }
+}
+
 export interface MarkdownCalloutProps {
   /** What kind of aside this is. Decides the colour, the icon and the default title. */
   kind: MarkdownCalloutKind
@@ -56,20 +71,69 @@ export interface MarkdownCalloutProps {
   title?: string
   /** The body: prose, lists, code -- whatever the block holds. */
   children?: ReactNode
+  /**
+   * Makes the heading an input that reports each change. For an editor; the
+   * kind's name is its placeholder, so an empty title still reads as the kind.
+   */
+  onTitleChange?: (title: string) => void
+  /** Adds a switcher to the heading line that offers every kind. For an editor. */
+  onKindChange?: (kind: MarkdownCalloutKind) => void
 }
 
 /**
  * A documentation aside: a note, a tip, something important, a warning or a
  * caution, set apart from the prose around it by a coloured rule and its icon.
+ *
+ * Given `onTitleChange` / `onKindChange` it is the same block made editable.
+ * The heading line is then kept out of the surrounding editable text
+ * (`contentEditable={false}`), so a rich-text editor hosting the block treats
+ * it as controls rather than as prose to type into.
  */
-export function MarkdownCallout({ kind, title, children }: MarkdownCalloutProps) {
+export function MarkdownCallout({ kind, title, children, onTitleChange, onKindChange }: MarkdownCalloutProps) {
   const tone = TONES[kind]
   const Icon = tone.icon
+  const editing = Boolean(onTitleChange || onKindChange)
   return (
     <div role='note' className={cn('my-2 rounded-r-md border-l-4 px-3 py-2', tone.box)}>
-      <div className={cn('flex items-center gap-1.5 font-medium', tone.accent)}>
+      <div
+        contentEditable={editing ? false : undefined}
+        className={cn('flex items-center gap-1.5 font-medium', tone.accent)}
+      >
         <Icon className='size-4 shrink-0' aria-hidden />
-        <span>{title || tone.title}</span>
+        {onTitleChange ? (
+          <input
+            value={title ?? ''}
+            placeholder={tone.title}
+            onChange={(event) => onTitleChange(event.target.value)}
+            aria-label='Callout title'
+            className='min-w-0 flex-1 bg-transparent outline-none placeholder:text-current placeholder:opacity-60'
+          />
+        ) : (
+          <span className='flex-1'>{title || tone.title}</span>
+        )}
+        {onKindChange ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button type='button' variant='ghost' size='xs' className='text-current'>
+                  {tone.title}
+                  <ChevronDown />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align='end'>
+              {MARKDOWN_CALLOUT_KINDS.map((option) => {
+                const OptionIcon = TONES[option].icon
+                return (
+                  <DropdownMenuItem key={option} onClick={() => onKindChange(option)}>
+                    <OptionIcon className={TONES[option].accent} />
+                    {TONES[option].title}
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
       </div>
       {children ? <div className='mt-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0'>{children}</div> : null}
     </div>
