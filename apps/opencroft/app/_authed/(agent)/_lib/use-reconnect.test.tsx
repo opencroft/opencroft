@@ -1,8 +1,8 @@
 // When a chat tab reconnects: at once the first time, backing off in a run,
-// never while hidden. The hook is mounted against a real DOM, because the
+// never while hidden, and not past a limit until the reader asks. The hook is mounted against a real DOM, because the
 // hidden case is the document's own visibility and its event.
 import assert from 'node:assert/strict'
-import test, { after } from 'node:test'
+import test, { after, mock } from 'node:test'
 
 import { installDomEnvironment } from '@/test-support/dom-environment'
 
@@ -11,7 +11,7 @@ const dom = await installDomEnvironment()
 // After the DOM exists, never before -- react-dom binds to the globals it finds.
 const { act, createElement } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { reconnectDelay, useReconnect } = await import('./use-reconnect')
+const { MAX_FAILURES, reconnectDelay, useReconnect } = await import('./use-reconnect')
 
 after(() => dom.cleanup())
 
@@ -42,11 +42,58 @@ async function mount() {
   return { hook, unmount: () => act(async () => root.unmount()) }
 }
 
-test('the first attempt is immediate, a run backs off, and it is capped', () => {
-  assert.equal(reconnectDelay(0), 0)
-  assert.equal(reconnectDelay(1), 1000)
-  assert.equal(reconnectDelay(2), 2000)
-  assert.equal(reconnectDelay(10), 30_000)
+// The jitter's two ends, passed in rather than drawn: the whole range of every
+// step is then stated, not sampled.
+const lowest = () => 0
+const highest = () => 1
+
+test('the first attempt is immediate, a run backs off within the upper half of each step, and it is capped', () => {
+  const failures = [0, 1, 2, 3, 4, 5, 6, 7, 12]
+  assert.deepEqual(
+    failures.map((n) => reconnectDelay(n, lowest)),
+    [0, 500, 1000, 2000, 4000, 8000, 15_000, 15_000, 15_000],
+  )
+  assert.deepEqual(
+    failures.map((n) => reconnectDelay(n, highest)),
+    [0, 1000, 2000, 4000, 8000, 16_000, 30_000, 30_000, 30_000],
+  )
+})
+
+test('a run stops at the limit and says so, and a retry starts a fresh one at once', async () => {
+  setVisibility('visible')
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const { hook, unmount } = await mount()
+    for (let failure = 0; failure < MAX_FAILURES; failure++) {
+      await act(async () => {
+        hook().schedule()
+        mock.timers.tick(30_000)
+      })
+      assert.equal(hook().attempt, failure + 1)
+      assert.equal(hook().exhausted, false)
+    }
+    await act(async () => {
+      hook().schedule()
+      mock.timers.tick(10 * 60_000)
+    })
+    assert.equal(hook().attempt, MAX_FAILURES, 'nothing past the limit')
+    assert.equal(hook().exhausted, true)
+    // No timer involved: the retry is the reader's, so it does not wait.
+    await act(async () => {
+      hook().retry()
+    })
+    assert.equal(hook().attempt, MAX_FAILURES + 1)
+    assert.equal(hook().exhausted, false)
+    // And the run it starts is a fresh one: its first retry is immediate again.
+    await act(async () => {
+      hook().schedule()
+      mock.timers.tick(0)
+    })
+    assert.equal(hook().attempt, MAX_FAILURES + 2)
+    await unmount()
+  } finally {
+    mock.timers.reset()
+  }
 })
 
 test('a visible tab reconnects at once, and one lost connection is one attempt', async () => {

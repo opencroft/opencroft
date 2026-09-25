@@ -17,6 +17,7 @@ import { ScrollArea } from 'ui/scroll-area'
 
 import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
+import { SessionOpenNotice } from '@/app/_authed/(agent)/_components/session-open-notice'
 import type {
   ForkTransport,
   LocalSource,
@@ -26,6 +27,7 @@ import type {
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { openedOrThrow } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
@@ -192,7 +194,10 @@ export function GroupChatThreadChat({
   // fail: it creates a fresh, empty session under an address nothing else
   // resolves, and the reader sees an empty chat where their conversation was.
   // A thread's id never moves, so the server reads whatever key it has now.
-  const openTransport = useCallback<OpenTransport>(() => openGroupChatThreadSession({ data: thread.id }), [thread.id])
+  const openTransport = useCallback<OpenTransport>(
+    async () => openedOrThrow(await openGroupChatThreadSession({ data: thread.id })),
+    [thread.id],
+  )
 
   // Fork into a NEW thread: the server branches this thread's session before
   // the chosen turn, creates the destination thread and stages the forked
@@ -467,7 +472,14 @@ export function GroupChatThreadChat({
         unread={unread}
         onRemoveUnread={acp.removeQueued}
         onDeliverUnread={acp.deliverQueue}
-        footerExtra={<AgentChatStatusIndicators />}
+        footerExtra={
+          <>
+            {/* In the footer so it stands under an empty chat and under a
+                transcript that lost its connection alike. */}
+            <SessionOpenNotice message={acp.openError} onRetry={acp.retryOpen} />
+            <AgentChatStatusIndicators />
+          </>
+        }
       />
       {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and
           without this there is nowhere to answer: the request renders in the

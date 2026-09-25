@@ -38,7 +38,7 @@ import { type ChatMessageRecord, toChatMessages } from './chat-completion'
 import { findSelectOption, MODE_SELECTOR, MODEL_SELECTOR, THOUGHT_LEVEL_SELECTOR } from './config-selectors'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
-import { errorMessage, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
+import { ActionRequiredError, errorMessage, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
 import type { HarnessAdapter, HarnessTurnEnd } from './harness-adapters'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
@@ -1962,7 +1962,8 @@ function redact(text: string, secrets: string[]): string {
 
 // An error safe to surface: its message (and its cause chain's) with the
 // secrets replaced. A fresh Error, so the original — which may carry the
-// secret in a message, a cause or an attached request — goes no further.
+// secret in a message, a cause or an attached request — goes no further. An
+// ActionRequiredError stays one: a caller decides whether to retry on its class.
 function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
   const parts: string[] = []
   let cursor: unknown = error
@@ -1972,7 +1973,7 @@ function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
   }
   const [first, ...rest] = parts.map((part) => redact(part, secrets))
   const message = `${prefix}${first ?? 'unknown error'}${rest.length ? ` (${rest.join('; ')})` : ''}`
-  return new Error(message)
+  return error instanceof ActionRequiredError ? new ActionRequiredError(message) : new Error(message)
 }
 
 // How much of an error's `data` a chat line carries, and how much the server
@@ -2042,7 +2043,7 @@ async function authenticateConnection(
   const authenticate = adapter.authenticate
   const provider = findProvider(selection.providerId)
   if (!authenticate || !provider) {
-    throw new Error(`${adapter.label} needs a provider on the agent profile to authenticate against.`)
+    throw new ActionRequiredError(`${adapter.label} needs a provider on the agent profile to authenticate against.`)
   }
   let request: AuthenticateRequest
   try {
@@ -2051,7 +2052,7 @@ async function authenticateConnection(
     throw redactedError(error, secrets)
   }
   if (!connection.authenticate) {
-    throw new Error(`${adapter.label} requires authentication, which this connection cannot send.`)
+    throw new ActionRequiredError(`${adapter.label} requires authentication, which this connection cannot send.`)
   }
   try {
     await connection.authenticate(request)
@@ -2991,18 +2992,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const retired = store.connections.get(key)?.connection !== connection
     if (!adapter.authenticate) {
       return {
-        error: new Error(
+        error: new ActionRequiredError(
           `${adapter.label} is not signed in: sign in to its account first, then start the session again.`,
         ),
         retired,
       }
     }
+    // Only the reset connection is worth asking again: the next one signs in.
+    // The kept one refuses the same way until the reader closes the session
+    // that holds it.
     return {
-      error: new Error(
-        retired
-          ? `${adapter.label} had lost its sign-in, so its connection was reset and will sign in again: send your message again.`
-          : `${adapter.label} had lost its sign-in, and another open session still uses its connection, so it was not reset: close that session, then try again.`,
-      ),
+      error: retired
+        ? new Error(
+            `${adapter.label} had lost its sign-in, so its connection was reset and will sign in again: send your message again.`,
+          )
+        : new ActionRequiredError(
+            `${adapter.label} had lost its sign-in, and another open session still uses its connection, so it was not reset: close that session, then try again.`,
+          ),
       retired,
     }
   }

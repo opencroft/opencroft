@@ -54,3 +54,17 @@ export function safeJson(value: unknown): string {
     return String(value)
   }
 }
+
+// A refusal that asking again cannot change: the profile has no key, the
+// account is not signed in, the adapter cannot carry what the profile needs.
+// The same call gives the same answer until someone acts on the message, so a
+// caller that retries on failure should stop on this one and show it instead
+// -- retrying only repeats the work of getting here, which for a harness can
+// mean spawning a process each time.
+// Its message is written for the person who has to act on it.
+export class ActionRequiredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ActionRequiredError'
+  }
+}

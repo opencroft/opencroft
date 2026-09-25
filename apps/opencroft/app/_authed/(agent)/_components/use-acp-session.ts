@@ -55,6 +55,7 @@ import {
   stopLocal,
 } from '@/app/_authed/(agent)/_server/acp'
 import { sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
+import { openedOrThrow, SessionOpenRefusedError } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 
 export interface LocalSource {
   agentNodeId: string
@@ -109,6 +110,10 @@ const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue, or
  *
  * OMITTING IT MUST CHANGE NOTHING. Every existing caller passes no transport and
  * therefore runs the `ensureLocalSession` path below, unchanged.
+ *
+ * A transport throws a SessionOpenRefusedError for a refusal only the reader
+ * can remove (see session-open-refusal.ts). The hook shows that one and stops;
+ * anything else it throws is retried with backoff.
  */
 export type OpenTransport = (source: LocalSource) => Promise<OpenedSessionResult>
 
@@ -135,7 +140,11 @@ export interface OpenedSessionResult {
 }
 
 // The default: exactly the call this hook has always made.
-const ensureLocalSessionTransport: OpenTransport = (source) => ensureLocalSession({ data: source })
+const ensureLocalSessionTransport: OpenTransport = async (source) =>
+  openedOrThrow(await ensureLocalSession({ data: source }))
+
+/** Shown when a run of failed attempts ran out, rather than a refusal. */
+export const OPEN_GAVE_UP_MESSAGE = 'The connection to this agent could not be restored, so this chat stopped trying.'
 
 export interface PendingPermission {
   requestId: string
@@ -232,6 +241,15 @@ export interface AcpSession {
   setPresence: (presence: Presence) => void
   // Stop one background task by id, without cancelling the running turn.
   stopBackgroundTask: (asyncTaskId: string) => void
+  // Why this tab has no session and is no longer trying to open one: a refusal
+  // only the reader can remove (no key, not signed in), or a run of failed
+  // attempts that ran out. Unset while the tab is connected or still trying --
+  // a failure that is being retried is not shown, so nothing flashes per
+  // attempt.
+  openError?: string
+  // Try to open the session again now, starting the backoff over. What a
+  // reader presses after acting on `openError`.
+  retryOpen: () => void
 }
 
 type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
@@ -830,8 +848,12 @@ export function useAcpSession(
   // Re-establishing this tab's connection: the session went (an unload, a
   // restart), the stream failed for good, or opening failed. Each is answered
   // the same way -- open the tab's session again and stream what that gives --
-  // and the hook decides when (see useReconnect: backoff, and not while hidden).
+  // and the hook decides when (see useReconnect: backoff, not while hidden, and
+  // not past a limit). An open that was refused is not among them.
   const reconnect = useReconnect()
+  // The refusal the last open answered with, if it was one. Not retried: the
+  // same open gives the same answer until the reader acts on it.
+  const [openRefusal, setOpenRefusal] = useState<string | undefined>(undefined)
   // Which conversation the open effect last opened. A run for the same one is
   // a reconnect, and what the reader is looking at stays on screen until the
   // fresh history replaces it, rather than going blank for the round trip.
@@ -905,6 +927,7 @@ export function useAcpSession(
     const reconnecting = openedRef.current === opening
     openedRef.current = opening
     setSessionId(null)
+    setOpenRefusal(undefined)
     if (!reconnecting) {
       // Held for the conversation being left, so not for this one.
       pending.current = []
@@ -945,12 +968,19 @@ export function useAcpSession(
       })
       .catch((error) => {
         console.error('opening the session failed', error)
-        // Tried again rather than left as an empty chat: a failed open is
-        // usually a server restarting or a harness slow to start, and an empty
-        // transcript here reads as a conversation with nothing in it.
-        if (!cancelled) {
-          reconnect.schedule()
+        if (cancelled) {
+          return
         }
+        // A refusal is shown and left: asking again gives the same answer, and
+        // each ask is a whole open on the server.
+        if (error instanceof SessionOpenRefusedError) {
+          setOpenRefusal(error.message)
+          return
+        }
+        // Anything else is tried again rather than left as an empty chat: it
+        // is usually a server restarting or a harness slow to start, and an
+        // empty transcript here reads as a conversation with nothing in it.
+        reconnect.schedule()
       })
     return () => {
       cancelled = true
@@ -1376,6 +1406,11 @@ export function useAcpSession(
 
   const dismissSendError = useCallback(() => setSendError(undefined), [])
 
+  const openError = openRefusal ?? (reconnect.exhausted ? OPEN_GAVE_UP_MESSAGE : undefined)
+  // The open effect clears the refusal as it starts, so the notice gives way to
+  // the loading state for the attempt this starts.
+  const retryOpen = reconnect.retry
+
   // Discards this tab's session entirely (transcript, durable pointer, live
   // process) and bumps `generation` so the resolve-session effect opens a
   // fresh one in its place -- same tab, same chat-list entry, empty history.
@@ -1406,7 +1441,9 @@ export function useAcpSession(
     () => ({
       sessionKey: tabKey,
       messages: folded.messages,
-      loading,
+      // A tab that stopped trying is not loading anything, and a spinner over
+      // the reason it stopped would say it was.
+      loading: loading && !openError,
       sending,
       waiting: folded.waiting || localWaiting,
       // A just-sent message not yet folded back still shows the dots — the
@@ -1439,6 +1476,7 @@ export function useAcpSession(
       folded.thinking,
       folded.commands,
       loading,
+      openError,
       sending,
       localWaiting,
       botName,
@@ -1546,6 +1584,8 @@ export function useAcpSession(
       setConfigOption,
       setPresence,
       stopBackgroundTask,
+      openError,
+      retryOpen,
     }),
     [
       session,
@@ -1568,6 +1608,8 @@ export function useAcpSession(
       setConfigOption,
       setPresence,
       stopBackgroundTask,
+      openError,
+      retryOpen,
     ],
   )
 }

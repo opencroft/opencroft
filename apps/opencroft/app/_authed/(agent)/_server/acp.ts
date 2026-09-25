@@ -36,6 +36,7 @@ import { writePersistedConfigOption } from '@/app/_authed/(agent)/_server/acp-se
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
+import { refusalAsData, type SessionOpenRefusal } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
 import {
@@ -46,12 +47,14 @@ import {
 
 // Opens the session under the agent the thread runs, not the one the request
 // names: a thread's agent is fixed, and taking it from the wire would let a
-// member start a different agent under that thread's key.
+// member start a different agent under that thread's key. A refusal only a
+// person can remove comes back as data (see session-open-refusal.ts); an access
+// failure still throws.
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; tabKey: string }) => data)
-  .handler(async ({ data }): Promise<OpenedSession> => {
+  .handler(async ({ data }): Promise<OpenedSession | SessionOpenRefusal> => {
     const { agentNodeId } = await requireSessionKeyAccess(data.tabKey)
-    return ensureLocalSessionImpl({ agentNodeId, tabKey: data.tabKey })
+    return refusalAsData(() => ensureLocalSessionImpl({ agentNodeId, tabKey: data.tabKey }))
   })
 
 // An image the reader attached, on its way to the store. `data` is base64 with

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { connectionKey, createAgentClient, supportsMidTurnInput } from './agent-client'
 import { AGENT_PROVIDERS } from './agent-providers'
 import type { AgentConnection } from './connection'
+import { ActionRequiredError } from './errors'
 import { foldEvents } from './fold'
 import { CODEX_DEFAULT_BASE_URL, HARNESS_ADAPTERS } from './harness-adapters'
 import { awaitOauthLogin, disconnectOauth, oauthLoginStatus, startOauthLogin } from './oauth-login'
@@ -116,11 +117,17 @@ test('the gateway request carries the endpoint and the key as a Bearer header', 
   assert.equal((custom._meta as { gateway: { baseUrl: string } }).gateway.baseUrl, 'https://llm.example/v1')
 })
 
+// Both are the profile's to fix, so both say so by class: a caller that
+// retries a failed open stops on them instead of asking again.
+function actionRequired(message: RegExp) {
+  return (error: unknown) => error instanceof ActionRequiredError && message.test(error.message)
+}
+
 test('no key, or no gateway method advertised, is a clear error before anything is sent', () => {
-  assert.throws(() => codexAuth(codexSelection({ apiKey: '' })), /Codex needs an API key/)
+  assert.throws(() => codexAuth(codexSelection({ apiKey: '' })), actionRequired(/Codex needs an API key/))
   assert.throws(
     () => codexAuth(codexSelection(), { protocolVersion: 1, authMethods: [{ id: 'api-key', name: 'API Key' }] }),
-    /does not offer gateway authentication/,
+    actionRequired(/does not offer gateway authentication/),
   )
 })
 
@@ -280,14 +287,19 @@ test('a rejected authenticate surfaces as an error without the key, and nothing 
 
 test('an agent without gateway auth fails clearly, and so does a profile without a key', async () => {
   await withFakeAgent('codex', 'no-gateway', async (h) => {
+    // Through the engine, which rebuilds every auth error with the key
+    // redacted: the class has to survive that rebuild.
     await assert.rejects(
       h.client.createSession(codexSelection({ cwd: h.cwd })),
-      /does not offer gateway authentication/,
+      actionRequired(/does not offer gateway authentication/),
     )
     assertNoLeak(h)
   })
   await withFakeAgent('codex', '', async (h) => {
-    await assert.rejects(h.client.createSession(codexSelection({ cwd: h.cwd, apiKey: '' })), /Codex needs an API key/)
+    await assert.rejects(
+      h.client.createSession(codexSelection({ cwd: h.cwd, apiKey: '' })),
+      actionRequired(/Codex needs an API key/),
+    )
     assert.ok(!h.requests().some((request) => request.method === 'authenticate'))
   })
 })
@@ -373,6 +385,8 @@ test('a sign-in that does not hold is retried once, then reported as a reset con
       (error as Error).message,
       'Codex had lost its sign-in, so its connection was reset and will sign in again: send your message again.',
     )
+    // The next connection signs in afresh, so asking again can succeed.
+    assert.ok(!(error instanceof ActionRequiredError))
     const requests = h.requests()
     assert.deepEqual(
       requests.map((request) => request.method),
@@ -413,7 +427,7 @@ test('a signed-out harness another open session still uses is kept, and the refu
       () => assert.fail('createSession must fail'),
       (caught: unknown) => caught,
     )
-    assert.match((error as Error).message, /^Codex had lost its sign-in, and another open session still uses/)
+    assert.ok(actionRequired(/^Codex had lost its sign-in, and another open session still uses/)(error))
     const requests = h.requests()
     assert.equal(requests.filter((request) => request.method === 'initialize').length, 1, 'nothing respawned')
     assert.ok(alive(requests[0].pid), 'the open session keeps its process')
@@ -585,6 +599,7 @@ test('a session without a stored login says to sign in first, and opens once the
   await withFakeAgent('codex-subscription', '', async (h) => {
     const selection = subscriptionSelection({ cwd: h.cwd, harnessHome: harnessHomeOf(h) })
     await assert.rejects(h.client.createSession(selection), {
+      name: 'ActionRequiredError',
       message:
         'Codex (ChatGPT subscription) is not signed in: sign in to its account first, then start the session again.',
     })

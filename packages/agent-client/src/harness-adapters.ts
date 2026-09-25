@@ -1,6 +1,7 @@
 import type { AuthenticateRequest, InitializeResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AgentProvider } from './agent-providers'
+import { ActionRequiredError } from './errors'
 import type { AgentSelection } from './types'
 
 // 'openai-responses' is an endpoint that serves OpenAI's Responses API
@@ -95,8 +96,8 @@ export interface HarnessAdapter {
   // Builds the ACP `authenticate` request sent once per connection, right
   // after `initialize`, for harnesses that will not open a session until the
   // client authenticates (codex-acp). Receives the initialize response so the
-  // adapter picks from the methods the agent actually advertised, and throws a
-  // user-facing Error when it can't (no key, method not offered). Declaring
+  // adapter picks from the methods the agent actually advertised, and throws an
+  // ActionRequiredError when it can't (no key, method not offered). Declaring
   // the hook is also what makes the client advertise gateway auth support
   // (`clientCapabilities.auth._meta.gateway`) on that connection — only there.
   // The request may carry the selection's key: the engine sends it on the
@@ -210,13 +211,13 @@ function codexGatewayAuth(
   init: InitializeResponse,
 ): AuthenticateRequest {
   if (!selection.apiKey) {
-    throw new Error(
+    throw new ActionRequiredError(
       'Codex needs an API key: set one on the agent profile (it is sent to the endpoint as a Bearer token).',
     )
   }
   const offered = (init.authMethods ?? []).some((method) => method.id === 'gateway')
   if (!offered) {
-    throw new Error(
+    throw new ActionRequiredError(
       "This Codex adapter does not offer gateway authentication, so the profile's endpoint and key cannot be applied.",
     )
   }

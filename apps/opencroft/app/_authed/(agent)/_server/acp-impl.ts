@@ -30,6 +30,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
 import type { AttachmentRef } from 'agent-client/attachments'
 import { usableContextWindow } from 'agent-client/context-window'
+import { ActionRequiredError } from 'agent-client/errors'
 import { rebuildTurn, type TurnEdit } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
 
@@ -397,7 +398,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   }
   const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
   if (!agent) {
-    throw new Error('Agent node not found')
+    throw new ActionRequiredError('Agent node not found')
   }
   // Each agent gets a persistent workspace and a harness home of its own,
   // keyed by its slug — shared with the account sign-in, which must write a

@@ -7,6 +7,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import type { QueueMode } from 'agent-client/types'
 
+import { refusalAsData } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 import { listArtifactsForThread, type ThreadArtifact } from '@/app/_authed/(group-chats)/_server/artifacts'
 import type {
   GroupChatPinSummary,
@@ -316,10 +317,13 @@ export type SendThreadMessageResult = GroupChatWriteResult
  * session, so a stale key there does not error -- it produces an empty
  * conversation under an address nothing resolves. The id is stable; the key is
  * read from the row. See `openThreadSession`.
+ *
+ * A refusal only a person can remove (no key, not signed in) is answered as
+ * data, the same as `ensureLocalSession` -- see session-open-refusal.ts.
  */
 export const openGroupChatThreadSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((threadId: string) => threadId)
-  .handler(async ({ data: threadId }) => openThreadSession(getRequest(), threadId))
+  .handler(async ({ data: threadId }) => refusalAsData(() => openThreadSession(getRequest(), threadId)))
 
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator(
