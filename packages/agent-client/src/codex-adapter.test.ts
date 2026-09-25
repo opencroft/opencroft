@@ -139,6 +139,7 @@ interface LoggedRequest {
   params: Record<string, unknown>
   cwd?: string
   env?: Record<string, string | null>
+  pid?: number
 }
 
 // Points an adapter entry at the fake agent for one test, and collects the
@@ -289,6 +290,155 @@ test('an agent without gateway auth fails clearly, and so does a profile without
   })
 })
 
+// ── a harness that loses its sign-in ───────────────────────────────────────
+
+async function until(check: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5000
+  while (!check()) {
+    if (Date.now() > deadline) {
+      assert.fail(`timed out waiting for ${what}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+function alive(pid: number | undefined): boolean {
+  if (pid === undefined) {
+    return false
+  }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Sends `/logout` the way a reader would type it, and waits for its turn to end.
+async function logOut(h: { client: ReturnType<typeof createAgentClient>; events: ChatEvent[] }, sessionId: string) {
+  const ended = h.events.filter((event) => event.kind === 'turn_end').length
+  await h.client.prompt(sessionId, '/logout', { queue: 'push', origin: { kind: 'system' } })
+  await until(() => h.events.filter((event) => event.kind === 'turn_end').length > ended, 'the /logout turn to end')
+}
+
+test('a harness that lost its sign-in is retired, and the next session opens on a process that signs in again', async () => {
+  await withFakeAgent('codex', '', async (h) => {
+    const selection = codexSelection({ cwd: h.cwd })
+    const first = await h.client.createSession(selection)
+    await logOut(h, first.id)
+    // The chat that signed out is closed; its harness closes sessions, so the
+    // process stays up, signed out, for whoever opens the next one.
+    await h.client.deleteSession(first.id)
+    const second = await h.client.createSession(selection)
+    const requests = h.requests()
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      [
+        'initialize',
+        'authenticate',
+        'session/new',
+        'session/prompt',
+        'session/close',
+        'session/new',
+        'initialize',
+        'authenticate',
+        'session/new',
+      ],
+    )
+    const signedOut = requests[0].pid
+    const fresh = requests[6].pid
+    assert.notEqual(signedOut, fresh)
+    assert.equal(requests[5].pid, signedOut, 'the refusal came from the signed-out process')
+    assert.equal(requests[8].pid, fresh, 'and the retry from the one that signed in again')
+    assert.ok(second.id.startsWith(`fake-${fresh}-`))
+    await until(() => !alive(signedOut), 'the signed-out process to exit')
+    assert.ok(!h.events.some((event) => event.kind === 'error' && /sign-in/.test(event.message)), 'nothing to resend')
+    assertNoLeak(h)
+    // The retired process exited after its successor was stored under the
+    // same key; the successor must still be the engine's to stop.
+    await h.client.reset()
+    await until(() => !alive(fresh), 'reset() to stop the process that replaced it')
+  })
+})
+
+test('a sign-in that does not hold is retried once, then reported as a reset connection without the key', async () => {
+  await withFakeAgent('codex', 'auth-lost', async (h) => {
+    const error = await h.client.createSession(codexSelection({ cwd: h.cwd })).then(
+      () => assert.fail('createSession must fail'),
+      (caught: unknown) => caught,
+    )
+    assert.equal(
+      (error as Error).message,
+      'Codex had lost its sign-in, so its connection was reset and will sign in again: send your message again.',
+    )
+    const requests = h.requests()
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      ['initialize', 'authenticate', 'session/new', 'initialize', 'authenticate', 'session/new'],
+    )
+    assert.equal(new Set(requests.map((request) => request.pid)).size, 2)
+    await until(() => requests.every((request) => !alive(request.pid)), 'both refusing processes to exit')
+    assertNoLeak(h, error)
+  })
+})
+
+test('resuming the only session on a signed-out harness reattaches it on a process that signs in again', async () => {
+  await withFakeAgent('codex', '', async (h) => {
+    const session = await h.client.createSession(codexSelection({ cwd: h.cwd }))
+    await logOut(h, session.id)
+    await h.client.resumeSession(session.id)
+    const requests = h.requests()
+    assert.deepEqual(
+      requests.slice(4).map((request) => [request.method, request.pid === requests[0].pid ? 'signed-out' : 'fresh']),
+      [
+        ['session/resume', 'signed-out'],
+        ['initialize', 'fresh'],
+        ['authenticate', 'fresh'],
+        ['session/resume', 'fresh'],
+      ],
+    )
+    assert.equal((requests[7].params as { sessionId?: string }).sessionId, session.id)
+    assertNoLeak(h)
+  })
+})
+
+test('a signed-out harness another open session still uses is kept, and the refusal says so', async () => {
+  await withFakeAgent('codex', '', async (h) => {
+    const selection = codexSelection({ cwd: h.cwd })
+    const open = await h.client.createSession(selection)
+    await logOut(h, open.id)
+    const error = await h.client.createSession(selection).then(
+      () => assert.fail('createSession must fail'),
+      (caught: unknown) => caught,
+    )
+    assert.match((error as Error).message, /^Codex had lost its sign-in, and another open session still uses/)
+    const requests = h.requests()
+    assert.equal(requests.filter((request) => request.method === 'initialize').length, 1, 'nothing respawned')
+    assert.ok(alive(requests[0].pid), 'the open session keeps its process')
+    assertNoLeak(h, error)
+  })
+})
+
+test('an adapter without an authenticate hook passes a sign-in refusal through and keeps its process', async () => {
+  await withFakeAgent('qwen', 'open', async (h) => {
+    const selection: AgentSelection = { providerId: 'openai', adapterId: 'qwen', model: 'm', apiKey: KEY, cwd: h.cwd }
+    const first = await h.client.createSession(selection)
+    await logOut(h, first.id)
+    await h.client.deleteSession(first.id)
+    const error = await h.client.createSession(selection).then(
+      () => assert.fail('createSession must fail'),
+      (caught: unknown) => caught,
+    )
+    assert.equal((error as { code?: number }).code, -32000, 'the agent’s own error, untouched')
+    const requests = h.requests()
+    assert.deepEqual(
+      requests.map((request) => request.method),
+      ['initialize', 'session/new', 'session/prompt', 'session/close', 'session/new'],
+    )
+    assert.ok(alive(requests[0].pid))
+  })
+})
+
 test('adapters without an authenticate hook neither declare gateway auth nor authenticate', async () => {
   await withFakeAgent('qwen', 'open', async (h) => {
     await h.client.createSession({ providerId: 'openai', adapterId: 'qwen', model: 'm', apiKey: KEY, cwd: h.cwd })
@@ -432,10 +582,10 @@ test('the device-code sign-in needs the agent’s harness home and spawns nothin
 test('a session without a stored login says to sign in first, and opens once the login is stored', async () => {
   await withFakeAgent('codex-subscription', '', async (h) => {
     const selection = subscriptionSelection({ cwd: h.cwd, harnessHome: harnessHomeOf(h) })
-    await assert.rejects(
-      h.client.createSession(selection),
-      /^Error: Codex \(ChatGPT subscription\) is not signed in: sign in to its account first/,
-    )
+    await assert.rejects(h.client.createSession(selection), {
+      message:
+        'Codex (ChatGPT subscription) is not signed in: sign in to its account first, then start the session again.',
+    })
     const shown = await startOauthLogin('codex-subscription', { harnessHome: selection.harnessHome })
     assert.deepEqual(await awaitOauthLogin((shown as { loginId: string }).loginId), { ok: true })
     const meta = await h.client.createSession(selection)

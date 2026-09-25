@@ -34,13 +34,15 @@ import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, RequestError } fro
 const mode = process.env.FAKE_AGENT_MODE ?? ''
 const log = (entry) => {
   if (process.env.FAKE_AGENT_LOG) {
-    appendFileSync(process.env.FAKE_AGENT_LOG, `${JSON.stringify(entry)}\n`)
+    // The pid tells one process's requests from the next one's.
+    appendFileSync(process.env.FAKE_AGENT_LOG, `${JSON.stringify({ ...entry, pid: process.pid })}\n`)
   }
 }
 process.stderr.write(`fake codex-acp starting, CODEX_API_KEY=${process.env.CODEX_API_KEY ?? ''}\n`)
 
 const authFile = process.env.CODEX_HOME ? join(process.env.CODEX_HOME, 'auth.json') : null
 let authenticated = mode === 'open' || (authFile !== null && existsSync(authFile))
+let sessions = 0
 const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
 new AgentSideConnection(
   (connection) => ({
@@ -64,7 +66,11 @@ new AgentSideConnection(
       }
       return {
         protocolVersion: PROTOCOL_VERSION,
-        agentCapabilities: { loadSession: false, mcpCapabilities: { http: true, sse: false } },
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { resume: {}, close: {} },
+          mcpCapabilities: { http: true, sse: false },
+        },
         authMethods,
       }
     },
@@ -97,7 +103,9 @@ new AgentSideConnection(
           `gateway rejected credentials ${params._meta?.gateway?.headers?.Authorization}`,
         )
       }
-      authenticated = true
+      // 'auth-lost': the sign-in is accepted and does not hold, so every
+      // process refuses its sessions however often it is signed in.
+      authenticated = mode !== 'auth-lost'
       return {}
     },
     async newSession(params) {
@@ -108,9 +116,41 @@ new AgentSideConnection(
       if (params.mcpServers.some((server) => server.type === 'sse')) {
         throw RequestError.invalidRequest(undefined, 'SSE MCP servers are not supported')
       }
-      return { sessionId: `fake-${process.pid}` }
+      sessions += 1
+      return { sessionId: `fake-${process.pid}-${sessions}` }
     },
-    async prompt() {
+    // Load, resume and fork (codex-acp's getOrCreateSessionWithHistory and
+    // tryCreateSession) sit behind the same sign-in check as session/new. The
+    // fake keeps no transcripts, so any id is taken back.
+    async loadSession(params) {
+      log({ method: 'session/load', params })
+      if (!authenticated) {
+        throw RequestError.authRequired()
+      }
+      return {}
+    },
+    async resumeSession(params) {
+      log({ method: 'session/resume', params })
+      if (!authenticated) {
+        throw RequestError.authRequired()
+      }
+      return {}
+    },
+    async closeSession(params) {
+      log({ method: 'session/close', params })
+      return {}
+    },
+    // `/logout` signs the whole process out and the turn itself succeeds.
+    // codex-acp's command does that to an account login; a gateway sign-in
+    // survives it there (measured on 1.13.1: session/new, load, resume and
+    // fork are all still accepted afterwards), so this is the stricter harness
+    // the engine has to cope with. Nothing else a prompt says matters here.
+    async prompt(params) {
+      const text = params.prompt[0]?.type === 'text' ? params.prompt[0].text.trim() : ''
+      log({ method: 'session/prompt', params: { sessionId: params.sessionId, text } })
+      if (text === '/logout') {
+        authenticated = false
+      }
       return { stopReason: 'end_turn' }
     },
     async cancel() {},

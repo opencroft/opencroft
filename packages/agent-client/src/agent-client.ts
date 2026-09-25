@@ -2488,12 +2488,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       mcpServers = tagInternal(internal, servers, token)
     }
     try {
-      const response = await entry.connection.unstable_forkSession({
-        sessionId: session.meta.id,
-        cwd: selection.cwd,
-        mcpServers,
-        _meta: forkCutoffMeta(session, boundary),
-      })
+      // Through signedInCall for its error only: the source session is on this
+      // connection, so a refusal never retires it and is never retried.
+      const { result: response } = await signedInCall(selection, entry.connection, (live) =>
+        live.unstable_forkSession({
+          sessionId: session.meta.id,
+          cwd: selection.cwd,
+          mcpServers,
+          _meta: forkCutoffMeta(session, boundary),
+        }),
+      )
       if (token) {
         store.acpTokenSession.set(token, response.sessionId)
       }
@@ -2578,14 +2582,25 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // Without an 'error' listener a failed spawn throws at the process level and
     // takes the host server down; handle it so the failure surfaces as a rejected
     // initialize()/prompt() instead.
+    //
+    // Both drop the entry only while it is still THIS process's: a process that
+    // was retired (killed and replaced under the same key, see
+    // settleAuthRequired) exits after its successor has been stored, and
+    // deleting by key alone would orphan the successor — alive, out of the map,
+    // and out of reach of reset().
+    const ownsEntry = () => store.connections.get(key)?.process === child
     child.on('error', (error) => {
       console.error('[acp-agent] spawn failed:', redact(errorMessage(error), secrets))
       failure.spawnError = error
-      store.connections.delete(key)
+      if (ownsEntry()) {
+        store.connections.delete(key)
+      }
     })
     child.on('exit', (code, signal) => {
       failure.exit = { code, signal }
-      store.connections.delete(key)
+      if (ownsEntry()) {
+        store.connections.delete(key)
+      }
     })
     const stream = interceptDraftSessionUpdates(
       ndJsonStream(
@@ -2775,12 +2790,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (findAdapter(session.selection.adapterId)?.mcpRefreshReopens === true && entry?.closeSupported === true) {
       await connection.closeSession({ sessionId }).catch(() => undefined)
     }
-    const response = await connection.resumeSession({
+    const resumed = await signedInCall(
+      session.selection,
+      connection,
+      (live) => live.resumeSession({ sessionId, cwd: session.selection.cwd, mcpServers }),
       sessionId,
-      cwd: session.selection.cwd,
-      mcpServers,
-    })
-    await reconcileResumedState(sessionId, connection, response, logged)
+    )
+    await reconcileResumedState(sessionId, resumed.connection, resumed.result, logged)
   }
 
   // The connection entry backing a selection (subprocess connections only;
@@ -2792,27 +2808,107 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     return store.connections.get(connectionKey(selection))
   }
 
-  // A harness that signs in through its own stored login (an adapter with
-  // supportsOauthLogin) answers session/new with ACP's authRequired until that
-  // login exists. The raw "Authentication required" names no remedy, and
-  // there is exactly one: sign in first. The process that answered is retired
-  // unless a session still uses it — measured on codex-acp 1.13.1, a process
-  // that refused keeps refusing after a login lands in its home, while a
-  // fresh one opens the session.
-  function signInRequiredError(selection: AgentSelection, error: unknown): unknown {
+  // A session call the harness refused with ACP's auth_required, for an
+  // adapter whose sign-in the engine arranges: an `authenticate` hook it runs
+  // after initialize, or a stored login (supportsOauthLogin) the harness reads
+  // when it starts. A sign-in belongs to the PROCESS, not to the request, so
+  // the process that refused is retired and the next call spawns one that
+  // signs in afresh — through the hook, or by reading whatever login is stored
+  // by then. Measured on codex-acp 1.13.1: a process that refused keeps
+  // refusing after a login lands in its home, while a fresh one opens the
+  // session.
+  //
+  // Only when no other session is on it: retiring a process under a live
+  // session strands that session, whose id means nothing to the next process,
+  // and that is worse than one refused open. `opening` names the session this
+  // call is attaching, which does not count — attaching it is the point.
+  //
+  // The error to surface is rebuilt from the adapter's label alone, so nothing
+  // the harness said (or echoed back) travels on. Any other error, and every
+  // adapter the engine does not sign in, pass through untouched.
+  function settleAuthRequired(
+    selection: AgentSelection,
+    connection: AgentConnection,
+    error: unknown,
+    opening?: string,
+  ): { error: unknown; retired: boolean } {
     const adapter = findAdapter(selection.adapterId)
-    if (!adapter?.supportsOauthLogin || (error as { code?: unknown } | null)?.code !== AUTH_REQUIRED_CODE) {
-      return error
+    const signsIn = adapter?.authenticate !== undefined || adapter?.supportsOauthLogin === true
+    if (
+      !adapter ||
+      !signsIn ||
+      isNativeSelection(selection) ||
+      (error as { code?: unknown } | null)?.code !== AUTH_REQUIRED_CODE
+    ) {
+      return { error, retired: false }
     }
     const key = connectionKey(selection)
-    const inUse = [...store.sessions.values()].some(
-      (session) => !isNativeSelection(session.selection) && connectionKey(session.selection) === key,
+    const entry = store.connections.get(key)
+    const inUse = [...store.sessions].some(
+      ([id, session]) =>
+        id !== opening && !isNativeSelection(session.selection) && connectionKey(session.selection) === key,
     )
-    if (!inUse) {
-      store.connections.get(key)?.process?.kill()
+    if (entry?.connection === connection && !inUse) {
       store.connections.delete(key)
+      entry.process?.kill()
     }
-    return new Error(`${adapter.label} is not signed in: sign in to its account first, then start the session again.`)
+    // Also true when the process had already gone on its own: either way the
+    // next call gets a new one.
+    const retired = store.connections.get(key)?.connection !== connection
+    if (!adapter.authenticate) {
+      return {
+        error: new Error(
+          `${adapter.label} is not signed in: sign in to its account first, then start the session again.`,
+        ),
+        retired,
+      }
+    }
+    return {
+      error: new Error(
+        retired
+          ? `${adapter.label} had lost its sign-in, so its connection was reset and will sign in again: send your message again.`
+          : `${adapter.label} had lost its sign-in, and another open session still uses its connection, so it was not reset: close that session, then try again.`,
+      ),
+      retired,
+    }
+  }
+
+  // Makes a session call that outlives one lost sign-in. Retried once, and
+  // only for an adapter with an `authenticate` hook whose refusing process was
+  // retired: the next connection signs in through the hook, so the second
+  // attempt has a reason to succeed. A stored login is nothing a respawn can
+  // produce, so that refusal surfaces at once.
+  //
+  // Safe to repeat for what can be retried here — new, load, resume (a fork's
+  // source session keeps its process, so a fork never is) — because
+  // auth_required is a refusal at the door: codex-acp 1.13.1 checks
+  // sign-in before it creates or attaches anything (checkAuthorization at the
+  // top of tryCreateSession and getOrCreateSessionWithHistory), so the retry
+  // is the request made once, not twice. A prompt never comes through here: a
+  // turn is not idempotent, and its session lives in the process that refused.
+  //
+  // Answers with the connection that succeeded, which later calls in the same
+  // operation must use.
+  async function signedInCall<T>(
+    selection: AgentSelection,
+    connection: AgentConnection,
+    call: (connection: AgentConnection) => Promise<T>,
+    opening?: string,
+  ): Promise<{ result: T; connection: AgentConnection }> {
+    try {
+      return { result: await call(connection), connection }
+    } catch (error) {
+      const refused = settleAuthRequired(selection, connection, error, opening)
+      if (!refused.retired || !findAdapter(selection.adapterId)?.authenticate) {
+        throw refused.error
+      }
+      const fresh = await ensureConnection(selection)
+      try {
+        return { result: await call(fresh), connection: fresh }
+      } catch (again) {
+        throw settleAuthRequired(selection, fresh, again, opening).error
+      }
+    }
   }
 
   // Resolve a live connection for an already-created session, using the spawn
@@ -4327,7 +4423,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       defaultModeId?: string,
       permissions?: ResolvedPermissions,
     ): Promise<SessionMeta> {
-      const connection = await ensureConnection(selection)
+      let connection = await ensureConnection(selection)
       const native = isNativeSelection(selection)
       // ACP: mint a token before newSession so the built-in MCP server can apply
       // this session's permissions on the very first tools/list. Tagged onto the
@@ -4342,15 +4438,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         mcpServers = tagInternal(internal, servers, token)
         droppedMcp = dropped
       }
-      const response = await connection
-        .newSession({
-          cwd: selection.cwd,
-          mcpServers,
-          _meta: sessionMeta(selection),
-        })
-        .catch((error: unknown) => {
-          throw signInRequiredError(selection, error)
-        })
+      const created = await signedInCall(selection, connection, (live) =>
+        live.newSession({ cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) }),
+      )
+      connection = created.connection
+      const response = created.result
       const sessionId = response.sessionId
       if (token) {
         store.acpTokenSession.set(token, sessionId)
@@ -4527,12 +4619,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         replaying: true,
       })
       try {
-        const response = await connection.loadSession({
+        const { result: response } = await signedInCall(
+          selection,
+          connection,
+          (live) => live.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) }),
           sessionId,
-          cwd: selection.cwd,
-          mcpServers,
-          _meta: sessionMeta(selection),
-        })
+        )
         // Seed from the response the same way newSession does — the agent may
         // not replay a config_option_update for state it already had before
         // this load, so relying on replay alone can leave configOptions empty.
@@ -4707,8 +4799,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         store.subagentParents.set(subagentSessionId, state.subagentParents.get(subagentSessionId) ?? sessionId)
       }
       let response: Awaited<ReturnType<AgentConnection['resumeSession']>>
+      let live = connection
       try {
-        response = await connection.resumeSession({ sessionId, cwd: selection.cwd, mcpServers })
+        const resumed = await signedInCall(
+          selection,
+          connection,
+          (candidate) => candidate.resumeSession({ sessionId, cwd: selection.cwd, mcpServers }),
+          sessionId,
+        )
+        response = resumed.result
+        live = resumed.connection
       } catch (error) {
         // The agent could not take the session back — unwind the half-registered
         // record so the caller can cleanly fall back to a replay or a fresh
@@ -4727,7 +4827,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Before the drain below, so a message held for this session runs under
       // the settings its log says it had, not the ones the harness restarted
       // with.
-      await reconcileResumedState(sessionId, connection, response, {
+      await reconcileResumedState(sessionId, live, response, {
         modes: state.modes ? { ...state.modes } : null,
         configOptions: state.configOptions,
       })
