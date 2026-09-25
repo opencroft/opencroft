@@ -57,6 +57,7 @@ import {
   saveAttachment,
 } from '@/app/_authed/(agent)/_server/attachment-store'
 import { queryChatUsageTokensBySession } from '@/app/_authed/(agent)/_server/chat-usage-store'
+import { gatewayDefaults } from '@/app/_authed/(agent)/_server/gateway-defaults'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
   appendSessionEvent,
@@ -404,18 +405,20 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   const placement = agentPlacement(agent, data.agentNodeId, { cwd: process.cwd(), join })
   const adapterId = agent.adapterId ?? 'claude'
   const containerName = placement.containerName
+  const gateway = gatewayDefaults(adapterId)
   const selection: AgentSelection = {
     providerId: agent.providerId ?? '',
     adapterId,
     model: agent.model ?? '',
-    // The API token / base URL fall back to the OPENCLAW_GATEWAY_* env vars when
-    // the node leaves them unset, so a deployment can supply them globally.
-    apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    // An OpenClaw agent's token and base URL fall back to the deployment's
+    // OPENCLAW_GATEWAY_* vars when its node leaves them unset; no other harness
+    // takes them (see gateway-defaults).
+    apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || gateway.apiKey || '',
     // A container workdir is created in the container on spawn.
     cwd: placement.cwd,
     harnessHome: placement.harnessHome,
     containerName,
-    baseUrl: agent.baseUrl || process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: agent.baseUrl || gateway.baseUrl,
     responsesApi: agent.responsesApi,
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
