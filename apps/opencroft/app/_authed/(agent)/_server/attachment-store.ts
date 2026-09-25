@@ -151,9 +151,9 @@ export async function loadAttachments(sessionKey: string, ids: readonly string[]
 }
 
 /**
- * One image for a surface that draws it -- the transcript, through the route in
- * api/acp.attachments.$id.ts. Scoped like loadAttachments: another
- * conversation's id answers null.
+ * One image for a surface that draws it -- the transcript, through
+ * attachmentResponse. Scoped like loadAttachments: another conversation's id
+ * answers null.
  */
 /**
  * The stored byte size of each of `ids` that is a row of this conversation.
