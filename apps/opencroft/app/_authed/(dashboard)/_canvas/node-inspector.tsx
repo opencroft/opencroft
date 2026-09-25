@@ -44,34 +44,25 @@ function handlePaletteDragStart(e: DragEvent<HTMLButtonElement>, typeId: string)
 
 interface NodeInspectorProps {
   node: Node<NodeData> | null
-  browserTab: BrowserTab
   expanded: boolean
-  extensions: ResolvedNode[]
-  graphNodes: Node<NodeData>[]
   override?: ReactNode
   updateNodeData: (nodeId: string, patch: Partial<NodeData>) => void
-  onBrowserTabChange: (tab: BrowserTab) => void
   onDeselect: () => void
   onEditExtension: (extensionId: string) => void
-  onNewExtension: () => void
   onExpandedChange: (next: boolean) => void
-  onFocusNode: (nodeId: string) => void
 }
 
+// The selected node's inspector. With nothing selected there is nothing to
+// inspect: the graph's outline, palette and MCP requests live in the page's
+// sidebar (NodeBrowser), not here.
 export function NodeInspector({
   node,
-  browserTab,
   expanded,
-  extensions,
-  graphNodes,
   override,
   updateNodeData,
-  onBrowserTabChange,
   onDeselect,
   onEditExtension,
-  onNewExtension,
   onExpandedChange,
-  onFocusNode,
 }: NodeInspectorProps) {
   const [activeTab, setActiveTab] = useState<string>('details')
   const intent = useInspectorIntent(node?.id ?? '')
@@ -100,16 +91,7 @@ export function NodeInspector({
   }
 
   if (!node) {
-    return (
-      <NodeBrowser
-        tab={browserTab}
-        extensions={extensions}
-        graphNodes={graphNodes}
-        onTabChange={onBrowserTabChange}
-        onEditExtension={onEditExtension}
-        onFocusNode={onFocusNode}
-      />
-    )
+    return null
   }
 
   const resolved = node.type ? extensionRegistry.resolveNode(node.type) : undefined
@@ -232,16 +214,19 @@ const browserTabs = [
   { id: 'mcp', label: 'MCP Requests', icon: MessageCircleQuestion },
 ] as const
 
-function NodeBrowser({ tab, extensions, graphNodes, onTabChange, onEditExtension, onFocusNode }: NodeBrowserProps) {
+export function NodeBrowser({
+  tab,
+  extensions,
+  graphNodes,
+  onTabChange,
+  onEditExtension,
+  onFocusNode,
+}: NodeBrowserProps) {
   const { pendingApprovals, pendingAskUsers } = useSSEEvents()
   const pendingCount = pendingApprovals.size + pendingAskUsers.size
 
   return (
-    <Flex expanded className='w-full h-full bg-card'>
-      <div className='px-3 py-3'>
-        <span className='text-sm font-semibold'>Inspector</span>
-      </div>
-      <Separator />
+    <Flex expanded className='w-full h-full'>
       <PanelTabStrip
         tabs={browserTabs.map((entry) => ({
           id: entry.id,

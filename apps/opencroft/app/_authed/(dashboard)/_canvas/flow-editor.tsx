@@ -20,7 +20,7 @@ import {
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
 
-import { Box, GripVertical, Move, PanelLeft } from 'lucide-react'
+import { Box, GripVertical, Move } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -43,7 +43,7 @@ import { ExtensionsStateContext } from '@/app/_authed/(dashboard)/_canvas/extens
 import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
 import { NodeContextMenu } from '@/app/_authed/(dashboard)/_canvas/node-context-menu'
 import { subscribeNodeDataUpdates } from '@/app/_authed/(dashboard)/_canvas/node-data-events'
-import { type BrowserTab, NodeInspector } from '@/app/_authed/(dashboard)/_canvas/node-inspector'
+import { type BrowserTab, NodeBrowser, NodeInspector } from '@/app/_authed/(dashboard)/_canvas/node-inspector'
 import { nodeSelection } from '@/app/_authed/(dashboard)/_canvas/node-selection'
 import { graphNodeTypes, nodeTypesKey, typesFromKey } from '@/app/_authed/(dashboard)/_canvas/node-type-keys'
 import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
@@ -59,6 +59,7 @@ import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import { findTakenGraphIds } from '@/app/_authed/(space)/_server/actions'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
+import { AppSidebar } from '@/app/_shell/app-sidebar'
 import { newGraphId } from '@/lib/graph-id'
 import { cn } from '@/lib/utils'
 
@@ -155,7 +156,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const [nodesMovable, setNodesMovable] = useState(false)
   const [nodeMenu, setNodeMenu] = useState<{ screen: { x: number; y: number }; nodeId: string } | null>(null)
   const [overlayActive, setOverlayActive] = useState(false)
-  const { toggleSidebar } = useSidebar()
+  const { setOpen: setSidebarOpen, setOpenMobile: setSidebarOpenMobile } = useSidebar()
 
   // Back button closes inspector on mobile
   useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false))
@@ -256,6 +257,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     [nodes, isMobile],
   )
   const selected = nodes.find((n) => n.selected && n.type !== 'comment') ?? null
+  // The right-hand panel exists only for something to inspect.
+  const inspectorOpen = selected !== null || Boolean(inspector.inspectorNode)
 
   // Hand the selected node to the surrounding selection scope, when there is
   // one. A dashboard mounts none, and `useOptionalSelection` answering null
@@ -775,9 +778,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     deselect()
     setBrowserTab('mcp')
     if (isMobile) {
-      setMobileInspectorVisible(true)
+      setSidebarOpenMobile(true)
+    } else {
+      setSidebarOpen(true)
     }
-  }, [overlay.slots.setSlot, deselect, isMobile])
+  }, [overlay.slots.setSlot, deselect, isMobile, setSidebarOpen, setSidebarOpenMobile])
 
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
@@ -1144,14 +1149,6 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                 <div className='fixed right-6 bottom-20 z-40 flex flex-col items-center gap-2'>
                   <button
                     type='button'
-                    className='size-10 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur border shadow-sm active:bg-accent'
-                    onClick={() => toggleSidebar()}
-                    title='Toggle sidebar'
-                  >
-                    <PanelLeft className='size-5' />
-                  </button>
-                  <button
-                    type='button'
                     className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesMovable ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
                     onClick={() => setNodesMovable((v) => !v)}
                     title={nodesMovable ? 'Pan canvas' : 'Move nodes'}
@@ -1183,7 +1180,23 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             />
             <McpRequestNotifications onOpen={openMcpRequests} />
           </div>
-          {(!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
+          <AppSidebar>
+            <NodeBrowser
+              tab={browserTab}
+              extensions={allNodes}
+              graphNodes={nodes}
+              onTabChange={setBrowserTab}
+              onEditExtension={openEditor}
+              onFocusNode={(nodeId) => {
+                focusNode(nodeId)
+                // On a phone the sidebar covers the canvas; step aside for the node.
+                if (isMobile) {
+                  setSidebarOpenMobile(false)
+                }
+              }}
+            />
+          </AppSidebar>
+          {inspectorOpen && (!isMobile || mobileInspectorVisible) && !inspectorExpanded && (
             // The handle resizes by pointer only. Satisfying the a11y rules on it means a
             // focusable separator with a value and arrow-key resizing, which is a new
             // behaviour rather than a lint fix; until that is built the handle stays as it is.
@@ -1202,7 +1215,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
               </div>
             </div>
           )}
-          {(!isMobile || mobileInspectorVisible || inspectorExpanded) && (
+          {inspectorOpen && (!isMobile || mobileInspectorVisible || inspectorExpanded) && (
             <div
               className={
                 inspectorExpanded || (isMobile && mobileInspectorVisible)
@@ -1213,13 +1226,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             >
               <NodeInspector
                 node={selected}
-                browserTab={browserTab}
                 expanded={inspectorExpanded}
-                extensions={allNodes}
-                graphNodes={nodes}
                 override={inspector.inspectorNode}
                 updateNodeData={updateNodeData}
-                onBrowserTabChange={setBrowserTab}
                 onDeselect={() => {
                   deselect()
                   if (isMobile) {
@@ -1227,9 +1236,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                   }
                 }}
                 onEditExtension={openEditor}
-                onNewExtension={() => openEditor(null)}
                 onExpandedChange={setInspectorExpanded}
-                onFocusNode={focusNode}
               />
             </div>
           )}
