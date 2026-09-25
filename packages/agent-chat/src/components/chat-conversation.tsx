@@ -1,20 +1,20 @@
 'use client'
 
-import type { ReactNode } from 'react'
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
-import { Flex } from 'ui/components/ui/layout/flex'
+import type { ReactNode } from 'react'
 
 import { ChatEmptyState } from './chat-empty-state'
 import {
   BLOCK_ID_ATTR,
   ChatLoadOlderButton,
   ChatTurnDetails,
-  type ChatTurnRenderers,
   ChatUserMessage,
+  type ChatTurnRenderers,
   type ChatUserMessagePart,
   type DetailItem,
   type UserText,
 } from './chat-turn'
+import { Flex } from 'ui/components/ui/layout/flex'
 
 // `id` is the React key, and it has to name the same block before and after a
 // "load older" prepend -- otherwise React rewrites DOM across the visible
@@ -636,18 +636,23 @@ function useConversationScroll(sessionKey: string, blocks: readonly Block[]) {
     return () => observer.disconnect()
   }, [applyDecision, armQuiescence])
 
+  // A suppression has to be the LAST comment line before the effect it covers.
+  // Sitting inside the body -- above the dependency line rather than above the
+  // hook call -- detaches it from the node, and it stops applying without
+  // saying so. Both suppressions in this file were written that way and were
+  // inert from the day they were added.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(sessionKey): the session changing IS the cause being recorded, and it must be declared before the effect below that acts on causes runs on this same commit
   useLayoutEffect(() => {
     causeRef.current = 'session-changed'
-    // biome-ignore lint/correctness/useExhaustiveDependencies(sessionKey): the session changing IS the cause being recorded, and it must be declared before the effect below that acts on causes runs on this same commit
   }, [sessionKey])
 
   // Every commit that changed the content -- keyed on the blocks ARRAY, not on
   // a count of it. A page landing mid-turn merges into an existing block and
   // adds neither a block nor a message, so a count would skip the very commit
   // carrying it; the rebuilt array is what actually marks that commit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-run on the commit that changed the content, not because the body reads it
   useLayoutEffect(() => {
     applyDecision()
-    // biome-ignore lint/correctness/useExhaustiveDependencies(blocks): re-run on the commit that changed the content, not because the body reads it
   }, [blocks, applyDecision])
 
   return { rootRef, holdAcrossLoadOlder }
@@ -791,6 +796,10 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
         <div className='text-sm text-muted-foreground'>loading…</div>
       ) : !hasMessages && !hasUndelivered ? (
         <div className='flex flex-1 items-center justify-center'>
+          {/* Sentence case, matching what the product has been showing for
+              weeks. The kit had drifted to lower case and nobody decided that,
+              so the live copy is the one that stands -- a reinstall must not
+              deliver an unrequested wording change as a side effect. */}
           <ChatEmptyState text={emptyText ?? 'No messages yet'} />
         </div>
       ) : (

@@ -3,11 +3,10 @@
 import { Loader2 } from 'lucide-react'
 import { useState } from 'react'
 
-import { UsageCost, type UsageTokens } from './usage-cost'
-
 import { Button } from 'ui/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { Slider } from 'ui/components/ui/slider'
+import { UsageCost, type UsageTokens } from './usage-cost'
 import { cn } from 'ui/lib/utils'
 
 export interface ContextRingProps {
