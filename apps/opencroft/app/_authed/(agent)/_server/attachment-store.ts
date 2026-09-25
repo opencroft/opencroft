@@ -150,7 +150,11 @@ export async function loadAttachments(sessionKey: string, ids: readonly string[]
   })
 }
 
-/** One image for a surface that draws it (the transcript's own thumbnails). */
+/**
+ * One image for a surface that draws it -- the transcript, through the route in
+ * api/acp.attachments.$id.ts. Scoped like loadAttachments: another
+ * conversation's id answers null.
+ */
 export async function readAttachment(
   sessionKey: string,
   id: string,

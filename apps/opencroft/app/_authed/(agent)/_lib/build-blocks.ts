@@ -6,6 +6,7 @@ import type { DeliveredAttachment } from 'agent-client/attachments'
 import type { QueuedPrompt } from 'agent-client/types'
 
 import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { attachmentSrc } from '@/app/_authed/(agent)/_lib/attachment-src'
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 
 // Re-exported rather than redeclared, same reasoning as `UserText` below: the
@@ -115,10 +116,14 @@ function attachmentLabel(detail: string): string {
 // and the pictures, read from the record beside the text and matched to the
 // message by position (see DeliveredAttachment).
 //
-// A chip rather than the thumbnail itself: the picture lives in a store this
-// function cannot reach. What the reader gets back is the name they attached,
-// which is the part that says WHICH picture went with WHICH message.
-function attachmentsReader(pictures: readonly DeliveredAttachment[] = []) {
+// A picture is drawn as the picture: the record names the stored
+// row, and `sessionKey` -- the key it was stored under -- is what the route
+// serving it is scoped by. The name stays as the label, which is the picture's
+// alternative text and what a reader gets if the bytes are gone.
+//
+// Without a key there is nowhere to draw from, and the picture is the name
+// alone -- still saying that something travelled with this message.
+function attachmentsReader(pictures: readonly DeliveredAttachment[] = [], sessionKey?: string) {
   return (raw: string, index: number): MessageAttachment[] => {
     const attachments: MessageAttachment[] = []
     for (const [, content] of raw.matchAll(USER_SELECTION_TAG)) {
@@ -130,7 +135,11 @@ function attachmentsReader(pictures: readonly DeliveredAttachment[] = []) {
     }
     for (const picture of pictures) {
       if (picture.message === index) {
-        attachments.push({ label: attachmentLabel(picture.name), detail: picture.name })
+        attachments.push({
+          label: attachmentLabel(picture.name),
+          detail: picture.name,
+          ...(sessionKey ? { src: attachmentSrc(sessionKey, picture.id) } : {}),
+        })
       }
     }
     return attachments
@@ -157,8 +166,10 @@ function userTurn(
   authors?: Record<string, ResolvedAuthor>,
   // The pictures the delivery carried, as its user event recorded them.
   pictures?: readonly DeliveredAttachment[],
+  // The key the pictures were stored under, which is what draws them.
+  sessionKey?: string,
 ): { text: UserText; parts: ChatUserMessagePart[] } | null {
-  const parts = toUserParts(raw, userText, authors, attachmentsReader(pictures))
+  const parts = toUserParts(raw, userText, authors, attachmentsReader(pictures, sessionKey))
   const text = userText(raw)
   return parts.length > 0 && text !== null ? { text, parts } : null
 }
@@ -197,6 +208,8 @@ export function buildUnread(
   // message once it has been handed over are one message, and one of them
   // showing a bare identifier while the other shows a face would be two.
   authors?: Record<string, ResolvedAuthor>,
+  // The key this conversation's pictures are stored under (see userTurn).
+  sessionKey?: string,
 ): ChatUnreadMessage[] {
   return queue.map((entry): ChatUnreadMessage => {
     const author = entry.kind !== 'system' ? entry.sender : undefined
@@ -205,7 +218,7 @@ export function buildUnread(
     // not a second one that agrees with it. A message waiting to be read and the
     // same message once it has been handed over are one message, and one of them
     // showing what it carries while the other does not would be two.
-    const attachments = attachmentsReader(entry.attachments)(entry.text, 0)
+    const attachments = attachmentsReader(entry.attachments, sessionKey)(entry.text, 0)
     return {
       id: entry.id,
       text: userText(entry.text) ?? EMPTY_USER_TEXT,
@@ -235,7 +248,11 @@ export function buildUnread(
 // page — a regression fixed earlier. A header whose text is all tags must still
 // report its index, so "no words" and "no header" are deliberately different
 // things here.
-export function headerFromWindow(header?: { index: number; event: AuthoredChatEvent } | null): {
+export function headerFromWindow(
+  header?: { index: number; event: AuthoredChatEvent } | null,
+  // The key this conversation's pictures are stored under (see userTurn).
+  sessionKey?: string,
+): {
   index: number
   parts: readonly ChatUserMessagePart[]
 } | null {
@@ -262,7 +279,7 @@ export function headerFromWindow(header?: { index: number; event: AuthoredChatEv
   // only one of them could show a face they would be two behaviours again.
   return {
     index: header.index,
-    parts: userTurn(header.event.text, header.event.authors, header.event.attachments)?.parts ?? [],
+    parts: userTurn(header.event.text, header.event.authors, header.event.attachments, sessionKey)?.parts ?? [],
   }
 }
 
@@ -282,6 +299,8 @@ export function buildBlocks(
   messages: ChatMessage[],
   enclosingTurnId?: number,
   onStopTask?: (asyncTaskId: string) => void,
+  // The key this conversation's pictures are stored under (see userTurn).
+  sessionKey?: string,
 ): Block[] {
   const blocks: Block[] = []
   let details: DetailItem[] = []
@@ -313,7 +332,7 @@ export function buildBlocks(
         if (p.type !== 'text') {
           continue
         }
-        const turn = userTurn(p.text || '', m.authors, m.attachments)
+        const turn = userTurn(p.text || '', m.authors, m.attachments, sessionKey)
         if (turn === null) {
           continue
         }

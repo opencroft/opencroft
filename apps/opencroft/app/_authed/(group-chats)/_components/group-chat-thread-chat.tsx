@@ -222,11 +222,15 @@ export function GroupChatThreadChat({
   // (for edit/fork) must stay correct regardless of how much is rendered, and
   // folding/building is cheap next to the cost of actually rendering blocks.
   const blocks = useMemo(
-    () => buildBlocks(acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask),
-    [acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask],
+    () =>
+      buildBlocks(acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask, thread.sessionKey),
+    [acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask, thread.sessionKey],
   )
 
-  const unread = useMemo(() => buildUnread(acp.queue, acp.queueAuthors), [acp.queue, acp.queueAuthors])
+  const unread = useMemo(
+    () => buildUnread(acp.queue, acp.queueAuthors, thread.sessionKey),
+    [acp.queue, acp.queueAuthors, thread.sessionKey],
+  )
   // Memoized for the same reason as `unread`: it feeds the memoized command
   // bar, and a fresh object every render would rebuild it every render.
   const presence = useMemo(

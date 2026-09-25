@@ -501,6 +501,40 @@ test('a picture waiting to be read is the same chip it will be once delivered', 
   assert.deepEqual(queued?.attachments, [{ label: 'shot.png', detail: 'shot.png' }])
 })
 
+// Regression: a sent picture showed only as its file name. The record on the
+// user event names the stored row, and that row is what the transcript draws --
+// so it is drawn from what is stored, after a reload as much as right after the
+// send, and not from anything the composer still holds.
+const KEY = 'space.agent.thread'
+const SHOT_SRC = `/api/acp/attachments/att-1?key=${encodeURIComponent(KEY)}`
+
+test('a delivered picture is drawn from the stored row, scoped to its conversation', () => {
+  const message: ChatMessage = { ...userMessage(1, 'look at this'), attachments: [{ ...SHOT, message: 0 }] }
+  const [part] = partsOf(buildBlocks([message], undefined, undefined, KEY)[0]) ?? []
+  assert.deepEqual(part?.attachments, [{ label: 'shot.png', detail: 'shot.png', src: SHOT_SRC }])
+})
+
+test('a picture is drawn the same way waiting, delivered, and as the header of a partly loaded turn', () => {
+  const pictures = [{ ...SHOT, message: 0 }]
+  const [queued] = buildUnread(
+    [{ ...waiting('q12', 'Alex Rivera', '2026-03-04T09:12:00.000Z', 'look'), attachments: pictures }],
+    undefined,
+    KEY,
+  )
+  const [delivered] =
+    partsOf(buildBlocks([{ ...userMessage(1, 'look'), attachments: pictures }], undefined, undefined, KEY)[0]) ?? []
+  const header = headerFromWindow({ index: 1, event: { kind: 'user', text: 'look', attachments: pictures } }, KEY)
+  assert.equal(queued?.attachments?.[0]?.src, SHOT_SRC)
+  assert.equal(delivered?.attachments?.[0]?.src, SHOT_SRC)
+  assert.equal(header?.parts[0]?.attachments?.[0]?.src, SHOT_SRC)
+})
+
+test('a quoted selection is never drawn as a picture, key or not', () => {
+  const [part] =
+    partsOf(buildBlocks([userMessage(1, `${SELECTION}what does this do?`)], undefined, undefined, KEY)[0]) ?? []
+  assert.equal(part?.attachments?.[0]?.src, undefined)
+})
+
 // The five publishers in this app all open their content with a line naming the
 // source, so none of them reaches either guard below. The host exposes the
 // selection API to extensions, though, so what an attachment's content looks

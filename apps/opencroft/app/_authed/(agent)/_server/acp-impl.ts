@@ -50,7 +50,6 @@ import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import {
   AttachmentRejected,
   clearAttachments,
-  readAttachment,
   resolveAttachmentRefs,
   type StoredAttachment,
   saveAttachment,
@@ -327,20 +326,6 @@ export async function attachImageImpl(data: {
   data: string
 }): Promise<StoredAttachment> {
   return saveAttachment({ sessionKey: data.tabKey, name: data.name, mimeType: data.mimeType, data: data.data })
-}
-
-/**
- * One stored image, for a surface that draws it.
- *
- * Answers the bytes rather than a URL: the transcript needs the picture while
- * it renders a message that names it, and a second route serving these would be
- * a second place to get the session scoping wrong.
- */
-export async function readChatAttachmentImpl(data: {
-  tabKey: string
-  id: string
-}): Promise<{ name: string; mimeType: string; data: string } | null> {
-  return readAttachment(data.tabKey, data.id)
 }
 
 // A session this module puts behind a key — resumed, replayed, new, or a fork

@@ -20,7 +20,6 @@ import {
   hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
-  readChatAttachmentImpl,
   sessionHistoryPageImpl,
   setPresenceLocalImpl,
   stopLocalImpl,
@@ -46,15 +45,6 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
 export const attachImage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { tabKey: string; name: string; mimeType: string; data: string }) => data)
   .handler(async ({ data }): Promise<StoredAttachment> => attachImageImpl(data))
-
-// One stored image, for drawing a message that names it. Null when the id
-// names nothing this tab stored — which is the answer for another
-// conversation's row as much as for a deleted one.
-export const readChatAttachment = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { tabKey: string; id: string }) => data)
-  .handler(
-    async ({ data }): Promise<{ name: string; mimeType: string; data: string } | null> => readChatAttachmentImpl(data),
-  )
 
 // `queue` says how this message relates to anything already held: `wait` to be
 // delivered on its own when the turn ends, `push` to interrupt and deliver the

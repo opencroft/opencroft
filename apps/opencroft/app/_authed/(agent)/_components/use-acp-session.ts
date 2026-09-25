@@ -768,6 +768,11 @@ export function useAcpSession(
   const openRef = useRef<OpenTransport>(openTransport ?? ensureLocalSessionTransport)
   openRef.current = openTransport ?? ensureLocalSessionTransport
   const open = useCallback((source: LocalSource) => openRef.current(source), [])
+  // Read by the history callbacks to draw a header's pictures (see
+  // headerFromWindow), through a ref so the key is not one more reason for the
+  // stream effect to re-run: the session it opens already follows the key.
+  const tabKeyRef = useRef(tabKey)
+  tabKeyRef.current = tabKey
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [events, setEvents] = useState<AuthoredChatEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -997,7 +1002,7 @@ export function useAcpSession(
         paginatedHistory.reset(event.startIndex, event.hasMore)
         // Set unconditionally: a fresh connect re-sends a fresh tail, so a
         // header from a previous connection must not linger.
-        setHistoryHeader(headerFromWindow(event.header))
+        setHistoryHeader(headerFromWindow(event.header, tabKeyRef.current))
         return
       }
       if (replayingHistoryRef.current) {
@@ -1325,7 +1330,7 @@ export function useAcpSession(
     // The topmost partly-loaded turn has changed: either it's an older turn
     // now, or this page reached far enough up that the question is inside the
     // slice and no separate header is needed.
-    setHistoryHeader(headerFromWindow(page.header))
+    setHistoryHeader(headerFromWindow(page.header, tabKeyRef.current))
   }, [paginatedHistory.loadOlder])
 
   const dismissSendError = useCallback(() => setSendError(undefined), [])

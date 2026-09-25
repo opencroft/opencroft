@@ -276,6 +276,11 @@ export interface MessageAttachment {
   // The whole of what travelled, for a reader who would rather see it than be
   // told it exists. Optional, because a host may have nothing but the label.
   detail?: string
+  // Where the picture can be drawn from, when what travelled was a picture.
+  // Present makes this an image rather than a quotation, with `label` as its
+  // alternative text; the host resolves it (a stored URL, typically), because
+  // where pictures live is not this component's business either.
+  src?: string
 }
 
 export interface ChatUserMessagePart {
@@ -737,37 +742,81 @@ function UserMessageBubble({
         // a composer's attachments row sits above the box being typed into, so
         // the message is read in the order it was composed.
         //
-        // STACKED, NOT WRAPPED SIDE BY SIDE. Each of these is a quotation with a
-        // rule down its left, and quotations set beside one another read as
-        // columns of a table rather than as separate things that were carried.
-        // Several on one message is a real state, and stacking is also what
-        // keeps a long one from squeezing its neighbour to a few characters.
+        // QUOTATIONS STACKED, PICTURES SIDE BY SIDE. Each quotation has a rule
+        // down its left, and quotations set beside one another read as columns
+        // of a table rather than as separate things that were carried -- so
+        // they stack, which also keeps a long one from squeezing its neighbour
+        // to a few characters. Pictures carry no such rule and read as a row of
+        // pictures, which is what the composer showed when they were picked.
         //
         // Left out of the collapsed form deliberately. That form is the opening
         // few LINES of the message, kept short so a tall question cannot cover
         // the reply it belongs to -- and quoted context is neither its words nor
         // a line of them.
         <div className='flex min-w-0 flex-col gap-1'>
-          {part.attachments.map((attachment, index) => (
-            // The same component the composer quotes the live selection with,
-            // rendering the same way: here it is a record, and what makes it one
-            // is that the message has already gone, not a flag on the element.
-            // There is no control in it to leave unwired.
-            <SelectionBadge
-              // biome-ignore lint/suspicious/noArrayIndexKey: a delivered message's attachments are decoded out of a text that cannot change, so nothing here reorders, is inserted or is removed -- position IS the identity, and there is no id to key on instead. What would retire this suppression: attachments becoming editable after delivery, or arriving carrying an identity of their own. Either one makes position stop being identity, and the key then has to become that identity rather than this comment being widened.
-              key={index}
-              label={attachment.label}
-              // Everything the quotation is not told to name itself is spread
-              // onto it, so the whole of what travelled reaches the reader
-              // through the ordinary title attribute rather than a prop of its
-              // own.
-              title={attachment.detail ?? attachment.label}
-            />
-          ))}
+          {part.attachments.some((attachment) => attachment.src) ? (
+            <div className='flex min-w-0 flex-wrap gap-1'>
+              {part.attachments.map((attachment, index) =>
+                attachment.src ? (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: see the quotation key below -- the same reasoning, the same list.
+                  <SentPicture key={index} src={attachment.src} name={attachment.label} />
+                ) : null,
+              )}
+            </div>
+          ) : null}
+          {part.attachments.map((attachment, index) =>
+            attachment.src ? null : (
+              // The same component the composer quotes the live selection with,
+              // rendering the same way: here it is a record, and what makes it one
+              // is that the message has already gone, not a flag on the element.
+              // There is no control in it to leave unwired.
+              <SelectionBadge
+                // biome-ignore lint/suspicious/noArrayIndexKey: a delivered message's attachments are decoded out of a text that cannot change, so nothing here reorders, is inserted or is removed -- position IS the identity, and there is no id to key on instead. What would retire this suppression: attachments becoming editable after delivery, or arriving carrying an identity of their own. Either one makes position stop being identity, and the key then has to become that identity rather than this comment being widened.
+                key={index}
+                label={attachment.label}
+                // Everything the quotation is not told to name itself is spread
+                // onto it, so the whole of what travelled reaches the reader
+                // through the ordinary title attribute rather than a prop of its
+                // own.
+                title={attachment.detail ?? attachment.label}
+              />
+            ),
+          )}
         </div>
       ) : null}
       <Markdown text={part.text} className={preview ? 'line-clamp-3' : undefined} />
     </div>
+  )
+}
+
+// A picture a message carried, drawn as the picture.
+//
+// THE IMAGE, NOT ITS NAME. A reader who sent a screenshot recognises it by
+// looking at it; `Screenshot 2026-09-22 at 02.14.png` tells them nothing the
+// picture does not. The name is still there -- alternative text and tooltip --
+// for anything that does not render images.
+//
+// Bounded in height so a tall screenshot does not push the conversation off
+// the screen, and a link to the whole of it for a reader who wants detail.
+//
+// A picture that cannot be drawn -- its bytes gone, or a host that answered
+// with nothing -- falls back to the quotation with its name, so the message
+// still says something travelled rather than showing a broken image.
+function SentPicture({ src, name }: { src: string; name: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) {
+    return <SelectionBadge label={name} title={name} />
+  }
+  return (
+    <a href={src} target='_blank' rel='noopener noreferrer' title={name} className='block max-w-full shrink-0'>
+      <img
+        src={src}
+        alt={name}
+        loading='lazy'
+        onError={() => setFailed(true)}
+        className='block max-h-48 max-w-full rounded-md border bg-muted object-contain'
+      />
+    </a>
   )
 }
 
