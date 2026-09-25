@@ -34,8 +34,19 @@ export default defineConfig(async ({ mode }) => {
       // The extension compiler writes built bundles to <ext>/dist on activation;
       // watching those writes tears down the SSR environment mid-request
       // ("Vite environment ssr is unavailable"), so ignore them too.
+      // Agents write freely into their workspaces and harness homes under
+      // data/ (a harness clones plugins, templates and tsconfig files into its
+      // home); a watched write there forces a full reload of every connected
+      // browser, so neither tree is ever watched.
       watch: {
-        ignored: ['**/agent-profiles.json', '**/agent-config.json', '**/mcp-config.json', '**/dist/**'],
+        ignored: [
+          '**/agent-profiles.json',
+          '**/agent-config.json',
+          '**/mcp-config.json',
+          '**/dist/**',
+          '**/data/agent-workspace/**',
+          '**/data/agent-harness-home/**',
+        ],
       },
     },
     preview: {

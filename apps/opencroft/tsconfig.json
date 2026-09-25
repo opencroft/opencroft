@@ -16,5 +16,11 @@
     "types": ["vite/client", "node", "dom-navigation"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "data/extensions/**", "backup/**"]
+  "exclude": [
+    "node_modules",
+    "data/extensions/**",
+    "data/agent-workspace/**",
+    "data/agent-harness-home/**",
+    "backup/**"
+  ]
 }
