@@ -1,7 +1,5 @@
 'use client'
 
-import '@/components/tool-views/builtin-views'
-
 import { Check, Crosshair, type LucideIcon, MessageCircleQuestion, ShieldQuestion, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import { AskUser } from 'agent-chat/components/ask-user'
@@ -11,6 +9,7 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
+import { resolveToolView } from 'ui/tool-views/tool-views'
 
 import {
   answerAskUser,
@@ -22,7 +21,7 @@ import {
 } from '@/app/_authed/(approvals)/_server/actions'
 import { sseEventsStore, useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { RenderBoundary } from '@/components/render-boundary'
-import { resolveToolView } from '@/components/tool-views/registry'
+import { AppToolViewHost } from '@/components/tool-views/app-tool-view-host'
 import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
 import { cn } from '@/lib/utils'
 
@@ -138,7 +137,9 @@ function ApprovalDetail({ request }: { request: PendingApproval }) {
             would take the approvals surface down with it, leaving no way to
             act on the request it was describing. */}
         <RenderBoundary scope='tool-view' label={request.tool} resetKey={request.id}>
-          <ViewComponent tool={request.tool} args={request.args} requestId={request.id} mode='approval' />
+          <AppToolViewHost>
+            <ViewComponent tool={request.tool} args={request.args} requestId={request.id} mode='approval' />
+          </AppToolViewHost>
         </RenderBoundary>
       </div>
       <div className='flex flex-col gap-1.5 px-3 py-2 border-t'>

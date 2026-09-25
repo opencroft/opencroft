@@ -1,43 +1,28 @@
 'use client'
 
+import { normalizeToolId, type ToolViewProps } from 'agent-chat/tool-views'
 import { GitCompare, Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Button } from 'ui/button'
-import { Flex } from 'ui/layout/flex'
+import { type ComponentType, useEffect, useMemo, useState } from 'react'
 
-import { readRemoteFile } from '@/app/_authed/(approvals)/_server/actions'
-import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
-import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
-import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
-import { backgroundRunLabel } from '@/app/_authed/(mcp)/_server/execution-mode'
-import { CodeEditor, type CodeEditorProps, languageFromPath } from '@/components/code-editor'
-import { cn } from '@/lib/utils'
+import { Button } from '../button'
+import { Flex } from 'ui/components/ui/layout/flex'
+import { NodeCard } from '../nodes/node-card'
+import { cn } from 'ui/lib/utils'
 import { exceedsClamp, OpBlock, OpRow } from './op-block'
-import { registerToolView, type ToolViewProps } from './registry'
+import { useToolViewHost } from './tool-view-host'
 
-// The host's one editor, in diff mode: `original` is the before side, `value`
-// the after. Nothing here mounts a second editor component — see
-// components/code-editor for why that matters.
+// A rich, tool-specific view of a tool call — shared by the approval prompt
+// (before the call runs) and the chat transcript (after it ran). `mode` tells a
+// view which side of the call it's rendering: 'approval' has live pre-call
+// state to diff against args; 'history' only has post-call live state, so a
+// view that wants a diff must reconstruct the "before" side from args instead
+// (see the substitution-based views below).
 //
-// @xyflow/react's `useKeyPress` calls `preventDefault()` on the keys it watches
-// unless the event came from an element its `isInputDOMNode` recognises —
-// INPUT / SELECT / TEXTAREA, `contenteditable`, or a `.nokey` ancestor. Monaco
-// takes input through the EditContext API on a plain div, so a caret inside a
-// diff would send Backspace to the canvas as node deletion. `nokey` is xyflow's
-// own opt-out. The editor now sets it on its own root as well, so this wrapper
-// is belt-and-braces — kept because the class is the contract the canvas reads,
-// and these diffs render inside the canvas whatever the editor does internally.
-//
-// Defaulted to `plaintext` rather than the editor's own default: these diffs
-// carry whatever the agent wrote — file contents, node property values, skill
-// bodies — and highlighting all of that as TypeScript is worse than not
-// highlighting it. Callers that know what they are showing pass `language`.
-function CanvasSafeDiffEditor({ language = 'plaintext', ...props }: CodeEditorProps) {
-  return (
-    <div className='nokey'>
-      <CodeEditor {...props} language={language} />
-    </div>
-  )
+// Everything a view needs from the product it runs in comes through
+// useToolViewHost(). No view reads a canvas, an overlay or a store directly.
+export interface ToolViewSpec {
+  body: ComponentType<ToolViewProps>
+  getNodeId?: (args: Record<string, unknown>) => string | undefined
 }
 
 function FieldRow({ label, value }: { label: string; value: string }) {
@@ -52,18 +37,16 @@ function FieldRow({ label, value }: { label: string; value: string }) {
 }
 
 function NodeRow({ nodeId }: { nodeId: string }) {
-  const canvas = useCanvasNodes()
-  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
-  const name = node?.data?.name
+  const { canvas } = useToolViewHost()
+  const name = canvas?.getNode(nodeId)?.data?.name as string | undefined
   const value = name ? `${name} (${nodeId})` : nodeId
   return <FieldRow label='Node' value={value} />
 }
 
 function TargetRow({ target }: { target: string }) {
-  const canvas = useCanvasNodes()
+  const { canvas } = useToolViewHost()
   const [nodeId, handleId] = target.split('/')
-  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
-  const name = node?.data?.name
+  const name = canvas?.getNode(nodeId)?.data?.name as string | undefined
   const label = name ? `${name} (${nodeId})` : nodeId
   const value = handleId ? `${label} / ${handleId}` : label
   return <FieldRow label='Target' value={value} />
@@ -83,6 +66,7 @@ function useRemoteFileContent(
   path: string | undefined,
   requestId: string,
 ) {
+  const { readFile } = useToolViewHost()
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -94,7 +78,7 @@ function useRemoteFileContent(
     let cancelled = false
     setContent(null)
     setError(null)
-    readRemoteFile({ data: { target, space, path } })
+    readFile({ target, space, path })
       .then((value) => {
         if (!cancelled) {
           setContent(value)
@@ -109,12 +93,12 @@ function useRemoteFileContent(
     return () => {
       cancelled = true
     }
-  }, [target, space, path, requestId])
+  }, [readFile, target, space, path, requestId])
 
   return { content, error }
 }
 
-// Approval mode projects the diff into the canvas overlay panel (there's one
+// Approval mode projects the diff into the host's approval panel (there's one
 // shared slot, and the approval list only shows a summary inline). History
 // mode has no such slot available — the chat transcript itself already lives
 // there — so it renders the same diff inline instead.
@@ -129,6 +113,7 @@ function ToolDiffPanel({
   current: string | null
   next: string
 }) {
+  const { DiffEditor, ApprovalPanel } = useToolViewHost()
   const diffNode = useMemo(() => {
     if (current === null) {
       return null
@@ -138,16 +123,17 @@ function ToolDiffPanel({
         <NodeCard className='w-full'>
           <div className='px-3 py-2 space-y-2'>
             {label && <div className='font-mono text-xs'>{label}</div>}
-            <CanvasSafeDiffEditor original={current} value={next} language={languageFromPath(label)} />
+            <DiffEditor original={current} value={next} path={label} />
           </div>
         </NodeCard>
       </div>
     )
-  }, [current, next, label])
+  }, [DiffEditor, current, next, label])
 
-  useOptionalOverlay(mode === 'approval' ? { content: diffNode } : undefined)
-
-  return mode === 'history' ? diffNode : null
+  if (mode === 'history') {
+    return diffNode
+  }
+  return ApprovalPanel ? <ApprovalPanel>{diffNode}</ApprovalPanel> : null
 }
 
 // For whole-overwrite tools, the "before" state is gone once the call has
@@ -173,12 +159,13 @@ function ToolContentPanel({ mode, label, content }: { mode: ToolViewProps['mode'
 
 // ── the agent's own file tools ─────────────────────────────────────────────
 //
-// The views above are for THIS app's MCP tools, which act on a remote node and
-// so have a `target` and can read the file back over it. An agent's own
-// Write/Edit act on the machine its harness runs on, which this app has no
-// handle for — so these render from the call's arguments alone. That is also
-// what makes them behave identically on a reopened conversation: the arguments
-// are in the transcript, where a live read would have nothing to read from.
+// The remote views below are for the product's own MCP tools, which act on a
+// remote node and so have a `target` and can read the file back over it. An
+// agent's own Write/Edit act on the machine its harness runs on, which the host
+// has no handle for — so these render from the call's arguments alone. That is
+// also what makes them behave identically on a reopened conversation: the
+// arguments are in the transcript, where a live read would have nothing to read
+// from.
 //
 // The harness sends a rendered diff of its own alongside the call, and it is
 // deliberately not used: for a Write it describes the file as newly created
@@ -223,8 +210,8 @@ function AgentWriteView({ args, mode, result }: ToolViewProps) {
 
 // A targeted replacement, which is the case that genuinely has two sides: the
 // call carries both, so the diff is exact rather than reconstructed — unlike
-// the remote-file views above, which have to substitute in reverse against the
-// file as it is now.
+// the remote-file views, which have to substitute in reverse against the file
+// as it is now.
 function AgentEditView({ args, mode, result }: ToolViewProps) {
   const filePath = agentFilePath(args)
   const oldString = (args.old_string as string | undefined) ?? ''
@@ -372,6 +359,7 @@ function RemoteWriteView({ args, requestId, mode, result }: ToolViewProps) {
 }
 
 function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
+  const { DiffEditor } = useToolViewHost()
   const target = args.target as string | undefined
   const space = args.space as string | undefined
   const filePath = args.path as string | undefined
@@ -410,9 +398,7 @@ function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
       pending={!result}
       overflowing={current !== null}
     >
-      {current !== null && (
-        <CanvasSafeDiffEditor original={current} value={next} language={languageFromPath(filePath)} />
-      )}
+      {current !== null && <DiffEditor original={current} value={next} path={filePath} />}
     </OpBlock>
   )
 }
@@ -430,18 +416,17 @@ function getByPath(obj: Record<string, unknown>, path: string): unknown {
 }
 
 function usePropertyLabel(nodeId: string | undefined, path: string | undefined): string | undefined {
-  const canvas = useCanvasNodes()
+  const { canvas } = useToolViewHost()
   if (!nodeId || !path) {
     return undefined
   }
-  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
-  const name = node?.data?.name ?? nodeId
+  const name = (canvas?.getNode(nodeId)?.data?.name as string | undefined) ?? nodeId
   return `${name} (${nodeId}) · ${path}`
 }
 
 function useLiveProperty(nodeId: string | undefined, path: string | undefined): string {
-  const canvas = useCanvasNodes()
-  const node = nodeId ? (canvas?.getNode(nodeId) as { data?: Record<string, unknown> } | undefined) : undefined
+  const { canvas } = useToolViewHost()
+  const node = nodeId ? canvas?.getNode(nodeId) : undefined
   const raw = node && path ? getByPath(node.data ?? {}, path) : undefined
   return typeof raw === 'string' ? raw : ''
 }
@@ -527,7 +512,7 @@ function OpInputOutput({ input, result }: { input?: string; result?: ToolViewPro
 // Fallback for a tool call with no registered view (e.g. an external MCP
 // server's tool) — same chrome as Exec/Script (bold name, input/output rows,
 // clamped preview, view-full dialog), just without a target line: a generic
-// tool call isn't tied to one of our node/handle targets.
+// tool call isn't tied to one of the product's node/handle targets.
 export function GenericToolView({
   tool,
   args,
@@ -551,12 +536,13 @@ export function GenericToolView({
 }
 
 function RemoteExecView({ args, mode, result }: ToolViewProps) {
+  const { describeBackgroundRun } = useToolViewHost()
   const target = args.target as string | undefined
   const command = args.command as string | undefined
   const secrets = args.secrets as string[] | undefined
   const description = args.description as string | undefined
   // Said before approval, not after: a detached command outlives this call.
-  const runs = backgroundRunLabel(args)
+  const runs = describeBackgroundRun(args)
 
   if (mode === 'approval') {
     return (
@@ -585,12 +571,13 @@ function RemoteExecView({ args, mode, result }: ToolViewProps) {
 }
 
 function RemoteScriptView({ args, mode, result }: ToolViewProps) {
+  const { describeBackgroundRun } = useToolViewHost()
   const target = args.target as string | undefined
   const script = args.script as string | undefined
   const scriptArgs = args.args as string[] | undefined
   const secrets = args.secrets as string[] | undefined
   const description = args.description as string | undefined
-  const runs = backgroundRunLabel(args)
+  const runs = describeBackgroundRun(args)
 
   if (mode === 'approval') {
     return (
@@ -620,6 +607,7 @@ function RemoteScriptView({ args, mode, result }: ToolViewProps) {
 }
 
 function useSkillBody(name: string | undefined, requestId: string) {
+  const { readSkill } = useToolViewHost()
   const [body, setBody] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -631,14 +619,11 @@ function useSkillBody(name: string | undefined, requestId: string) {
     let cancelled = false
     setBody(null)
     setError(null)
-    fetch('/api/acp/skills')
-      .then((r) => r.json())
-      .then((skills: { name: string; body: string }[]) => {
-        if (cancelled) {
-          return
+    readSkill(name)
+      .then((value) => {
+        if (!cancelled) {
+          setBody(value)
         }
-        const found = skills.find((skill) => skill.name === name)
-        setBody(found ? found.body : '')
       })
       .catch((err: Error) => {
         if (!cancelled) {
@@ -649,7 +634,7 @@ function useSkillBody(name: string | undefined, requestId: string) {
     return () => {
       cancelled = true
     }
-  }, [name, requestId])
+  }, [readSkill, name, requestId])
 
   return { body, error }
 }
@@ -757,10 +742,8 @@ function changeSummary(update: NodeUpdate): string {
 }
 
 function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeUpdate }) {
-  const canvas = useCanvasNodes()
-  const node = canvas?.getNode(update.nodeId) as
-    | { data?: Record<string, unknown>; position?: { x: number; y: number } }
-    | undefined
+  const { canvas, DiffEditor } = useToolViewHost()
+  const node = canvas?.getNode(update.nodeId)
   const name = (node?.data?.name as string | undefined) ?? update.nodeId
   const label = `${name} (${update.nodeId})`
   const next = {
@@ -779,7 +762,7 @@ function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeU
   return (
     <div className='px-3 py-2 space-y-2'>
       <div className='font-mono text-xs'>{label}</div>
-      <CanvasSafeDiffEditor
+      <DiffEditor
         original={JSON.stringify(current, null, 2)}
         value={JSON.stringify(next, null, 2)}
         language='json'
@@ -789,8 +772,8 @@ function NodeDiff({ mode, update }: { mode: ToolViewProps['mode']; update: NodeU
 }
 
 function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
+  const { canvas, ApprovalPanel } = useToolViewHost()
   const updates = (args.updates ?? []) as NodeUpdate[]
-  const canvas = useCanvasNodes()
   const [openId, setOpenId] = useState<string | null>(null)
 
   const openUpdate = openId ? (updates.find((u) => u.nodeId === openId) ?? null) : null
@@ -807,7 +790,9 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
     )
   }, [openUpdate, mode])
 
-  useOptionalOverlay(mode === 'approval' ? { content: diffNode } : undefined)
+  // Rendered on both returns below, so the panel is written whichever one
+  // this render takes — the same slot write the view made before it had a host.
+  const panel = mode === 'approval' && ApprovalPanel ? <ApprovalPanel>{diffNode}</ApprovalPanel> : null
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(requestId): collapse the open diff when a new request arrives
   useEffect(() => {
@@ -815,18 +800,23 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
   }, [requestId])
 
   if (!updates.length) {
-    return <div className='px-3 py-2 text-xs text-muted-foreground'>No updates.</div>
+    return (
+      <>
+        {panel}
+        <div className='px-3 py-2 text-xs text-muted-foreground'>No updates.</div>
+      </>
+    )
   }
 
   return (
     <div className='space-y-1.5 px-3 py-2'>
+      {panel}
       <div className='text-xs font-medium text-muted-foreground'>
         {updates.length} node{updates.length === 1 ? '' : 's'} to update
       </div>
       <div className='space-y-1'>
         {updates.map((update) => {
-          const node = canvas?.getNode(update.nodeId) as { data?: { name?: string } } | undefined
-          const name = node?.data?.name ?? update.nodeId
+          const name = (canvas?.getNode(update.nodeId)?.data?.name as string | undefined) ?? update.nodeId
           const active = openId === update.nodeId
           return (
             <div key={update.nodeId} className='space-y-1'>
@@ -851,69 +841,66 @@ function UpdateNodesView({ args, requestId, mode }: ToolViewProps) {
   )
 }
 
-// The agent's own file tools. Registered under their programmatic names, which
-// is what the transcript matches on — their displayed titles embed the file
-// path, so no fixed id could ever equal one.
-registerToolView('Write', {
-  body: AgentWriteView,
-})
+function formatArgs(args: Record<string, unknown>): string {
+  return JSON.stringify(args, null, 2)
+}
 
-registerToolView('Edit', {
-  body: AgentEditView,
-})
+// The approval list's fallback: every call has to show something before it is
+// approved, and a tool with no view of its own shows its raw arguments.
+export function DefaultToolView({ args }: ToolViewProps) {
+  return (
+    <div className='space-y-1 px-3 py-2'>
+      <div className='text-xs font-medium text-muted-foreground'>Arguments</div>
+      <pre className='text-xs whitespace-pre-wrap break-all bg-muted/50 rounded-md p-2 max-h-72 overflow-auto font-mono'>
+        {formatArgs(args)}
+      </pre>
+    </div>
+  )
+}
 
-registerToolView('MultiEdit', {
-  body: AgentMultiEditView,
-})
+const DEFAULT_SPEC: ToolViewSpec = { body: DefaultToolView }
 
-registerToolView('remote_read', {
-  body: RemoteReadView,
-  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
-})
+const targetNodeId = (args: Record<string, unknown>) => (args.target as string | undefined)?.split('/')[0]
+const argNodeId = (args: Record<string, unknown>) => args.nodeId as string | undefined
 
-registerToolView('remote_exec', {
-  body: RemoteExecView,
-  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
-})
+// Every view, keyed by the tool's programmatic name. The agent's own file tools
+// are keyed the same way, which is what the transcript matches on — their
+// displayed titles embed the file path, so no fixed id could ever equal one.
+// `getNodeId` names the node a call acts on, for a host that offers to show it.
+export const TOOL_VIEWS: Readonly<Record<string, ToolViewSpec>> = {
+  Write: { body: AgentWriteView },
+  Edit: { body: AgentEditView },
+  MultiEdit: { body: AgentMultiEditView },
+  remote_read: { body: RemoteReadView, getNodeId: targetNodeId },
+  remote_exec: { body: RemoteExecView, getNodeId: targetNodeId },
+  remote_script: { body: RemoteScriptView, getNodeId: targetNodeId },
+  remote_write: { body: RemoteWriteView, getNodeId: targetNodeId },
+  remote_edit: { body: RemoteEditView, getNodeId: targetNodeId },
+  skill_write: { body: SkillWriteView },
+  skill_edit: { body: SkillEditView },
+  call: { body: CallView, getNodeId: argNodeId },
+  update_nodes: { body: UpdateNodesView },
+  write_node_property: { body: WriteNodePropertyView, getNodeId: argNodeId },
+  edit_node_property: { body: EditNodePropertyView, getNodeId: argNodeId },
+}
 
-registerToolView('remote_script', {
-  body: RemoteScriptView,
-  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
-})
+// Only a specifically registered view, or undefined — for callers (the chat
+// transcript) that already have a reasonable default of their own to fall back
+// to instead of the raw-args dump. The id is normalized first, so a tool
+// reported with an MCP server prefix still finds its view. Own keys only: a
+// tool that happens to be called `toString` or `constructor` must find nothing
+// rather than something inherited from Object.
+export function lookupToolView(id: string): ToolViewSpec | undefined {
+  const key = normalizeToolId(id)
+  return Object.hasOwn(TOOL_VIEWS, key) ? TOOL_VIEWS[key] : undefined
+}
 
-registerToolView('remote_write', {
-  body: RemoteWriteView,
-  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
-})
-
-registerToolView('remote_edit', {
-  body: RemoteEditView,
-  getNodeId: (args) => (args.target as string | undefined)?.split('/')[0],
-})
-
-registerToolView('skill_write', {
-  body: SkillWriteView,
-})
-
-registerToolView('skill_edit', {
-  body: SkillEditView,
-})
-
-registerToolView('call', {
-  body: CallView,
-  getNodeId: (args) => args.nodeId as string | undefined,
-})
-
-registerToolView('update_nodes', {
-  body: UpdateNodesView,
-})
-
-registerToolView('write_node_property', {
-  body: WriteNodePropertyView,
-  getNodeId: (args) => args.nodeId as string | undefined,
-})
-
-registerToolView('edit_node_property', {
-  body: EditNodePropertyView,
-  getNodeId: (args) => args.nodeId as string | undefined,
-})
+// Always returns a spec, falling back to the raw-args dump — for callers (the
+// approval prompt) that must render something regardless of whether a rich
+// view is registered.
+export function resolveToolView(id?: string): ToolViewSpec {
+  if (!id) {
+    return DEFAULT_SPEC
+  }
+  return lookupToolView(id) ?? DEFAULT_SPEC
+}

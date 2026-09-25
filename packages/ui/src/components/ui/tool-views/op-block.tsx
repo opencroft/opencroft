@@ -2,12 +2,11 @@
 
 import { Loader2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { Flex } from 'ui/layout/flex'
 
-import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
-import { sseEventsStore } from '@/app/_authed/(sse)/_lib/sse-events-store'
-import { cn } from '@/lib/utils'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../dialog'
+import { Flex } from 'ui/components/ui/layout/flex'
+import { cn } from 'ui/lib/utils'
+import { useToolViewHost } from './tool-view-host'
 
 // Lines a preview is capped to before showing a "there's more" cue — same
 // threshold callers use to decide whether to pass `overflowing`.
@@ -117,21 +116,19 @@ export function exceedsClamp(text: string | undefined): boolean {
 }
 
 // The call's target ("<node-id>/<handle-id>"), shown as a small line under the
-// header rather than hidden behind a hover tooltip. Where a canvas is mounted
-// it resolves the node's name and clicking pans to it (the same affordance the
-// approval list offers via its "View node" button); on a surface without one
-// it is the plain target text.
+// header rather than hidden behind a hover tooltip. Where the host has a canvas
+// it resolves the node's name and clicking focuses it (the same affordance the
+// approval list offers via its "View node" button); on a surface without one it
+// is the plain target text.
 function TargetLine({ target }: { target: string }) {
-  const canvas = useCanvasNodes()
+  const { canvas } = useToolViewHost()
   const [nodeId, handleId] = target.split('/')
-  const node = canvas?.getNode(nodeId) as { data?: { name?: string } } | undefined
-  const name = node?.data?.name
+  const name = canvas?.getNode(nodeId)?.data?.name as string | undefined
   const label = name ? `${name} (${nodeId})` : nodeId
   const value = handleId ? `${label}/${handleId}` : label
 
-  // No canvas to pan: the target is still worth showing, but as the text it
-  // is. A button here would look live and do nothing, since the focus event
-  // below is only listened for by the canvas.
+  // No canvas to focus: the target is still worth showing, but as the text it
+  // is. A button here would look live and do nothing.
   if (!canvas) {
     return <span className='block max-w-full break-all text-[10px] text-muted-foreground/80'>{value}</span>
   }
@@ -139,7 +136,7 @@ function TargetLine({ target }: { target: string }) {
   return (
     <button
       type='button'
-      onClick={() => sseEventsStore.dispatch({ type: 'focus_node', nodeId, panToNode: true })}
+      onClick={() => canvas.focusNode(nodeId)}
       className='block max-w-full break-all text-left text-[10px] text-muted-foreground/80 hover:underline'
     >
       {value}

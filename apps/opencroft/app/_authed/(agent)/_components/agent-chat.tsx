@@ -10,13 +10,13 @@ import { ThinkingBlock } from 'agent-chat/components/thinking-block'
 import type { AgentChatEdit } from 'agent-chat/session'
 import type { AvailableCommand } from 'agent-client/types'
 import type { ComponentType } from 'react'
+import { GenericToolView, lookupToolView } from 'ui/tool-views/tool-views'
 
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { RenderBoundary } from '@/components/render-boundary'
-import { GenericToolView } from '@/components/tool-views/builtin-views'
-import { lookupToolView } from '@/components/tool-views/registry'
+import { AppToolViewHost } from '@/components/tool-views/app-tool-view-host'
 
 // The rail and the thinking block the installed conversation renders with.
 // They stay the package's copies deliberately: `ui` sits below `agent-chat`, so
@@ -26,7 +26,7 @@ import { lookupToolView } from '@/components/tool-views/registry'
 // package's `AgentChat` as its `renderers` prop by every host in this app.
 export const CHAT_RENDERERS: ChatTurnRenderers = { Chained, ChainDot, ThinkingBlock }
 
-// A registered tool view (see components/tool-views) renders in place of the
+// A registered tool view (the kit's tool-views) renders in place of the
 // generic block, giving e.g. remote_edit/edit_node_property a real diff instead
 // of a raw args dump. Falls back to the same chrome without a target line
 // otherwise (e.g. an external MCP server's tool, with no node/handle to point
@@ -66,11 +66,13 @@ export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
   }
   return (
     <RenderBoundary scope='tool-view' label={item.name} resetKey={item.id}>
-      {ViewComponent ? (
-        <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
-      ) : (
-        <GenericToolView tool={item.name} args={args} result={item.result} />
-      )}
+      <AppToolViewHost>
+        {ViewComponent ? (
+          <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
+        ) : (
+          <GenericToolView tool={item.name} args={args} result={item.result} />
+        )}
+      </AppToolViewHost>
     </RenderBoundary>
   )
 }
