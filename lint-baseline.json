@@ -31,7 +31,7 @@
   ],
   "biome": "2.4.16",
   "filesScanned": 839,
-  "total": 382,
+  "total": 380,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/acp-impl.test.ts": {
       "format": 1
@@ -573,10 +573,6 @@
     },
     "packages/agent-chat/src/components/author-runs.test.ts": {
       "format": 1
-    },
-    "packages/agent-chat/src/components/chat-edit-bar.tsx": {
-      "lint/a11y/useAriaPropsSupportedByRole": 1,
-      "lint/a11y/useSemanticElements": 1
     },
     "packages/agent-chat/src/components/chat-turn-avatar.test.tsx": {
       "lint/style/noNonNullAssertion": 3
