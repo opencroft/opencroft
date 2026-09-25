@@ -1,0 +1,147 @@
+import type { Parent, Root, RootContent } from 'mdast'
+import type { ContainerDirective } from 'mdast-util-directive'
+
+import { MARKDOWN_CALLOUT_KINDS, type MarkdownCalloutKind } from './markdown-callout'
+
+/**
+ * The documentation blocks markdown can carry, written as generic directives
+ * (`remark-directive`, the syntax Docusaurus, VitePress and MyST share):
+ *
+ *     :::warning{title="Before you upgrade"}
+ *     Back up the database first.
+ *     :::
+ *
+ *     :::details{summary="Full log"}
+ *     ...
+ *     :::
+ *
+ *     ::::tabs
+ *     :::tab{label="npm"}
+ *     ...
+ *     :::
+ *     :::tab{label="pnpm"}
+ *     ...
+ *     :::
+ *     ::::
+ *
+ * This is the one place that says which directive names mean something and
+ * which attribute each one reads (the callout kinds themselves are the callout
+ * component's), so anything else that reads or writes these blocks takes the
+ * names from here rather than restating them.
+ */
+export const SPOILER_DIRECTIVE = 'details'
+export const TABS_DIRECTIVE = 'tabs'
+export const TAB_DIRECTIVE = 'tab'
+
+/**
+ * The element names the blocks are handed to the renderer under. Custom names
+ * rather than `div`s with a marker, so a renderer claims exactly these and no
+ * other element changes meaning.
+ */
+export const DIRECTIVE_ELEMENTS = {
+  callout: 'markdown-callout',
+  spoiler: 'markdown-spoiler',
+  tabs: 'markdown-tabs',
+  tab: 'markdown-tab',
+} as const
+
+function isCalloutKind(name: string): name is MarkdownCalloutKind {
+  return (MARKDOWN_CALLOUT_KINDS as readonly string[]).includes(name)
+}
+
+function attribute(node: ContainerDirective, name: string): string | undefined {
+  const value = node.attributes?.[name]
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * Only the one attribute a block reads is carried to the rendered element,
+ * never the author's attribute list as a whole. The attributes come from
+ * whoever wrote the markdown -- an agent, a pasted page -- and passing them
+ * through would let `{style="..."}` or an event-handler name reach the DOM.
+ */
+function claim(node: ContainerDirective, element: string, properties: Record<string, string | undefined> = {}) {
+  node.data = { ...node.data, hName: element, hProperties: properties }
+}
+
+function isTab(child: RootContent): boolean {
+  return child.type === 'containerDirective' && child.name === TAB_DIRECTIVE
+}
+
+/**
+ * A container nobody claims renders as its content in a plain box, with none
+ * of its attributes: an unknown block name reads as ordinary text rather than
+ * as raw `:::` or an error, which is what makes adding blocks later safe.
+ */
+function plain(node: ContainerDirective) {
+  claim(node, 'div')
+}
+
+function transformContainer(node: ContainerDirective, parent: Parent) {
+  if (isCalloutKind(node.name)) {
+    claim(node, DIRECTIVE_ELEMENTS.callout, { kind: node.name, title: attribute(node, 'title') })
+  } else if (node.name === SPOILER_DIRECTIVE) {
+    claim(node, DIRECTIVE_ELEMENTS.spoiler, { summary: attribute(node, 'summary') })
+  } else if (node.name === TABS_DIRECTIVE && node.children.length > 0 && node.children.every(isTab)) {
+    claim(node, DIRECTIVE_ELEMENTS.tabs)
+  } else if (
+    node.name === TAB_DIRECTIVE &&
+    parent.type === 'containerDirective' &&
+    parent.data?.hName === DIRECTIVE_ELEMENTS.tabs
+  ) {
+    claim(node, DIRECTIVE_ELEMENTS.tab, { label: attribute(node, 'label') })
+  } else {
+    // Includes a `tabs` holding anything besides tabs, and a `tab` outside
+    // one: shown as their content, so nothing the author wrote is dropped.
+    plain(node)
+  }
+}
+
+/**
+ * The source text a node was parsed from, exactly as written.
+ */
+function sourceOf(node: RootContent, source: string): string | undefined {
+  const start = node.position?.start.offset
+  const end = node.position?.end.offset
+  return start === undefined || end === undefined ? undefined : source.slice(start, end)
+}
+
+function walk(parent: Parent, source: string) {
+  parent.children = parent.children.map((child) => {
+    if (child.type === 'containerDirective') {
+      transformContainer(child, parent)
+      walk(child, source)
+      return child
+    }
+    // Only containers are blocks. The text form (`:name`) turns up in ordinary
+    // prose -- `see file:README`, `key:value` -- so it goes back to the text it
+    // was parsed from rather than swallowing what the author typed. No block
+    // uses the leaf form (`::name` alone on a line) either, and it gets the
+    // same treatment.
+    if (child.type === 'textDirective' || child.type === 'leafDirective') {
+      const text = sourceOf(child, source)
+      if (text === undefined) {
+        walk(child, source)
+        return child
+      }
+      return child.type === 'leafDirective'
+        ? { type: 'paragraph', children: [{ type: 'text', value: text }] }
+        : { type: 'text', value: text }
+    }
+    if ('children' in child) {
+      walk(child, source)
+    }
+    return child
+  }) as typeof parent.children
+}
+
+/**
+ * A remark plugin, run after `remark-directive`: turns the documentation
+ * blocks into the elements a renderer draws, and every other directive back
+ * into ordinary content.
+ */
+export function remarkDirectiveBlocks() {
+  return (tree: Root, file: { value: unknown }) => {
+    walk(tree, String(file.value))
+  }
+}

@@ -1,10 +1,15 @@
-import type { ComponentProps } from 'react'
+import { Children, type ComponentProps, isValidElement, type ReactElement, type ReactNode } from 'react'
 import type { Components, ExtraProps } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
+import remarkDirective from 'remark-directive'
 import remarkGfm from 'remark-gfm'
 import { cn } from 'ui/lib/utils'
 
 import { CodeBlock } from './code-block'
+import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
+import { DIRECTIVE_ELEMENTS, remarkDirectiveBlocks } from './markdown-directives'
+import { MarkdownSpoiler } from './markdown-spoiler'
+import { MarkdownTabs } from './markdown-tabs'
 import { MermaidDiagram } from './mermaid-diagram'
 
 // `rel="noopener noreferrer"` travels with `target="_blank"` -- without it the
@@ -69,7 +74,51 @@ function MarkdownPre({ node, children, ...props }: ComponentProps<'pre'> & Extra
   return <CodeBlock code={fence.code} language={fence.language} />
 }
 
-const markdownComponents: Components = { a: MarkdownLink, pre: MarkdownPre }
+// The documentation blocks arrive as the elements `markdown-directives` names,
+// carrying only the one attribute each block reads.
+type BlockProps<P> = P & ExtraProps & { children?: ReactNode }
+
+function CalloutElement({ kind, title, children }: BlockProps<{ kind: MarkdownCalloutKind; title?: string }>) {
+  return (
+    <MarkdownCallout kind={kind} title={title}>
+      {children}
+    </MarkdownCallout>
+  )
+}
+
+function SpoilerElement({ summary, children }: BlockProps<{ summary?: string }>) {
+  return <MarkdownSpoiler summary={summary}>{children}</MarkdownSpoiler>
+}
+
+type TabElementProps = BlockProps<{ label?: string }>
+
+function TabsElement({ children }: BlockProps<object>) {
+  // Every element child is a tab -- the plugin only claims a `tabs` block whose
+  // children all are. What is filtered out is the whitespace between them.
+  const tabs = Children.toArray(children)
+    .filter((child): child is ReactElement<TabElementProps> => isValidElement(child))
+    .map((tab, index) => ({ label: tab.props.label ?? `Tab ${index + 1}`, content: tab.props.children }))
+  return <MarkdownTabs tabs={tabs} />
+}
+
+// Never rendered on its own: `TabsElement` reads a tab's label and content off
+// the element and hands them to the tab strip.
+function TabElement({ children }: TabElementProps) {
+  return <>{children}</>
+}
+
+// `Components` only knows HTML's element names; the blocks' own names are added
+// alongside it.
+const markdownComponents = {
+  a: MarkdownLink,
+  pre: MarkdownPre,
+  [DIRECTIVE_ELEMENTS.callout]: CalloutElement,
+  [DIRECTIVE_ELEMENTS.spoiler]: SpoilerElement,
+  [DIRECTIVE_ELEMENTS.tabs]: TabsElement,
+  [DIRECTIVE_ELEMENTS.tab]: TabElement,
+} as Components
+
+const remarkPlugins = [remarkGfm, remarkDirective, remarkDirectiveBlocks]
 
 // What survives in an inline rendering: the spans a sentence can carry. A
 // block construct is unwrapped to its text rather than dropped, so nothing the
@@ -113,13 +162,17 @@ export interface MarkdownProps {
  * The prose styling is `prose-chat`, so anything rendered through this reads as
  * the same voice as the conversation rather than as a second treatment of the
  * same markdown.
+ *
+ * Documentation blocks written as directives -- callouts, `details` spoilers
+ * and `tabs` -- render as those blocks; any other directive renders as its
+ * plain content.
  */
 export function Markdown({ text, className, typography = 'chat', inline = false }: MarkdownProps) {
   const Wrapper = inline ? 'span' : 'div'
   return (
     <Wrapper className={cn('prose-chat', typography === 'inherit' && 'prose-chat-inherit', className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
         components={markdownComponents}
         {...(inline ? { allowedElements: inlineElements, unwrapDisallowed: true } : {})}
       >
