@@ -562,6 +562,9 @@ interface ClientStore {
       // still be answered with the request's own reject (see
       // rejectionResponse).
       options?: RequestPermissionRequest['options']
+      // Raised while a turn of its session was in flight, so it ends with
+      // that turn (see cancelTurnAsks).
+      turnBound: boolean
     }
   >
   pendingElicitations: Map<
@@ -820,13 +823,28 @@ function hasTurnInFlight(sessionId: string): boolean {
 
 // An ask raised inside a turn belongs to that turn: once the turn has ended or
 // is being stopped, nothing is left to read its answer. The agent cannot tell
-// us it stopped waiting — the SDK's client dispatch hands createElicitation the
-// request params alone, never the request's cancellation signal — so an agent
-// that gave up (its own timeout, a cancelled turn) would leave the card open
-// forever. The turn's end is the boundary we do observe. Settling it as a
-// cancel is also what closes the card, and an answer that arrives afterwards
-// finds no pending entry and is dropped, like any answer to a settled ask.
+// us it stopped waiting — the SDK's client dispatch hands createElicitation and
+// requestPermission the request params alone, never the request's cancellation
+// signal — so an agent that gave up (its own timeout, a cancelled turn) would
+// leave the card open forever. The turn's end is the boundary we do observe.
+// Settling it as a cancel is also what closes the card, and an answer that
+// arrives afterwards finds no pending entry and is dropped, like any answer to
+// a settled ask.
+//
+// A permission request settles with the protocol's `cancelled` outcome, not
+// the request's own reject option that a reader's rejection sends
+// (rejectionResponse): nobody declined this call, its turn went away, and
+// `cancelled` is the answer ACP prescribes for a cancelled turn's pending
+// requests. The resolved event carries no option, which the card reads as
+// cancelled.
 function cancelTurnAsks(sessionId: string): void {
+  for (const [requestId, pending] of store.pendingPermissions) {
+    if (pending.sessionId === sessionId && pending.turnBound) {
+      store.pendingPermissions.delete(requestId)
+      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      emit(sessionId, { kind: 'permission_resolved', requestId })
+    }
+  }
   for (const [requestId, pending] of store.pendingElicitations) {
     if (pending.sessionId === sessionId && pending.turnBound) {
       store.pendingElicitations.delete(requestId)
@@ -1706,6 +1724,10 @@ export function buildClient(
       if (isAlwaysAllowed(perms, title)) {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
       }
+      // Read on arrival, not after the host's verdict: the handler may be
+      // async, and a turn that ends while it decides would otherwise make an
+      // in-turn request look like one raised between turns.
+      const turnBound = hasTurnInFlight(sessionId)
       const outcome = permissionHandler ? await permissionHandler(permissionContext(request, mcpServerName)) : 'prompt'
       if (outcome === 'allow') {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
@@ -1713,12 +1735,19 @@ export function buildClient(
       if (outcome === 'deny') {
         return rejectionResponse(request.options)
       }
+      // Its turn already ended while the host decided: cancelTurnAsks has run
+      // and would never see this entry, so drawing a card now would leave it
+      // open with nobody waiting. Answer the way that sweep would have.
+      if (turnBound && !hasTurnInFlight(sessionId)) {
+        return { outcome: { outcome: 'cancelled' } }
+      }
       return new Promise<RequestPermissionResponse>((resolve) => {
         const requestId = randomUUID()
         store.pendingPermissions.set(requestId, {
           sessionId,
           resolve,
           options: request.options,
+          turnBound,
         })
         emit(sessionId, {
           kind: 'permission_request',
@@ -2926,8 +2955,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // the cancelled turn's in-flight prompt is what actually drains it (see
   // settleTurn), which is why a push queues rather than delivering directly.
   //
-  // The one thing it does settle is the turn's open questions, the way the
-  // protocol has a client answer its pending permission requests on cancel:
+  // The one thing it does settle is the turn's open permission requests and
+  // questions, the way the protocol has a client answer its pending permission
+  // requests on cancel (with `cancelled`, see cancelTurnAsks):
   // whether the turn then ends is up to the agent, and a stopped turn's card
   // must not wait on that. After the signal, so the agent already knows the
   // turn is stopping when the cancelled answer reaches it.

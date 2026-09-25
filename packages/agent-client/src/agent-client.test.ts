@@ -2032,6 +2032,135 @@ test('an ask raised with no turn in flight is left open by the next turn’s end
   await h.client.deleteSession(h.sessionId)
 })
 
+// A command request as codex-acp words one: an allow, and the reject that
+// leaves the turn running — the one a reader's rejection sends, which a
+// cancelled turn's request must NOT be answered with.
+function raisePermission(sessionId: string, permissionHandler?: Parameters<typeof buildClient>[2]) {
+  return buildClient(() => sessionId, 'local', permissionHandler).requestPermission({
+    sessionId,
+    toolCall: { toolCallId: 'call-1', title: 'Run a command' },
+    options: [
+      { optionId: 'approved', name: 'Yes', kind: 'allow_once' },
+      { optionId: 'decline', name: 'No, continue without running it', kind: 'reject_once' },
+    ],
+  })
+}
+
+// The answer the agent got, or 'unanswered' if none arrived by the time the
+// engine's timers have run: an unsettled request is the defect under test, and
+// awaiting it bare would hang the suite instead of failing it.
+function answerOf(response: ReturnType<typeof raisePermission>) {
+  return Promise.race([response, settle().then(() => 'unanswered' as const)])
+}
+
+function permissionsIn(events: ChatEvent[]) {
+  return events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'permission_request' }> => event.kind === 'permission_request',
+  )
+}
+
+function permissionResolutionsOf(events: ChatEvent[], requestId: string) {
+  return events.filter(
+    (event): event is Extract<ChatEvent, { kind: 'permission_resolved' }> =>
+      event.kind === 'permission_resolved' && event.requestId === requestId,
+  )
+}
+
+test('a permission request raised in a turn closes as cancelled when the turn ends, and a late answer is dropped', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:perm:turn-end' })
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const response = raisePermission(h.sessionId)
+  const asked = permissionsIn(h.events).at(-1)
+  assert.ok(asked)
+
+  // The harness gave up on the answer (its own timeout) and ended the turn;
+  // nothing but the turn's end says so.
+  h.endTurn()
+  await settle()
+  assert.deepEqual(await answerOf(response), { outcome: { outcome: 'cancelled' } })
+  const turnEnd = h.events.findIndex((event) => event.kind === 'turn_end')
+  const closed = h.events.findIndex(
+    (event) => event.kind === 'permission_resolved' && event.requestId === asked.requestId,
+  )
+  assert.ok(closed >= 0 && closed < turnEnd, 'closed inside the turn that asked')
+  assert.deepEqual(h.events[closed], { kind: 'permission_resolved', requestId: asked.requestId })
+  assert.equal(h.client.pendingRequestSessionId(asked.requestId), undefined)
+  assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:perm:turn-end'))
+  const card = foldEvents(h.events).find((message) => message.kind === 'permission')
+  assert.ok(card && card.kind === 'permission')
+  assert.equal(card.resolved, true)
+  assert.equal(card.resolvedOptionId, undefined, 'no option: the card reads as cancelled')
+
+  // The reader clicks the card they still had open: nothing reaches the agent
+  // a second time and the transcript does not close it twice.
+  h.client.resolvePermission(asked.requestId, 'approved')
+  assert.equal(permissionResolutionsOf(h.events, asked.requestId).length, 1)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('stopping a turn answers its permission request cancelled at once, without waiting for the turn to end', async () => {
+  // The default seeded cancel does NOT end the turn: an agent still blocked on
+  // the answer it asked for.
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const response = raisePermission(h.sessionId)
+  const asked = permissionsIn(h.events).at(-1)
+  assert.ok(asked)
+  await h.client.cancel(h.sessionId)
+  assert.deepEqual(await answerOf(response), { outcome: { outcome: 'cancelled' } })
+  assert.equal(permissionResolutionsOf(h.events, asked.requestId).length, 1)
+  assert.ok(!h.events.some((event) => event.kind === 'turn_end'), 'the turn itself is still the agent’s to end')
+  h.endTurn()
+  await settle()
+  assert.equal(permissionResolutionsOf(h.events, asked.requestId).length, 1, 'the turn end finds nothing left to close')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a permission request raised with no turn in flight is left open by the next turn’s end', async () => {
+  const h = await setup('openclaw')
+  const response = raisePermission(h.sessionId)
+  const asked = permissionsIn(h.events).at(-1)
+  assert.ok(asked)
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  h.endTurn()
+  await settle()
+  assert.equal(h.client.pendingRequestSessionId(asked.requestId), h.sessionId)
+  assert.equal(permissionResolutionsOf(h.events, asked.requestId).length, 0)
+  h.client.resolvePermission(asked.requestId, 'approved')
+  assert.deepEqual(await response, { outcome: { outcome: 'selected', optionId: 'approved' } })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a permission request whose turn ends while the host decides is answered cancelled and never drawn', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  let decide: (outcome: 'prompt') => void = () => {}
+  const verdict = new Promise<'prompt'>((resolve) => {
+    decide = resolve
+  })
+  const response = raisePermission(h.sessionId, () => verdict)
+  h.endTurn()
+  await settle()
+  decide('prompt')
+  assert.deepEqual(await answerOf(response), { outcome: { outcome: 'cancelled' } })
+  assert.equal(permissionsIn(h.events).length, 0, 'no card for a turn that is already over')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a permission request the host answers itself is settled once, never again by the turn end', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const response = raisePermission(h.sessionId, () => 'allow')
+  assert.deepEqual(await response, { outcome: { outcome: 'selected', optionId: 'approved' } })
+  h.endTurn()
+  await settle()
+  assert.ok(
+    !h.events.some((event) => event.kind === 'permission_request' || event.kind === 'permission_resolved'),
+    'an auto-answered request has no card to open or close',
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('a command prompt is delivered verbatim — no tag, no author, no note', async () => {
   const h = await setup()
   await h.client.prompt(h.sessionId, '/review src', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
