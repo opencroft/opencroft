@@ -14,6 +14,7 @@ import { cn } from 'ui/lib/utils'
 
 import { prepareLanguage, resolveLanguage, tokenize } from './components/code-highlight'
 import { directiveBlockExtensions } from './markdown-editor-blocks'
+import { DirectiveSafeText } from './markdown-editor-directives'
 import { createSlashMenuStore, SlashMenu, SlashMenuPopup, type SlashMenuStore } from './markdown-editor-slash-menu'
 import { ALL_TOOLBAR_GROUPS, type MarkdownEditorToolbarGroup, Toolbar } from './markdown-editor-toolbar'
 
@@ -246,7 +247,12 @@ export function markdownEditorExtensions({
       // Not opened on click: inside an editor a click is how you put the
       // caret in the text, and autolink is what turns a typed URL into one.
       link: { openOnClick: false, autolink: true },
+      // Replaced by `DirectiveSafeText` below.
+      text: false,
     }),
+    // Text that writes a line-leading `:::` so it reads back as text rather
+    // than as a directive fence.
+    DirectiveSafeText,
     TableKit,
     Placeholder.configure({ placeholder: placeholder ?? '' }),
     CodeBlockHighlight,

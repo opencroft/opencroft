@@ -126,6 +126,55 @@ test('tabs holding anything besides tabs, and a tab on its own, are kept as unkn
   assert.equal(roundTrip(':::tab{label="A"}\nalone\n:::'), ':::tab{label="A"}\nalone\n\n:::')
 })
 
+test('a body line of colons stays text in its block across a save and a reopen', () => {
+  // Typed into the body, a line of exactly `:::` (or `::::`) would otherwise
+  // be written plain and read back as a fence, dropping what follows out of
+  // the block. It is written with its first colon escaped instead.
+  for (const colons of [':::', '::::']) {
+    const editor = open(':::note\nbefore\n:::')
+    let end = 0
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'before') {
+        end = pos + node.nodeSize
+      }
+    })
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, end)))
+    editor.commands.splitBlock()
+    type(editor, `${colons}`)
+    editor.commands.splitBlock()
+    type(editor, 'after')
+    const saved = editorModule.readMarkdown(editor)
+    assert.equal(saved, `:::note\nbefore\n\n\\${colons}\n\nafter\n\n:::`, colons)
+    editor.destroy()
+
+    // Reopened, it is the same one callout holding all three paragraphs.
+    const reopened = open(saved)
+    assert.equal(reopened.state.doc.childCount, 1, colons)
+    assert.deepEqual(
+      reopened.state.doc.firstChild?.content.content.map((paragraph) => paragraph.textContent),
+      ['before', colons, 'after'],
+    )
+    assert.equal(editorModule.readMarkdown(reopened), saved)
+    reopened.destroy()
+
+    // And the renderer reads the saved text the same way.
+    const html = renderToStaticMarkup(<Markdown text={saved} />)
+    assert.equal((html.match(/role="note"/g) ?? []).length, 1)
+    assert.match(html, new RegExp(`<p>${colons}</p><p>after</p>`))
+  }
+})
+
+test('after a hard break, a line of colons is escaped too; mid-line colons are left alone', () => {
+  const editor = open('')
+  editor.commands.focus('end')
+  type(editor, 'first')
+  editor.commands.setHardBreak()
+  type(editor, ':::')
+  assert.equal(editorModule.readMarkdown(editor), 'first\\\n\\:::')
+  editor.destroy()
+  assert.equal(roundTrip('ratio a::: b'), 'ratio a::: b')
+})
+
 test('text around the blocks is untouched, and text directives stay text', () => {
   assert.equal(
     roundTrip('See file:README.\n\n:::note\nx\n:::\n\nAfter.'),

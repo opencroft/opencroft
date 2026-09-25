@@ -1,3 +1,4 @@
+import { Text } from '@tiptap/extension-text'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import container from 'markdown-it-container'
 
@@ -151,3 +152,41 @@ export function writeDirective(state: DirectiveSerializerState, node: ProseMirro
   state.write(fence)
   state.closeBlock(node)
 }
+
+/** The part of the markdown serializer's state a text node writes through. */
+interface TextSerializerState {
+  write(content?: string): void
+  text(text: string, escaped?: boolean): void
+}
+
+/**
+ * Text as the editor writes it, with one addition: text that starts a line
+ * with three or more colons gets its first colon escaped.
+ *
+ * Written plain, a line of `:::` in a block's body would be read back as the
+ * block's closing fence -- or any other colon run as an opening one -- and the
+ * rest of the body would fall out of the block on the next open. `\:` is the
+ * standard markdown escape for a literal colon, so the text reads back
+ * unchanged. A line starts at the beginning of a paragraph or heading and
+ * after a hard break; a colon run in the middle of a line is left as typed.
+ *
+ * Replaces the text node's markdown writer, which otherwise only escapes `<`
+ * and `>` into entities; that is repeated here unchanged.
+ */
+export const DirectiveSafeText = Text.extend({
+  addStorage() {
+    return {
+      markdown: {
+        serialize(state: TextSerializerState, node: ProseMirrorNode, parent: ProseMirrorNode, index: number) {
+          const text = node.text ?? ''
+          const startsLine = index === 0 || parent.child(index - 1).type.name === 'hardBreak'
+          if (startsLine && /^:{3}/.test(text)) {
+            state.write('\\')
+          }
+          state.text(text.replace(/</g, '&lt;').replace(/>/g, '&gt;'))
+        },
+        parse: {},
+      },
+    }
+  },
+})
