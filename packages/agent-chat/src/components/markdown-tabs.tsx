@@ -37,10 +37,10 @@ export interface MarkdownTabsProps {
 }
 
 // A panel sits flush under the strip: the gap between them is the spacing, not
-// the first and last paragraph's margins. Important, because a surrounding
-// prose stylesheet (unlayered CSS) outranks a plain utility and would put its
-// paragraph margins back.
-const PANEL = '[&>*:first-child]:mt-0! [&>*:last-child]:mb-0!'
+// the first and last paragraph's margins. Its text is the document's: the kit's
+// panel sets the small control size, which would set a tab's paragraphs apart
+// from every other paragraph on the page -- and from the same panel edited.
+const PANEL = '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 text-[length:inherit]'
 
 /**
  * Alternatives shown one at a time: the same command for three package

@@ -163,8 +163,8 @@ export interface MarkdownProps {
    *   heading -- and has to look exactly like the plain text it replaces. Only
    *   the base type defers; the element treatments (links, code, lists) are
    *   `prose-chat`'s and scale from it. Set that type on a surrounding
-   *   element, not through `className`: the prose rules are unlayered CSS and
-   *   outrank utility classes on the wrapper itself.
+   *   element, or as a utility through `className`: the prose sits in the
+   *   `components` layer, below utilities, so a utility on the wrapper wins.
    */
   typography?: 'chat' | 'inherit'
   /**

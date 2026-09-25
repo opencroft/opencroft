@@ -5,199 +5,457 @@
    know the package layout (and Tailwind otherwise skips node_modules). */
 @source './';
 
-/* ─── Chat Markdown Styling (compact variant) ────────────────────────── */
-/* Used by MessageView/UserBubble's react-markdown rendering. Relies only on
-   the standard shadcn design-token CSS variables (--foreground, --primary,
-   etc.) already assumed throughout this package's Tailwind classes. */
+/* ─── Markdown prose: one sheet, two scales ─────────────────────────────── */
+/*
+ * Everything rendered markdown looks like -- `Markdown` and `MarkdownEditor`
+ * alike -- comes from the rules below. A surface picks a SCALE by class:
+ *
+ *   .prose-chat  the conversation's compact type (14px, 1.5)
+ *   .prose-docs  a documentation page's roomier type (15px, 1.75)
+ *
+ * The rules are written once and read every size and gap from the scale's
+ * custom properties, so the two scales cannot drift apart in anything but the
+ * numbers, and a renderer and an editor given the same class draw the same
+ * text. Relies only on the standard shadcn design tokens (--foreground,
+ * --primary, --muted, --border, ...).
+ *
+ * In the `components` layer, below Tailwind's `utilities`: a utility class on
+ * an element inside prose -- a block component's own spacing, say -- wins over
+ * the prose default by layer order, with no `!important` needed.
+ */
+@layer components {
+  .prose-chat {
+    --prose-font-size: 0.875rem;
+    --prose-line-height: 1.5;
+    --prose-block-space: 0.4em;
+    --prose-child-overflow: visible;
 
-.prose-chat {
-  color: var(--foreground);
-  font-size: 0.875rem;
-  line-height: 1.5;
-  overflow-wrap: break-word;
-  word-break: break-word;
-  max-width: 100%;
+    --prose-h1-size: 1.15em;
+    --prose-h1-weight: 600;
+    --prose-h1-line-height: 1.3;
+    --prose-h1-space-before: 0.75em;
+    --prose-h1-space-after: 0.35em;
+    --prose-h1-rule-gap: 0;
+    --prose-h1-rule: 0;
+    --prose-h2-size: 1.1em;
+    --prose-h2-line-height: 1.3;
+    --prose-h2-space-before: 0.75em;
+    --prose-h2-space-after: 0.35em;
+    --prose-h2-rule-gap: 0;
+    --prose-h2-rule: 0;
+    --prose-h3-size: 1.05em;
+    --prose-h3-line-height: 1.3;
+    --prose-h3-space-before: 0.75em;
+    --prose-h3-space-after: 0.35em;
+    --prose-h4-line-height: 1.3;
+    --prose-h4-space-before: 0.75em;
+    --prose-h4-space-after: 0.35em;
+
+    --prose-list-space: 0.4em;
+    --prose-nested-list-space: 0.4em;
+    --prose-list-indent: 1.25em;
+    --prose-item-space: 0.1em;
+
+    --prose-quote-rule: 2px;
+    --prose-quote-indent: 0.75em;
+    --prose-quote-space: 0.4em;
+    --prose-quote-style: normal;
+
+    --prose-code-size: 0.85em;
+    --prose-code-padding: 0.1em 0.3em;
+    --prose-code-radius: 0.2rem;
+
+    --prose-pre-radius: 0.4rem;
+    --prose-pre-padding: 0.6em 0.75em;
+    --prose-pre-space: 0.5em;
+    --prose-pre-white-space: pre-wrap;
+    --prose-pre-overflow-wrap: anywhere;
+    --prose-pre-code-size: 1em;
+    --prose-pre-code-line-height: 1.5;
+
+    --prose-rule-space: 0.75em;
+    --prose-image-space: 0.5em;
+
+    --prose-table-space: 0.5em;
+    --prose-table-size: 0.85em;
+    --prose-table-white-space: normal;
+    --prose-cell-padding: 0.3em 0.5em;
+  }
+
+  .prose-docs {
+    --prose-font-size: 0.9375rem;
+    --prose-line-height: 1.75;
+    --prose-block-space: 1em;
+    --prose-child-overflow: auto;
+
+    --prose-h1-size: 2em;
+    --prose-h1-weight: 700;
+    --prose-h1-line-height: 1.2;
+    --prose-h1-space-before: 2em;
+    --prose-h1-space-after: 0.75em;
+    --prose-h1-rule-gap: 0.3em;
+    --prose-h1-rule: 1px;
+    --prose-h2-size: 1.5em;
+    --prose-h2-line-height: 1.3;
+    --prose-h2-space-before: 1.75em;
+    --prose-h2-space-after: 0.5em;
+    --prose-h2-rule-gap: 0.2em;
+    --prose-h2-rule: 1px;
+    --prose-h3-size: 1.25em;
+    --prose-h3-line-height: 1.4;
+    --prose-h3-space-before: 1.5em;
+    --prose-h3-space-after: 0.5em;
+    --prose-h4-line-height: 1.4;
+    --prose-h4-space-before: 1.25em;
+    --prose-h4-space-after: 0.5em;
+
+    --prose-list-space: 0.75em;
+    --prose-nested-list-space: 0.25em;
+    --prose-list-indent: 1.5em;
+    --prose-item-space: 0.25em;
+
+    --prose-quote-rule: 3px;
+    --prose-quote-indent: 1em;
+    --prose-quote-space: 1em;
+    --prose-quote-style: italic;
+
+    --prose-code-size: 0.875em;
+    --prose-code-padding: 0.15em 0.35em;
+    --prose-code-radius: 0.25rem;
+
+    --prose-pre-radius: var(--radius);
+    --prose-pre-padding: 1em;
+    --prose-pre-space: 1em;
+    --prose-pre-white-space: pre;
+    --prose-pre-overflow-wrap: normal;
+    --prose-pre-code-size: 0.875em;
+    --prose-pre-code-line-height: 1.6;
+
+    --prose-rule-space: 2em;
+    --prose-image-space: 1em;
+
+    --prose-table-space: 1em;
+    --prose-table-size: 0.875em;
+    --prose-table-white-space: nowrap;
+    --prose-cell-padding: 0.5em 0.75em;
+  }
+
+  :is(.prose-chat, .prose-docs) {
+    color: var(--foreground);
+    font-size: var(--prose-font-size);
+    line-height: var(--prose-line-height);
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
+  }
+
+  /* Set in the surrounding element's type instead of the conversation's. Two
+     classes, so it outranks `.prose-chat` above without depending on source
+     order; the element rules below are sized in `em` and follow it. */
+  .prose-chat.prose-chat-inherit {
+    color: inherit;
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  :is(.prose-chat, .prose-docs) > * {
+    max-width: 100%;
+    overflow-x: var(--prose-child-overflow);
+  }
+
+  :is(.prose-chat, .prose-docs) :is(h1, h2, h3, h4, h5, h6) {
+    font-weight: 600;
+  }
+
+  :is(.prose-chat, .prose-docs) h1 {
+    font-size: var(--prose-h1-size);
+    font-weight: var(--prose-h1-weight);
+    line-height: var(--prose-h1-line-height);
+    margin-top: var(--prose-h1-space-before);
+    margin-bottom: var(--prose-h1-space-after);
+    padding-bottom: var(--prose-h1-rule-gap);
+    border-bottom: var(--prose-h1-rule) solid var(--border);
+  }
+
+  :is(.prose-chat, .prose-docs) h2 {
+    font-size: var(--prose-h2-size);
+    line-height: var(--prose-h2-line-height);
+    margin-top: var(--prose-h2-space-before);
+    margin-bottom: var(--prose-h2-space-after);
+    padding-bottom: var(--prose-h2-rule-gap);
+    border-bottom: var(--prose-h2-rule) solid var(--border);
+  }
+
+  :is(.prose-chat, .prose-docs) h3 {
+    font-size: var(--prose-h3-size);
+    line-height: var(--prose-h3-line-height);
+    margin-top: var(--prose-h3-space-before);
+    margin-bottom: var(--prose-h3-space-after);
+  }
+
+  :is(.prose-chat, .prose-docs) :is(h4, h5, h6) {
+    line-height: var(--prose-h4-line-height);
+    margin-top: var(--prose-h4-space-before);
+    margin-bottom: var(--prose-h4-space-after);
+  }
+
+  :is(.prose-chat, .prose-docs) p {
+    margin-top: var(--prose-block-space);
+    margin-bottom: var(--prose-block-space);
+  }
+
+  :is(.prose-chat, .prose-docs) a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  :is(.prose-chat, .prose-docs) a:hover {
+    opacity: 0.8;
+  }
+
+  :is(.prose-chat, .prose-docs) strong {
+    font-weight: 600;
+  }
+
+  :is(.prose-chat, .prose-docs) :is(ul, ol) {
+    margin-top: var(--prose-list-space);
+    margin-bottom: var(--prose-list-space);
+    padding-left: var(--prose-list-indent);
+  }
+
+  :is(.prose-chat, .prose-docs) ul {
+    list-style-type: disc;
+  }
+
+  :is(.prose-chat, .prose-docs) ol {
+    list-style-type: decimal;
+  }
+
+  :is(.prose-chat, .prose-docs) li {
+    margin-top: var(--prose-item-space);
+    margin-bottom: var(--prose-item-space);
+  }
+
+  :is(.prose-chat, .prose-docs) li > :is(ul, ol) {
+    margin-top: var(--prose-nested-list-space);
+    margin-bottom: var(--prose-nested-list-space);
+  }
+
+  :is(.prose-chat, .prose-docs) blockquote {
+    border-left: var(--prose-quote-rule) solid var(--border);
+    padding-left: var(--prose-quote-indent);
+    margin: var(--prose-quote-space) 0;
+    color: var(--muted-foreground);
+    font-style: var(--prose-quote-style);
+  }
+
+  :is(.prose-chat, .prose-docs) code {
+    background: var(--muted);
+    padding: var(--prose-code-padding);
+    border-radius: var(--prose-code-radius);
+    font-size: var(--prose-code-size);
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
+
+  /* Inline code wraps rather than pushing the line off a narrow screen. */
+  :is(.prose-chat, .prose-docs) :not(pre) > code {
+    white-space: pre-wrap;
+    color: var(--foreground);
+  }
+
+  :is(.prose-chat, .prose-docs) pre {
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--prose-pre-radius);
+    padding: var(--prose-pre-padding);
+    overflow-x: auto;
+    white-space: var(--prose-pre-white-space);
+    overflow-wrap: var(--prose-pre-overflow-wrap);
+    margin: var(--prose-pre-space) 0;
+    font-size: 0.85em;
+  }
+
+  :is(.prose-chat, .prose-docs) pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: var(--prose-pre-code-size);
+    line-height: var(--prose-pre-code-line-height);
+  }
+
+  :is(.prose-chat, .prose-docs) hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: var(--prose-rule-space) 0;
+  }
+
+  :is(.prose-chat, .prose-docs) table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: var(--prose-table-space) 0;
+    font-size: var(--prose-table-size);
+    display: block;
+    overflow-x: auto;
+    white-space: var(--prose-table-white-space);
+  }
+
+  :is(.prose-chat, .prose-docs) :is(th, td) {
+    padding: var(--prose-cell-padding);
+    border: 1px solid var(--border);
+  }
+
+  :is(.prose-chat, .prose-docs) th {
+    font-weight: 600;
+    background: var(--muted);
+    text-align: left;
+  }
+
+  /* A cell's text wraps. A scale may keep the table itself on one line
+     (`--prose-table-white-space: nowrap`), so the header stays a row of labels
+     and the table scrolls sideways; long cell text still wraps inside its
+     column instead of stretching it. */
+  :is(.prose-chat, .prose-docs) td {
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  :is(.prose-chat, .prose-docs) img {
+    max-width: 100%;
+    border-radius: var(--radius);
+    margin: var(--prose-image-space) 0;
+  }
+
+  /*
+   * Code blocks marked `data-code-block` -- `CodeBlock`'s own, and the editor's.
+   *
+   * The box is for a code block with no prose around it -- an install snippet,
+   * a settings panel -- and weighs nothing (`:where`), so inside prose the
+   * scale's `pre` above decides it. What stands everywhere is that code does
+   * not wrap: prose may wrap a quoted `pre`, but a wrapped line of code loses
+   * the indentation the reader is following, so it scrolls sideways instead.
+   */
+  :where(pre[data-code-block]) {
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    padding: 0.6em 0.75em;
+    margin: 0.5em 0;
+    font-size: 0.85em;
+  }
+
+  pre[data-code-block] {
+    white-space: pre;
+    overflow-wrap: normal;
+    overflow-x: auto;
+  }
+
+  /*
+   * `MarkdownEditor`'s editable area. Everything the text looks like comes from
+   * the scale class the caller picked (`.prose-chat` by default), exactly as it
+   * does for `Markdown`. The rules here only undo the places where the editor's
+   * DOM differs from the rendered one, so the same text lands in the same
+   * place -- they add no look of their own.
+   */
+
+  /* The placeholder. TipTap's Placeholder extension marks the first node of an
+     empty document and hangs the text on `data-placeholder`; it has to be drawn
+     by CSS, because a real text node would be content the caller never wrote. */
+  .markdown-editor p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    color: var(--muted-foreground);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+
+  /* The editor's own wrappers -- TipTap's box around a table, the element a
+     React node view is mounted in -- are not blocks of the document, so they
+     pass their block's margins through to meet its neighbours', as they do in
+     the rendered view with no wrapper there. Left to the prose's rule for
+     top-level elements, a scale that lets those scroll sideways would make the
+     wrapper keep the margins inside it and add them to the gaps. The block
+     inside still scrolls on its own (a table does). */
+  .markdown-editor > :is(.tableWrapper, .react-renderer) {
+    overflow-x: visible;
+  }
+
+  /* A documentation block's body (callout, spoiler, tab) is flush with its
+     frame -- the block component trims the first and last child's margins. In
+     the editor that child is not a direct child any more: the node view puts
+     its editable region two wrappers down, and a tab's text sits one level
+     further inside the tab's own element -- so the trim is repeated here,
+     where it can see through them. */
+  .markdown-editor :is([data-node-view-content-react], [data-md-directive='tab']) > :first-child {
+    margin-top: 0;
+  }
+
+  .markdown-editor :is([data-node-view-content-react], [data-md-directive='tab']) > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* A tight list reads as one: the editor keeps every item's text in a
+     paragraph, and without this each item carries a full paragraph margin,
+     where the same list rendered from markdown has none. `data-tight` is the
+     markdown extension's own mark for a list written without blank lines
+     between items. */
+  .markdown-editor :is(ul, ol)[data-tight='true'] > li > p {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  /* A table cell's text: the editor keeps it in a paragraph, where the rendered
+     table's cell holds the text directly. */
+  .markdown-editor :is(th, td) > p {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  /* The cells of a selected range, which ProseMirror marks and leaves to the
+     document to draw. Without it a multi-cell selection is invisible. */
+  .markdown-editor .selectedCell {
+    position: relative;
+  }
+
+  .markdown-editor .selectedCell::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--primary);
+    opacity: 0.15;
+    pointer-events: none;
+  }
 }
 
-/* Set in the surrounding element's type instead of the conversation's. Two
-   classes, so it outranks `.prose-chat` above without depending on source
-   order; the element rules below are sized in `em` and follow it. */
-.prose-chat.prose-chat-inherit {
-  color: inherit;
-  font-size: inherit;
-  line-height: inherit;
-}
+/* Outside the layer, on purpose: two rules that have to outrank what they meet.
 
-.prose-chat > *:first-child {
+   The prose's edges are flush: its first block has no top margin and its last
+   none below, whatever block that is. A documentation block brings its own
+   spacing as a utility (`my-2`), which the layer order would let win, so a
+   message opening with a callout would start half a line down. In the editor
+   the block is not the first child but inside it -- a node view's block sits two
+   wrappers down, a table one -- so the rule reaches through those, and the text
+   being edited starts where the rendered text does. */
+/* biome-ignore lint/style/noDescendingSpecificity: unlayered, so it outranks the layered rules above whatever their specificity; source order and specificity do not decide between layers */
+:is(.prose-chat, .prose-docs) > :first-child,
+.markdown-editor > .react-renderer:first-child > [data-node-view-wrapper] > :first-child,
+.markdown-editor > .tableWrapper:first-child > table {
   margin-top: 0;
 }
 
-.prose-chat > *:last-child {
+/* biome-ignore lint/style/noDescendingSpecificity: unlayered, so it outranks the layered rules above whatever their specificity; source order and specificity do not decide between layers */
+:is(.prose-chat, .prose-docs) > :last-child,
+.markdown-editor > .react-renderer:last-child > [data-node-view-wrapper] > :last-child,
+.markdown-editor > .tableWrapper:last-child > table {
   margin-bottom: 0;
 }
 
-.prose-chat h1,
-.prose-chat h2,
-.prose-chat h3,
-.prose-chat h4,
-.prose-chat h5,
-.prose-chat h6 {
-  font-weight: 600;
-  line-height: 1.3;
-  margin-top: 0.75em;
-  margin-bottom: 0.35em;
-}
-
-.prose-chat h1 {
-  font-size: 1.15em;
-}
-
-.prose-chat h2 {
-  font-size: 1.1em;
-}
-
-.prose-chat h3 {
-  font-size: 1.05em;
-}
-
-.prose-chat p {
-  margin-top: 0.4em;
-  margin-bottom: 0.4em;
-}
-
-.prose-chat a {
-  color: var(--primary);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.prose-chat a:hover {
-  opacity: 0.8;
-}
-
-.prose-chat strong {
-  font-weight: 600;
-}
-
-.prose-chat ul,
-.prose-chat ol {
-  margin-top: 0.4em;
-  margin-bottom: 0.4em;
-  padding-left: 1.25em;
-}
-
-.prose-chat ul {
-  list-style-type: disc;
-}
-
-.prose-chat ol {
-  list-style-type: decimal;
-}
-
-.prose-chat li {
-  margin-top: 0.1em;
-  margin-bottom: 0.1em;
-}
-
-.prose-chat blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.75em;
-  margin: 0.4em 0;
-  color: var(--muted-foreground);
-}
-
-.prose-chat code {
-  background: var(--muted);
-  padding: 0.1em 0.3em;
-  border-radius: 0.2rem;
-  font-size: 0.85em;
-  font-family: var(--font-mono);
-  word-break: break-all;
-}
-
-.prose-chat :not(pre) > code {
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--foreground);
-}
-
-.prose-chat pre {
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  padding: 0.6em 0.75em;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 0.5em 0;
-  font-size: 0.85em;
-}
-
-.prose-chat pre code {
-  background: transparent;
-  padding: 0;
-  border-radius: 0;
-  font-size: inherit;
-  line-height: 1.5;
-}
-
-.prose-chat hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 0.75em 0;
-}
-
-.prose-chat table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0.5em 0;
-  font-size: 0.85em;
-  display: block;
-  overflow-x: auto;
-}
-
-.prose-chat th,
-.prose-chat td {
-  padding: 0.3em 0.5em;
-  border: 1px solid var(--border);
-}
-
-.prose-chat th {
-  font-weight: 600;
-  background: var(--muted);
-  text-align: left;
-}
-
-.prose-chat img {
-  max-width: 100%;
-  border-radius: var(--radius);
-  margin: 0.5em 0;
-}
-
-/*
- * Code blocks rendered by `CodeBlock`. The component marks its own `pre` with
- * `data-code-block`, and everything below hangs on that mark.
- *
- * These rules come last on purpose: `.prose-chat pre` and `pre[data-code-block]`
- * have the same specificity, so order is what decides, and inside chat content
- * the code block's answer has to be the one that stands.
- */
-pre[data-code-block] {
-  /* Code does not wrap. Chat prose wraps its `pre` because quoted output reads
-     better that way, but a wrapped line of code loses the indentation the
-     reader is following, so this one scrolls sideways instead. */
+/* TipTap injects its own stylesheet at runtime, unlayered, and it wraps every
+   `pre` (`.ProseMirror pre`); keeping a line of code unwrapped as it is in the
+   rendered view takes an unlayered rule of its own. */
+.markdown-editor pre[data-code-block] {
   white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
-  /* The box, for the surfaces that have no chat prose around them at all --
-     an install snippet, a settings panel. Inside prose these repeat what the
-     prose already said, which is why they are the same values. */
-  background: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  padding: 0.6em 0.75em;
-  margin: 0.5em 0;
-  font-size: 0.85em;
 }
 
 /*
@@ -221,70 +479,15 @@ pre.shiki span {
   color: var(--shiki-dark);
 }
 
-/*
- * `MarkdownEditor`'s editable area. Everything the prose itself looks like
- * comes from the class the caller picked (`.prose-chat` by default), so what is
- * left here is the two things only an editor has.
- */
-
-/* The placeholder. TipTap's Placeholder extension marks the first node of an
-   empty document and hangs the text on `data-placeholder`; it has to be drawn
-   by CSS, because a real text node would be content the caller never wrote. */
-.markdown-editor p.is-editor-empty:first-child::before {
-  content: attr(data-placeholder);
-  color: var(--muted-foreground);
-  float: left;
-  height: 0;
-  pointer-events: none;
-}
-
-/* A documentation block's body (callout, spoiler, tab) is flush with its frame
-   -- the block component trims the first and last child's margins. In the
-   editor that child is not a direct child any more: the node view puts its
-   editable region two wrappers down, and a tab's text sits one level further
-   inside the tab's own element -- so the trim is repeated here, where it can
-   see through them. */
-.markdown-editor :is([data-node-view-content-react], [data-md-directive='tab']) > :first-child {
-  margin-top: 0;
-}
-
-.markdown-editor :is([data-node-view-content-react], [data-md-directive='tab']) > :last-child {
-  margin-bottom: 0;
-}
-
-/* A tight list reads as one: the editor keeps every item's text in a paragraph,
-   and without this each item carries a full paragraph margin, where the same
-   list rendered from markdown has none. `data-tight` is the markdown
-   extension's own mark for a list written without blank lines between items. */
-.markdown-editor :is(ul, ol)[data-tight='true'] > li > p {
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-/* A code block's coloured runs, which arrive as ProseMirror decorations rather
-   than as shiki's own markup -- the text has to stay editable, so it cannot be
-   replaced by rendered HTML. Both themes ride on the decoration as custom
-   properties and this chooses between them, exactly as `pre.shiki` above does
-   for the rendered kind. */
+/* A code block's coloured runs in the editor, which arrive as ProseMirror
+   decorations rather than as shiki's own markup -- the text has to stay
+   editable, so it cannot be replaced by rendered HTML. Both themes ride on the
+   decoration as custom properties and this chooses between them, exactly as
+   `pre.shiki` above does for the rendered kind. */
 .shiki-token {
   color: var(--shiki-light);
 }
 
 .dark .shiki-token {
   color: var(--shiki-dark);
-}
-
-/* The cells of a selected range, which ProseMirror marks and leaves to the
-   document to draw. Without it a multi-cell selection is invisible. */
-.markdown-editor .selectedCell {
-  position: relative;
-}
-
-.markdown-editor .selectedCell::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--primary);
-  opacity: 0.15;
-  pointer-events: none;
 }

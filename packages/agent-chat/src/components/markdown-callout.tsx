@@ -117,7 +117,7 @@ export function MarkdownCallout({ kind, title, children, onTitleChange, onKindCh
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button type='button' variant='ghost' size='xs' className='text-current'>
+                <Button type='button' variant='ghost' size='xs' className='h-auto py-0 text-current'>
                   {tone.title}
                   <ChevronDown />
                 </Button>
@@ -138,10 +138,8 @@ export function MarkdownCallout({ kind, title, children, onTitleChange, onKindCh
         ) : null}
       </div>
       {/* The body sits flush with the frame: the frame's padding is the
-          spacing, not the first and last paragraph's margins. Important,
-          because a surrounding prose stylesheet (unlayered CSS) outranks a
-          plain utility and would put its paragraph margins back. */}
-      {children ? <div className='mt-1 [&>*:first-child]:mt-0! [&>*:last-child]:mb-0!'>{children}</div> : null}
+          spacing, not the first and last paragraph's margins. */}
+      {children ? <div className='mt-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0'>{children}</div> : null}
     </div>
   )
 }

@@ -20,10 +20,8 @@ const BOX = 'group my-2 rounded-md border'
 // wherever the surrounding prose sets a looser one.
 const SUMMARY = 'flex items-center gap-1.5 px-3 py-2 font-medium leading-normal'
 // The body sits flush with the frame: its padding is the spacing, not the first
-// and last paragraph's margins. Important, because a surrounding prose
-// stylesheet (unlayered CSS) outranks a plain utility and would put its
-// paragraph margins back.
-const BODY = 'border-t px-3 py-2 [&>*:first-child]:mt-0! [&>*:last-child]:mb-0!'
+// and last paragraph's margins.
+const BODY = 'border-t px-3 py-2 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0'
 const DEFAULT_SUMMARY = 'Details'
 
 /**

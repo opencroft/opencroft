@@ -103,20 +103,23 @@ export interface MarkdownEditorProps {
   /** Added to the editor's outer box, for the layout your surface needs. */
   className?: string
   /**
-   * Classes for the editable area itself, REPLACING the default prose styling
-   * rather than adding to it: a surface with its own prose rules (the
-   * documentation page has `prose-docs`) would otherwise render under both.
+   * Classes for the editable area itself, REPLACING the default look -- prose
+   * scale and inset both -- rather than adding to it. A surface that renders
+   * the same markdown with another scale (the documentation page, `prose-docs`)
+   * passes that scale here, and no inset, so the text it edits sits exactly
+   * where its rendered view puts it.
    */
   contentClassName?: string
 }
 
-// The editable area's default look. `prose-chat` is this package's own markdown
-// styling -- the same rules the chat renders a message with -- so text written
-// here looks like the text it becomes. The rest is the editor's own: no focus
-// ring (the box around it carries the border), and a full-height click target
-// so clicking the empty space below the last paragraph puts the caret in it.
-const DEFAULT_CONTENT_CLASS = 'prose-chat max-w-none'
-const CONTENT_CLASS = 'markdown-editor min-h-full p-3 focus:outline-none'
+// The editable area's default look: the chat's prose scale, the same one
+// `Markdown` renders a message with, so text written here looks like the text
+// it becomes -- inset from the box's border, since this editor draws one.
+const DEFAULT_CONTENT_CLASS = 'prose-chat max-w-none p-3'
+// The editor's own, whatever the look: no focus ring (the box around it
+// carries the border), and a full-height click target so clicking the empty
+// space below the last paragraph puts the caret in it.
+const CONTENT_CLASS = 'markdown-editor min-h-full focus:outline-none'
 
 export function readMarkdown(editor: Editor): string {
   // `tiptap-markdown` adds its storage without augmenting TipTap's `Storage`
@@ -249,6 +252,9 @@ export function markdownEditorExtensions({
       link: { openOnClick: false, autolink: true },
       // Replaced by `DirectiveSafeText` below.
       text: false,
+      // Marked as `CodeBlock` marks its own, so a code block takes the same
+      // box, size and no-wrap rule being edited as it does rendered.
+      codeBlock: { HTMLAttributes: { 'data-code-block': '' } },
     }),
     // Text that writes a line-leading `:::` so it reads back as text rather
     // than as a directive fence.

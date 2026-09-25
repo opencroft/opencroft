@@ -565,7 +565,7 @@ export function ExtensionDetail({
               {readme ? (
                 <>
                   <Separator />
-                  <Markdown text={readme} className='max-w-prose' />
+                  <Markdown text={readme} />
                 </>
               ) : null}
             </>
