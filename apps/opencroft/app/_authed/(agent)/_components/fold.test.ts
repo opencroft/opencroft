@@ -67,6 +67,71 @@ test('thinking is waiting minus delegation: dots drop while a subagent runs, wai
   assert.equal(ended.thinking, false)
 })
 
+test('a subagent spawned by a subagent folds into its parent’s block, and holds the turn while it runs', () => {
+  // The engine's nesting (see ChatEvent's subagent_event): the grandchild is
+  // announced inside the child's step, and its own steps come wrapped twice.
+  const helper = { subagentSessionId: 'helper', name: 'Helper', task: 'check one half' }
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'delegate this' },
+    { kind: 'subagent', subagent: { subagentSessionId: 'worker', name: 'Worker', task: 'split the job' } },
+    { kind: 'subagent_event', subagentSessionId: 'worker', event: { kind: 'agent_message', text: 'splitting' } },
+    { kind: 'subagent_event', subagentSessionId: 'worker', event: { kind: 'subagent', subagent: helper } },
+    {
+      kind: 'subagent_event',
+      subagentSessionId: 'worker',
+      event: { kind: 'subagent_event', subagentSessionId: 'helper', event: { kind: 'agent_message', text: 'half ' } },
+    },
+    {
+      kind: 'subagent_event',
+      subagentSessionId: 'worker',
+      event: { kind: 'subagent_event', subagentSessionId: 'helper', event: { kind: 'agent_message', text: 'checked' } },
+    },
+  ]
+  const running = fold(events, 0)
+  assert.deepEqual(running.messages[1]?.parts, [
+    {
+      type: 'subagent',
+      subagentSessionId: 'worker',
+      name: 'Worker',
+      task: 'split the job',
+      state: undefined,
+      parts: [
+        { type: 'text', text: 'splitting' },
+        {
+          type: 'subagent',
+          subagentSessionId: 'helper',
+          name: 'Helper',
+          task: 'check one half',
+          state: undefined,
+          parts: [{ type: 'text', text: 'half checked' }],
+        },
+      ],
+    },
+  ])
+  assert.equal(running.thinking, false, 'delegated work, not the agent generating')
+
+  const closed = fold(
+    [
+      ...events,
+      {
+        kind: 'subagent_event',
+        subagentSessionId: 'worker',
+        event: { kind: 'subagent', subagent: { ...helper, state: 'completed' } },
+      },
+      {
+        kind: 'subagent',
+        subagent: { subagentSessionId: 'worker', name: 'Worker', task: 'split the job', state: 'completed' },
+      },
+    ],
+    0,
+  )
+  const worker = closed.messages[1]?.parts[0]
+  assert.ok(worker?.type === 'subagent')
+  assert.equal(worker.state, 'completed')
+  assert.equal(worker.parts[1]?.type === 'subagent' ? worker.parts[1].state : null, 'completed')
+  assert.equal(closed.thinking, true, 'the delegation over, the open turn is the agent thinking again')
+})
+
 test('a multi-chunk assistant reply keeps the id of its FIRST chunk, not its last', () => {
   const events: ChatEvent[] = [
     { kind: 'user', text: 'q' },

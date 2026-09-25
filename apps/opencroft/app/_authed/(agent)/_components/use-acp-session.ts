@@ -20,6 +20,7 @@ import type {
   Presence,
   QueuedPrompt,
   QueueMode,
+  SubagentInfo,
   TurnTokenUsage,
 } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
@@ -419,10 +420,60 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     return assistant
   }
 
-  // Subagents by their session id, each a part nested in the parent transcript
-  // plus its OWN tool-correlation map (child tool ids are child-scoped and
-  // must not collide with the parent's).
+  // Subagents by their session id, each a part nested in the transcript of
+  // whoever spawned it — the parent, or another subagent — plus its OWN
+  // tool-correlation map (child tool ids are child-scoped and must not collide
+  // with the parent's). One map for the whole spawn tree: session ids name one
+  // subagent wherever it sits.
   const subagents = new Map<string, { part: SubagentPart; tools: Map<string, ToolPart> }>()
+  // A subagent's entry, its part handed to `place` on first sighting. A step
+  // for an unseen subagent (its spawn lost to a window cut) still gets a home:
+  // a placeholder part rather than a dropped step.
+  const subagentEntry = (subagentSessionId: string, place: (part: SubagentPart) => void) => {
+    let entry = subagents.get(subagentSessionId)
+    if (!entry) {
+      const part: SubagentPart = { type: 'subagent', subagentSessionId, name: '', task: '', parts: [] }
+      place(part)
+      entry = { part, tools: new Map() }
+      subagents.set(subagentSessionId, entry)
+    }
+    return entry
+  }
+  // The first sighting places the part (its nested transcript grows in as
+  // subagent_event arrives); later ones patch name/task/state.
+  const upsertSubagent = (info: SubagentInfo, place: (part: SubagentPart) => void) => {
+    const { part } = subagentEntry(info.subagentSessionId, place)
+    part.name = info.name || part.name
+    part.task = info.task || part.task
+    part.state = info.state
+  }
+  // One step of a subagent's own transcript, folded into its nested parts. A
+  // subagent it spawned arrives as a step too (see ChatEvent), and lands as a
+  // part inside it, at any depth.
+  const foldSubagentStep = (
+    step: Extract<ChatEvent, { kind: 'subagent_event' }>,
+    place: (part: SubagentPart) => void,
+  ): void => {
+    const entry = subagentEntry(step.subagentSessionId, place)
+    const placeInside = (part: SubagentPart) => entry.part.parts.push(part)
+    const child = step.event
+    // The engine only nests conversation kinds and spawned subagents under a
+    // subagent (see childEventOf); the guards narrow the union and drop
+    // anything else.
+    if (child.kind === 'subagent') {
+      upsertSubagent(child.subagent, placeInside)
+    } else if (child.kind === 'subagent_event') {
+      foldSubagentStep(child, placeInside)
+    } else if (
+      child.kind === 'user' ||
+      child.kind === 'agent_message' ||
+      child.kind === 'agent_thought' ||
+      child.kind === 'tool_call' ||
+      child.kind === 'tool_update'
+    ) {
+      foldConversationPart(entry.part.parts, entry.tools, child)
+    }
+  }
   // Background tasks by asyncTaskId — last state wins, surfaced as a list.
   const asyncTasks = new Map<string, AsyncTaskInfo>()
   // The tasks' transcript parts by asyncTaskId — the subagent contract again:
@@ -475,58 +526,11 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'subagent': {
-        // Upsert the subagent's part in the parent transcript, keyed by its
-        // session id. The first sighting places it (its nested transcript
-        // grows in as subagent_event arrives); later ones patch name/task/state.
-        const info = event.subagent
-        const existing = subagents.get(info.subagentSessionId)
-        if (existing) {
-          existing.part.name = info.name || existing.part.name
-          existing.part.task = info.task || existing.part.task
-          existing.part.state = info.state
-        } else {
-          const part: SubagentPart = {
-            type: 'subagent',
-            subagentSessionId: info.subagentSessionId,
-            name: info.name,
-            task: info.task,
-            state: info.state,
-            parts: [],
-          }
-          ensureAssistant(id).parts.push(part)
-          subagents.set(info.subagentSessionId, { part, tools: new Map() })
-        }
+        upsertSubagent(event.subagent, (part) => ensureAssistant(id).parts.push(part))
         break
       }
       case 'subagent_event': {
-        // One step of a subagent's own transcript, folded into its nested
-        // parts. A step for an unseen subagent (its spawn lost to a window cut)
-        // still gets a home: a placeholder part rather than a dropped step.
-        let entry = subagents.get(event.subagentSessionId)
-        if (!entry) {
-          const part: SubagentPart = {
-            type: 'subagent',
-            subagentSessionId: event.subagentSessionId,
-            name: '',
-            task: '',
-            parts: [],
-          }
-          ensureAssistant(id).parts.push(part)
-          entry = { part, tools: new Map() }
-          subagents.set(event.subagentSessionId, entry)
-        }
-        // The engine only nests conversation kinds under a subagent (see
-        // childEventOf); the guard narrows the union and drops anything else.
-        const child = event.event
-        if (
-          child.kind === 'user' ||
-          child.kind === 'agent_message' ||
-          child.kind === 'agent_thought' ||
-          child.kind === 'tool_call' ||
-          child.kind === 'tool_update'
-        ) {
-          foldConversationPart(entry.part.parts, entry.tools, child)
-        }
+        foldSubagentStep(event, (part) => ensureAssistant(id).parts.push(part))
         break
       }
       case 'async_task': {

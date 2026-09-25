@@ -309,6 +309,11 @@ export interface AsyncTaskInfo {
   // what travels: through the event log, a restore and every fold. A stop
   // issued for a task that came back that way still has to find its owner.
   origin?: 'host'
+  // The subagent session that reported the task, when it was not the session
+  // itself: a background command a subagent started. Absent for the
+  // session's own tasks. The record still lives in the session's task list,
+  // and a stop still names the session, not the subagent — see stopAsyncTask.
+  subagentSessionId?: string
 }
 
 export type ChatEvent =
@@ -388,6 +393,10 @@ export type ChatEvent =
   // One step of a subagent's own transcript, nested verbatim: the child
   // session's update translated to the same event vocabulary and wrapped with
   // the child's id. Folds build the subagent's live transcript from these.
+  //
+  // Nesting follows the spawn tree: a subagent spawned BY a subagent is
+  // announced as a `subagent` event inside its parent's `subagent_event`, and
+  // its own steps arrive wrapped once per level, outermost first.
   | { kind: 'subagent_event'; subagentSessionId: string; event: ChatEvent }
   // A background task's full current state — upserted by `asyncTaskId`, same
   // contract as `subagent`.

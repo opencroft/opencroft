@@ -561,9 +561,11 @@ interface ClientStore {
   // Monotonic chat counter for default titles (delete-proof, unlike map size).
   titleCounter: number
   // subagentSessionId -> parent sessionId, for routing a subagent's own
-  // session/update notifications into the parent's transcript. Entries live
-  // as long as the parent session does (see deleteSession's cleanup) — a
-  // terminal subagent may still have chunks in flight.
+  // session/update notifications into the parent's transcript. The parent is
+  // itself a subagent when one spawned another; subagentRoute walks the chain
+  // up to the session. Entries live as long as that session does (see
+  // deleteSession's cleanup) — a terminal subagent may still have chunks in
+  // flight.
   subagentParents: Map<string, string>
 }
 
@@ -971,6 +973,51 @@ function childEventOf(update: SessionNotification['update']): ChatEvent | null {
   }
 }
 
+/**
+ * Where a notification addressed to `sessionId` lands: the session that holds
+ * it (`rootId`) and the subagents between them (`chain`, innermost first —
+ * empty when `sessionId` IS a session).
+ *
+ * A harness addresses everything a subagent does to the subagent's own id,
+ * and a subagent may spawn one of its own, which the harness then announces
+ * on the spawning subagent (codex-acp does both). None of those ids is a
+ * session here, so every such notification has to be carried up the spawn
+ * tree to the one a subscriber watches.
+ *
+ * An id that is neither a session nor a known subagent answers itself with an
+ * empty chain, so the caller finds no session and drops it as before. The
+ * walk stops at a repeated id, so a malformed spawn tree cannot hang it.
+ */
+function subagentRoute(sessionId: string): { rootId: string; chain: string[] } {
+  const chain: string[] = []
+  let id = sessionId
+  while (!store.sessions.has(id)) {
+    const parentId = store.subagentParents.get(id)
+    if (parentId === undefined || chain.includes(id)) {
+      break
+    }
+    chain.push(id)
+    id = parentId
+  }
+  return { rootId: id, chain }
+}
+
+// Wraps an event once per subagent on the route, so it lands in the
+// transcript of the innermost one (see ChatEvent's subagent_event).
+function nestUnder(chain: readonly string[], event: ChatEvent): ChatEvent {
+  return chain.reduce<ChatEvent>(
+    (inner, subagentSessionId) => ({ kind: 'subagent_event', subagentSessionId, event: inner }),
+    event,
+  )
+}
+
+// Publishes a subagent's current state in the transcript of whoever spawned
+// it: the session itself, or the subagent that did.
+function emitSubagent(parentId: string, info: SubagentInfo): void {
+  const route = subagentRoute(parentId)
+  emit(route.rootId, nestUnder(route.chain, { kind: 'subagent', subagent: { ...info } }))
+}
+
 // Reads one string/boolean field off an untyped draft update without
 // inventing values: absent or mistyped answers undefined.
 function draftString(update: Record<string, unknown>, key: string): string | undefined {
@@ -986,6 +1033,11 @@ function draftString(update: Record<string, unknown>, key: string): string | und
  * Subagent and async-task entities follow the compaction pattern: the session
  * holds the merged record, every emit carries its full current state, and
  * consumers fold by replacement keyed on the entity id.
+ *
+ * Every kind may be addressed to a subagent rather than to the session (see
+ * subagentRoute), and the records live on the session either way: its
+ * `subagents` holds the whole spawn tree, its `asyncTasks` every task started
+ * anywhere in it — what "background work" and a stop have to see.
  */
 function handleExtensionUpdate(
   sessionId: string,
@@ -993,7 +1045,7 @@ function handleExtensionUpdate(
 ): boolean {
   switch (update.sessionUpdate) {
     case 'subagent_spawned': {
-      const session = store.sessions.get(sessionId)
+      const session = store.sessions.get(subagentRoute(sessionId).rootId)
       const subagentSessionId = draftString(update, 'subagentSessionId')
       if (!session || !subagentSessionId) {
         return true
@@ -1006,11 +1058,11 @@ function handleExtensionUpdate(
       session.subagents ??= new Map()
       session.subagents.set(subagentSessionId, info)
       store.subagentParents.set(subagentSessionId, sessionId)
-      emit(sessionId, { kind: 'subagent', subagent: { ...info } })
+      emitSubagent(sessionId, info)
       return true
     }
     case 'subagent_state_update': {
-      const session = store.sessions.get(sessionId)
+      const session = store.sessions.get(subagentRoute(sessionId).rootId)
       const subagentSessionId = draftString(update, 'subagentSessionId')
       if (!session || !subagentSessionId) {
         return true
@@ -1021,13 +1073,16 @@ function handleExtensionUpdate(
       const info = session.subagents.get(subagentSessionId) ?? { subagentSessionId, name: '', task: '' }
       info.state = draftString(update, 'state') ?? info.state
       session.subagents.set(subagentSessionId, info)
-      emit(sessionId, { kind: 'subagent', subagent: { ...info } })
+      // The state goes to the immediate parent, as the spawn did (ACP #1992),
+      // so the addressee is where the subagent sits.
+      emitSubagent(sessionId, info)
       return true
     }
     case 'async_task_spawned':
     case 'async_task_progress':
     case 'async_task_state_update': {
-      const session = store.sessions.get(sessionId)
+      const route = subagentRoute(sessionId)
+      const session = store.sessions.get(route.rootId)
       const asyncTaskId = draftString(update, 'asyncTaskId')
       if (!session || !asyncTaskId) {
         return true
@@ -1081,8 +1136,14 @@ function handleExtensionUpdate(
       if (update.sessionUpdate === 'async_task_state_update') {
         task.state = draftString(update, 'state') ?? task.state
       }
+      if (route.chain.length > 0) {
+        task.subagentSessionId = sessionId
+      }
       session.asyncTasks.set(asyncTaskId, task)
-      emit(sessionId, { kind: 'async_task', task: { ...task } })
+      // Emitted at the session's level, not nested under the subagent: a task
+      // outlives the subagent that started it, and the session's task list is
+      // where a reader finds, and stops, what is still running.
+      emit(route.rootId, { kind: 'async_task', task: { ...task } })
       return true
     }
     default:
@@ -1183,13 +1244,13 @@ export function handleUpdate(notification: SessionNotification): void {
     return
   }
   // A notification addressed to a subagent's own session id is one step of
-  // that subagent's transcript, nested into the parent's log — the parent is
-  // the session a subscriber is actually watching.
-  const parentId = store.subagentParents.get(sessionId)
-  if (parentId !== undefined && !store.sessions.has(sessionId)) {
+  // that subagent's transcript, nested into the session's log — the session
+  // is what a subscriber is actually watching.
+  const route = subagentRoute(sessionId)
+  if (route.chain.length > 0) {
     const childEvent = childEventOf(update)
     if (childEvent) {
-      emit(parentId, { kind: 'subagent_event', subagentSessionId: sessionId, event: childEvent })
+      emit(route.rootId, nestUnder(route.chain, childEvent))
     }
     return
   }
@@ -1557,7 +1618,7 @@ export function buildClient(
       // steps are nested there (see handleUpdate). Emitting to the child id
       // would drop the event on the floor and leave the harness waiting on an
       // answer nobody can give.
-      const sessionId = store.subagentParents.get(request.sessionId) ?? request.sessionId
+      const sessionId = subagentRoute(request.sessionId).rootId
       const perms = store.sessions.get(sessionId)?.permissions
       const title = request.toolCall.title ?? ''
       if (isAlwaysAllowed(perms, title)) {
@@ -1601,7 +1662,7 @@ export function buildClient(
         // The guess is left for what has no session to name — a request-scoped
         // elicitation, raised while a session is being set up.
         const scoped = 'sessionId' in request && typeof request.sessionId === 'string' ? request.sessionId : undefined
-        const sessionId = scoped ? (store.subagentParents.get(scoped) ?? scoped) : getElicitationSession()
+        const sessionId = scoped ? subagentRoute(scoped).rootId : getElicitationSession()
         if (!sessionId) {
           resolve({ action: 'cancel' })
           return
@@ -3129,7 +3190,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     for (const subagent of session.subagents?.values() ?? []) {
       if (subagent.state === undefined) {
         subagent.state = 'completed'
-        emit(sessionId, { kind: 'subagent', subagent: { ...subagent } })
+        emitSubagent(store.subagentParents.get(subagent.subagentSessionId) ?? sessionId, subagent)
       }
     }
     // The turn boundary the usage_update case's monotonic rule promises
@@ -3621,7 +3682,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // always has. A no-op (resolving false) when the session or the owner's
     // channel is absent (no stopHostTask, no connection, no extension) — the
     // same degrade-quietly contract steering follows.
-    async stopAsyncTask(sessionId: string, asyncTaskId: string): Promise<boolean> {
+    //
+    // A task a subagent started is stopped through the SESSION too, whichever
+    // id the caller holds: codex-acp resolves `_session/async_task/stop` among
+    // the sessions a client opened and answers a subagent's id with
+    // `stopped: false`, while the task id it reported is already unique
+    // across the spawn tree.
+    async stopAsyncTask(taskSessionId: string, asyncTaskId: string): Promise<boolean> {
+      const sessionId = subagentRoute(taskSessionId).rootId
       const session = store.sessions.get(sessionId)
       if (!session) {
         return false
@@ -4090,7 +4158,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // dropped, which is the live half of the same loss this path exists to
       // close.
       for (const subagentSessionId of state.subagents.keys()) {
-        store.subagentParents.set(subagentSessionId, sessionId)
+        store.subagentParents.set(subagentSessionId, state.subagentParents.get(subagentSessionId) ?? sessionId)
       }
       try {
         await connection.resumeSession({ sessionId, cwd: selection.cwd, mcpServers })
@@ -4263,12 +4331,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       dropSession(sessionId)
       store.nativeSessions.delete(sessionId)
       dropSessionTokens(sessionId)
-      // Drop the subagent→parent routes this session owned, so a later
-      // session id can't be misrouted as one of its subagents.
-      for (const [childId, parentId] of store.subagentParents) {
-        if (parentId === sessionId) {
-          store.subagentParents.delete(childId)
-        }
+      // Drop the subagent→parent routes this session owned, the whole spawn
+      // tree, so a later session id can't be misrouted as one of its
+      // subagents. Collected before deleting: a route walks through its
+      // parents' entries, and a deleted parent would cut a grandchild's short.
+      const owned = [...store.subagentParents.keys()].filter((childId) => subagentRoute(childId).rootId === sessionId)
+      for (const childId of owned) {
+        store.subagentParents.delete(childId)
       }
       if (store.lastSessionId === sessionId) {
         store.lastSessionId = null

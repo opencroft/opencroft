@@ -49,7 +49,13 @@ export interface RestoredSessionState {
   title?: string
   usage?: { used: number; size?: number }
   compactions: Map<string, CompactionState>
+  // The whole spawn tree, as the live session holds it: the session's own
+  // subagents and the ones they spawned.
   subagents: Map<string, SubagentInfo>
+  // The spawning subagent of each subagent in `subagents` that another
+  // subagent spawned; the session's own are absent. Routing a still-running
+  // subagent's notifications needs the chain, not only the record.
+  subagentParents: Map<string, string>
   asyncTasks: Map<string, AsyncTaskInfo>
   // The agent's plan, folded the same "last value wins" way handleUpdate
   // mirrors it live: the last plan event in the log is the current plan, and an
@@ -156,6 +162,7 @@ export function foldRestoredState(events: readonly ChatEvent[]): RestoredSession
     commands: [],
     compactions: new Map(),
     subagents: new Map(),
+    subagentParents: new Map(),
     asyncTasks: new Map(),
   }
   for (const event of events) {
@@ -190,6 +197,21 @@ export function foldRestoredState(events: readonly ChatEvent[]): RestoredSession
       case 'subagent':
         state.subagents.set(event.subagent.subagentSessionId, { ...event.subagent })
         break
+      case 'subagent_event': {
+        // A subagent spawned by a subagent is announced inside its parent's
+        // step (see ChatEvent), at whatever depth the parent sits.
+        let parentId = event.subagentSessionId
+        let inner = event.event
+        while (inner.kind === 'subagent_event') {
+          parentId = inner.subagentSessionId
+          inner = inner.event
+        }
+        if (inner.kind === 'subagent') {
+          state.subagents.set(inner.subagent.subagentSessionId, { ...inner.subagent })
+          state.subagentParents.set(inner.subagent.subagentSessionId, parentId)
+        }
+        break
+      }
       case 'async_task':
         state.asyncTasks.set(event.task.asyncTaskId, { ...event.task })
         break

@@ -971,6 +971,40 @@ test('a restored session is still live: a running subagent keeps nesting into it
   await harness.client.deleteSession(harness.sessionId)
 })
 
+test('a restored session rebuilds the route of a subagent another subagent spawned', async () => {
+  // The spawn of a grandchild is recorded inside its parent's step. Restored
+  // as a direct child of the session, its next chunk would land one level too
+  // high, beside the subagent that spawned it.
+  const harness = restoreSetup()
+  const childId = 'thread-worker'
+  const grandchildId = 'thread-helper'
+  const helper = { subagentSessionId: grandchildId, name: 'Helper', task: 'check one half' }
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [
+    { kind: 'user', text: 'delegate this' },
+    { kind: 'subagent', subagent: { subagentSessionId: childId, name: 'Worker', task: 'split the job' } },
+    { kind: 'subagent_event', subagentSessionId: childId, event: { kind: 'subagent', subagent: helper } },
+  ])
+  assert.ok(harness.client.hasBackgroundWork(harness.sessionId), 'the restored grandchild is live work')
+  const events: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => events.push(event))
+
+  handleUpdate({
+    sessionId: grandchildId,
+    update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'still checking' } },
+  } as Parameters<typeof handleUpdate>[0])
+
+  assert.deepEqual(events.at(-1), {
+    kind: 'subagent_event',
+    subagentSessionId: childId,
+    event: {
+      kind: 'subagent_event',
+      subagentSessionId: grandchildId,
+      event: { kind: 'agent_message', text: 'still checking' },
+    },
+  })
+  await harness.client.deleteSession(harness.sessionId)
+})
+
 test('the cold-open window a reconnecting chat is served carries the restored subagents', async () => {
   // This is the read the SSE stream actually performs on connect — a restored
   // transcript that only satisfies subscribe() would still open empty there.
@@ -5672,6 +5706,194 @@ test('stopping a host task goes to the host, and a harness task still goes to th
   const bare = createAgentClient()
   assert.equal(await bare.stopAsyncTask(h.sessionId, 'host-build'), false)
   assert.equal(harnessStops().length, 1)
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── updates a harness addresses to a subagent's session ────────────────────
+//
+// A harness sends everything a subagent does on the subagent's own session
+// id, including the subagents IT spawns and the background commands it
+// starts. Those ids are not sessions here; the fixtures below are the
+// sequences codex-acp 1.13.1 sends, copied from the source file each one
+// names, with its thread ids replaced by readable ones.
+
+function subagentRoutes(): Map<string, string> {
+  const store = (globalThis as typeof globalThis & { __acpStore?: { subagentParents: Map<string, string> } }).__acpStore
+  assert.ok(store)
+  return store.subagentParents
+}
+
+test('a subagent spawned by a subagent nests under it, and both close where they were announced', async () => {
+  const h = await setup('openclaw')
+  const childId = 'thread-worker'
+  const grandchildId = 'thread-helper'
+  // src/subagents/CodexSubagentEventRouter.ts, materialize(): the spawn goes to
+  // the spawning session — the root for a direct child, the child for its own.
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: childId,
+    name: 'Worker',
+    task: 'split the job',
+    capabilities: {},
+  })
+  sendUpdate(childId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: grandchildId,
+    name: 'Helper',
+    task: 'check one half',
+    capabilities: {},
+  })
+  // src/subagents/CodexSubagentEventRouter.ts, notificationSessionId(): the
+  // grandchild's own output is addressed to the grandchild.
+  sendUpdate(grandchildId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'half checked' } })
+  // src/subagents/CodexSubagentEventRouter.ts, finish(): the terminal state
+  // goes to child.parentSessionId, the same session the spawn went to.
+  sendUpdate(childId, { sessionUpdate: 'subagent_state_update', subagentSessionId: grandchildId, state: 'completed' })
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'the child is still running')
+  sendUpdate(h.sessionId, { sessionUpdate: 'subagent_state_update', subagentSessionId: childId, state: 'completed' })
+
+  const worker = { subagentSessionId: childId, name: 'Worker', task: 'split the job' }
+  const helper = { subagentSessionId: grandchildId, name: 'Helper', task: 'check one half' }
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'subagent' || event.kind === 'subagent_event'),
+    [
+      { kind: 'subagent', subagent: worker },
+      { kind: 'subagent_event', subagentSessionId: childId, event: { kind: 'subagent', subagent: helper } },
+      {
+        kind: 'subagent_event',
+        subagentSessionId: childId,
+        event: {
+          kind: 'subagent_event',
+          subagentSessionId: grandchildId,
+          event: { kind: 'agent_message', text: 'half checked' },
+        },
+      },
+      {
+        kind: 'subagent_event',
+        subagentSessionId: childId,
+        event: { kind: 'subagent', subagent: { ...helper, state: 'completed' } },
+      },
+      { kind: 'subagent', subagent: { ...worker, state: 'completed' } },
+    ],
+  )
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false)
+
+  await h.client.deleteSession(h.sessionId)
+  assert.equal(subagentRoutes().has(childId), false)
+  assert.equal(subagentRoutes().has(grandchildId), false, 'the whole spawn tree goes with its session')
+})
+
+test('the turn boundary closes a silent grandchild where it sits, not at the top level', async () => {
+  const h = await setup('openclaw')
+  await h.client.prompt(h.sessionId, 'delegate', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: 'thread-a',
+    name: 'A',
+    task: 'a',
+    capabilities: {},
+  })
+  sendUpdate('thread-a', {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: 'thread-b',
+    name: 'B',
+    task: 'b',
+    capabilities: {},
+  })
+  h.endTurn()
+  await settle()
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false)
+
+  const closures = h.events.filter(
+    (event) =>
+      (event.kind === 'subagent' && event.subagent.state === 'completed') ||
+      (event.kind === 'subagent_event' &&
+        event.event.kind === 'subagent' &&
+        event.event.subagent.state === 'completed'),
+  )
+  assert.deepEqual(closures, [
+    { kind: 'subagent', subagent: { subagentSessionId: 'thread-a', name: 'A', task: 'a', state: 'completed' } },
+    {
+      kind: 'subagent_event',
+      subagentSessionId: 'thread-a',
+      event: {
+        kind: 'subagent',
+        subagent: { subagentSessionId: 'thread-b', name: 'B', task: 'b', state: 'completed' },
+      },
+    },
+  ])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a background command a subagent starts is the session’s task, and stops through the session', async () => {
+  const h = await setup('openclaw')
+  const childId = 'thread-worker'
+  const itemId = 'call-dev-server'
+  // src/async-tasks/CodexBackgroundTerminalTasks.ts, wireTaskId(): a child
+  // command's task id is prefixed with the child thread id.
+  const asyncTaskId = `${childId}:${itemId}`
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: childId,
+    name: 'Worker',
+    task: 'run the dev server',
+    capabilities: {},
+  })
+  // src/async-tasks/CodexBackgroundTerminalTasks.ts, publishSpawn(): both
+  // updates go to task.sessionId, the child session.
+  sendUpdate(childId, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: itemId,
+    _meta: { jetbrains: { air: { asyncTasks: { backgrounded: true } } } },
+  })
+  sendUpdate(childId, {
+    sessionUpdate: 'async_task_spawned',
+    asyncTaskId,
+    name: 'npm run dev',
+    taskType: 'shell',
+    showInTranscript: false,
+    canStop: true,
+    toolCallId: itemId,
+  })
+  sendUpdate(h.sessionId, { sessionUpdate: 'subagent_state_update', subagentSessionId: childId, state: 'completed' })
+
+  const running: AsyncTaskInfo = {
+    asyncTaskId,
+    name: 'npm run dev',
+    taskType: 'shell',
+    description: '',
+    state: 'running',
+    canStop: true,
+    showInTranscript: false,
+    toolCallId: itemId,
+    subagentSessionId: childId,
+  }
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'async_task'),
+    [{ kind: 'async_task', task: running }],
+    'on the session’s own list, marked with the subagent that started it',
+  )
+  assert.ok(h.client.hasBackgroundWork(h.sessionId), 'it outlives the subagent that started it')
+
+  // docs/async-tasks.md and CodexAcpServer.ts: the stop is resolved among the
+  // root sessions only, so it must name the session whichever id the caller has.
+  const stops = () =>
+    h.extMethodCalls.filter((call) => call.method === '_session/async_task/stop').map((call) => call.params)
+  assert.equal(await h.client.stopAsyncTask(h.sessionId, asyncTaskId), true)
+  assert.equal(await h.client.stopAsyncTask(childId, asyncTaskId), true)
+  assert.deepEqual(stops(), [
+    { sessionId: h.sessionId, asyncTaskId },
+    { sessionId: h.sessionId, asyncTaskId },
+  ])
+
+  // src/async-tasks/CodexBackgroundTerminalTasks.ts, publishTerminalState().
+  sendUpdate(childId, { sessionUpdate: 'async_task_state_update', asyncTaskId, state: 'stopped', toolCallId: itemId })
+  assert.deepEqual(h.events.filter((event) => event.kind === 'async_task').at(-1), {
+    kind: 'async_task',
+    task: { ...running, state: 'stopped' },
+  })
+  assert.equal(h.client.hasBackgroundWork(h.sessionId), false)
   await h.client.deleteSession(h.sessionId)
 })
 
