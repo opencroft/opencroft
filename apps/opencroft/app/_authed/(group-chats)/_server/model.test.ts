@@ -4309,27 +4309,16 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
   }
   assert.ok(queuedBefore.colon > 0, 'precondition: the colon key holds the entry that has to survive the move')
 
-  // Dry run: reports the move and the censuses, writes nothing.
-  const dry = await model.migrateThreadSessionKeysImpl({ apply: false })
-  assert.equal(dry.applied, false)
+  const run = await model.migrateThreadSessionKeys()
   // The database is shared across this file's tests, so earlier fixtures'
   // colon threads appear in the same report — scope to this test's own key.
   assert.deepEqual(
-    dry.moves.filter((m) => m.from === colonKey).map((m) => ({ from: m.from, to: m.to })),
-    [{ from: colonKey, to: dotKey }],
+    run.moves.filter((m) => m.from === colonKey),
+    [{ from: colonKey, to: dotKey, pointerMoved: true }],
+    'the forged colon thread moved, and its durable pointer answers under the new key',
   )
-  assert.equal(
-    (await db.select().from(groupChatThread).where(eq(groupChatThread.id, started.thread.id)))[0]?.sessionKey,
-    colonKey,
-    'a dry run changes nothing',
-  )
-
-  // Apply.
-  const run = await model.migrateThreadSessionKeysImpl({ apply: true })
-  assert.equal(run.applied, true)
-  const mine = run.moves.find((m) => m.from === colonKey)
-  assert.ok(mine, 'the forged colon thread is among the moves')
-  assert.equal(mine.pointerMoved, true, 'the durable pointer answers under the new key')
+  // What the server logs at start for this run: something, since it moved a key.
+  assert.match(model.describeThreadKeyMigration(run) ?? '', /^moved \d+ thread key\(s\) to the dot form/)
   // Not zero: the census counts every colon-PREFIXED key, and a key that is
   // not four slug segments is deliberately left as found. Tying the two
   // together is the stronger statement anyway — every colon key still stored
@@ -4373,9 +4362,10 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
   assert.equal(agentClient.listSessions().length, before, 'the alias lands in the same session, not a fresh one')
 
   // Runs safely twice: the second pass finds nothing colon-shaped.
-  const again = await model.migrateThreadSessionKeysImpl({ apply: true })
+  const again = await model.migrateThreadSessionKeys()
   assert.deepEqual(again.moves, [], 'the second run finds nothing colon-shaped left')
   assert.equal(again.stores.threads.colon, again.skipped.length)
+  assert.equal(model.describeThreadKeyMigration(again), null, 'and the second start logs nothing')
 })
 
 // The reference a surface hands out has to name the thread it came from, for
@@ -4437,7 +4427,7 @@ test('the migration leaves a pre-slug key exactly as found, and says so', async 
   const preSlug = 'group-chat:0f83a1c2-legacy-id'
   await db.update(groupChatThread).set({ sessionKey: preSlug }).where(eq(groupChatThread.id, started.thread.id))
 
-  const run = await model.migrateThreadSessionKeysImpl({ apply: true })
+  const run = await model.migrateThreadSessionKeys()
   assert.ok(!run.moves.some((m) => m.from === preSlug), 'a pre-slug key is never among the moves')
   const skip = run.skipped.find((entry) => entry.sessionKey === preSlug)
   assert.ok(skip, 'the skip is reported, not silent')
@@ -4447,6 +4437,16 @@ test('the migration leaves a pre-slug key exactly as found, and says so', async 
     preSlug,
     'a working address is not broken to tidy a spelling',
   )
+
+  // Found and skipped again on every later start, so skipping is not work: a
+  // store whose only colon keys are pre-slug ones logs nothing.
+  const again = await model.migrateThreadSessionKeys()
+  assert.ok(
+    again.skipped.some((entry) => entry.sessionKey === preSlug),
+    'precondition: the pre-slug key is skipped again',
+  )
+  assert.deepEqual(again.moves, [])
+  assert.equal(model.describeThreadKeyMigration(again), null)
 })
 
 // ---------------------------------------------------------------------------

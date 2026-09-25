@@ -10,8 +10,10 @@ import {
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import {
   deliverThreadFromNode,
+  describeThreadKeyMigration,
   groupChatStandingContext,
   groupChatWakeSession,
+  migrateThreadSessionKeys,
 } from '@/app/_authed/(group-chats)/_server/model'
 import { startBackgroundTaskPoller } from '@/server/scheduler/background-task-poller'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
@@ -20,28 +22,59 @@ import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
 import { startUsageRollupScheduler } from '@/server/scheduler/usage-rollup-scheduler'
 import { registerShutdownHandlers } from '@/server/shutdown'
 
-const globalForStartup = globalThis as unknown as { __opencroftStarted?: boolean }
+const globalForStartup = globalThis as unknown as { __opencroftReady?: Promise<void> }
 
 /**
  * Server-side boot tasks (formerly Next.js instrumentation register()). Runs once
  * per process from a server-only entry point (the SSE route handler), in the same
  * module context that serves docker snapshots. Idempotent.
+ *
+ * Resolves once the server may serve requests: the thread-key migration below
+ * has run. The app's request entry and the extension HTTP routes await it, so
+ * neither can look up a thread while its key is being moved.
  */
-export function ensureServerStarted(): void {
-  if (globalForStartup.__opencroftStarted) {
-    return
-  }
-  globalForStartup.__opencroftStarted = true
+export function ensureServerStarted(): Promise<void> {
+  globalForStartup.__opencroftReady ??= start()
+  return globalForStartup.__opencroftReady
+}
 
+async function start(): Promise<void> {
   // Before the schedulers, so nothing can start writing into a process that has
   // no way to release the database when it is asked to stop.
   registerShutdownHandlers()
+  registerResolvers()
+  // Before the schedulers too: a fired event can drive a send into a thread,
+  // and the background-task poller and the idle reaper address sessions by key.
+  await migrateThreadKeys()
   startEventScheduler()
   startDockerPsPoller()
   startDbBackupScheduler()
   startIdleSessionReaper()
   startBackgroundTaskPoller()
   startUsageRollupScheduler()
+  void preload()
+}
+
+// Stored thread keys move to the dot form here rather than in the database
+// package's migrations because the move is not SQL: it carries the durable
+// session pointer, the queue and the in-memory registries with each key. Every
+// start runs it; once the store holds no colon slug key it moves nothing and
+// says nothing.
+//
+// Not fatal on failure: resolution still reads the colon form, so an
+// unmigrated store serves correctly, and the next start tries again.
+async function migrateThreadKeys(): Promise<void> {
+  try {
+    const summary = describeThreadKeyMigration(await migrateThreadSessionKeys())
+    if (summary) {
+      console.log(`[startup] thread keys: ${summary}`)
+    }
+  } catch (err) {
+    console.error('[startup] thread key migration failed', err)
+  }
+}
+
+function registerResolvers(): void {
   // The session layer (extension-runtime/_server/stream.ts) knows nothing of
   // group chats — this is the one place that names both, so compaction's
   // restore step can reach a group-chat thread's current topic + pins
@@ -68,7 +101,6 @@ export function ensureServerStarted(): void {
   // to re-deliver the standing context the compaction just dropped — the same
   // restore the Compact button's job performs, now driven by the event.
   registerCompactionHandler(restoreAfterCompaction)
-  void preload()
 }
 
 async function preload(): Promise<void> {

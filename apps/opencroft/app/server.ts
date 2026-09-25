@@ -7,7 +7,7 @@ import { ensureServerStarted } from '@/server/startup'
 // TanStack Start custom server entry. Runs once at server boot (in the server
 // build context) — replaces the Next.js instrumentation.ts register() hook:
 // starts the docker-ps poller + event scheduler, preloads spaces, auto-installs extensions.
-ensureServerStarted()
+const ready = ensureServerStarted()
 
 const fetch = createStartHandler(defaultStreamHandler)
 
@@ -16,6 +16,7 @@ export type ServerEntry = { fetch: RequestHandler<Register> }
 export function createServerEntry(entry: ServerEntry): ServerEntry {
   return {
     async fetch(...args) {
+      await ready
       return await entry.fetch(...args)
     },
   }

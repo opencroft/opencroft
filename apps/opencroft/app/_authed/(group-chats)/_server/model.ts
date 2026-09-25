@@ -719,17 +719,38 @@ export async function renameGroupChat(request: Request, groupChatId: string, nam
 }
 
 export interface ThreadKeyMigrationReport {
-  applied: boolean
-  /** Every colon-form thread key and the dot key it moves to. */
-  moves: Array<{ from: string; to: string; pointerMoved?: boolean }>
+  /** Every colon-form thread key and the dot key it moved to. */
+  moves: Array<{ from: string; to: string; pointerMoved: boolean }>
   /** Keys left as found, each with the reason. */
   skipped: Array<{ sessionKey: string; reason: string }>
-  /** Per-store spelling census, taken after the run (or as found, on a dry run). */
+  /** Per-store spelling census, taken after the run. */
   stores: {
     threads: { colon: number; dot: number }
     queue: { colon: number; dot: number }
     aliases: { colon: number; dot: number }
   }
+}
+
+/**
+ * One log line for a run that moved something, or null for a run that did not.
+ *
+ * Keyed on moves alone: a pre-slug key is colon-prefixed forever, so every
+ * later run finds and skips it again, and counting skips as work would make an
+ * already-migrated store report on every start.
+ */
+export function describeThreadKeyMigration(report: ThreadKeyMigrationReport): string | null {
+  if (report.moves.length === 0) {
+    return null
+  }
+  const withoutPointer = report.moves.filter((move) => !move.pointerMoved).length
+  const { threads, queue, aliases } = report.stores
+  return (
+    `moved ${report.moves.length} thread key(s) to the dot form ` +
+    `(${withoutPointer} without a durable session pointer), ` +
+    `left ${report.skipped.length} pre-slug key(s) as found; ` +
+    `stores now colon/dot -- threads ${threads.colon}/${threads.dot}, ` +
+    `queue ${queue.colon}/${queue.dot}, aliases ${aliases.colon}/${aliases.dot}`
+  )
 }
 
 async function countKeySpellings(table: typeof groupChatThread | typeof agentQueueEntry | typeof groupChatThreadAlias): Promise<{ colon: number; dot: number }> {
@@ -763,10 +784,10 @@ async function countKeySpellings(table: typeof groupChatThread | typeof agentQue
  * Those rows retire in the contract phase, with the tolerance that reads
  * them.
  *
- * Dry-run by default: `apply: false` reports the moves and censuses without
- * touching anything.
+ * Run by the server at start, before anything can look a thread up. A run
+ * with nothing to move writes nothing.
  */
-export async function migrateThreadSessionKeysImpl(options: { apply: boolean }): Promise<ThreadKeyMigrationReport> {
+export async function migrateThreadSessionKeys(): Promise<ThreadKeyMigrationReport> {
   const rows = await db
     .select({
       id: groupChatThread.id,
@@ -798,9 +819,39 @@ export async function migrateThreadSessionKeysImpl(options: { apply: boolean }):
     })
   }
 
-  const report: ThreadKeyMigrationReport = {
-    applied: false,
-    moves: moves.map((move) => ({ from: move.from, to: move.to })),
+  if (moves.length > 0) {
+    await requireSessionKeysFree(
+      moves.map((move) => move.to),
+      moves.map((move) => move.threadId),
+    )
+    await stageSessionKeyMoves(moves)
+    await db.transaction(async (tx) => {
+      for (const move of moves) {
+        await tx.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, move.to))
+        await tx.insert(groupChatThreadAlias).values({
+          threadId: move.threadId,
+          groupChatId: move.groupChatId,
+          agentNodeId: move.agentNodeId,
+          sessionKey: move.from,
+          slug: null,
+        })
+        await tx.update(groupChatThread).set({ sessionKey: move.to }).where(eq(groupChatThread.id, move.threadId))
+      }
+    })
+    await settleSessionKeyMoves(moves)
+  }
+
+  // The census is taken after the move so acceptance is a reading of the
+  // stores, not an inference from the loop having finished. The per-move
+  // pointer check answers for the fourth store the same way.
+  return {
+    moves: await Promise.all(
+      moves.map(async (move) => ({
+        from: move.from,
+        to: move.to,
+        pointerMoved: (await readPersistedSession(move.to)) !== null,
+      })),
+    ),
     skipped,
     stores: {
       threads: await countKeySpellings(groupChatThread),
@@ -808,47 +859,6 @@ export async function migrateThreadSessionKeysImpl(options: { apply: boolean }):
       aliases: await countKeySpellings(groupChatThreadAlias),
     },
   }
-  if (!options.apply || moves.length === 0) {
-    return report
-  }
-
-  await requireSessionKeysFree(
-    moves.map((move) => move.to),
-    moves.map((move) => move.threadId),
-  )
-  await stageSessionKeyMoves(moves)
-  await db.transaction(async (tx) => {
-    for (const move of moves) {
-      await tx.delete(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, move.to))
-      await tx.insert(groupChatThreadAlias).values({
-        threadId: move.threadId,
-        groupChatId: move.groupChatId,
-        agentNodeId: move.agentNodeId,
-        sessionKey: move.from,
-        slug: null,
-      })
-      await tx.update(groupChatThread).set({ sessionKey: move.to }).where(eq(groupChatThread.id, move.threadId))
-    }
-  })
-  await settleSessionKeyMoves(moves)
-
-  report.applied = true
-  // The census is re-taken after the move so acceptance is a reading of the
-  // stores, not an inference from the loop having finished. The per-move
-  // pointer check answers for the fourth store the same way.
-  report.stores = {
-    threads: await countKeySpellings(groupChatThread),
-    queue: await countKeySpellings(agentQueueEntry),
-    aliases: await countKeySpellings(groupChatThreadAlias),
-  }
-  report.moves = await Promise.all(
-    moves.map(async (move) => ({
-      from: move.from,
-      to: move.to,
-      pointerMoved: (await readPersistedSession(move.to)) !== null,
-    })),
-  )
-  return report
 }
 
 /**
