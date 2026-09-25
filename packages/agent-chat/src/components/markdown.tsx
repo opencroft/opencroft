@@ -71,6 +71,13 @@ function MarkdownPre({ node, children, ...props }: ComponentProps<'pre'> & Extra
 
 const markdownComponents: Components = { a: MarkdownLink, pre: MarkdownPre }
 
+// What survives in an inline rendering: the spans a sentence can carry. A
+// block construct is unwrapped to its text rather than dropped, so nothing the
+// author wrote goes missing -- it only stops being a paragraph, list or heading,
+// which a label or a one-line hint has no room for (and `<label>` does not
+// permit: its content model is phrasing content only).
+const inlineElements = ['a', 'strong', 'em', 'del', 'code', 'br']
+
 export interface MarkdownProps {
   /** The markdown source. */
   text: string
@@ -80,6 +87,24 @@ export interface MarkdownProps {
    * `prose-chat`'s job and is shared on purpose.
    */
   className?: string
+  /**
+   * Whose type the text is set in.
+   *
+   * - `chat` (default): the conversation's own size, colour and line height.
+   * - `inherit`: whatever the surrounding element already sets. For markdown
+   *   that sits inside another component's text -- a form's muted hint, a
+   *   heading -- and has to look exactly like the plain text it replaces. Only
+   *   the base type defers; the element treatments (links, code, lists) are
+   *   `prose-chat`'s and scale from it. Set that type on a surrounding
+   *   element, not through `className`: the prose rules are unlayered CSS and
+   *   outrank utility classes on the wrapper itself.
+   */
+  typography?: 'chat' | 'inherit'
+  /**
+   * Render as a run of text in a `span`, with block constructs unwrapped to
+   * their content. For phrasing-only contexts such as a `<label>`.
+   */
+  inline?: boolean
 }
 
 /**
@@ -89,12 +114,17 @@ export interface MarkdownProps {
  * the same voice as the conversation rather than as a second treatment of the
  * same markdown.
  */
-export function Markdown({ text, className }: MarkdownProps) {
+export function Markdown({ text, className, typography = 'chat', inline = false }: MarkdownProps) {
+  const Wrapper = inline ? 'span' : 'div'
   return (
-    <div className={cn('prose-chat', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+    <Wrapper className={cn('prose-chat', typography === 'inherit' && 'prose-chat-inherit', className)}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownComponents}
+        {...(inline ? { allowedElements: inlineElements, unwrapDisallowed: true } : {})}
+      >
         {text}
       </ReactMarkdown>
-    </div>
+    </Wrapper>
   )
 }

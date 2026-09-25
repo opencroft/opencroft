@@ -19,6 +19,15 @@
   max-width: 100%;
 }
 
+/* Set in the surrounding element's type instead of the conversation's. Two
+   classes, so it outranks `.prose-chat` above without depending on source
+   order; the element rules below are sized in `em` and follow it. */
+.prose-chat.prose-chat-inherit {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .prose-chat > *:first-child {
   margin-top: 0;
 }

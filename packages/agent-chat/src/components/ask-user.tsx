@@ -11,6 +11,8 @@ import { Input } from 'ui/components/ui/input'
 import { Label } from 'ui/components/ui/label'
 import { RadioGroup, RadioGroupItem } from 'ui/components/ui/radio-group'
 
+import { Markdown } from './markdown'
+
 // ── Schema folding ───────────────────────────────────────────────────────────
 //
 // THE ask-a-question component: agent-sent ACP form elicitations and the
@@ -79,11 +81,13 @@ function customAnswerTarget(property: unknown): string | null {
 export function askFields(schema: ElicitationSchema): AskUserField[] {
   const required = new Set(schema.required ?? [])
   const entries = Object.entries(schema.properties ?? {})
-  const customFor = new Map<string, string>()
+  // A plain record, not a Map: the design kit's live preview resolves bare
+  // identifiers by name, and an icon called Map shadows the global there.
+  const customFor: Record<string, string> = {}
   for (const [key, property] of entries) {
     const target = customAnswerTarget(property)
     if (target) {
-      customFor.set(target, key)
+      customFor[target] = key
     }
   }
   const fields: AskUserField[] = []
@@ -94,7 +98,7 @@ export function askFields(schema: ElicitationSchema): AskUserField[] {
     const record = property as PropertyRecord
     const title = typeof record.title === 'string' && record.title ? record.title : key
     const description = typeof record.description === 'string' && record.description ? record.description : undefined
-    const customKey = customFor.get(key)
+    const customKey = Object.hasOwn(customFor, key) ? customFor[key] : undefined
     const base = {
       key,
       title,
@@ -206,6 +210,18 @@ export function buildAskContent(
 
 // ── The component ────────────────────────────────────────────────────────────
 
+// An option's description sits inside the option's <label>, so it renders
+// inline (a label holds phrasing content only) and in the hint's own type.
+// A link in it does not pick the option: a label's activation skips clicks
+// whose target is interactive content inside it, which an <a href> is.
+function OptionHint({ text }: { text: string }) {
+  return (
+    <span className='ml-1 text-xs text-muted-foreground'>
+      <Markdown text={text} typography='inherit' inline />
+    </span>
+  )
+}
+
 export interface AskUserProps {
   // The elicitation's own message — the question itself for a single-field
   // form, the "please answer" preamble for several.
@@ -257,7 +273,9 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
       {/* Header */}
       <div className='flex items-center gap-2'>
         <MessageCircleQuestion className='h-4 w-4 shrink-0 text-primary' />
-        <span className='min-w-0 flex-1 text-sm font-medium wrap-break-word'>{message || 'Questions'}</span>
+        <div className='min-w-0 flex-1 text-sm font-medium wrap-break-word'>
+          <Markdown text={message || 'Questions'} typography='inherit' />
+        </div>
         {onCancel ? (
           <Button size='sm' variant='ghost' onClick={onCancel} disabled={pending} className='h-6 w-6 p-0'>
             <X className='h-4 w-4' />
@@ -290,7 +308,11 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
       ) : null}
 
       {/* Question text */}
-      {field.description ? <div className='text-sm text-muted-foreground'>{field.description}</div> : null}
+      {field.description ? (
+        <div className='text-sm text-muted-foreground'>
+          <Markdown text={field.description} typography='inherit' />
+        </div>
+      ) : null}
 
       {/* Field body */}
       {field.kind.type === 'select' ? (
@@ -304,9 +326,7 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
               <RadioGroupItem value={option.value} id={`${field.key}-${option.value}`} />
               <Label htmlFor={`${field.key}-${option.value}`} className='cursor-pointer text-sm font-normal'>
                 {option.label}
-                {option.description ? (
-                  <span className='ml-1 text-xs text-muted-foreground'>{option.description}</span>
-                ) : null}
+                {option.description ? <OptionHint text={option.description} /> : null}
               </Label>
             </div>
           ))}
@@ -329,9 +349,7 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
                 />
                 <Label htmlFor={`${field.key}-${option.value}`} className='cursor-pointer text-sm font-normal'>
                   {option.label}
-                  {option.description ? (
-                    <span className='ml-1 text-xs text-muted-foreground'>{option.description}</span>
-                  ) : null}
+                  {option.description ? <OptionHint text={option.description} /> : null}
                 </Label>
               </div>
             )
