@@ -2,7 +2,7 @@
 
 import { useSession } from '@opencroft/auth/client'
 import { Link, useLocation, useRouter } from '@tanstack/react-router'
-import { LogOut, MessagesSquare, Puzzle, SettingsIcon, Workflow } from 'lucide-react'
+import { LogOut, MessagesSquare, Puzzle, SettingsIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from 'ui/avatar'
 import {
@@ -25,11 +25,14 @@ import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { getActiveSpaceSlug } from '@/app/_authed/(space)/_server/actions'
-import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import {
+  DEFAULT_GRAPH_SLUG,
+  GRAPH_APP_EXTENSION_ID,
+  GRAPH_APP_SLUG,
+  type SpaceSummary,
+} from '@/app/_authed/(space)/_server/types'
 import { useBuildLabel } from '@/app/_components/dev-build-badge'
 import { useSignOut } from '@/app/(auth)/_components/sign-out-item'
-
-const GRAPH_ID = 'graph'
 
 function slugFromPath(pathname: string): string | null {
   const match = pathname.match(/^\/space\/([^/]+)/)
@@ -50,8 +53,18 @@ function useCurrentSpaceSlug(pathname: string): string | null {
   return pathSlug ?? activeSlug
 }
 
+function isDefaultGraph(instance: SpaceAppInstance) {
+  return (
+    instance.extensionId === GRAPH_APP_EXTENSION_ID &&
+    instance.appSlug === GRAPH_APP_SLUG &&
+    instance.slug === DEFAULT_GRAPH_SLUG
+  )
+}
+
 /**
- * The space's graph and its App instances, as the title bar lists them.
+ * The space's App instances, as the title bar lists them. The space's graphs
+ * are instances too, so they arrive here with the rest; the default one is
+ * addressed by the space itself, which is where the space's own link goes.
  * Refetched on every navigation, not only when the space changes, so an
  * instance added in the settings shows up as soon as the reader goes anywhere.
  */
@@ -85,20 +98,16 @@ function useSpaceApps(slug: string | null, pathname: string): SwitcherApp[] {
   if (!slug) {
     return []
   }
-  const graph: SwitcherApp = { id: GRAPH_ID, label: 'Graph', href: `/space/${slug}`, icon: Workflow, type: 'Graph' }
-  return [
-    graph,
-    ...instances.map((instance) => {
-      const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
-      return {
-        id: instance.id,
-        label: instance.name || meta?.title || instance.appSlug,
-        href: `/space/${slug}/app/${instance.slug}`,
-        icon: resolveIcon(meta?.icon),
-        type: meta?.title ?? instance.appSlug,
-      }
-    }),
-  ]
+  return instances.map((instance) => {
+    const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
+    return {
+      id: instance.id,
+      label: instance.name || meta?.title || instance.appSlug,
+      href: isDefaultGraph(instance) ? `/space/${slug}` : `/space/${slug}/app/${instance.slug}`,
+      icon: resolveIcon(meta?.icon),
+      type: meta?.title ?? instance.appSlug,
+    }
+  })
 }
 
 function initials(name: string) {
@@ -173,10 +182,14 @@ export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; ha
   const apps = useSpaceApps(slug, pathname)
 
   const navigate = (href: string) => router.history.push(href)
-  const activeApp =
-    pathname === `/space/${slug}`
-      ? GRAPH_ID
-      : apps.find((app) => app.id !== GRAPH_ID && (pathname === app.href || pathname.startsWith(`${app.href}/`)))?.id
+  // The default graph answers at the space's own address and at its app
+  // address alike; every other app only at its own.
+  const defaultGraphAppHref = `/space/${slug}/app/${DEFAULT_GRAPH_SLUG}`
+  const activeApp = apps.find((app) =>
+    app.href === `/space/${slug}`
+      ? pathname === app.href || pathname === defaultGraphAppHref || pathname.startsWith(`${defaultGraphAppHref}/`)
+      : pathname === app.href || pathname.startsWith(`${app.href}/`),
+  )?.id
 
   return (
     <TitleBar
