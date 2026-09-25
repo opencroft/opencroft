@@ -41,6 +41,21 @@ export interface HarnessAdapter {
   // its own fallback question tool from sessions whose harness asks natively
   // (the native path has no MCP request timeout; the tool does).
   supportsElicitation?: boolean
+  // Whether an MCP-server refresh must close the session before resuming it.
+  // The refresh sends the new server list on `session/resume`, which only
+  // works if the harness rebuilds the session from that request. codex-acp
+  // resumes through the app server's thread/resume, whose own contract
+  // (ThreadResumeParams in codex-acp 1.13.1) is that resuming a thread that is
+  // still running REJOINS it — so the new list plausibly never reaches the
+  // thread. Closing first — codex-acp's close is thread/unsubscribe — is
+  // meant to release the thread so the resume starts it afresh. Both halves
+  // are read off the source, neither is measured, which is why no adapter
+  // sets this yet. Defaults to false, and is honored only when the agent also
+  // advertised `sessionCapabilities.close`.
+  // claude-agent-acp needs none of this: it compares the resume request with
+  // the live session and rebuilds the session itself when the MCP servers
+  // differ (acp-agent.js getOrCreateSession, 0.79.0).
+  mcpRefreshReopens?: boolean
   // Builds extra spawn env from the selection's provider wiring, for harnesses
   // whose provider configuration cannot travel through the standard base-url /
   // key / model env vars and must instead be carried in a document of the

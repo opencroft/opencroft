@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { Readable, Writable } from 'node:stream'
 
@@ -514,6 +514,13 @@ interface ConnEntry {
   // same spelling as elicitation). Only meaningful once `initialized` has
   // resolved.
   forkSupported: boolean
+  // Whether the agent advertised `sessionCapabilities.close` at initialize
+  // (same `{}`-means-supported spelling). Read only by the opt-in MCP refresh
+  // that closes before it resumes (see HarnessAdapter.mcpRefreshReopens):
+  // deleteSession tries a close regardless, because a failure there costs
+  // nothing, while a refresh must not close a session it cannot say will close.
+  // Only meaningful once `initialized` has resolved.
+  closeSupported?: boolean
   // Whether the agent advertised `agentCapabilities.promptCapabilities.image`
   // at initialize. A real boolean in the spec, not a marker object like the
   // session capabilities above. Without it the client MUST NOT put an image
@@ -1729,6 +1736,24 @@ function toSessionModes(modes: {
   }
 }
 
+// The modes block as a session/new, /load or /resume answer spells it.
+type ResumedModes = Parameters<typeof toSessionModes>[0]
+
+// A session/set_config_option request for one option, in the shape its type
+// takes on the wire: a boolean option is sent as one, anything else as the
+// string value a select carries. An option this side has not heard of yet is
+// sent as a select.
+function configOptionRequest(
+  sessionId: string,
+  configId: string,
+  option: SessionConfigOption | undefined,
+  value: string | boolean,
+) {
+  return option?.type === 'boolean'
+    ? { sessionId, configId, type: 'boolean' as const, value: Boolean(value) }
+    : { sessionId, configId, value: String(value) }
+}
+
 function spawnKey(config: SpawnConfig): string {
   return JSON.stringify(config)
 }
@@ -1882,6 +1907,14 @@ function supportsTools(selection: AgentSelection): boolean {
 // has no "fork empty" spelling, so no fork point is sent and the agent copies
 // the whole transcript. This session's log still rewinds (the reader sees the
 // edit land), but the agent's own copy of the older turns stays in its context.
+//
+// The id alone is not always enough. codex-acp (1.13.1, SessionFork.ts) looks
+// the id up among its thread's CURRENT item ids, and those are not stable: a
+// thread whose items were re-minted (the upstream test is "when Codex item ids
+// changed") no longer holds the id we recorded, and the fork is refused with
+// invalidParams. Both bridges therefore also accept the message by content —
+// `messageFingerprint`, and `messageOccurrence` to tell identical texts apart
+// — and fall back to it when the id misses. See agentMessageFingerprint.
 function forkCutoffMeta(
   session: { events: ChatEvent[] },
   boundary: number | null,
@@ -1892,10 +1925,58 @@ function forkCutoffMeta(
   for (let i = boundary - 1; i >= 0; i -= 1) {
     const event = session.events[i]
     if (event.kind === 'agent_message' && event.messageId) {
-      return { jetbrains: { air: { fork: { version: 1, messageId: event.messageId } } } }
+      const fingerprint = agentMessageFingerprint(session.events, i, event.messageId)
+      return { jetbrains: { air: { fork: { version: 1, messageId: event.messageId, ...fingerprint } } } }
     }
   }
   return undefined
+}
+
+// The content half of a fork point: which agent message, by what it said.
+//
+// Both consumers read it the same way, verified against their source:
+// codex-acp 1.13.1 (SessionFork.ts) hashes each `agentMessage` item's full
+// text and takes the Nth match in thread order; claude-agent-acp 0.79.0
+// (fork-session.js) hashes the concatenated text of every assistant entry
+// sharing one message id and counts matches along the branch up to the
+// target. So the text hashed here is every chunk logged under the anchor's
+// message id joined with nothing in between — how the harness streamed it,
+// and what it stores as one message — and the occurrence is 1-based, counting
+// the anchor itself among the messages up to it that said exactly the same.
+//
+// Chunks without a message id are skipped rather than guessed into a message:
+// neither harness can be matched against them (codex stamps every item, the
+// Claude bridge groups by id), and counting them would shift the occurrence
+// of every later duplicate.
+function agentMessageFingerprint(
+  events: readonly ChatEvent[],
+  anchorIndex: number,
+  anchorId: string,
+): { messageFingerprint: string; messageOccurrence: number } {
+  // Message ids in first-appearance order, each with its joined text. The
+  // anchor's own chunks all lie at or before anchorIndex: it is the last
+  // agent message before the cut, and the cut is a user turn.
+  const texts = new Map<string, string>()
+  for (let i = 0; i <= anchorIndex; i += 1) {
+    const event = events[i]
+    if (event.kind === 'agent_message' && event.messageId) {
+      texts.set(event.messageId, (texts.get(event.messageId) ?? '') + event.text)
+    }
+  }
+  const anchorText = texts.get(anchorId) ?? ''
+  let occurrence = 0
+  for (const [messageId, text] of texts) {
+    if (text === anchorText) {
+      occurrence += 1
+    }
+    if (messageId === anchorId) {
+      break
+    }
+  }
+  return {
+    messageFingerprint: `sha256:${createHash('sha256').update(anchorText, 'utf8').digest('hex')}`,
+    messageOccurrence: occurrence,
+  }
 }
 
 // Whether a prompt to this agent may carry an image block, which is ACP's
@@ -2249,6 +2330,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       resumeSession: false,
       steeringSupported: false,
       forkSupported: false,
+      closeSupported: false,
       imagePrompt: false,
       initialized: Promise.resolve(),
     }
@@ -2336,6 +2418,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           (initResult as { agentCapabilities?: { sessionCapabilities?: { fork?: unknown } } }).agentCapabilities
             ?.sessionCapabilities?.fork,
         )
+        entry.closeSupported =
+          (initResult as { agentCapabilities?: { sessionCapabilities?: { close?: unknown } } }).agentCapabilities
+            ?.sessionCapabilities?.close != null
         // Prompt capabilities, unlike the session ones, are declared as real
         // booleans — so this one is read as a boolean and not for presence.
         // Measured 2026-09-22: claude-agent-acp 0.79.0 and opencode 1.18.32
@@ -2380,11 +2465,24 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       store.acpTokenSession.set(token, sessionId)
       mcpServers = tagInternal(internal, servers, token)
     }
-    await connection.resumeSession({
+    // Copied before the resume: reconcileResumedState compares against it, and
+    // the live record is what the resume's answer overwrites.
+    const logged = { modes: session.modes ? { ...session.modes } : null, configOptions: session.configOptions }
+    // A harness whose resume rejoins a live session rather than rebuilding it
+    // would keep its old MCP servers; closing first makes the resume a fresh
+    // start (see HarnessAdapter.mcpRefreshReopens). A close that fails leaves
+    // the session as it was, which is the state a plain resume handles — so it
+    // does not stop the resume.
+    const entry = connEntryFor(session.selection)
+    if (findAdapter(session.selection.adapterId)?.mcpRefreshReopens === true && entry?.closeSupported === true) {
+      await connection.closeSession({ sessionId }).catch(() => undefined)
+    }
+    const response = await connection.resumeSession({
       sessionId,
       cwd: session.selection.cwd,
       mcpServers,
     })
+    await reconcileResumedState(sessionId, connection, response, logged)
   }
 
   // The connection entry backing a selection (subprocess connections only;
@@ -2417,6 +2515,99 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const options = store.sessions.get(sessionId)?.configOptions
     if (options) {
       emit(sessionId, { kind: 'config_options', options })
+    }
+  }
+
+  // What a resumed session actually runs on once the harness has answered —
+  // and, where the harness dropped a choice the reader made, that choice put
+  // back.
+  //
+  // `session/resume` answers with the session's modes and config options, and
+  // the answer is not always what this side holds. codex-acp 1.13.1 rebuilds
+  // its session state on every resume and starts it on its initial mode
+  // (AgentMode.getInitialAgentMode: INITIAL_AGENT_MODE, else `agent`) whatever
+  // the session ran on before; claude-agent-acp 0.79.0 does the same when the
+  // resume carries a different MCP server list, because it rebuilds the
+  // session (getOrCreateSession). Ignoring the answer showed the reader a mode
+  // the harness no longer ran.
+  //
+  // Adopting the answer alone would be truthful and still wrong: a session the
+  // reader put on "Ask for approval" would come back on "Approve for me" — a
+  // looser permission nobody chose — on every process restart and every MCP
+  // refresh, and a message drained from the queue right after would run under
+  // it. So the answer is adopted first, as the truth to fall back on, and each
+  // logged choice the harness still offers is then applied again. A choice it
+  // no longer offers stays as reported; one it refuses stays as reported and
+  // is said in the chat, not swallowed.
+  //
+  // Snapshots are emitted only when the end state differs from the logged one:
+  // a resume that changed nothing — every resume on a harness that keeps its
+  // state — must not append to the host's log each time a chat reopens.
+  async function reconcileResumedState(
+    sessionId: string,
+    connection: AgentConnection,
+    response: { modes?: ResumedModes | null; configOptions?: SessionConfigOption[] | null } | null | undefined,
+    logged: { modes: SessionModes | null; configOptions: SessionConfigOption[] },
+  ): Promise<void> {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
+      return
+    }
+    if (response?.modes) {
+      session.modes = toSessionModes(response.modes)
+    }
+    if (response?.configOptions) {
+      session.configOptions = response.configOptions
+    }
+    const refused: string[] = []
+    const wantedMode = logged.modes?.current
+    if (
+      wantedMode &&
+      session.modes &&
+      session.modes.current !== wantedMode &&
+      session.modes.available.some((mode) => mode.id === wantedMode)
+    ) {
+      try {
+        await connection.setSessionMode({ sessionId, modeId: wantedMode })
+        session.modes.current = wantedMode
+      } catch (error) {
+        refused.push(`mode "${wantedMode}": ${errorMessage(error)}`)
+      }
+    }
+    // In logged order, each against the harness's CURRENT options: setting one
+    // answers with the whole fresh list, and a change (a model) can reshape
+    // another (the efforts that model offers).
+    for (const wanted of logged.configOptions) {
+      const current = session.configOptions.find((option) => option.id === wanted.id)
+      if (!current || current.type !== wanted.type || current.currentValue === wanted.currentValue) {
+        continue
+      }
+      if (
+        current.type === 'select' &&
+        !selectOptionValues(current.options).some((choice) => choice.value === wanted.currentValue)
+      ) {
+        continue
+      }
+      try {
+        const answer = await connection.setSessionConfigOption(
+          configOptionRequest(sessionId, current.id, current, wanted.currentValue),
+        )
+        session.configOptions = answer.configOptions
+      } catch (error) {
+        refused.push(`${current.name || current.id} "${String(wanted.currentValue)}": ${errorMessage(error)}`)
+      }
+    }
+    if (JSON.stringify(session.modes) !== JSON.stringify(logged.modes)) {
+      emitSessionModes(sessionId)
+    }
+    if (JSON.stringify(session.configOptions) !== JSON.stringify(logged.configOptions)) {
+      emitConfigOptions(sessionId)
+    }
+    if (refused.length > 0) {
+      emit(sessionId, {
+        kind: 'error',
+        message: `The agent came back without the session's earlier ${refused.length === 1 ? 'setting' : 'settings'} and would not take ${refused.length === 1 ? 'it' : 'them'} back — ${refused.join('; ')}.`,
+      })
     }
   }
 
@@ -4014,6 +4205,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             emitConfigOptions(sessionId)
           }
         }
+        // Modes by the same rule. codex-acp 1.13.1 replays thread items only
+        // (CodexAcpServer.streamThreadHistory) — never a current_mode_update —
+        // so without this seed a loaded Codex session offered no mode at all.
+        if (response.modes) {
+          const session = store.sessions.get(sessionId)
+          if (session && !session.modes) {
+            session.modes = toSessionModes(response.modes)
+            emitSessionModes(sessionId)
+          }
+        }
       } catch (error) {
         // Transcript gone or agent refused — unwind the half-registered session
         // so the caller can cleanly create a fresh one. A notification the host
@@ -4160,8 +4361,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       for (const subagentSessionId of state.subagents.keys()) {
         store.subagentParents.set(subagentSessionId, state.subagentParents.get(subagentSessionId) ?? sessionId)
       }
+      let response: Awaited<ReturnType<AgentConnection['resumeSession']>>
       try {
-        await connection.resumeSession({ sessionId, cwd: selection.cwd, mcpServers })
+        response = await connection.resumeSession({ sessionId, cwd: selection.cwd, mcpServers })
       } catch (error) {
         // The agent could not take the session back — unwind the half-registered
         // record so the caller can cleanly fall back to a replay or a fresh
@@ -4177,6 +4379,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
         throw error
       }
+      // Before the drain below, so a message held for this session runs under
+      // the settings its log says it had, not the ones the harness restarted
+      // with.
+      await reconcileResumedState(sessionId, connection, response, {
+        modes: state.modes ? { ...state.modes } : null,
+        configOptions: state.configOptions,
+      })
       // After the reattach, for the reason loadSession restores after its
       // replay: a drain must not deliver into a session the agent has not
       // taken back yet.
@@ -4261,11 +4470,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       const connection = await connectionForSession(sessionId)
       const session = store.sessions.get(sessionId)
       const option = session?.configOptions.find((entry) => entry.id === configId)
-      const request =
-        option?.type === 'boolean'
-          ? { sessionId, configId, type: 'boolean' as const, value: Boolean(value) }
-          : { sessionId, configId, value: String(value) }
-      const response = await connection.setSessionConfigOption(request)
+      const response = await connection.setSessionConfigOption(configOptionRequest(sessionId, configId, option, value))
       if (session) {
         session.configOptions = response.configOptions
       }

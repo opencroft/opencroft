@@ -4655,12 +4655,26 @@ test('forkSession over ACP forks the agent session, rewinds the log, and adopts 
   // The cutoff travels as the agent's own fork-point dialect, anchored on the
   // last agent message BEFORE the dropped turn: the agent keeps its transcript
   // up to the first turn's reply, and the second turn and its reply are gone.
+  // The anchor is named by id and by content, so a harness whose ids moved
+  // can still find it (see the fingerprint tests below).
   assert.deepEqual(h.forkCalls, [
     {
       sessionId: h.sessionId,
       cwd: h.selection.cwd,
       mcpServers: [],
-      _meta: { jetbrains: { air: { fork: { version: 1, messageId: 'msg_first' } } } },
+      _meta: {
+        jetbrains: {
+          air: {
+            fork: {
+              version: 1,
+              messageId: 'msg_first',
+              // sha256("first reply")
+              messageFingerprint: 'sha256:9b3ae2aded0bac2ca5da884965ca69f5951e25b12d550d9e59a61aeca9ffc8c6',
+              messageOccurrence: 1,
+            },
+          },
+        },
+      },
     },
   ])
 
@@ -6202,6 +6216,470 @@ test('an empty notification starts no turn and is not reported as delivered', as
   assert.equal(await h.client.notify(h.sessionId, ' \n '), false)
   assert.deepEqual(h.promptCalls, [])
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── Codex session lifecycle: fork, resume, load ────────────────────────────
+//
+// Contract tests against codex-acp 1.13.1, each fixture spelled the way that
+// source spells it (file named per fixture). Nothing here ran against a live
+// Codex: the harness is modelled on the source, not recorded from it.
+
+// Every agent message in the log, one turn each, streamed in the chunks given.
+// A chunk without an id is sent without one, as a harness notice would be.
+async function historyOf(
+  h: Awaited<ReturnType<typeof setup>>,
+  turns: Array<Array<{ text: string; messageId?: string } | { subagentText: string }>>,
+): Promise<void> {
+  const push = (sessionId: string, update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  for (const [index, chunks] of turns.entries()) {
+    await h.client.prompt(h.sessionId, `turn ${index}`, {
+      queue: 'wait',
+      origin: { kind: 'message', sender: 'Reader' },
+    })
+    for (const chunk of chunks) {
+      if ('subagentText' in chunk) {
+        const childId = `${h.sessionId}:subagent:${index}`
+        push(h.sessionId, {
+          sessionUpdate: 'subagent_spawned',
+          subagentSessionId: childId,
+          name: 'Helper',
+          task: 'help',
+          capabilities: {},
+        })
+        push(childId, {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: chunk.subagentText },
+          messageId: `${childId}:msg`,
+        })
+        continue
+      }
+      push(h.sessionId, {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: chunk.text },
+        ...(chunk.messageId ? { messageId: chunk.messageId } : {}),
+      })
+    }
+    h.endTurn()
+    await settle()
+  }
+}
+
+function forkPointOf(call: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return (call?._meta as { jetbrains?: { air?: { fork?: Record<string, unknown> } } } | undefined)?.jetbrains?.air?.fork
+}
+
+test('a fork point names its anchor by content too: the fingerprint of the whole message and its occurrence', async () => {
+  // codex-acp SessionFork.ts falls back to messageFingerprint/messageOccurrence
+  // when the message id is gone from its thread; its own test ("maps a
+  // persisted AIR message fingerprint when Codex item ids changed",
+  // __tests__/CodexACPAgent/CodexAcpClient.test.ts) forks at the SECOND of two
+  // "Same answer" messages with exactly this fingerprint and occurrence 2.
+  // The same literal here is the cross-check that both sides hash the same
+  // bytes.
+  const h = await setup('openclaw', { forkSupported: true })
+  await historyOf(h, [
+    // Streamed in two chunks: the fingerprint is of the joined message, not
+    // of a chunk.
+    [
+      { text: 'Same ', messageId: 'item-1' },
+      { text: 'answer', messageId: 'item-1' },
+    ],
+    // Identical texts that are NOT agent messages of this session must not
+    // count: a subagent's own message, and a chunk the harness sent without
+    // an id (neither harness can match one).
+    [{ subagentText: 'Same answer' }, { text: 'Same answer' }, { text: 'Other answer', messageId: 'item-2' }],
+    [{ text: 'Same answer', messageId: 'item-3' }],
+    [{ text: 'Later', messageId: 'item-4' }],
+  ])
+
+  await h.client.forkSession(h.sessionId, 3)
+
+  assert.deepEqual(forkPointOf(h.forkCalls[0]), {
+    version: 1,
+    messageId: 'item-3',
+    messageFingerprint: 'sha256:41153d2b46c2869f4021958d44dac18888247fd999507c28970be299a8de4a0f',
+    messageOccurrence: 2,
+  })
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('the first of two identical messages is occurrence 1, and a later duplicate does not move it', async () => {
+  // claude-agent-acp 0.79.0 (fork-session.js) counts along the branch UP TO
+  // the target, so a duplicate after the anchor is not part of its count
+  // either; codex-acp takes the Nth match in thread order, which agrees.
+  const h = await setup('openclaw', { forkSupported: true })
+  await historyOf(h, [[{ text: 'Same answer', messageId: 'item-1' }], [{ text: 'Same answer', messageId: 'item-2' }]])
+
+  await h.client.forkSession(h.sessionId, 1)
+
+  const point = forkPointOf(h.forkCalls[0])
+  assert.equal(point?.messageId, 'item-1')
+  assert.equal(point?.messageOccurrence, 1)
+  await h.client.deleteSession(h.sessionId)
+})
+
+// codex-acp's modes, as AgentMode.toSessionModeState() spells them
+// (src/AgentMode.ts).
+const CODEX_MODES = [
+  {
+    id: 'read-only',
+    name: 'Ask for approval',
+    description: 'Always ask to edit external files and use the internet',
+    _meta: { kind: 'standard' },
+  },
+  {
+    id: 'agent',
+    name: 'Approve for me',
+    description: 'Only ask for actions detected as potentially unsafe',
+    _meta: { kind: 'auto_review' },
+  },
+  {
+    id: 'agent-full-access',
+    name: 'Full access',
+    description: 'Unrestricted access to the internet and any file on your computer',
+    _meta: { kind: 'full_access' },
+  },
+]
+
+// codex-acp's config options for a session state: AgentMode.toConfigOption()
+// (src/AgentMode.ts) and createModelConfigOption (src/ModelConfigOption.ts),
+// in the order CodexAcpServer.createSessionConfigOptions lists them.
+function codexConfigOptions(state: { mode: string; model: string }) {
+  return [
+    {
+      id: 'mode',
+      name: 'Mode',
+      description: 'Approval and sandboxing preset for the session',
+      category: 'mode',
+      type: 'select',
+      currentValue: state.mode,
+      options: CODEX_MODES.map((mode) => ({
+        value: mode.id,
+        name: mode.name,
+        description: mode.description,
+        _meta: mode._meta,
+      })),
+    },
+    {
+      id: 'model',
+      name: 'Model',
+      description: 'Model Codex uses for the session',
+      category: 'model',
+      type: 'select',
+      currentValue: state.model,
+      options: [
+        { value: 'gpt-5', name: '5', description: null },
+        { value: 'gpt-5-codex', name: '5 Codex', description: null },
+      ],
+    },
+  ]
+}
+
+// What the host logged for a Codex session the reader had put on `mode`.
+function recordedCodexSession(mode: string, available = CODEX_MODES): ChatEvent[] {
+  return [
+    {
+      kind: 'modes',
+      available: available.map((entry) => ({ id: entry.id, name: entry.name, description: entry.description })),
+      current: mode,
+    },
+    { kind: 'config_options', options: codexConfigOptions({ mode, model: 'gpt-5' }) } as ChatEvent,
+    { kind: 'user', text: 'fix it' },
+    { kind: 'agent_message', text: 'fixed', messageId: 'item-1' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]
+}
+
+// A connection that behaves like codex-acp 1.13.1 across a resume:
+// tryCreateSession (CodexAcpServer.ts) installs a fresh SessionState on every
+// session/resume with `agentMode: AgentMode.getInitialAgentMode()` — `agent`
+// unless INITIAL_AGENT_MODE says otherwise — while the model comes back from
+// the thread; resumeSession answers with `modes` and `configOptions` built
+// from that state. setSessionMode and the `mode` config option both write
+// the same agentMode (applyModeChange), and neither sends a notification.
+//
+// `keepsState` models the other kind of harness: one whose resume of a live
+// session answers with what it already had (claude-agent-acp 0.79.0,
+// getOrCreateSession, when the resume changes nothing).
+function codexSetup(
+  options: { closeSupported?: boolean; refuseMode?: boolean; keepsState?: boolean; startMode?: string } = {},
+) {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+    sessionKey: `codex-key-${counter}`,
+  }
+  const sessionId = `codex-thread-${counter}`
+  const state = { mode: options.startMode ?? 'agent', model: 'gpt-5' }
+  const wire: string[] = []
+  const setMode = (modeId: string) => {
+    if (options.refuseMode) {
+      throw new Error('Invalid params')
+    }
+    state.mode = modeId
+  }
+  const connection = {
+    resumeSession: async () => {
+      wire.push('resume')
+      if (!options.keepsState) {
+        state.mode = 'agent'
+      }
+      return {
+        modes: { availableModes: CODEX_MODES, currentModeId: state.mode },
+        configOptions: codexConfigOptions(state),
+      }
+    },
+    closeSession: async () => {
+      wire.push('close')
+      return {}
+    },
+    setSessionMode: async (params: { modeId: string }) => {
+      wire.push(`mode:${params.modeId}`)
+      setMode(params.modeId)
+      return {}
+    },
+    setSessionConfigOption: async (params: { configId: string; value: string }) => {
+      wire.push(`config:${params.configId}=${params.value}`)
+      if (params.configId === 'mode') {
+        setMode(params.value)
+      } else {
+        state.model = params.value
+      }
+      return { configOptions: codexConfigOptions(state) }
+    },
+  } as unknown as AgentConnection
+  acpStore().connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    resumeSession: true,
+    forkSupported: false,
+    closeSupported: options.closeSupported === true,
+    initialized: Promise.resolve(),
+  })
+  const observed: ChatEvent[] = []
+  const client = createAgentClient({ onEvent: (_sessionId, event) => observed.push(event) })
+  return { client, sessionId, selection, wire, state, observed }
+}
+
+function storedConfigOptions(sessionId: string): unknown {
+  return (acpStore().sessions.get(sessionId) as { configOptions: unknown }).configOptions
+}
+
+test('a restored Codex session gets back the mode its log recorded, not the one the harness restarted on', async () => {
+  const h = codexSetup()
+
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('read-only'))
+
+  // The mode travels both ways Codex takes it; neither answer tells us the
+  // other changed, so both are set. Both write one field, so the second is a
+  // no-op on the harness.
+  assert.deepEqual(h.wire, ['resume', 'mode:read-only', 'config:mode=read-only'])
+  assert.equal(h.state.mode, 'read-only', 'the harness runs on the logged choice again')
+  assert.equal(h.client.sessionModes(h.sessionId)?.current, 'read-only')
+  assert.deepEqual(storedConfigOptions(h.sessionId), codexConfigOptions({ mode: 'read-only', model: 'gpt-5' }))
+  // The end state is the logged one, so nothing is appended to the host log:
+  // a snapshot per reopen would grow every Codex chat each time it opened.
+  assert.deepEqual(
+    h.observed.filter((event) => event.kind === 'modes' || event.kind === 'config_options' || event.kind === 'error'),
+    [],
+  )
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a harness that kept its state is sent nothing after a resume', async () => {
+  // The Claude bridge answers a resume of an unchanged live session with the
+  // modes and options it already had: nothing differs, nothing is set.
+  const h = codexSetup({ keepsState: true, startMode: 'read-only' })
+
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('read-only'))
+
+  assert.deepEqual(h.wire, ['resume'])
+  assert.deepEqual(h.observed, [])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a logged choice the harness no longer offers gives way to what the harness reports', async () => {
+  const retired = [
+    ...CODEX_MODES,
+    { id: 'retired', name: 'Retired', description: 'Gone in this version', _meta: { kind: 'standard' } },
+  ]
+  const h = codexSetup()
+
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('retired', retired))
+
+  assert.deepEqual(h.wire, ['resume'], 'nothing is asked for that the harness does not offer')
+  assert.equal(h.client.sessionModes(h.sessionId)?.current, 'agent', 'the reader sees what actually runs')
+  const modes = h.observed.filter((event) => event.kind === 'modes')
+  assert.equal(modes.length, 1, 'and the log learns it once')
+  assert.equal(modes[0].kind === 'modes' && modes[0].current, 'agent')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a harness that refuses the logged choice keeps its own, and the chat says so', async () => {
+  const h = codexSetup({ refuseMode: true })
+
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('read-only'))
+
+  assert.equal(h.client.sessionModes(h.sessionId)?.current, 'agent', 'not the choice the harness turned down')
+  const configMode = (storedConfigOptions(h.sessionId) as Array<{ id: string; currentValue: unknown }>).find(
+    (option) => option.id === 'mode',
+  )
+  assert.equal(configMode?.currentValue, 'agent')
+  const errors = h.observed.filter((event) => event.kind === 'error')
+  assert.equal(errors.length, 1)
+  assert.match(errors[0].kind === 'error' ? errors[0].message : '', /read-only/)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an MCP refresh resume puts the logged choice back too', async () => {
+  const h = codexSetup()
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('read-only'))
+  h.wire.length = 0
+
+  await h.client.resumeSession(h.sessionId)
+
+  assert.deepEqual(
+    h.wire,
+    ['resume', 'mode:read-only', 'config:mode=read-only'],
+    'no close: the adapter did not opt in',
+  )
+  assert.equal(h.client.sessionModes(h.sessionId)?.current, 'read-only')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an adapter that opts in closes before the refresh resume, and only when the agent can close', async () => {
+  const adapter = findAdapter('openclaw')
+  assert.ok(adapter)
+  adapter.mcpRefreshReopens = true
+  try {
+    const closing = codexSetup({ closeSupported: true })
+    await closing.client.restoreSession(closing.sessionId, closing.selection, recordedCodexSession('read-only'))
+    closing.wire.length = 0
+    await closing.client.resumeSession(closing.sessionId)
+    assert.deepEqual(closing.wire.slice(0, 2), ['close', 'resume'])
+    assert.equal(closing.client.sessionModes(closing.sessionId)?.current, 'read-only')
+    await closing.client.deleteSession(closing.sessionId)
+
+    const unable = codexSetup({ closeSupported: false })
+    await unable.client.restoreSession(unable.sessionId, unable.selection, recordedCodexSession('read-only'))
+    unable.wire.length = 0
+    await unable.client.resumeSession(unable.sessionId)
+    assert.equal(unable.wire[0], 'resume', 'an agent that never advertised close is not sent one')
+    await unable.client.deleteSession(unable.sessionId)
+  } finally {
+    delete adapter.mcpRefreshReopens
+  }
+})
+
+test('a Codex session/load replay rebuilds the transcript and seeds modes and options from the answer', async () => {
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `codex-loaded-${counter}`
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    // CodexAcpServer.loadSession streams each thread item through
+    // createHistoryUpdates, then answers with models, modes and options.
+    loadSession: async () => {
+      // userMessage -> createUserMessageChunk (src/ContentChunks.ts)
+      push({ sessionUpdate: 'user_message_chunk', messageId: 'item-user-1', content: { type: 'text', text: 'Fix it' } })
+      // reasoning -> createAgentTextThoughtChunk, one per summary part
+      push({
+        sessionUpdate: 'agent_thought_chunk',
+        messageId: 'item-reasoning-1',
+        content: { type: 'text', text: 'Reading the failing step' },
+      })
+      // commandExecution -> createCommandExecutionUpdate +
+      // createCommandExecutionCompleteUpdate (src/CodexToolCallMapper.ts)
+      push({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'item-cmd-1',
+        kind: 'execute',
+        title: 'npm test',
+        status: 'completed',
+        content: [{ type: 'terminal', terminalId: 'item-cmd-1' }],
+        rawInput: { command: 'npm test', cwd: '/workspace' },
+        _meta: { terminal_info: { cwd: '/workspace', terminal_id: 'item-cmd-1' } },
+      })
+      push({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'item-cmd-1',
+        status: 'completed',
+        rawOutput: { formatted_output: 'ok', exit_code: 0 },
+      })
+      // agentMessage -> one agent_message_chunk carrying the whole text
+      push({
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'item-agent-1',
+        content: { type: 'text', text: 'Fixed.' },
+        _meta: { codex: { phase: 'final_answer' } },
+      })
+      // plan -> createPlanHistoryUpdate: a client that did not declare the
+      // `plan` capability (this one does not) gets the plan as an agent
+      // message in the final_answer phase, under the plan item's id.
+      push({
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'item-plan-1',
+        content: { type: 'text', text: '1. Ship it' },
+        _meta: { codex: { phase: 'final_answer' } },
+      })
+      // contextCompaction -> createCompactionUpdate (src/CodexSessionCompactions.ts),
+      // since this client declares session.compaction
+      push({ sessionUpdate: 'compaction_update', compactionId: 'item-compact-1', status: 'completed' })
+      return {
+        modes: { availableModes: CODEX_MODES, currentModeId: 'agent' },
+        configOptions: codexConfigOptions({ mode: 'agent', model: 'gpt-5' }),
+      }
+    },
+  } as unknown as AgentConnection
+  acpStore().connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+
+  assert.ok(await client.loadSession(sessionId, selection))
+
+  const events = sessionEvents(sessionId)
+  const conversation = events.filter((event) =>
+    ['user', 'agent_thought', 'tool_call', 'tool_update', 'agent_message', 'compaction'].includes(event.kind),
+  )
+  assert.deepEqual(kinds(conversation), [
+    'user',
+    'agent_thought',
+    'tool_call',
+    'tool_update',
+    'agent_message',
+    'agent_message',
+    'compaction',
+  ])
+  // The ids survive: they are what a later fork point names.
+  assert.deepEqual(
+    conversation.map((event) => ('messageId' in event ? event.messageId : undefined)),
+    ['item-user-1', 'item-reasoning-1', undefined, undefined, 'item-agent-1', 'item-plan-1', undefined],
+  )
+  const compaction = conversation.at(-1)
+  assert.equal(compaction?.kind === 'compaction' && compaction.compaction.status, 'completed')
+  // A replay that ends on a settled compaction closed its turn.
+  assert.deepEqual(events.at(-1), { kind: 'turn_end', stopReason: 'replayed' })
+  // Codex replays no current_mode_update, so the answer is the only source.
+  assert.equal(client.sessionModes(sessionId)?.current, 'agent')
+  assert.deepEqual(storedConfigOptions(sessionId), codexConfigOptions({ mode: 'agent', model: 'gpt-5' }))
+  await client.deleteSession(sessionId)
 })
 
 // Last in the file, after the reset above: refreshMcpServers resumes EVERY
