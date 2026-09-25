@@ -330,52 +330,75 @@ export function rebuildDelivery(original: string, texts: (string | null)[]): str
 }
 
 /**
- * The texts `rebuildDelivery` takes, from a delivered turn and the edits made to
- * it: every message as delivered, except where an edit names its position.
+ * One message's edit: its new words, keyed by its position in the delivered
+ * turn, and -- when the reader changed them -- the COMPLETE list of what it now
+ * carries beside its words. Absent `attachments` means "as delivered".
+ */
+export interface TurnEdit<A> {
+  index: number
+  text: string
+  attachments?: readonly A[]
+}
+
+/**
+ * An edited turn put back together: the text to re-deliver and the attachments
+ * it carries, each positioned on the message it now belongs to.
  *
- * An edit whose words are blank REMOVES its message (`null`) rather than
- * leaving an empty one behind. An empty message is not something anybody said,
- * and sent on it would still carry a tag naming its author.
+ * A message is REMOVED when it is left with nothing: blank words and nothing
+ * attached. Blank words with attachments keep the message, empty-bodied, since
+ * what travels with it is still something somebody sent. A removed message
+ * leaves no body and no tag, and the survivors' attachments are renumbered to
+ * where their messages now stand.
  *
  * `place` puts an edit's words where the message's old text stood. By default
  * the words replace it outright; a host that wraps each message in context of
  * its own passes the function that carries that context over.
+ *
+ * Attachments are opaque here beyond their position: resolving and vetting what
+ * an edit names is the caller's, before this is reached.
  */
-export function applyTurnEdits(
+export function rebuildTurn<A extends object>(
   original: string,
-  edits: readonly { index: number; text: string }[],
+  attachments: readonly (A & { message: number })[],
+  edits: readonly TurnEdit<A>[],
   place: (current: string, words: string) => string = (_current, words) => words,
-): (string | null)[] {
-  const texts: (string | null)[] = splitDelivery(original).messages.map((message) => message.text)
+): { text: string; attachments: (A & { message: number })[] } {
+  const { messages } = splitDelivery(original)
+  const texts = messages.map((message) => message.text)
+  const carried: (readonly A[])[] = messages.map((_, index) =>
+    attachments.filter((attachment) => attachment.message === index),
+  )
+  const blank = messages.map(() => false)
+  const edited = new Set<number>()
   for (const edit of edits) {
-    const current = texts[edit.index]
-    if (current === undefined || current === null) {
+    if (texts[edit.index] === undefined) {
       throw new Error(`Edited message ${edit.index} is not in a turn of ${texts.length}`)
     }
-    texts[edit.index] = edit.text.trim() === '' ? null : place(current, edit.text)
+    if (edited.has(edit.index)) {
+      throw new Error(`Edited message ${edit.index} is edited twice`)
+    }
+    edited.add(edit.index)
+    texts[edit.index] = place(texts[edit.index], edit.text)
+    blank[edit.index] = edit.text.trim() === ''
+    if (edit.attachments) {
+      carried[edit.index] = edit.attachments
+    }
   }
-  return texts
-}
-
-/**
- * The attachments of a delivery after `rebuildDelivery` removed some of its
- * messages: a removed message's attachments go with it, and every survivor's
- * position is renumbered to where its message now stands.
- *
- * `texts` is the same array handed to `rebuildDelivery`, so the two cannot
- * disagree about which messages survived.
- */
-export function rebuildAttachments<T extends { message: number }>(
-  attachments: readonly T[],
-  texts: readonly (string | null)[],
-): T[] {
-  const positions: number[] = []
-  let next = 0
-  for (const text of texts) {
-    positions.push(text === null ? -1 : next++)
-  }
-  return attachments.flatMap((attachment) => {
-    const message = positions[attachment.message] ?? -1
-    return message === -1 ? [] : [{ ...attachment, message }]
+  const removed = messages.map((_, index) => blank[index] && carried[index].length === 0)
+  const text = rebuildDelivery(
+    original,
+    texts.map((message, index) => (removed[index] ? null : message)),
+  )
+  const rebuilt: (A & { message: number })[] = []
+  let position = 0
+  carried.forEach((list, index) => {
+    if (removed[index]) {
+      return
+    }
+    for (const attachment of list) {
+      rebuilt.push({ ...attachment, message: position })
+    }
+    position += 1
   })
+  return { text, attachments: rebuilt }
 }

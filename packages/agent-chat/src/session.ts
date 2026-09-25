@@ -1,3 +1,4 @@
+import type { TurnEdit } from 'agent-client/queue-tags'
 import type { AvailableCommand, ElicitationContentValue, ElicitationSchema, PermissionOpt } from 'agent-client/types'
 
 import type { EditablePart } from './user-parts'
@@ -81,7 +82,9 @@ export interface AgentChatSession {
   // Display name shown as the conversation's speaker when the host does not
   // override it with its own `agentName` prop.
   botName: string
-  send: (text: string) => void
+  // `attachments` are the stored ids of pictures going with the message, as the
+  // host's own `uploadPicture` answered them (see the composer hook).
+  send: (text: string, options?: { attachments?: readonly string[] }) => void
   // Cancels the in-flight turn. Absent on a session with no live process to
   // cancel (e.g. a placeholder session with nothing selected yet).
   // Stop absorbs the interrupt: with unread messages held, stopping cancels
@@ -128,13 +131,15 @@ export interface AgentChatSession {
   // Commit the turn: re-send it with these words in place of the messages at
   // these positions, everything else unchanged. Only the messages the reader
   // actually changed need be listed, and each carries the position it
-  // replaces — the array's own order says nothing. Blank words REMOVE that
-  // message from the re-sent turn, tag and all, rather than sending it empty.
+  // replaces — the array's own order says nothing. `attachments`, present only
+  // when the reader changed a message's pictures, is that message's COMPLETE
+  // list of stored picture ids. A message left with blank words and no pictures
+  // is REMOVED from the re-sent turn, tag and all, rather than sent empty.
   //
-  // Words only, never authorship: who sent each message and when is the
-  // transcript's, and a host resolves it from the stored turn rather than
-  // accepting it from whatever asked for the edit.
-  commitEdit?: (edits: { index: number; text: string }[]) => void
+  // Words and picture ids only, never authorship: who sent each message and
+  // when is the transcript's, and a host resolves it from the stored turn
+  // rather than accepting it from whatever asked for the edit.
+  commitEdit?: (edits: TurnEdit<string>[]) => void
   // Composer draft staged by `editMessage`; the composer's own text syncs to
   // it when it changes. Distinct from a host's own persisted composer draft
   // (loaded once when the session opens) — this one stages an in-progress

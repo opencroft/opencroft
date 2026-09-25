@@ -3,6 +3,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { buildBlocks, type ChatBlock, foldEvents } from 'agent-client/fold'
 import type { AgentProfile } from 'agent-client/profiles'
+import type { TurnEdit } from 'agent-client/queue-tags'
 import type { AgentSelection, AvailableCommand, ChatEvent, QueuedPrompt, SessionMode } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -373,7 +374,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   // leaves the reader's words where they typed them instead of closing the bar
   // on an edit that never happened.
   const commitEdit = useCallback(
-    (edits: { index: number; text: string }[]) => {
+    (edits: TurnEdit<string>[]) => {
       const open = edit
       if (!sessionId || !open) {
         return

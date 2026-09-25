@@ -9,6 +9,7 @@ import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
 import { compactionView, isTerminalToolStatus } from 'agent-client/fold'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
+import type { TurnEdit } from 'agent-client/queue-tags'
 import type {
   AsyncTaskInfo,
   AvailableCommand,
@@ -31,11 +32,13 @@ import {
   type ResolvedAuthor,
   SESSION_GONE_KIND,
 } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { attachmentSrc } from '@/app/_authed/(agent)/_lib/attachment-src'
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import { useReconnect } from '@/app/_authed/(agent)/_lib/use-reconnect'
 import {
+  attachmentSizes,
   cancelLocal,
   deliverQueueLocal,
   editTurnLocal,
@@ -1161,14 +1164,36 @@ export function useAcpSession(
   // start of a line, so the client would decode fewer messages than the server
   // and commit a body into the wrong one. Stripping happens per message here
   // instead, which is what `toEditableParts`' render seam is for.
+  //
+  // The turn's pictures open with it, each on the message it came with, drawn
+  // from the store and labelled with its stored size. The sizes are looked up
+  // BEFORE the editor opens: the composer seeds its pictures once per opened
+  // turn, so a size arriving afterwards would never reach the chips.
   const editMessage = useCallback(
-    (blockId: string) => {
+    async (blockId: string) => {
       const message = folded.messages.find((m) => m.role === 'user' && `u:${m.id}` === blockId)
       const raw = message?.parts.find((part) => part.type === 'text')
-      if (!message || !raw) {
+      if (!message || (!raw && !message.attachments?.length)) {
         return
       }
-      const parts = toEditableParts(raw.text, userText)
+      const delivered = message.attachments ?? []
+      const sizes =
+        delivered.length > 0
+          ? await attachmentSizes({ data: { tabKey, ids: delivered.map((picture) => picture.id) } }).catch(
+              () => ({}) as Record<string, number>,
+            )
+          : {}
+      const parts = toEditableParts(
+        raw?.text ?? '',
+        userText,
+        delivered.map((picture) => ({
+          id: picture.id,
+          name: picture.name,
+          message: picture.message,
+          src: attachmentSrc(tabKey, picture.id),
+          byteSize: sizes[picture.id],
+        })),
+      )
       // A turn with nothing editable in it -- every message was application
       // context -- opens no editor rather than an empty one.
       if (parts.length === 0) {
@@ -1178,7 +1203,7 @@ export function useAcpSession(
       // (see ChatMessage.id), which is the numbering the server indexes by.
       setEdit({ eventIndex: message.id, parts })
     },
-    [folded.messages],
+    [folded.messages, tabKey],
   )
 
   const cancelEdit = useCallback(() => setEdit(undefined), [])
@@ -1237,7 +1262,7 @@ export function useAcpSession(
   // composer where they were, and `sendError` says what happened -- the same
   // pair a failed send uses.
   const commitEdit = useCallback(
-    (edits: { index: number; text: string }[]) => {
+    (edits: TurnEdit<string>[]) => {
       const open = edit
       if (!sessionId || !open) {
         return

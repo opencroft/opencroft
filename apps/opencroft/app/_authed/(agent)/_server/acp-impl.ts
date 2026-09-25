@@ -28,8 +28,9 @@ import { join } from 'node:path'
 import { getSessionUser } from '@opencroft/auth/server'
 import { getRequest } from '@tanstack/react-start/server'
 import { supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
+import type { AttachmentRef } from 'agent-client/attachments'
 import { usableContextWindow } from 'agent-client/context-window'
-import { applyTurnEdits, rebuildAttachments, rebuildDelivery } from 'agent-client/queue-tags'
+import { rebuildTurn, type TurnEdit } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
 
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
@@ -50,6 +51,7 @@ import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import {
   AttachmentRejected,
   clearAttachments,
+  readAttachmentSizes,
   resolveAttachmentRefs,
   type StoredAttachment,
   saveAttachment,
@@ -328,6 +330,39 @@ export async function attachImageImpl(data: {
   return saveAttachment({ sessionKey: data.tabKey, name: data.name, mimeType: data.mimeType, data: data.data })
 }
 
+/**
+ * The pictures a message may carry out of this tab, resolved from the stored
+ * ids it names -- the ONE check every path that sends pictures goes through: an
+ * ordinary send, and an edit's re-send of the pictures a reader left or added.
+ *
+ * Refuses rather than drops, for each reason a picture could not travel: no
+ * open chat to belong to, an agent that did not advertise image prompts, or an
+ * id that is not a row of this conversation (see resolveAttachmentRefs). A
+ * message that quietly lost a picture is the failure this is built against.
+ */
+async function resolveOutgoingPictures(tabKey: string | undefined, ids: readonly string[]): Promise<AttachmentRef[]> {
+  if (ids.length === 0) {
+    return []
+  }
+  if (!tabKey) {
+    throw new AttachmentRejected('pictures can only be sent into an open chat')
+  }
+  if (!tabSessions.get(tabKey)?.canAttachImages) {
+    throw new AttachmentRejected('this agent did not advertise image prompts, so a picture cannot be sent to it')
+  }
+  return resolveAttachmentRefs(tabKey, ids)
+}
+
+/**
+ * The stored size of each picture this conversation holds among `ids`, for a
+ * composer showing pictures it did not upload itself (an edited message's).
+ * Scoped to the conversation like every other read of the store: an id from
+ * elsewhere is simply absent from the answer.
+ */
+export async function attachmentSizesImpl(data: { tabKey: string; ids: string[] }): Promise<Record<string, number>> {
+  return readAttachmentSizes(data.tabKey, data.ids)
+}
+
 // A session this module puts behind a key — resumed, replayed, new, or a fork
 // taking over — shows the background tasks the host runs for that key only as
 // its recording last saw them: a task that ended meanwhile still reads running,
@@ -577,14 +612,10 @@ export async function promptLocalImpl(data: {
   // the durable record saying "never prompted" for exactly as long as the agent
   // was working — and a resume in that window would have re-stated a task the
   // agent was already doing.
-  const ids = data.attachments ?? []
   // Before anything is recorded: a refused picture refuses the whole send, and
   // a session marked as spoken to by a message that never went would skip its
   // opening context on the next one.
-  if (ids.length > 0 && !tabKey) {
-    throw new AttachmentRejected('pictures can only be sent into an open chat')
-  }
-  const attachments = tabKey ? await resolveAttachmentRefs(tabKey, ids) : []
+  const attachments = await resolveOutgoingPictures(tabKey, data.attachments ?? [])
   if (tabKey) {
     await writePersistedSession(tabKey, data.sessionId, true)
   }
@@ -643,7 +674,7 @@ export async function editTurnLocalImpl(data: {
   tabKey: string
   sessionId: string
   eventIndex: number
-  edits: { index: number; text: string }[]
+  edits: TurnEdit<string>[]
 }): Promise<{ sessionId: string } | null> {
   // Read before the fork. Not because the fork disturbs it (it builds a new
   // session and leaves this one's events alone), but because there is no reason
@@ -662,14 +693,29 @@ export async function editTurnLocalImpl(data: {
   // The old delivery stamp goes; the re-delivery gets its own, which is what
   // that stamp means. Everything else about the framing stays.
   const original = stripDeliveryStamp(turn.text)
+  // Every picture an edit names -- kept or newly added -- goes through the same
+  // check a send's pictures do, BEFORE the fork: a refused picture refuses the
+  // whole edit, and the conversation is not branched for an edit that cannot be
+  // sent.
+  const edits = await Promise.all(
+    data.edits.map(async ({ index, text, attachments }) =>
+      attachments
+        ? { index, text, attachments: await resolveOutgoingPictures(data.tabKey, attachments) }
+        : { index, text },
+    ),
+  )
   // The reader's words go back behind the context they never saw. Dropping it
   // would quietly strip a message of what it was sent with; regenerating it
   // would attach today's canvas to a message sent from a different one. A
-  // message the reader emptied is removed whole, context included: there is no
-  // message left for the context to be about.
-  const texts = applyTurnEdits(original, data.edits, (current, words) => splitEnvelope(current).context + words)
-  const text = rebuildDelivery(original, texts)
-  const attachments = rebuildAttachments(turn.attachments, texts)
+  // message the reader left with nothing -- no words, no pictures -- is removed
+  // whole, context included: there is no message left for the context to be
+  // about.
+  const { text, attachments } = rebuildTurn(
+    original,
+    turn.attachments,
+    edits,
+    (current, words) => splitEnvelope(current).context + words,
+  )
   // NAMED WITH THE TAB'S OWN KEY, the way the fork-to-new-thread flow below
   // already names one. `opts.sessionKey` exists so a caller can say what the
   // fork answers to; what the engine refuses to do is INHERIT a key silently.

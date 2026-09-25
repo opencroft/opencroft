@@ -155,6 +155,22 @@ export async function loadAttachments(sessionKey: string, ids: readonly string[]
  * api/acp.attachments.$id.ts. Scoped like loadAttachments: another
  * conversation's id answers null.
  */
+/**
+ * The stored byte size of each of `ids` that is a row of this conversation.
+ * Rows of any other conversation are absent from the answer, as they are from
+ * every other read here.
+ */
+export async function readAttachmentSizes(sessionKey: string, ids: readonly string[]): Promise<Record<string, number>> {
+  if (ids.length === 0) {
+    return {}
+  }
+  const rows = await db
+    .select({ id: chatAttachment.id, byteSize: chatAttachment.byteSize, sessionKey: chatAttachment.sessionKey })
+    .from(chatAttachment)
+    .where(inArray(chatAttachment.id, [...ids]))
+  return Object.fromEntries(rows.filter((row) => row.sessionKey === sessionKey).map((row) => [row.id, row.byteSize]))
+}
+
 export async function readAttachment(
   sessionKey: string,
   id: string,

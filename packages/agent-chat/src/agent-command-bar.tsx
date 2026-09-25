@@ -26,6 +26,8 @@ import {
   selectLeftoverConfigs,
 } from './agent-command-bar-configs'
 import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
+import { AttachButton } from './components/attach-button'
+import { AttachmentChip } from './components/attachment-chip'
 import { ChatEditBar } from './components/chat-edit-bar'
 import { ContextRing } from './components/context-ring'
 import { EffortSelector } from './components/effort-selector'
@@ -35,9 +37,19 @@ import { ModelSelector } from './components/model-selector'
 import { PresenceSelector, type PresenceValue } from './components/presence-selector'
 import type { UsageTokens } from './components/usage-cost'
 import { ConfigOptionsBar } from './config-options-bar'
-import { changedEdits, type EditDrafts, originalDrafts, othersHaveText } from './edit-drafts'
+import {
+  changedEdits,
+  EDIT_SLOT_PREFIX,
+  type EditDrafts,
+  editSlot,
+  hasContent,
+  originalDrafts,
+  originalPictures,
+  othersHaveContent,
+} from './edit-drafts'
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
+import { COMPOSE_SLOT, storedIds, type UploadPicture, useComposerPictures } from './use-composer-pictures'
 
 export type { ApprovalTitles, UsageTokens }
 
@@ -189,6 +201,17 @@ export interface UseAgentCommandBarOptions {
    *  name, which recognises the gesture; what a file BECOMES stays here, in the
    *  same boundary `attachments` draws one row up. */
   onFiles?: (files: File[]) => void
+  /** Pictures on messages: offered when given. The composer then owns them --
+   *  the chips above it, the attach button, paste and drop, and which message
+   *  of an edited turn each belongs to -- and sends their stored ids with the
+   *  message (`session.send`'s `attachments`) or the commit.
+   *
+   *  `upload` is the host's half: store the file, answer with its id and
+   *  stored size. `unavailableReason`, when set, keeps the attach button on
+   *  screen but disabled, saying why -- an agent that cannot take pictures is
+   *  offered none, in a new message or in an edit. Takes over from `onFiles`
+   *  while pictures can be attached. */
+  pictures?: { upload: UploadPicture; unavailableReason?: string }
   /** What pressing send on an EMPTY composer means, when it means anything.
    *  Present offers the press and is its tooltip; absent leaves send inert
    *  without words, as it has always been. A picture attached and nothing typed
@@ -252,6 +275,7 @@ export function useAgentCommandBar({
   attachments,
   attachmentControls,
   onFiles,
+  pictures,
   emptySendLabel,
   presence,
 }: UseAgentCommandBarOptions): ReactElement {
@@ -577,17 +601,15 @@ export function useAgentCommandBar({
   // the composer on cancel destroyed exactly the draft `onChangeText` refuses
   // to overwrite while an edit is open.
   const preEditTextRef = useRef('')
-  // Whether an empty composer may still commit (see `othersHaveText`). The
-  // drafts are refs, so this is settled wherever they change underneath the
-  // composer: opening, paging and resetting, which all end in `loadEditPart`.
-  const [canCommitEmpty, setCanCommitEmpty] = useState(false)
+  // The pictures, one slot for the message being written and one per message
+  // of an open edit (see edit-drafts' `editSlot`). Held beside the text drafts
+  // so paging, reset, leaving and committing treat a message's pictures and its
+  // words as one thing.
+  const composerPictures = useComposerPictures(pictures && !pictures.unavailableReason ? pictures.upload : undefined)
+  const { seed: seedPictures, settled: settledPictures } = composerPictures
 
   const loadEditPart = useCallback(
     (text: string) => {
-      const current = editRef.current
-      setCanCommitEmpty(
-        current ? othersHaveText(current.parts, editDraftsRef.current, current.parts[editPositionRef.current]) : false,
-      )
       textRef.current = text
       setValue(text)
       textareaRef.current?.focus()
@@ -608,6 +630,7 @@ export function useAgentCommandBar({
       editDraftsRef.current = new Map()
       if (wasEditingRef.current) {
         wasEditingRef.current = false
+        seedPictures(EDIT_SLOT_PREFIX, {})
         textRef.current = preEditTextRef.current
         setValue(preEditTextRef.current)
       }
@@ -618,10 +641,11 @@ export function useAgentCommandBar({
     }
     wasEditingRef.current = true
     editDraftsRef.current = originalDrafts(edit.parts)
+    seedPictures(EDIT_SLOT_PREFIX, originalPictures(edit.parts))
     editPositionRef.current = 0
     setEditPosition(0)
     loadEditPart(edit.parts[0]?.text ?? '')
-  }, [edit?.eventIndex, loadEditPart])
+  }, [edit?.eventIndex, loadEditPart, seedPictures])
 
   // Paging away is not discarding: what was typed into a message is held until
   // the whole turn is committed or abandoned. That is the entire reason these
@@ -644,9 +668,9 @@ export function useAgentCommandBar({
     [loadEditPart],
   )
 
-  // Every message of the turn goes back to what it originally said, not only
-  // the open one: reset is "start this edit over", and the turn is the thing
-  // being edited. The editor stays open, on the message it was on.
+  // Every message of the turn goes back to what it originally said and carried,
+  // not only the open one: reset is "start this edit over", and the turn is the
+  // thing being edited. The editor stays open, on the message it was on.
   const resetEdits = useCallback(() => {
     const current = editRef.current
     const open = current?.parts[editPositionRef.current]
@@ -654,26 +678,38 @@ export function useAgentCommandBar({
       return
     }
     editDraftsRef.current = originalDrafts(current.parts)
+    seedPictures(EDIT_SLOT_PREFIX, originalPictures(current.parts))
     loadEditPart(open.text)
-  }, [loadEditPart])
+  }, [loadEditPart, seedPictures])
 
   // Commit every message at once, which is what the turn IS -- it was delivered
   // as one thing and it is re-sent as one thing. `open` is the text the
   // composer is handing over for the message currently in it; the rest come
-  // from the drafts paging put there. Only what changed is sent (see
-  // `changedEdits`).
-  const commitOpenEdit = useCallback((open: string) => {
-    const current = editRef.current
-    if (!current) {
-      return
-    }
-    const drafts = editDraftsRef.current
-    const openPart = current.parts[editPositionRef.current]
-    if (openPart) {
-      drafts.set(openPart.index, open)
-    }
-    commitEditRef.current?.(changedEdits(current.parts, drafts))
-  }, [])
+  // from the drafts paging put there. Pictures still uploading are waited for,
+  // so a picture added a second before the press goes with it. Only what
+  // changed is sent (see `changedEdits`).
+  const commitOpenEdit = useCallback(
+    async (open: string) => {
+      const current = editRef.current
+      if (!current) {
+        return
+      }
+      const drafts = editDraftsRef.current
+      const openPart = current.parts[editPositionRef.current]
+      if (openPart) {
+        drafts.set(openPart.index, open)
+      }
+      const slots = await settledPictures()
+      // Left or replaced while the uploads settled: this commit is no longer
+      // about the edit on screen. Compared by WHICH turn, as the opening effect
+      // is, since a session may rebuild the object every render.
+      if (editRef.current?.eventIndex !== current.eventIndex) {
+        return
+      }
+      commitEditRef.current?.(changedEdits(current.parts, drafts, slots))
+    },
+    [settledPictures],
+  )
 
   // Clamped rather than trusted: `parts` comes from the session and the
   // position is this hook's, so a turn that changed under an open editor must
@@ -695,6 +731,80 @@ export function useAgentCommandBar({
     [edit, editPart, editPosition, goToEditPart, resetEdits],
   )
 
+  // ---- pictures ----
+  //
+  // The slot on screen: the open message's while editing, the new message's
+  // otherwise. Mirrored into a ref so a paste or drop lands on the message that
+  // is open at that moment, without the handler changing identity each page.
+  const pictureSlot = editPart ? editSlot(editPart.index) : COMPOSE_SLOT
+  const pictureSlotRef = useRef(pictureSlot)
+  pictureSlotRef.current = pictureSlot
+  const { add: addPictures, remove: removePicture } = composerPictures
+  const slotPictures = composerPictures.slots[pictureSlot]
+  const canAttach = Boolean(pictures && !pictures.unavailableReason)
+  const addToOpenSlot = useCallback((files: File[]) => addPictures(pictureSlotRef.current, files), [addPictures])
+  const attachmentsRow = useMemo(
+    () =>
+      slotPictures?.length || attachments ? (
+        <>
+          {attachments}
+          {/* A line of their own, under whatever the host quoted: `basis-full`
+              in the row's wrap is what starts it on a new line. */}
+          {slotPictures?.length ? (
+            <div className='flex basis-full flex-wrap gap-3'>
+              {slotPictures.map((picture) => (
+                <AttachmentChip
+                  key={picture.key}
+                  name={picture.name}
+                  src={picture.src}
+                  byteSize={picture.byteSize}
+                  uploading={picture.uploading}
+                  error={picture.error}
+                  onRemove={() => removePicture(pictureSlot, picture.key)}
+                />
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : undefined,
+    [slotPictures, attachments, removePicture, pictureSlot],
+  )
+  const attachmentControlsRow = useMemo(
+    () =>
+      pictures ? (
+        <>
+          <AttachButton onFiles={addToOpenSlot} unavailableReason={pictures.unavailableReason} />
+          {attachmentControls}
+        </>
+      ) : (
+        attachmentControls
+      ),
+    [pictures, addToOpenSlot, attachmentControls],
+  )
+  // Whether the empty composer's press means something. Editing: commit, while
+  // the open message still carries a picture or another message has anything
+  // at all (a message left with nothing is removed rather than sent empty).
+  // Composing: send the waiting pictures with no words.
+  const canCommitEmpty = edit
+    ? hasContent('', slotPictures) ||
+      othersHaveContent(edit.parts, editDraftsRef.current, composerPictures.slots, editPart)
+    : false
+  const pictureSendLabel = hasContent('', composerPictures.slots[COMPOSE_SLOT])
+    ? 'Send the attached picture'
+    : undefined
+
+  // The new message's pictures, waited for and taken off the row: they belong
+  // to the message that just went, and the next one must not carry them again.
+  const sendWithPictures = useCallback(
+    async (text: string) => {
+      const slots = await settledPictures()
+      const ids = storedIds(slots[COMPOSE_SLOT])
+      seedPictures(COMPOSE_SLOT, {})
+      sendRef.current(text, ids.length > 0 ? { attachments: ids } : undefined)
+    },
+    [settledPictures, seedPictures],
+  )
+
   const onSend = useCallback(
     (text: string) => {
       // Sending IS committing while a turn is open: the check button and this
@@ -706,10 +816,10 @@ export function useAgentCommandBar({
       // the effect above). The stored draft is not touched either: it is the
       // reader's unsent text, which an edit never became.
       if (editRef.current) {
-        commitOpenEdit(text)
+        void commitOpenEdit(text)
         return
       }
-      sendRef.current(text)
+      void sendWithPictures(text)
       if (draftDebounceRef.current) {
         clearTimeout(draftDebounceRef.current)
         draftDebounceRef.current = null
@@ -719,7 +829,7 @@ export function useAgentCommandBar({
       textRef.current = ''
       setValue('')
     },
-    [commitOpenEdit, setValue],
+    [commitOpenEdit, sendWithPictures, setValue],
   )
 
   const onSetConfigOptionRef = useRef(onSetConfigOption)
@@ -736,7 +846,7 @@ export function useAgentCommandBar({
     // this test a composer whose only readout is the host's own control
     // renders no cluster at all, and the control it was handed is dropped with
     // nothing to say so.
-    if (!attachmentControls && !usage && booleanOptions.length === 0) {
+    if (!attachmentControlsRow && !usage && booleanOptions.length === 0) {
       return null
     }
     return (
@@ -744,7 +854,7 @@ export function useAgentCommandBar({
         {/* BEFORE the context ring, which is a position rather than a
             preference: the ring is a readout of what the session is holding,
             and what this message is about to add to it reads ahead of it. */}
-        {attachmentControls}
+        {attachmentControlsRow}
         {usage ? (
           <ContextRing
             usedTokens={usage.used}
@@ -768,7 +878,7 @@ export function useAgentCommandBar({
         ) : null}
       </>
     )
-  }, [attachmentControls, configOptions, usage, compact, onClear])
+  }, [attachmentControlsRow, configOptions, usage, compact, onClear])
 
   // Memoized for element identity, not for render cost -- see this hook's own
   // doc comment on why identity stability is the whole point. Every entry
@@ -805,11 +915,11 @@ export function useAgentCommandBar({
         sendError={sendError}
         onDismissSendError={onDismissSendError}
         editBar={editBarNode}
-        attachments={attachments}
-        onFiles={onFiles}
-        // Mid-edit an empty composer means "remove this message", which commits
-        // only while another message still has words (see `othersHaveText`).
-        emptySendLabel={edit ? (canCommitEmpty ? 'Commit edits' : undefined) : emptySendLabel}
+        attachments={attachmentsRow}
+        onFiles={canAttach ? addToOpenSlot : onFiles}
+        // Mid-edit an empty composer commits only while something is left to
+        // send (see `canCommitEmpty`); composing, waiting pictures make it a send.
+        emptySendLabel={edit ? (canCommitEmpty ? 'Commit edits' : undefined) : (pictureSendLabel ?? emptySendLabel)}
         submitMode={edit ? 'commit' : 'send'}
         approval={approval}
         autoApprove={autoApprove}
@@ -845,9 +955,12 @@ export function useAgentCommandBar({
       sendError,
       onDismissSendError,
       editBarNode,
-      attachments,
+      attachmentsRow,
+      canAttach,
+      addToOpenSlot,
       onFiles,
       emptySendLabel,
+      pictureSendLabel,
       edit,
       canCommitEmpty,
       approval,

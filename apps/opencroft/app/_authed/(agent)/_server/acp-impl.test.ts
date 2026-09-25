@@ -45,7 +45,7 @@ import {
   tabSessions,
 } from './acp-impl'
 import { readPersistedSession, writePersistedUsage } from './acp-session-store'
-import { AttachmentRejected, saveAttachment } from './attachment-store'
+import { saveAttachment } from './attachment-store'
 import { flushSessionEvents, readSessionEvents } from './session-event-store'
 
 // The browser must not be able to say who a message is from — the name is
@@ -76,7 +76,7 @@ function acpStore(): AcpStoreShape {
 // of spawning a real process — same seam agent-client's own tests use.
 function seedMockConnection(
   selection: AgentSelection,
-  options: { canLoad?: boolean; forkable?: boolean; resumable?: boolean; resumeFails?: boolean } = {},
+  options: { canLoad?: boolean; forkable?: boolean; resumable?: boolean; resumeFails?: boolean; images?: boolean } = {},
 ): void {
   const connection = {
     newSession: async () => ({ sessionId: `acp-session-${crypto.randomUUID()}` }),
@@ -111,6 +111,9 @@ function seedMockConnection(
     loadSession: options.canLoad ?? false,
     resumeSession: options.resumable ?? false,
     forkSupported: options.forkable ?? false,
+    // Whether the harness advertised image prompts -- what decides if a picture
+    // may be sent to it at all.
+    imagePrompt: options.images ?? false,
     initialized: Promise.resolve(),
   })
 }
@@ -477,7 +480,7 @@ test('an edit that empties every message is refused, and nothing is forked', asy
 // messages they came with.
 test('a sent picture is recorded from the store, and an edit carries it into the new session', async () => {
   const { nodeId, selection } = await freshAgentNode()
-  seedMockConnection(selection, { forkable: true })
+  seedMockConnection(selection, { forkable: true, images: true })
   const tabKey = `picture-test-tab-${crypto.randomUUID()}`
   const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   const stored = await saveAttachment({ sessionKey: tabKey, name: 'shot.png', mimeType: 'image/png', data: 'AAAA' })
@@ -509,7 +512,9 @@ test('a sent picture is recorded from the store, and an edit carries it into the
 
 test("a send naming another conversation's picture is refused before anything is delivered", async () => {
   const { nodeId, selection } = await freshAgentNode()
-  seedMockConnection(selection)
+  // Images ON, so the refusal below is the conversation check and not the
+  // capability one -- the message pins which.
+  seedMockConnection(selection, { images: true })
   const tabKey = `picture-test-tab-${crypto.randomUUID()}`
   const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   const foreign = await saveAttachment({
@@ -526,7 +531,7 @@ test("a send naming another conversation's picture is refused before anything is
       origin: { kind: 'message', sender: 'Reader' },
       attachments: [foreign.id],
     }),
-    AttachmentRejected,
+    /not part of this conversation/,
   )
   assert.equal(
     (agentClient.getSessionEvents(opened.sessionId) ?? []).some((event) => event.kind === 'user'),
@@ -534,6 +539,141 @@ test("a send naming another conversation's picture is refused before anything is
     'nothing went out',
   )
   assert.equal((await readPersistedSession(tabKey))?.prompted, false, 'and the session is not marked as spoken to')
+})
+
+// ── pictures in an edit ─────────────────────────────────────────────────────
+//
+// An edit names a message's COMPLETE picture list when the reader changed it.
+// Every id in it goes through the same check a send's pictures do, before the
+// fork -- so a refused picture leaves the conversation exactly as it was.
+
+async function pictureThread(options: { images: boolean }) {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { forkable: true, images: options.images })
+  const tabKey = `edit-picture-tab-${crypto.randomUUID()}`
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  const save = (name: string, sessionKey = tabKey) =>
+    saveAttachment({ sessionKey, name, mimeType: 'image/png', data: 'AAAA' })
+  const userTurn = (sessionId: string) =>
+    (agentClient.getSessionEvents(sessionId) ?? []).filter((event) => event.kind === 'user').at(-1)
+  const eventIndexOf = (sessionId: string) =>
+    (agentClient.getSessionEvents(sessionId) ?? []).findIndex((event) => event.kind === 'user')
+  return { tabKey, opened, save, userTurn, eventIndexOf }
+}
+
+test('an edit can add a picture to a message and take one off it', async () => {
+  const { tabKey, opened, save, userTurn, eventIndexOf } = await pictureThread({ images: true })
+  const first = await save('first.png')
+  const added = await save('added.png')
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'look',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+    attachments: [first.id],
+  })
+
+  const grown = await editTurnLocalImpl({
+    tabKey,
+    sessionId: opened.sessionId,
+    eventIndex: eventIndexOf(opened.sessionId),
+    edits: [{ index: 0, text: 'look', attachments: [first.id, added.id] }],
+  })
+  assert.ok(grown)
+  const grownTurn = userTurn(grown.sessionId)
+  assert.ok(grownTurn?.kind === 'user')
+  assert.deepEqual(grownTurn.attachments, [
+    { id: first.id, name: 'first.png', mimeType: 'image/png', message: 0 },
+    { id: added.id, name: 'added.png', mimeType: 'image/png', message: 0 },
+  ])
+
+  const shrunk = await editTurnLocalImpl({
+    tabKey,
+    sessionId: grown.sessionId,
+    eventIndex: eventIndexOf(grown.sessionId),
+    edits: [{ index: 0, text: 'look', attachments: [added.id] }],
+  })
+  assert.ok(shrunk)
+  const resent = userTurn(shrunk.sessionId)
+  assert.ok(resent?.kind === 'user')
+  assert.deepEqual(resent.attachments, [{ id: added.id, name: 'added.png', mimeType: 'image/png', message: 0 }])
+})
+
+test('an untagged single-message turn with its words cleared and its picture kept re-sends as the picture alone', async () => {
+  const { tabKey, opened, save, userTurn, eventIndexOf } = await pictureThread({ images: true })
+  const picture = await save('only.png')
+  // A system send goes out exactly as given, with no tag -- the untagged shape.
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'a caption nobody wants any more',
+    queue: 'wait',
+    origin: { kind: 'system' },
+    attachments: [picture.id],
+  })
+  const delivered = userTurn(opened.sessionId)
+  assert.ok(delivered?.kind === 'user')
+  assert.equal(delivered.text.includes('<agent-message'), false, 'precondition: the delivered turn is untagged')
+
+  const result = await editTurnLocalImpl({
+    tabKey,
+    sessionId: opened.sessionId,
+    eventIndex: eventIndexOf(opened.sessionId),
+    edits: [{ index: 0, text: '' }],
+  })
+  assert.ok(result, 'a message that still carries a picture is kept, not removed')
+  const resent = userTurn(result.sessionId)
+  assert.ok(resent?.kind === 'user')
+  assert.equal(resent.text.includes('caption'), false, 'the cleared words are gone')
+  assert.equal(resent.text.includes('<agent-message'), false, 'and no tag was invented for it')
+  assert.deepEqual(resent.attachments, delivered.attachments)
+})
+
+test("an edit naming another conversation's picture is refused before anything is forked", async () => {
+  const { tabKey, opened, save, eventIndexOf } = await pictureThread({ images: true })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'look',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  const foreign = await save('theirs.png', `someone-else-${crypto.randomUUID()}`)
+  const sessionsBefore = agentClient.listSessions().length
+
+  await assert.rejects(
+    editTurnLocalImpl({
+      tabKey,
+      sessionId: opened.sessionId,
+      eventIndex: eventIndexOf(opened.sessionId),
+      edits: [{ index: 0, text: 'look', attachments: [foreign.id] }],
+    }),
+    /not part of this conversation/,
+  )
+  assert.equal(tabSessions.get(tabKey)?.id, opened.sessionId, 'the tab still points at its own session')
+  assert.equal(agentClient.listSessions().length, sessionsBefore, 'no fork was made')
+})
+
+test('an edit adding a picture for an agent that cannot take images is refused before anything is forked', async () => {
+  const { tabKey, opened, save, eventIndexOf } = await pictureThread({ images: false })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'look',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  const picture = await save('mine.png')
+  const sessionsBefore = agentClient.listSessions().length
+
+  await assert.rejects(
+    editTurnLocalImpl({
+      tabKey,
+      sessionId: opened.sessionId,
+      eventIndex: eventIndexOf(opened.sessionId),
+      edits: [{ index: 0, text: 'look', attachments: [picture.id] }],
+    }),
+    /did not advertise image prompts/,
+  )
+  assert.equal(tabSessions.get(tabKey)?.id, opened.sessionId, 'the tab still points at its own session')
+  assert.equal(agentClient.listSessions().length, sessionsBefore, 'no fork was made')
 })
 
 test('a thread keeps persisting its transcript after an edit is committed', async () => {

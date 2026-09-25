@@ -108,6 +108,18 @@ export interface EditablePart {
   index: number
   /** The words, as the reader saw them and will edit them. */
   text: string
+  /** The pictures this message was delivered with, as the editor opens them. */
+  pictures: readonly EditPicture[]
+}
+
+/** A picture a delivered message carries, as the editor needs it: the stored
+ *  id a commit names it by, and what to draw. `byteSize` is the host's to add
+ *  when it knows it. */
+export interface EditPicture {
+  id: string
+  name: string
+  src?: string
+  byteSize?: number
 }
 
 /**
@@ -126,15 +138,24 @@ export interface EditablePart {
  * application context — is skipped, and skipping it is exactly why `index`
  * exists: the parts after it keep the numbers the delivery gave them, so an
  * edit still lands on the message it was aimed at.
+ *
+ * `pictures` are the delivery's own, each marked with the message it came with.
+ * A message that renders no words but carried a picture IS a stop: the picture
+ * is something the reader can take off it.
  */
-export function toEditableParts(prompt: string, render: (raw: string) => string | null): EditablePart[] {
+export function toEditableParts(
+  prompt: string,
+  render: (raw: string) => string | null,
+  pictures: readonly (EditPicture & { message: number })[] = [],
+): EditablePart[] {
   const parts: EditablePart[] = []
   splitDelivery(prompt).messages.forEach((message, index) => {
+    const own = pictures.filter((picture) => picture.message === index).map(({ message: _, ...picture }) => picture)
     const text = render(message.text)
-    if (text === null) {
+    if (text === null && own.length === 0) {
       return
     }
-    parts.push({ index, text })
+    parts.push({ index, text: text ?? '', pictures: own })
   })
   return parts
 }

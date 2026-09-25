@@ -5,12 +5,14 @@
 // bundle. A single plain exported function here has no stub and ships that tail
 // — see the header of acp-impl.ts, which is where plain implementations go.
 import { createServerFn } from '@tanstack/react-start'
+import type { TurnEdit } from 'agent-client/queue-tags'
 import type { ElicitationContentValue, Presence, QueueMode } from 'agent-client/types'
 
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   attachImageImpl,
+  attachmentSizesImpl,
   cancelLocalImpl,
   deliverQueueLocalImpl,
   editTurnLocalImpl,
@@ -45,6 +47,13 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
 export const attachImage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { tabKey: string; name: string; mimeType: string; data: string }) => data)
   .handler(async ({ data }): Promise<StoredAttachment> => attachImageImpl(data))
+
+// The stored size of pictures this conversation already holds, for a composer
+// showing ones it did not upload itself -- an edited message's. Scoped to the
+// tab's conversation; an id from elsewhere is absent from the answer.
+export const attachmentSizes = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { tabKey: string; ids: string[] }) => data)
+  .handler(async ({ data }): Promise<Record<string, number>> => attachmentSizesImpl(data))
 
 // `queue` says how this message relates to anything already held: `wait` to be
 // delivered on its own when the turn ends, `push` to interrupt and deliver the
@@ -201,9 +210,7 @@ export const forgetLocalSession = createServerFn({ method: 'POST', strict: { out
 // turn at that index, and throws when an edit names a message the turn does not
 // have.
 export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator(
-    (data: { tabKey: string; sessionId: string; eventIndex: number; edits: { index: number; text: string }[] }) => data,
-  )
+  .inputValidator((data: { tabKey: string; sessionId: string; eventIndex: number; edits: TurnEdit<string>[] }) => data)
   .handler(async ({ data }): Promise<{ sessionId: string } | null> => editTurnLocalImpl(data))
 
 // Tab keys of chat sessions currently blocked on someone (an unresolved

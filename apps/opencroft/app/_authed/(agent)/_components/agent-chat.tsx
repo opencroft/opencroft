@@ -7,7 +7,7 @@ import type {
   DetailItem as KitDetailItem,
 } from 'agent-chat/components/chat-turn'
 import { ThinkingBlock } from 'agent-chat/components/thinking-block'
-import type { AgentChatEdit } from 'agent-chat/session'
+import type { AgentChatEdit, AgentChatSession } from 'agent-chat/session'
 import type { AvailableCommand } from 'agent-client/types'
 import type { ComponentType } from 'react'
 import { GenericToolView, lookupToolView } from 'ui/tool-views/tool-views'
@@ -125,10 +125,10 @@ export interface AgentSession {
   edit?: AgentChatEdit
   // Leave edit mode, dropping every pending edit in the turn.
   cancelEdit?: () => void
-  // Commit the turn: re-send it with these words in place of the messages at
-  // these positions. Words only -- authorship and send times are resolved
-  // server-side from the stored turn, never stated here.
-  commitEdit?: (edits: { index: number; text: string }[]) => void
+  // Commit the turn: re-send it with these words (and, where changed, picture
+  // ids) in place of the messages at these positions. Never authorship --
+  // authors and send times are resolved server-side from the stored turn.
+  commitEdit?: AgentChatSession['commitEdit']
   // Composer draft staged by the host (a send that failed puts its text back
   // through this); the input syncs to it when it changes.
   draft?: { text: string; key: number }

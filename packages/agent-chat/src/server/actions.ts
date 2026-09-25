@@ -10,7 +10,7 @@ import {
   resolveSessionPermissions,
 } from 'agent-client/permissions'
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
-import { applyTurnEdits, rebuildDelivery } from 'agent-client/queue-tags'
+import { rebuildTurn, type TurnEdit } from 'agent-client/queue-tags'
 import type { AgentSelection, ElicitationContentValue, QueueMode, SessionMeta } from 'agent-client/types'
 
 import { getRuntime, type RoleRecord, resolveReaderName, type SkillRecord } from './runtime'
@@ -189,23 +189,37 @@ export const forkAgentSession = (sessionId: string, dropFromTurn?: number) =>
 // the rebuild, which this generic action cannot do for it. Hosts that transform
 // deliveries should use their own edit path (see this repo's app, which strips
 // its delivery stamp first) rather than this one.
+//
+// WORDS ONLY, and said so rather than assumed: this runtime has no store to
+// resolve a picture id against, so an edit that names a message's pictures is
+// refused -- dropping the list would re-send the turn without the change the
+// reader made. The pictures the turn was delivered with go again, positioned
+// on the messages that survive.
 const _editAgentTurn = createServerFn({ method: 'POST' })
-  .inputValidator((data: { sessionId: string; eventIndex: number; edits: { index: number; text: string }[] }) => data)
+  .inputValidator((data: { sessionId: string; eventIndex: number; edits: TurnEdit<string>[] }) => data)
   .handler(async ({ data }): Promise<SessionMeta | null> => {
+    if (data.edits.some((edit) => edit.attachments)) {
+      throw new Error('This runtime cannot change the pictures of an edited message')
+    }
     const agent = getRuntime().agent
     const turn = agent.userTurnAt(data.sessionId, data.eventIndex)
     if (!turn) {
       return null
     }
-    const text = rebuildDelivery(turn.text, applyTurnEdits(turn.text, data.edits))
+    const words = data.edits.map(({ index, text }) => ({ index, text }))
+    const { text, attachments } = rebuildTurn(turn.text, turn.attachments, words)
     const meta = await agent.forkSession(data.sessionId, turn.turnIndex)
     if (!meta) {
       return null
     }
-    await agent.prompt(meta.id, text, { queue: 'wait', origin: { kind: 'system' } })
+    await agent.prompt(meta.id, text, {
+      queue: 'wait',
+      origin: { kind: 'system' },
+      ...(attachments.length > 0 ? { attachments } : {}),
+    })
     return meta
   })
-export const editAgentTurn = (sessionId: string, eventIndex: number, edits: { index: number; text: string }[]) =>
+export const editAgentTurn = (sessionId: string, eventIndex: number, edits: TurnEdit<string>[]) =>
   _editAgentTurn({ data: { sessionId, eventIndex, edits } })
 
 // ---- Turn control ----

@@ -37,8 +37,8 @@ test('a message that renders nothing is skipped, and the ones after it keep the 
   })
 
   assert.deepEqual(toEditableParts(turn, render), [
-    { index: 0, text: 'first' },
-    { index: 2, text: 'third' },
+    { index: 0, text: 'first', pictures: [] },
+    { index: 2, text: 'third', pictures: [] },
   ])
 })
 
@@ -57,7 +57,7 @@ test('an untagged turn is one editable message at position 0', () => {
   // transcripts that get replayed. It decodes to one part, and editing it
   // replaces the whole prompt -- which is what an untagged turn IS.
   assert.deepEqual(toEditableParts('from before the format existed', render), [
-    { index: 0, text: 'from before the format existed' },
+    { index: 0, text: 'from before the format existed', pictures: [] },
   ])
 })
 
@@ -73,8 +73,8 @@ test('the interrupt note is not a message and does not shift the numbering', () 
 
   const parts = toEditableParts(turn, render)
   assert.deepEqual(parts, [
-    { index: 0, text: 'first' },
-    { index: 1, text: 'second' },
+    { index: 0, text: 'first', pictures: [] },
+    { index: 1, text: 'second', pictures: [] },
   ])
   assert.equal(
     parts.some((part) => part.text.includes('Your turn was interrupted')),
@@ -157,8 +157,24 @@ test('the host renders each message on its own, never the delivery as a whole', 
   })
 
   assert.deepEqual(toEditableParts(turn, render), [
-    { index: 0, text: 'restart it' },
-    { index: 1, text: 'second' },
+    { index: 0, text: 'restart it', pictures: [] },
+    { index: 1, text: 'second', pictures: [] },
+  ])
+})
+
+test('a message with no words is still a stop when it carried a picture, and its pictures ride on it', () => {
+  // Nothing to read, but something to take off: skipping it would leave the
+  // picture with no place in the editor.
+  const turn = buildDelivery({
+    kind: 'messages',
+    messages: [msg('Alice', T1, 'first'), msg('Alice', T2, '<ctx>selection: node-1</ctx>'), msg('Bob', T3, 'third')],
+  })
+  const shot = { id: 'shot-1', name: 'shot.png', src: '/shot-1', message: 1 }
+
+  assert.deepEqual(toEditableParts(turn, render, [shot]), [
+    { index: 0, text: 'first', pictures: [] },
+    { index: 1, text: '', pictures: [{ id: 'shot-1', name: 'shot.png', src: '/shot-1' }] },
+    { index: 2, text: 'third', pictures: [] },
   ])
 })
 

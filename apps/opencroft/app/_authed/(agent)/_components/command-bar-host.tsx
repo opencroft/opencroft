@@ -6,15 +6,14 @@ import {
   type CommandBarUsage,
   useAgentCommandBar,
 } from 'agent-chat/agent-command-bar'
-import { AttachButton } from 'agent-chat/components/attach-button'
-import { AttachmentChip } from 'agent-chat/components/attachment-chip'
 import type { CompactRenderState } from 'agent-chat/use-compact-control'
 import type { Presence } from 'agent-client/types'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentChatInputControls, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
-import { useMessageAttachments } from '@/app/_authed/(agent)/_components/use-message-attachments'
+import { readAttachableImage } from '@/app/_authed/(agent)/_lib/attachment-file'
+import { attachImage } from '@/app/_authed/(agent)/_server/acp'
 import { getAutoApprove, setAutoApprove } from '@/app/_authed/(approvals)/_server/actions'
 
 interface AgentCommandBarHostProps {
@@ -175,66 +174,29 @@ export function AgentCommandBarHost({
     [agentNodeId, getMessages],
   )
 
-  // The pictures waiting for the next message, and the three gestures that add
-  // one. Owned here rather than by a caller: there is one composition path, so
-  // every surface that mounts this bar can attach — and the send that has to
-  // carry them is the one this host already hands over.
-  const pictures = useMessageAttachments(session.sessionKey)
-  const unavailableReason = canAttachImages
-    ? undefined
-    : 'This agent did not advertise image prompts, so a picture cannot be sent to it'
-  const attachmentsRow = useMemo(
-    () =>
-      pictures.any || attachments ? (
-        <>
-          {pictures.items.map((item) => (
-            <AttachmentChip
-              key={item.localId}
-              name={item.name}
-              src={item.previewUrl}
-              uploading={item.uploading}
-              error={item.error}
-              onRemove={() => pictures.remove(item.localId)}
-            />
-          ))}
-          {attachments}
-        </>
-      ) : undefined,
-    [pictures.any, pictures.items, pictures.remove, attachments],
-  )
-  const attachmentControlsRow = useMemo(
-    () => (
-      <>
-        <AttachButton onFiles={pictures.onFiles} unavailableReason={unavailableReason} />
-        {attachmentControls}
-      </>
-    ),
-    [pictures.onFiles, unavailableReason, attachmentControls],
-  )
-  // The send, with the attachments beside it and the row emptied. Wrapped here
-  // because what goes has to be decided at the MOMENT of the send: a
-  // picture picked a second earlier may still be uploading, and `collect`
-  // awaits what is in flight rather than racing it.
-  //
-  // The session object is rebuilt only when its own identity or this callback
-  // changes — it feeds the memoised bar, and a fresh object every render is the
-  // churn that hook exists to avoid.
-  const sessionRef = useRef(session)
-  sessionRef.current = session
-  const sendWithAttachments = useCallback(
-    async (text: string) => {
-      const ids = await pictures.collect()
-      sessionRef.current.send(text, ids.length > 0 ? { attachments: ids } : undefined)
-    },
-    [pictures.collect],
-  )
-  const sessionWithAttachments = useMemo(
-    () => ({ ...session, send: sendWithAttachments }),
-    [session, sendWithAttachments],
+  // Pictures on messages: this app's half is only where a picture is kept. The
+  // package composer owns the rest -- the chips, the attach button, paste and
+  // drop, which message of an edited turn each belongs to, and sending their
+  // ids -- so a new message and an edit treat them the same way. The file is
+  // re-encoded to a vision model's working size before it is stored, and the
+  // stored size is what the chip shows, since that is what travels.
+  const tabKey = session.sessionKey
+  const pictures = useMemo(
+    () => ({
+      upload: async (file: File) => {
+        const read = await readAttachableImage(file)
+        const stored = await attachImage({ data: { tabKey, ...read } })
+        return { id: stored.id, byteSize: stored.byteSize }
+      },
+      unavailableReason: canAttachImages
+        ? undefined
+        : 'This agent did not advertise image prompts, so a picture cannot be sent to it',
+    }),
+    [tabKey, canAttachImages],
   )
 
   const barNode = useAgentCommandBar({
-    session: sessionWithAttachments,
+    session,
     placeholder,
     autoFocus,
     onFocus,
@@ -264,14 +226,9 @@ export function AgentCommandBarHost({
     adapterId: session.adapterId,
     lockedConfigOptions: lockedConfigOptions,
     approvalTitles: APPROVAL_TITLES,
-    attachments: attachmentsRow,
-    attachmentControls: attachmentControlsRow,
-    onFiles: canAttachImages ? pictures.onFiles : undefined,
-    // A press on an empty composer means something exactly while a picture is
-    // waiting: send it with no words. The label is what the kit bar requires
-    // before it offers that press at all -- an empty send with nothing to say
-    // about it is a button that appears to do nothing.
-    emptySendLabel: pictures.any ? 'Send the attached picture' : undefined,
+    attachments,
+    attachmentControls,
+    pictures,
     presence,
   })
 

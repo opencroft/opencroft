@@ -6,14 +6,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  applyTurnEdits,
   buildDelivery,
   decodeBatch,
   encodeBatch,
-  rebuildAttachments,
   rebuildDelivery,
+  rebuildTurn as rebuildTurnOf,
   splitDelivery,
   type TaggedMessage,
+  type TurnEdit,
 } from './queue-tags'
 
 const msg = (sender: string, sentAt: string, text: string): TaggedMessage => ({ sender, sentAt, text })
@@ -445,30 +445,119 @@ test('removing every message is refused, tagged or not', () => {
   assert.throws(() => rebuildDelivery('from before the format', [null]), /removes every message/)
 })
 
-test('applyTurnEdits reads blank words as removal, and places the rest', () => {
-  assert.deepEqual(
-    applyTurnEdits(THREE, [
+// ── rebuildTurn: words and attachments together ─────────────────────────────
+
+interface Ref {
+  id: string
+  name: string
+  mimeType: string
+}
+const shot = (id: string, message: number): Ref & { message: number } => ({
+  id,
+  name: `${id}.png`,
+  mimeType: 'image/png',
+  message,
+})
+const ref = (id: string): Ref => ({ id, name: `${id}.png`, mimeType: 'image/png' })
+// Pinned to one attachment type, as a real caller is: an empty list gives the
+// compiler nothing to infer it from.
+const rebuildTurn = (
+  original: string,
+  attachments: (Ref & { message: number })[],
+  edits: TurnEdit<Ref>[],
+  place?: (current: string, words: string) => string,
+) => rebuildTurnOf<Ref>(original, attachments, edits, place)
+
+test('blank words with nothing attached remove the message, whitespace included', () => {
+  const { text } = rebuildTurn(
+    THREE,
+    [],
+    [
       { index: 0, text: '' },
       { index: 1, text: '  \n ' },
       { index: 2, text: 'new' },
-    ]),
-    [null, null, 'new'],
+    ],
   )
-  // Untouched positions come back as delivered; `place` sees the old text.
+  assert.deepEqual(decodeBatch(text), [msg('Dave', '2026-08-21T01:02:00.000Z', 'new')])
+  assert.equal(text.startsWith('Your turn was interrupted'), true, 'the interrupt note survives the removals')
+})
+
+test('untouched messages come back as delivered, and `place` sees the old text', () => {
+  const { text } = rebuildTurn(THREE, [], [{ index: 1, text: 'new' }], (current, words) => `${current}|${words}`)
   assert.deepEqual(
-    applyTurnEdits(THREE, [{ index: 1, text: 'new' }], (current, words) => `${current}|${words}`),
+    decodeBatch(text).map((part) => part.text),
     ['first', 'second|new', 'third'],
   )
-  assert.throws(() => applyTurnEdits(THREE, [{ index: 3, text: 'x' }]), /not in a turn of 3/)
+})
+
+test('an edit naming a message the turn does not have, or one message twice, is refused', () => {
+  assert.throws(() => rebuildTurn(THREE, [], [{ index: 3, text: 'x' }]), /not in a turn of 3/)
+  assert.throws(
+    () =>
+      rebuildTurn(
+        THREE,
+        [],
+        [
+          { index: 1, text: '' },
+          { index: 1, text: 'again' },
+        ],
+      ),
+    /edited twice/,
+  )
 })
 
 test("a removed message's attachments go with it, and the survivors are renumbered", () => {
-  const shot = (id: string, message: number) => ({ id, name: `${id}.png`, mimeType: 'image/png', message })
-  assert.deepEqual(
-    rebuildAttachments([shot('a', 0), shot('b', 1), shot('c', 2), shot('d', 2)], ['first', null, 'third']),
-    [shot('a', 0), shot('c', 1), shot('d', 1)],
+  const { attachments } = rebuildTurn(
+    THREE,
+    [shot('a', 0), shot('b', 1), shot('c', 2), shot('d', 2)],
+    [{ index: 1, text: '' }],
   )
-  // Nothing removed: the positions are untouched.
+  // Message 1 had a picture, so blank words alone do NOT remove it now -- the
+  // attachment has to go too. Asserted as the kept case first, then removed.
+  assert.deepEqual(attachments, [shot('a', 0), shot('b', 1), shot('c', 2), shot('d', 2)])
+
+  const removed = rebuildTurn(
+    THREE,
+    [shot('a', 0), shot('b', 1), shot('c', 2), shot('d', 2)],
+    [{ index: 1, text: '', attachments: [] }],
+  )
+  assert.deepEqual(removed.attachments, [shot('a', 0), shot('c', 1), shot('d', 1)])
+  assert.equal(decodeBatch(removed.text).length, 2)
+
+  // Nothing edited: text and positions are exactly as delivered.
   const all = [shot('a', 0), shot('c', 2)]
-  assert.deepEqual(rebuildAttachments(all, ['first', 'second', 'third']), all)
+  assert.deepEqual(rebuildTurn(THREE, all, []), { text: THREE, attachments: all })
+})
+
+test('blank words with a picture keep the message, empty-bodied, tag and picture intact', () => {
+  const { text, attachments } = rebuildTurn(THREE, [shot('b', 1)], [{ index: 1, text: '' }])
+  assert.deepEqual(decodeBatch(text), [
+    msg('Alice', '2026-08-21T01:00:00.000Z', 'first'),
+    msg('Bob', '2026-08-21T01:01:00.000Z', ''),
+    msg('Dave', '2026-08-21T01:02:00.000Z', 'third'),
+  ])
+  assert.deepEqual(attachments, [shot('b', 1)])
+})
+
+test("an edit's attachment list replaces that message's, and only that message's", () => {
+  const { attachments } = rebuildTurn(
+    THREE,
+    [shot('a', 0), shot('b', 1)],
+    [
+      { index: 1, text: 'second', attachments: [ref('b'), ref('new')] },
+      { index: 2, text: 'third', attachments: [ref('added')] },
+    ],
+  )
+  assert.deepEqual(attachments, [shot('a', 0), shot('b', 1), shot('new', 1), shot('added', 2)])
+})
+
+test('an untagged turn with its words cleared and a picture kept re-sends as empty text plus the picture', () => {
+  const { text, attachments } = rebuildTurn('from before the format', [shot('a', 0)], [{ index: 0, text: '' }])
+  assert.equal(text, '')
+  assert.deepEqual(attachments, [shot('a', 0)])
+  // And with the picture removed too, there is nothing left to send.
+  assert.throws(
+    () => rebuildTurn('from before the format', [shot('a', 0)], [{ index: 0, text: '', attachments: [] }]),
+    /removes every message/,
+  )
 })
