@@ -112,7 +112,7 @@ function AppMenu({ groups, headings, activeId, createHref, onNavigate, trigger, 
       <PopoverTrigger render={trigger}>{children}</PopoverTrigger>
       <PopoverContent className='w-64 gap-0 p-0' side='bottom' align='start'>
         <Command className='p-0'>
-          <div className='flex items-center gap-1 pr-1 *:data-[slot=command-input-wrapper]:flex-1'>
+          <div className='flex items-center pr-1 *:data-[slot=command-input-wrapper]:flex-1'>
             <CommandInput value={query} onValueChange={setQuery} placeholder='Search apps…' />
             {createHref && (
               <a
