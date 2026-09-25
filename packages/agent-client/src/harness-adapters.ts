@@ -63,6 +63,12 @@ export interface HarnessAdapter {
   // the live session and rebuilds the session itself when the MCP servers
   // differ (acp-agent.js getOrCreateSession, 0.79.0).
   mcpRefreshReopens?: boolean
+  // Advertised command names (as the harness spells them, without a leading
+  // `/`) that are dropped from the session's `available_commands` before any
+  // subscriber sees them. For commands that act on the harness process rather
+  // than the session, and so reach every session sharing it. Hiding is not
+  // blocking: a prompt that spells one out still goes to the harness.
+  hiddenCommands?: string[]
   // Builds extra spawn env from the selection's provider wiring, for harnesses
   // whose provider configuration cannot travel through the standard base-url /
   // key / model env vars and must instead be carried in a document of the
@@ -301,6 +307,9 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // the engine would re-deliver as a prompt. Remove this line in the change
     // that teaches steerIntoRunningTurn to treat `startedNewTurn` as delivered.
     advertisedSteering: 'ignore',
+    // `/logout` signs out the account the adapter process holds (the
+    // profile's gateway credential), breaking the session for everyone on it.
+    hiddenCommands: ['logout'],
     note: "Needs an endpoint that serves OpenAI's Responses API: OpenAI itself, or an OpenAI-compatible endpoint marked as supporting it. The profile's key is sent to that endpoint as a Bearer token.",
   },
   {

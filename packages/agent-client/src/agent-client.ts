@@ -1495,10 +1495,16 @@ export function handleUpdate(notification: SessionNotification): void {
     }
     case 'available_commands_update': {
       const session = store.sessions.get(sessionId)
-      if (session) {
-        session.commands = update.availableCommands
+      if (!session) {
+        // emit() would drop it too: there is no record to hold the list.
+        break
       }
-      emit(sessionId, { kind: 'available_commands', commands: update.availableCommands })
+      // Filtered here rather than in a composer so the hidden names never
+      // reach the event log, and a restored or re-subscribed session cannot
+      // bring them back.
+      const hidden = findAdapter(session.selection.adapterId)?.hiddenCommands ?? []
+      session.commands = update.availableCommands.filter((command) => !hidden.includes(command.name))
+      emit(sessionId, { kind: 'available_commands', commands: session.commands })
       break
     }
     case 'session_info_update': {

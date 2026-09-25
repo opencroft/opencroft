@@ -6,18 +6,35 @@ import { useEffect, useRef } from 'react'
 import { cn } from 'ui/lib/utils'
 
 /**
- * The composer text's command token, or null when the text is not a command
- * being typed.
+ * How a command is typed into the composer. A name the agent already spells
+ * with a leading `$` is a mention the agent reads out of the prompt rather than
+ * a slash command it intercepts -- behind a `/` it would reach the agent as
+ * text naming nothing -- so it is typed as spelled; every other name is typed
+ * behind `/`. The popup row and the inserted text both come from here, so what
+ * a reader picks is what they were shown.
+ */
+export function commandInvocation(command: Pick<AvailableCommand, 'name'>): string {
+  return command.name.startsWith('$') ? command.name : `/${command.name}`
+}
+
+/**
+ * The composer text's command token, sigil included, or null when the text is
+ * not a command being typed.
  *
  * "Being typed" is the whole first token and nothing after it: `/`, `/rev`,
- * `/review` all qualify; `/review src/` does not (the name is settled, the
- * reader is writing arguments), and neither does anything with a newline or
- * that doesn't start with `/`. Leading whitespace is ignored the same way the
- * engine's own command detection ignores it.
+ * `/review`, `$`, `$sk` all qualify; `/review src/` does not (the name is
+ * settled, the reader is writing arguments), and neither does anything with a
+ * newline or that starts with neither `/` nor `$`. Leading whitespace is
+ * ignored the same way the engine's own command detection ignores it.
  */
 export function commandToken(text: string): string | null {
   const lead = text.trimStart()
-  return /^\/\S*$/.test(lead) ? lead.slice(1) : null
+  return /^[/$]\S*$/.test(lead) ? lead : null
+}
+
+// The part of a name a reader types after the sigil.
+function bareName(command: AvailableCommand): string {
+  return command.name.replace(/^\$/, '').toLowerCase()
 }
 
 /**
@@ -29,20 +46,29 @@ export function commandToken(text: string): string | null {
  * means it is one but nothing matches — the popup hides in both cases, but a
  * caller deciding whether Enter selects-or-sends needs the distinction to
  * collapse to "no visible choices" in one place, here.
+ *
+ * `/` offers every command, the `$` ones included, so they can be found from
+ * the key a reader already knows; `$` offers only those. A `$` with no such
+ * command is not a command being typed at all -- `$5` is a price -- so it
+ * answers null and leaves Enter to send.
  */
 export function matchCommands(commands: readonly AvailableCommand[], text: string): AvailableCommand[] | null {
   const token = commandToken(text)
-  if (token === null || commands.length === 0) {
+  if (token === null) {
     return null
   }
-  const lower = token.toLowerCase()
-  const prefixed = commands.filter((command) => command.name.toLowerCase().startsWith(lower))
+  const candidates = token.startsWith('$') ? commands.filter((command) => command.name.startsWith('$')) : commands
+  if (candidates.length === 0) {
+    return null
+  }
+  const lower = token.slice(1).toLowerCase()
+  const prefixed = candidates.filter((command) => bareName(command).startsWith(lower))
   if (prefixed.length > 0) {
     return prefixed
   }
   // Prefix first, substring as the fallback — `/plan` should offer `plan`
   // before it offers `create_plan`, but typing a memorable middle still finds.
-  return commands.filter((command) => command.name.toLowerCase().includes(lower))
+  return candidates.filter((command) => bareName(command).includes(lower))
 }
 
 export interface CommandAutocompleteProps {
@@ -55,7 +81,7 @@ export interface CommandAutocompleteProps {
 }
 
 /**
- * The slash-command popup: a list of agent-advertised commands over the
+ * The command popup: a list of agent-advertised commands over the
  * composer. Pure presentation — which commands, which is active and what
  * selecting does are the composer's; this draws them and reports clicks.
  */
@@ -96,7 +122,7 @@ export function CommandAutocomplete({ items, activeIndex, onSelect, onHover }: C
             index === activeIndex && 'bg-accent text-accent-foreground',
           )}
         >
-          <span className='shrink-0 font-mono'>/{command.name}</span>
+          <span className='shrink-0 font-mono'>{commandInvocation(command)}</span>
           {command.input?.hint ? (
             <span className='shrink-0 font-mono text-xs text-muted-foreground'>{command.input.hint}</span>
           ) : null}

@@ -18,7 +18,7 @@ import {
 import { Textarea } from 'ui/components/ui/textarea'
 import { cn } from 'ui/lib/utils'
 
-import { CommandAutocomplete, commandToken, matchCommands } from './command-autocomplete'
+import { CommandAutocomplete, commandInvocation, commandToken, matchCommands } from './command-autocomplete'
 
 // One choice inside a setting.
 export interface CommandBarConfigOption {
@@ -245,7 +245,8 @@ export interface AgentCommandBarProps {
   textareaRef?: Ref<HTMLTextAreaElement>
   // Commands the agent advertised for this session (see the session
   // contract's `commands`). With any given, typing `/` in an empty composer
-  // opens the autocomplete; without, `/text` is just text on its way out.
+  // opens the autocomplete, and so does a dollar sign where a name is spelled
+  // with one; without, `/text` is just text on its way out.
   commands?: AvailableCommand[]
   className?: string
 }
@@ -500,7 +501,7 @@ export function AgentCommandBar({
   const insertCommand = (command: AvailableCommand) => {
     // The trailing space settles the token, which closes the popup by the
     // derivation above -- no state to clean up beyond the cursor.
-    setValue(`/${command.name} `)
+    setValue(`${commandInvocation(command)} `)
     setCommandCursor(0)
   }
 
