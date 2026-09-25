@@ -1,21 +1,26 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { connectionKey, createAgentClient } from './agent-client'
+import { AGENT_PROVIDERS } from './agent-providers'
 import { CODEX_DEFAULT_BASE_URL, HARNESS_ADAPTERS } from './harness-adapters'
+import { awaitOauthLogin, disconnectOauth, oauthLoginStatus, startOauthLogin } from './oauth-login'
 import { adaptersForProvider, buildSpawnConfig, findAdapter, findProvider } from './resolve'
 import type { AgentSelection, ChatEvent } from './types'
 
-// The Codex adapter, checked without a key: the adapter's spawn
-// and auth contract against codex-acp 1.13.1 as read from its source, and the
-// engine against a fake agent that enforces that contract (test-fixtures/
-// fake-codex-agent.mjs).
+// The Codex adapters, checked without a key or an account: the adapters'
+// spawn and auth contract against codex-acp 1.13.1 as read from its source,
+// and the engine and the device-code sign-in against a fake agent that
+// enforces that contract (test-fixtures/fake-codex-agent.mjs).
 
 const KEY = 'sk-test-DO-NOT-LEAK-0123456789abcdef'
+// What the fake agent's device-code sign-in shows; made up.
+const DEVICE_URL = 'https://auth.example.test/codex/device'
+const DEVICE_CODE = 'FAKE-12345'
 
 function codexSelection(overrides: Partial<AgentSelection> = {}): AgentSelection {
   return {
@@ -72,9 +77,9 @@ test('Codex is offered for OpenAI, and for a compatible endpoint only when it op
   assert.ok(ids('openai-compatible', true).includes('codex'))
   assert.ok(!ids('dashscope').includes('codex'))
   assert.ok(!ids('anthropic', true).includes('codex'), 'no OpenAI-compatible endpoint to opt in')
-  // The opt-in widens nothing else.
+  // The opt-in widens nothing but the Responses-API harnesses.
   assert.deepEqual(
-    ids('openai-compatible', true).filter((id) => id !== 'codex'),
+    ids('openai-compatible', true).filter((id) => findAdapter(id)?.protocol !== 'openai-responses'),
     ids('openai-compatible'),
   )
 })
@@ -161,6 +166,8 @@ async function withFakeAgent(
   const savedEnv = { log: process.env.FAKE_AGENT_LOG, mode: process.env.FAKE_AGENT_MODE }
   process.env.FAKE_AGENT_LOG = logFile
   process.env.FAKE_AGENT_MODE = mode
+  process.env.FAKE_DEVICE_URL = DEVICE_URL
+  process.env.FAKE_DEVICE_CODE = DEVICE_CODE
   adapter.command = process.execPath
   adapter.args = [FAKE_AGENT]
   const printed: string[] = []
@@ -201,6 +208,8 @@ async function withFakeAgent(
     process.env.FAKE_AGENT_MODE = savedEnv.mode
     if (savedEnv.log === undefined) delete process.env.FAKE_AGENT_LOG
     if (savedEnv.mode === undefined) delete process.env.FAKE_AGENT_MODE
+    delete process.env.FAKE_DEVICE_URL
+    delete process.env.FAKE_DEVICE_CODE
     rmSync(dir, { recursive: true, force: true })
   }
 }
@@ -289,5 +298,154 @@ test('adapters without an authenticate hook neither declare gateway auth nor aut
       rest.map((request) => request.method),
       ['session/new'],
     )
+  })
+})
+
+// ── the ChatGPT-subscription variant ───────────────────────────────────────
+
+function subscriptionSelection(overrides: Partial<AgentSelection> = {}): AgentSelection {
+  return codexSelection({ adapterId: 'codex-subscription', ...overrides })
+}
+
+test('the subscription variant spawns the same pinned bridge with its own home and no key', () => {
+  const config = buildSpawnConfig(subscriptionSelection({ harnessHome: '/data/harness-home/agent-a' }))
+  assert.equal(config.command, 'npx')
+  assert.deepEqual(config.args, ['-y', '@agentclientprotocol/codex-acp@1.13.1'])
+  // Its own directory beside the key variant's, so the two logins never mix.
+  assert.equal(config.env.CODEX_HOME, '/data/harness-home/agent-a/codex-subscription')
+  assert.deepEqual(config.ensureDirs, ['/data/harness-home/agent-a/codex-subscription'])
+  assert.equal(config.env.NO_BROWSER, '1')
+  assert.deepEqual(JSON.parse(config.env.CODEX_CONFIG), { model: 'gpt-5-codex' })
+  assert.ok(
+    !Object.values(config.env).includes(KEY),
+    'a key left on the profile travels nowhere: the ChatGPT login is the credential',
+  )
+  const adapter = findAdapter('codex-subscription')
+  assert.equal(adapter?.authenticate, undefined)
+  assert.equal(adapter?.keyEnv, undefined)
+  assert.equal(adapter?.supportsOauthLogin, true)
+})
+
+test('the subscription variant is offered exactly where the key variant is', () => {
+  for (const provider of AGENT_PROVIDERS) {
+    for (const responsesApi of [false, true]) {
+      const ids = adaptersForProvider(provider.id, { responsesApi }).map((adapter) => adapter.id)
+      assert.equal(
+        ids.includes('codex-subscription'),
+        ids.includes('codex'),
+        `${provider.id}, responsesApi ${responsesApi}`,
+      )
+    }
+  }
+  assert.ok(adaptersForProvider('openai').some((adapter) => adapter.id === 'codex-subscription'))
+})
+
+function harnessHomeOf(h: { cwd: string }): string {
+  return join(dirname(h.cwd), 'harness-home')
+}
+
+test('the device-code sign-in shows the link and code, accepts, and stores the login in the agent’s home', async () => {
+  await withFakeAgent('codex-subscription', '', async (h) => {
+    const harnessHome = harnessHomeOf(h)
+    const authFile = join(harnessHome, 'codex-subscription', 'auth.json')
+    assert.deepEqual(await oauthLoginStatus('codex-subscription', { harnessHome }), {
+      supported: true,
+      connected: false,
+    })
+    const shown = await startOauthLogin('codex-subscription', { harnessHome })
+    assert.ok(shown.kind === 'device-code')
+    assert.match(shown.loginId, /^[0-9a-f-]{36}$/)
+    assert.deepEqual(
+      { ...shown, loginId: '' },
+      {
+        kind: 'device-code',
+        loginId: '',
+        verificationUrl: DEVICE_URL,
+        userCode: DEVICE_CODE,
+        message: `Sign in to ChatGPT and enter this code: ${DEVICE_CODE}`,
+      },
+    )
+    assert.deepEqual(await awaitOauthLogin(shown.loginId), { ok: true })
+    assert.ok(existsSync(authFile))
+    const [init, auth, answer] = h.requests()
+    assert.deepEqual([init.method, auth.method, answer.method], ['initialize', 'authenticate', 'elicitation/response'])
+    assert.deepEqual((init.params.clientCapabilities as { elicitation?: unknown }).elicitation, { url: {} })
+    assert.equal(init.env?.CODEX_HOME, join(harnessHome, 'codex-subscription'))
+    assert.equal(init.env?.NO_BROWSER, '1')
+    assert.deepEqual(auth.params, { methodId: 'chat-gpt-device-code' })
+    assert.deepEqual(answer.params, { action: 'accept' })
+    // Read once: a second read finds the flow finished.
+    assert.deepEqual(await awaitOauthLogin(shown.loginId), { ok: false, error: 'Login attempt expired — start again' })
+
+    assert.deepEqual(await oauthLoginStatus('codex-subscription', { harnessHome }), {
+      supported: true,
+      connected: true,
+    })
+    await disconnectOauth('codex-subscription', { harnessHome })
+    assert.ok(!existsSync(authFile))
+    assert.equal((await oauthLoginStatus('codex-subscription', { harnessHome })).connected, false)
+  })
+})
+
+test('an agent that never offers the device-code sign-in fails the start clearly', async () => {
+  await withFakeAgent('codex-subscription', 'no-device-code', async (h) => {
+    await assert.rejects(
+      startOauthLogin('codex-subscription', { harnessHome: harnessHomeOf(h) }),
+      /^Error: Codex \(ChatGPT subscription\) does not offer the 'chat-gpt-device-code' sign-in/,
+    )
+    assert.ok(!h.requests().some((request) => request.method === 'authenticate'))
+  })
+})
+
+test('a sign-in that fails after the code was shown settles with the failure and stores nothing', async () => {
+  await withFakeAgent('codex-subscription', 'device-code-fails', async (h) => {
+    const harnessHome = harnessHomeOf(h)
+    const shown = await startOauthLogin('codex-subscription', { harnessHome })
+    assert.equal(shown.kind, 'device-code')
+    const result = await awaitOauthLogin((shown as { loginId: string }).loginId)
+    assert.ok(!('pending' in result), 'settled')
+    assert.equal(result.ok, false)
+    assert.match(result.error ?? '', /^Sign-in did not complete: /)
+    assert.ok(!existsSync(join(harnessHome, 'codex-subscription', 'auth.json')))
+  })
+})
+
+test('a sign-in the user has not finished answers pending, and a disconnect cancels it', async () => {
+  await withFakeAgent('codex-subscription', 'device-code-pending', async (h) => {
+    const harnessHome = harnessHomeOf(h)
+    const shown = await startOauthLogin('codex-subscription', { harnessHome })
+    const loginId = (shown as { loginId: string }).loginId
+    assert.deepEqual(await awaitOauthLogin(loginId, 50), { pending: true })
+    await disconnectOauth('codex-subscription', { harnessHome })
+    assert.deepEqual(await awaitOauthLogin(loginId, 50), { ok: false, error: 'Login attempt expired — start again' })
+  })
+})
+
+test('the device-code sign-in needs the agent’s harness home and spawns nothing without one', async () => {
+  await withFakeAgent('codex-subscription', '', async (h) => {
+    await assert.rejects(startOauthLogin('codex-subscription'), /harness home/)
+    await assert.rejects(oauthLoginStatus('codex-subscription'), /harness home/)
+    assert.deepEqual(h.requests(), [])
+  })
+})
+
+test('a session without a stored login says to sign in first, and opens once the login is stored', async () => {
+  await withFakeAgent('codex-subscription', '', async (h) => {
+    const selection = subscriptionSelection({ cwd: h.cwd, harnessHome: harnessHomeOf(h) })
+    await assert.rejects(
+      h.client.createSession(selection),
+      /^Error: Codex \(ChatGPT subscription\) is not signed in: sign in to its account first/,
+    )
+    const shown = await startOauthLogin('codex-subscription', { harnessHome: selection.harnessHome })
+    assert.deepEqual(await awaitOauthLogin((shown as { loginId: string }).loginId), { ok: true })
+    const meta = await h.client.createSession(selection)
+    assert.ok(meta.id.startsWith('fake-'))
+    // The refusing process was retired: the session that opened is a fresh
+    // one, which read the login at start. No session connection authenticates.
+    assert.deepEqual(
+      h.requests().map((request) => request.method),
+      ['initialize', 'session/new', 'initialize', 'authenticate', 'elicitation/response', 'initialize', 'session/new'],
+    )
+    assertNoLeak(h)
   })
 })

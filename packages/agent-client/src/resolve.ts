@@ -69,7 +69,10 @@ export function responsesApiOptIn(provider: Pick<AgentProvider, 'endpoints'> | u
 // workdir — the harness resolves a relative home against the directory it was
 // started in, and ensureDirs are created against that same directory. A plain
 // string join: this module is client-safe (no node:path).
-export function harnessHomeDir(adapter: Pick<HarnessAdapter, 'id'>, selection: AgentSelection): string {
+export function harnessHomeDir(
+  adapter: Pick<HarnessAdapter, 'id'>,
+  selection: Pick<AgentSelection, 'harnessHome'>,
+): string {
   const root = selection.harnessHome ? selection.harnessHome.replace(/\/+$/, '') : '.harness-home'
   return `${root}/${adapter.id}`
 }

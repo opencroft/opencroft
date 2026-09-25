@@ -1883,6 +1883,10 @@ function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
   return new Error(message)
 }
 
+// ACP's `auth_required` error code (the SDK's ErrorCode union names the number
+// but exports no constant for it).
+const AUTH_REQUIRED_CODE = -32000
+
 // Runs an adapter's `authenticate` hook right after initialize. The hook sees
 // what the agent advertised and throws a user-facing error when it can't
 // proceed (no key, method not offered); the agent's own rejection is reported
@@ -2757,6 +2761,29 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return undefined
     }
     return store.connections.get(connectionKey(selection))
+  }
+
+  // A harness that signs in through its own stored login (an adapter with
+  // supportsOauthLogin) answers session/new with ACP's authRequired until that
+  // login exists. The raw "Authentication required" names no remedy, and
+  // there is exactly one: sign in first. The process that answered is retired
+  // unless a session still uses it — measured on codex-acp 1.13.1, a process
+  // that refused keeps refusing after a login lands in its home, while a
+  // fresh one opens the session.
+  function signInRequiredError(selection: AgentSelection, error: unknown): unknown {
+    const adapter = findAdapter(selection.adapterId)
+    if (!adapter?.supportsOauthLogin || (error as { code?: unknown } | null)?.code !== AUTH_REQUIRED_CODE) {
+      return error
+    }
+    const key = connectionKey(selection)
+    const inUse = [...store.sessions.values()].some(
+      (session) => !isNativeSelection(session.selection) && connectionKey(session.selection) === key,
+    )
+    if (!inUse) {
+      store.connections.get(key)?.process?.kill()
+      store.connections.delete(key)
+    }
+    return new Error(`${adapter.label} is not signed in: sign in to its account first, then start the session again.`)
   }
 
   // Resolve a live connection for an already-created session, using the spawn
@@ -4285,11 +4312,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         mcpServers = tagInternal(internal, servers, token)
         droppedMcp = dropped
       }
-      const response = await connection.newSession({
-        cwd: selection.cwd,
-        mcpServers,
-        _meta: sessionMeta(selection),
-      })
+      const response = await connection
+        .newSession({
+          cwd: selection.cwd,
+          mcpServers,
+          _meta: sessionMeta(selection),
+        })
+        .catch((error: unknown) => {
+          throw signInRequiredError(selection, error)
+        })
       const sessionId = response.sessionId
       if (token) {
         store.acpTokenSession.set(token, sessionId)

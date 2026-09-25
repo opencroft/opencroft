@@ -313,6 +313,29 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     note: "Needs an endpoint that serves OpenAI's Responses API: OpenAI itself, or an OpenAI-compatible endpoint marked as supporting it. The profile's key is sent to that endpoint as a Bearer token.",
   },
   {
+    id: 'codex-subscription',
+    label: 'Codex (ChatGPT subscription)',
+    command: 'npx',
+    // Same pinned bridge as 'codex' — see the notes there.
+    args: ['-y', '@agentclientprotocol/codex-acp@1.13.1'],
+    protocol: 'openai-responses',
+    // No keyEnv and no authenticate hook: the ChatGPT login is made once by
+    // ./oauth-login's device-code flow and stored by Codex as auth.json in its
+    // home, which it refreshes itself. A session only reads it, so a harness
+    // home without one answers session/new with authRequired.
+    homeEnv: 'CODEX_HOME',
+    // Hides the browser ChatGPT login, which would open a browser on the
+    // server; the device-code login needs no browser here.
+    staticEnv: { NO_BROWSER: '1' },
+    selectionEnv: codexSelectionEnv,
+    supportsOauthLogin: true,
+    // Same reason as the API-key entry: `/logout` signs out the process's
+    // stored ChatGPT login for every session on it.
+    hiddenCommands: ['logout'],
+    advertisedSteering: 'ignore',
+    note: "Sign in with your ChatGPT account: the sign-in shows a verification link and a one-time code to enter on that page. The login is kept in this agent's own harness home, survives restarts and is refreshed by Codex itself; no API key is used.",
+  },
+  {
     id: 'qwen',
     label: 'Qwen Code',
     command: 'npx',

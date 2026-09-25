@@ -70,8 +70,8 @@ import {
 } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { splitEnvelope, stripDeliveryStamp } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
+import { agentPlacement } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-placement-shared'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
-import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { authorForPerson } from '@/app/_server/message-author'
 import { secrets } from '@/server/secrets'
@@ -398,11 +398,12 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   if (!agent) {
     throw new Error('Agent node not found')
   }
-  // Each agent gets a persistent workspace next to the DB in the data volume,
-  // keyed by slug: <cwd>/data/agent-workspace/<agent-slug>.
-  const workspaceSlug = slug(agent.name ?? '') || data.agentNodeId
+  // Each agent gets a persistent workspace and a harness home of its own,
+  // keyed by its slug — shared with the account sign-in, which must write a
+  // harness login where these sessions read it.
+  const placement = agentPlacement(agent, data.agentNodeId, { cwd: process.cwd(), join })
   const adapterId = agent.adapterId ?? 'claude'
-  const containerName = agent.containerName || undefined
+  const containerName = placement.containerName
   const selection: AgentSelection = {
     providerId: agent.providerId ?? '',
     adapterId,
@@ -410,15 +411,9 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     // The API token / base URL fall back to the OPENCLAW_GATEWAY_* env vars when
     // the node leaves them unset, so a deployment can supply them globally.
     apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || process.env.OPENCLAW_GATEWAY_TOKEN || '',
-    // In a container the harness gets its own /agents/<slug> workdir (created in
-    // the container on spawn); on the host it's a persistent dir in the data volume.
-    cwd: containerName ? `/agents/${workspaceSlug}` : join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    // A harness's own home (Codex's CODEX_HOME) lives beside the workspace, not
-    // in it and not in the server user's home: the agent can't edit its own
-    // harness config, and nothing the host keeps in ~/.codex reaches it.
-    harnessHome: containerName
-      ? `/agents/.harness-home/${workspaceSlug}`
-      : join(process.cwd(), 'data', 'agent-harness-home', workspaceSlug),
+    // A container workdir is created in the container on spawn.
+    cwd: placement.cwd,
+    harnessHome: placement.harnessHome,
     containerName,
     baseUrl: agent.baseUrl || process.env.OPENCLAW_GATEWAY_URL,
     responsesApi: agent.responsesApi,
@@ -437,7 +432,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     sessionKey: data.tabKey,
     // Same slug used for the workspace dir — lets loadMcpServers (mcp-store.ts)
     // surface this agent's own MCP Connection node(s) without a global entry.
-    mcpIdentity: workspaceSlug,
+    mcpIdentity: placement.slug,
   }
   // Host spawn cwd must exist or spawn fails with ENOENT; the container path is
   // created inside the container when the harness is exec'd.

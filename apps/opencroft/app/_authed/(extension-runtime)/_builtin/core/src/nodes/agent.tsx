@@ -14,6 +14,7 @@ const {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Spinner,
   Textarea,
   icons,
   invoke,
@@ -172,6 +173,7 @@ const NO_SECRET = '__none__'
 const NO_REASONING = '__default__'
 
 export function AgentProfileTab({
+  nodeId,
   data,
   updateData,
 }: {
@@ -192,7 +194,13 @@ export function AgentProfileTab({
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
         {catalog ? (
-          <LocalProfileFields data={data} updateData={updateData} catalog={catalog} secretKeys={secretKeys} />
+          <LocalProfileFields
+            nodeId={nodeId}
+            data={data}
+            updateData={updateData}
+            catalog={catalog}
+            secretKeys={secretKeys}
+          />
         ) : (
           <p className='text-xs text-muted-foreground'>Loading profile options…</p>
         )}
@@ -202,11 +210,13 @@ export function AgentProfileTab({
 }
 
 function LocalProfileFields({
+  nodeId,
   data,
   updateData,
   catalog,
   secretKeys,
 }: {
+  nodeId: string
   data: AgentData
   updateData: (p: Partial<AgentData>) => void
   catalog: AgentCatalog
@@ -343,7 +353,11 @@ function LocalProfileFields({
         </Select>
       </div>
       {adapter?.supportsOauthLogin ? (
-        <OauthAccountSection adapterId={adapter.id} />
+        <OauthAccountSection
+          adapterId={adapter.id}
+          nodeId={nodeId}
+          homeKey={`${data.name ?? ''}\u0000${data.containerName ?? ''}`}
+        />
       ) : (
         <div className='flex flex-col gap-1'>
           <Label className='text-xs'>API key secret</Label>
@@ -497,41 +511,93 @@ function LocalProfileFields({
   )
 }
 
+// What agent.oauthStart answers (agent-client's OauthLoginStart).
+type OauthLogin =
+  | { kind: 'paste-code'; loginId: string; authUrl: string }
+  | { kind: 'device-code'; loginId: string; verificationUrl: string; userCode: string | null; message: string }
+  | { kind: 'signed-in' }
+
 // Connect/disconnect UI for harnesses that keep their own file-based OAuth
-// credentials (see agent-client's oauth-login): the harness prints a consent
-// URL, the user signs in and pastes the authorization code back, and the
-// harness stores and rotates the tokens itself.
-function OauthAccountSection({ adapterId }: { adapterId: string }) {
+// credentials (see agent-client's oauth-login), which the harness then stores
+// and rotates itself. Two ways in: the harness shows a consent URL and the
+// user pastes the authorization code back (paste-code), or it shows a
+// verification URL and a one-time code the user enters there while this
+// waits (device-code). Every call names the agent node: the login belongs to
+// that agent's own harness home. `homeKey` changes with whatever moves that
+// home (the agent's name, its container), so the status is read again.
+function OauthAccountSection({ adapterId, nodeId, homeKey }: { adapterId: string; nodeId: string; homeKey: string }) {
   const [connected, setConnected] = useState<boolean | null>(null)
-  const [login, setLogin] = useState<{ loginId: string; authUrl: string } | null>(null)
+  const [login, setLogin] = useState<Exclude<OauthLogin, { kind: 'signed-in' }> | null>(null)
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const refresh = useCallback(() => {
-    invoke<{ connected: boolean }>('agent.oauthStatus', adapterId)
+    invoke<{ connected: boolean }>('agent.oauthStatus', adapterId, nodeId)
       .then((s: { connected: boolean }) => setConnected(s.connected))
-      .catch(() => setConnected(null))
-  }, [adapterId])
+      .catch((e: unknown) => {
+        setConnected(null)
+        setError(e instanceof Error ? e.message : String(e))
+      })
+  }, [adapterId, nodeId])
 
+  // homeKey is a trigger, not an input: the server reads the home from the node.
   useEffect(() => {
     setLogin(null)
     setCode('')
     setError('')
     refresh()
-  }, [refresh])
+  }, [refresh, homeKey])
 
   const start = useCallback(async () => {
     setBusy(true)
     setError('')
     try {
-      setLogin(await invoke<{ loginId: string; authUrl: string }>('agent.oauthStart', adapterId))
+      const started = await invoke<OauthLogin>('agent.oauthStart', adapterId, nodeId)
+      if (started.kind === 'signed-in') {
+        refresh()
+      } else {
+        setLogin(started)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
-  }, [adapterId])
+  }, [adapterId, nodeId, refresh])
+
+  // A device-code login finishes on another device; ask until it has.
+  const deviceLoginId = login?.kind === 'device-code' ? login.loginId : null
+  useEffect(() => {
+    if (!deviceLoginId) {
+      return
+    }
+    let active = true
+    const wait = async () => {
+      while (active) {
+        const result = await invoke<{ pending?: true; ok?: boolean; error?: string }>('agent.oauthAwait', deviceLoginId)
+        if (!active || result.pending) {
+          continue
+        }
+        setLogin(null)
+        if (result.ok) {
+          refresh()
+        } else {
+          setError(result.error || 'Sign-in failed')
+        }
+        return
+      }
+    }
+    wait().catch((e: unknown) => {
+      if (active) {
+        setLogin(null)
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [deviceLoginId, refresh])
 
   const submit = useCallback(async () => {
     if (!login || !code.trim()) {
@@ -562,7 +628,7 @@ function OauthAccountSection({ adapterId }: { adapterId: string }) {
     setBusy(true)
     setError('')
     try {
-      await invoke('agent.oauthDisconnect', adapterId)
+      await invoke('agent.oauthDisconnect', adapterId, nodeId)
       setLogin(null)
       setCode('')
       refresh()
@@ -571,7 +637,7 @@ function OauthAccountSection({ adapterId }: { adapterId: string }) {
     } finally {
       setBusy(false)
     }
-  }, [adapterId, refresh])
+  }, [adapterId, nodeId, refresh])
 
   return (
     <div className='flex flex-col gap-1'>
@@ -584,6 +650,30 @@ function OauthAccountSection({ adapterId }: { adapterId: string }) {
           <Button variant='outline' size='sm' onClick={disconnect} disabled={busy}>
             Disconnect
           </Button>
+        </div>
+      ) : login?.kind === 'device-code' ? (
+        <div className='flex flex-col gap-1.5'>
+          <p className='text-[10px] text-muted-foreground'>
+            Open the sign-in page and enter this code there. This finishes by itself once you have.
+          </p>
+          <a href={login.verificationUrl} target='_blank' rel='noreferrer' className='break-all text-xs underline'>
+            {login.verificationUrl}
+          </a>
+          {login.userCode ? (
+            <code className='select-all self-start rounded-md bg-muted px-2 py-1 font-mono text-sm'>
+              {login.userCode}
+            </code>
+          ) : (
+            <p className='text-xs'>{login.message}</p>
+          )}
+          <div className='flex items-center gap-2'>
+            <Spinner className='size-3 text-muted-foreground' />
+            <p className='flex-1 text-[10px] text-muted-foreground'>Waiting for the sign-in to finish…</p>
+            {/* Disconnect ends the attempt in flight; there is no login yet to remove. */}
+            <Button variant='ghost' size='sm' onClick={disconnect} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
         </div>
       ) : login ? (
         <div className='flex flex-col gap-1.5'>

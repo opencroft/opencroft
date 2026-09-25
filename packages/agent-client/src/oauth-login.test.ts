@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { extractOauthUrl, parseJsonRpcLines } from './oauth-login'
+import { extractOauthUrl, parseJsonRpcLines } from './oauth-paste-code'
 
 const URL_PATTERN = /https:\/\/accounts\.google\.com\/o\/oauth2\/[^\s"']+/
 

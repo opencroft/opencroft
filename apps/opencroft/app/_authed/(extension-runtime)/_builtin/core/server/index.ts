@@ -2,9 +2,17 @@ import type { ExecOptions, ServerConfig, TerminalContext } from '@opencroft/serv
 import host from '@opencroft/server'
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'
-import { disconnectOauth, oauthLoginStatus, startOauthLogin, submitOauthCode } from 'agent-client/oauth-login'
+import {
+  awaitOauthLogin,
+  disconnectOauth,
+  type OauthPlacement,
+  oauthLoginStatus,
+  startOauthLogin,
+  submitOauthCode,
+} from 'agent-client/oauth-login'
 import { reasoningEfforts } from 'agent-client/reasoning'
 
+import { agentPlacement } from '../src/nodes/agent-placement-shared'
 import { routeOutput, TERMINAL_ROUTER_TYPE, type TerminalRouterData } from '../src/nodes/terminal-router-shared'
 import {
   keyStoreCopyKeyToWsl,
@@ -48,6 +56,23 @@ function listAgentCatalog(): AgentCatalog {
       protocols: Object.keys(p.endpoints),
     })),
   }
+}
+
+// Where an agent's harness login lives: the harness home and container its
+// sessions are spawned with. A harness that keeps its login in that home
+// (Codex) reads it from there and nowhere else, so a sign-in, a status check
+// or a disconnect aimed anywhere else would act on a login the agent never sees.
+async function agentOauthPlacement(nodeId: string): Promise<OauthPlacement> {
+  const node = await host.graph.getNode(String(nodeId ?? ''))
+  if (node?.type !== 'agent') {
+    throw new Error('Agent node not found')
+  }
+  const { harnessHome, containerName } = agentPlacement(
+    node.data as { name?: string; containerName?: string },
+    node.id,
+    { cwd: process.cwd(), join: host.path.join },
+  )
+  return { harnessHome, containerName }
 }
 
 // Discover models from an OpenAI-compatible endpoint (`<baseUrl>/models`),
@@ -506,11 +531,16 @@ export const actions = {
   // covers models discovered from an OpenAI-compatible endpoint or typed in by
   // hand, not just the static AGENT_PROVIDERS catalog.
   'agent.reasoningEfforts': (model: string) => reasoningEfforts(String(model ?? '')),
-  'agent.oauthStatus': (adapterId: string) => oauthLoginStatus(String(adapterId ?? '')),
-  'agent.oauthStart': (adapterId: string) => startOauthLogin(String(adapterId ?? '')),
+  // Each takes the agent node, whose own harness home the login lives in.
+  'agent.oauthStatus': async (adapterId: string, nodeId: string) =>
+    oauthLoginStatus(String(adapterId ?? ''), await agentOauthPlacement(nodeId)),
+  'agent.oauthStart': async (adapterId: string, nodeId: string) =>
+    startOauthLogin(String(adapterId ?? ''), await agentOauthPlacement(nodeId)),
   'agent.oauthSubmitCode': (params: { loginId?: string; code?: string }) =>
     submitOauthCode(String(params?.loginId ?? ''), String(params?.code ?? '')),
-  'agent.oauthDisconnect': (adapterId: string) => disconnectOauth(String(adapterId ?? '')),
+  'agent.oauthAwait': (loginId: string) => awaitOauthLogin(String(loginId ?? '')),
+  'agent.oauthDisconnect': async (adapterId: string, nodeId: string) =>
+    disconnectOauth(String(adapterId ?? ''), await agentOauthPlacement(nodeId)),
   // The agent's credentials for the MCP endpoint (the node's Tokens tab). The
   // plaintext comes back from create only; list never carries it. `input` is
   // passed through as sent: an absent expiry must be refused by the host's
