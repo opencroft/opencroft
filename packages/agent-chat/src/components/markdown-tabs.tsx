@@ -36,6 +36,12 @@ export interface MarkdownTabsProps {
   onRemove?: (index: number) => void
 }
 
+// A panel sits flush under the strip: the gap between them is the spacing, not
+// the first and last paragraph's margins. Important, because a surrounding
+// prose stylesheet (unlayered CSS) outranks a plain utility and would put its
+// paragraph margins back.
+const PANEL = '[&>*:first-child]:mt-0! [&>*:last-child]:mb-0!'
+
 /**
  * Alternatives shown one at a time: the same command for three package
  * managers, the same step on each platform.
@@ -106,11 +112,11 @@ export function MarkdownTabs({ tabs, active, onActiveChange, panel, onAdd, onRen
         ) : null}
       </div>
       {panel !== undefined ? (
-        <div className='[&>*:first-child]:mt-0 [&>*:last-child]:mb-0'>{panel}</div>
+        <div className={PANEL}>{panel}</div>
       ) : (
         tabs.map((tab, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: tabs never reorder
-          <TabsContent key={index} value={String(index)} className='[&>*:first-child]:mt-0 [&>*:last-child]:mb-0'>
+          <TabsContent key={index} value={String(index)} className={PANEL}>
             {tab.content}
           </TabsContent>
         ))

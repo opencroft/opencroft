@@ -97,7 +97,9 @@ export function MarkdownCallout({ kind, title, children, onTitleChange, onKindCh
     <div role='note' className={cn('my-2 rounded-r-md border-l-4 px-3 py-2', tone.box)}>
       <div
         contentEditable={editing ? false : undefined}
-        className={cn('flex items-center gap-1.5 font-medium', tone.accent)}
+        // The heading is the block's own line, not prose: it keeps the kit's
+        // leading wherever the surrounding prose sets a looser one.
+        className={cn('flex items-center gap-1.5 font-medium leading-normal', tone.accent)}
       >
         <Icon className='size-4 shrink-0' aria-hidden />
         {onTitleChange ? (
@@ -135,7 +137,11 @@ export function MarkdownCallout({ kind, title, children, onTitleChange, onKindCh
           </DropdownMenu>
         ) : null}
       </div>
-      {children ? <div className='mt-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0'>{children}</div> : null}
+      {/* The body sits flush with the frame: the frame's padding is the
+          spacing, not the first and last paragraph's margins. Important,
+          because a surrounding prose stylesheet (unlayered CSS) outranks a
+          plain utility and would put its paragraph margins back. */}
+      {children ? <div className='mt-1 [&>*:first-child]:mt-0! [&>*:last-child]:mb-0!'>{children}</div> : null}
     </div>
   )
 }

@@ -238,6 +238,29 @@ pre.shiki span {
   pointer-events: none;
 }
 
+/* A documentation block's body (callout, spoiler, tab) is flush with its frame
+   -- the block component trims the first and last child's margins. In the
+   editor that child is not a direct child any more: the node view puts its
+   editable region two wrappers down, and a tab's text sits one level further
+   inside the tab's own element -- so the trim is repeated here, where it can
+   see through them. */
+.markdown-editor :is([data-node-view-content-react], [data-md-directive='tab']) > :first-child {
+  margin-top: 0;
+}
+
+.markdown-editor :is([data-node-view-content-react], [data-md-directive='tab']) > :last-child {
+  margin-bottom: 0;
+}
+
+/* A tight list reads as one: the editor keeps every item's text in a paragraph,
+   and without this each item carries a full paragraph margin, where the same
+   list rendered from markdown has none. `data-tight` is the markdown
+   extension's own mark for a list written without blank lines between items. */
+.markdown-editor :is(ul, ol)[data-tight='true'] > li > p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 /* A code block's coloured runs, which arrive as ProseMirror decorations rather
    than as shiki's own markup -- the text has to stay editable, so it cannot be
    replaced by rendered HTML. Both themes ride on the decoration as custom
