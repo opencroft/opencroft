@@ -507,12 +507,24 @@ export interface TurnQuota {
  * A typed session failure (the bridge's AIR `sessionFailure` extension): the
  * harness's own word on WHY a turn ended with no answer — a quota exhaustion,
  * an auth requirement, a transport loss — instead of a generic error string.
- * `kind` is the harness's vocabulary (`quota_exhausted`, `auth_required`, …);
- * `category` groups it (`limit`, `access`, `service`, …). Both open-ended.
+ * `category` groups it (`limit`, `access`, `service`, …); open-ended.
+ *
+ * Neither bridge puts its own failure kind on the wire: claude-agent-acp
+ * 0.79.0 and codex-acp 1.13.1 both keep `quota_exhausted`, `auth_required`, …
+ * internal and send only the category and actions that kind maps to. So
+ * `label` is what a host keys on, and parseSessionFailure derives it (see
+ * there); `kind` is present only when a harness does send one.
  */
 export interface SessionFailure {
   id: string
-  kind: string
+  /** The failure's name in the bridges' shared vocabulary, or its category when the wire cannot tell kinds apart. */
+  label: string
+  /** The harness's own kind, verbatim — absent from both current bridges. */
+  kind?: string
+  /** The claude bridge's refinement of its kind (`claude_subscription_not_supported` on a sign-in failure). */
+  reason?: string
+  /** Increases per `id`: a later revision of the same failure supersedes the earlier one. */
+  revision?: number
   category: string
   severity: string
   title: string

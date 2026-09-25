@@ -132,6 +132,8 @@ test('the last usage snapshot wins, cost and rate limits with it', () => {
 test('a typed session failure renders as its own message, not a dead turn', () => {
   // The bridge settles an exhausted turn as end_turn with the verdict in
   // _meta; the fold turns that verdict into the visible outcome of the turn.
+  // No `kind`: neither bridge sends one, so the verdict arrives with the
+  // label parseSessionFailure derived (agent-client's usage-meta.test.ts).
   const events: ChatEvent[] = [
     { kind: 'user', text: 'q' },
     {
@@ -139,7 +141,7 @@ test('a typed session failure renders as its own message, not a dead turn', () =
       stopReason: 'end_turn',
       failure: {
         id: 't:error',
-        kind: 'quota_exhausted',
+        label: 'quota_exhausted',
         title: 'The Claude account has no available quota.',
         category: 'limit',
         severity: 'error',
@@ -163,7 +165,7 @@ test('a typed session failure with details carries them', () => {
       stopReason: 'end_turn',
       failure: {
         id: 't:error',
-        kind: 'auth_required',
+        label: 'auth_required',
         title: 'Sign in to continue using Claude.',
         details: 'Please run /login',
         category: 'access',

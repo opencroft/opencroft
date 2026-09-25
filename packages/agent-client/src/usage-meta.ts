@@ -126,11 +126,18 @@ export function normalizeTurnUsage(usage: unknown): TurnTokenUsage | undefined {
   // field and an undefined one deep-equal differently, and the absence is
   // the honest spelling of "not reported".
   const result: TurnTokenUsage = { totalTokens }
-  for (const counter of ['inputTokens', 'outputTokens', 'thoughtTokens'] as const) {
+  for (const counter of ['inputTokens', 'outputTokens'] as const) {
     const value = finiteNumber(record[counter])
     if (value !== undefined) {
       result[counter] = value
     }
+  }
+  // Reasoning spend goes by two names: ACP's `thoughtTokens`, and
+  // codex-acp's `reasoningOutputTokens` in `_meta.quota.token_count` (its
+  // TokenCount.ts; the same figure it hands ACP as `thoughtTokens`).
+  const thought = firstFinite(record, ['thoughtTokens', 'reasoningOutputTokens'])
+  if (thought !== undefined) {
+    result.thoughtTokens = thought
   }
   // The cache counters go by more than one name on the wire, and none of
   // them is ours. ACP's experimental `Usage` spells them `cachedReadTokens` /
@@ -191,8 +198,15 @@ export function parseTurnQuota(meta: unknown): TurnQuota | undefined {
 /**
  * A typed session failure, off the AIR `sessionFailure` extension the bridge
  * writes into `_meta` (turn-scoped on the prompt response, session-scoped on
- * a `session_info_update`). `title` and `kind` are what a host shows; the
- * rest is the harness's own structured verdict.
+ * a `session_info_update`). `id` and `title` are all a host needs to show one,
+ * so they are all that is required; the rest is the harness's own structured
+ * verdict, kept when it is well-formed.
+ *
+ * `kind` is not required because no real verdict carries one:
+ * claude-agent-acp 0.79.0 (`sessionFailureMeta`) and codex-acp 1.13.1
+ * (`SessionFailure` in CodexAcpServer.ts) both leave their kind off the wire,
+ * and a parser that insisted on it turned every quota exhaustion into a
+ * silent `end_turn`. The label a host keys on is derived instead.
  */
 export function parseSessionFailure(meta: unknown): SessionFailure | undefined {
   const record = asRecord(meta)
@@ -202,21 +216,64 @@ export function parseSessionFailure(meta: unknown): SessionFailure | undefined {
     return undefined
   }
   const id = nonEmptyString(failure.id)
-  const kind = nonEmptyString(failure.kind)
   const title = nonEmptyString(failure.title)
-  if (!id || !kind || !title) {
+  if (!id || !title) {
     return undefined
   }
+  const kind = nonEmptyString(failure.kind)
+  const reason = nonEmptyString(failure.reason)
+  const revision = finiteNumber(failure.revision)
   const details = nonEmptyString(failure.details)
+  const category = nonEmptyString(failure.category) ?? 'unknown'
+  const severity = nonEmptyString(failure.severity) ?? 'error'
+  const actions = Array.isArray(failure.actions)
+    ? failure.actions.filter((action): action is string => typeof action === 'string')
+    : undefined
   return {
     id,
-    kind,
+    label: kind ?? inferFailureKind(category, severity, actions) ?? category,
+    ...(kind ? { kind } : {}),
+    ...(reason ? { reason } : {}),
+    ...(revision !== undefined ? { revision } : {}),
     title,
-    category: nonEmptyString(failure.category) ?? 'unknown',
-    severity: nonEmptyString(failure.severity) ?? 'error',
+    category,
+    severity,
     ...(details ? { details } : {}),
-    actions: Array.isArray(failure.actions)
-      ? failure.actions.filter((action): action is string => typeof action === 'string')
-      : undefined,
+    ...(actions ? { actions } : {}),
   }
+}
+
+/**
+ * Both bridges map each of their kinds to a fixed category and action list
+ * (`AIR_FAILURE_POLICY` in claude-agent-acp 0.79.0's
+ * session-failure-extension.js, `SESSION_FAILURE_POLICY` in codex-acp
+ * 1.13.1's CodexEventHandler.ts), so the pair names the kind back — where it
+ * names exactly one across both tables. Where it names several (`limit` +
+ * `new_session` is a context or a budget exhaustion, `service` + `retry` an
+ * overload or a provider error) there is no entry: naming one of them would
+ * invent a diagnosis, and the label falls back to the category.
+ *
+ * Errors only. A retry warning is sent with its actions emptied, so a
+ * rate-limit warning arrives as `limit` + `[]` — exactly a quota exhaustion's
+ * pair. Reading warnings through this table would call a retry an exhausted
+ * account.
+ */
+const KIND_BY_POLICY: Record<string, string> = {
+  'limit:': 'quota_exhausted',
+  'limit:retry': 'rate_limited',
+  'access:login': 'auth_required',
+  // claude-agent-acp only.
+  'access:retry': 'access_denied',
+  'service:retry,new_session': 'internal_error',
+  // codex-acp only: the claude bridge's transport loss is `connection` +
+  // `new_session`, which it shares with a worker shutdown.
+  'connection:retry,new_session': 'transport_lost',
+}
+
+function inferFailureKind(category: string, severity: string, actions: string[] | undefined): string | undefined {
+  if (severity !== 'error' || !actions) {
+    return undefined
+  }
+  const key = `${category}:${actions.join(',')}`
+  return Object.hasOwn(KIND_BY_POLICY, key) ? KIND_BY_POLICY[key] : undefined
 }

@@ -281,7 +281,7 @@ test('a failed turn end still counts, because it draws the failure', () => {
     {
       kind: 'turn_end',
       stopReason: 'end_turn',
-      failure: { id: 'f', kind: 'quota', category: 'limit', severity: 'error', title: 'Quota exhausted' },
+      failure: { id: 'f', label: 'quota_exhausted', category: 'limit', severity: 'error', title: 'Quota exhausted' },
     },
   ]
   const window = tailByRecords(events, 1)

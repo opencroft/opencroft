@@ -95,6 +95,30 @@ test('normalizeTurnUsage reads the cache counters under every name they arrive b
   assert.deepEqual(normalizeTurnUsage({ totalTokens: 5, inputTokens: 5 }), { totalTokens: 5, inputTokens: 5 })
 })
 
+test('parseTurnQuota reads codex-acp token_count, reasoning tokens included', () => {
+  // codex-acp 1.13.1, src/TokenCount.ts via `buildQuotaMeta` in
+  // src/CodexAcpServer.ts: `{ totalTokens, inputTokens, cachedInputTokens,
+  // outputTokens, reasoningOutputTokens }`, the same object in `token_count`
+  // and in the single `model_usage` row.
+  const tokenCount = {
+    totalTokens: 1_000,
+    inputTokens: 300,
+    cachedInputTokens: 500,
+    outputTokens: 200,
+    reasoningOutputTokens: 150,
+  }
+  const expected = { totalTokens: 1_000, inputTokens: 300, outputTokens: 200, thoughtTokens: 150, cacheReadTokens: 500 }
+  assert.deepEqual(
+    parseTurnQuota({ quota: { token_count: tokenCount, model_usage: [{ model: 'gpt-5', token_count: tokenCount }] } }),
+    {
+      tokenCount: expected,
+      modelUsage: [{ model: 'gpt-5', tokenCount: expected }],
+    },
+  )
+  // ACP's own spelling wins where both appear.
+  assert.equal(normalizeTurnUsage({ totalTokens: 1, thoughtTokens: 2, reasoningOutputTokens: 3 })?.thoughtTokens, 2)
+})
+
 test('parseTurnQuota keeps a bare token_count and drops malformed model rows', () => {
   const quota = parseTurnQuota({
     quota: {
@@ -110,28 +134,155 @@ test('parseTurnQuota keeps a bare token_count and drops malformed model rows', (
   assert.deepEqual(parseTurnQuota({}), undefined)
 })
 
-test('parseSessionFailure reads the AIR payload and refuses an unnamed one', () => {
-  const failure = parseSessionFailure({
-    jetbrains: {
-      air: {
-        sessionFailure: {
-          id: 't:error',
-          kind: 'quota_exhausted',
-          category: 'limit',
-          severity: 'error',
-          title: 'Out of quota',
-        },
-      },
+// Wire shapes copied from the bridges, not from our own type. The earlier
+// fixture carried a `kind` no bridge sends, so the parser that required it
+// passed its test and dropped every real verdict.
+//
+// claude-agent-acp 0.79.0, dist/session-failure-extension.js:
+// `sessionFailureMeta()` sends `{ id, revision, category, severity, title,
+// details?, reason?, actions }` — no `kind`. `prepare()` builds a turn-scoped
+// id as `${turnId}:error` and a session-scoped one as
+// `${sessionId}:session-error:${epoch}:${n}`; the categories and actions come
+// from its `AIR_FAILURE_POLICY`.
+//
+// codex-acp 1.13.1, src/CodexAcpServer.ts (`SessionFailure`) and
+// src/CodexEventHandler.ts (`recordSessionFailure`, `SESSION_FAILURE_POLICY`):
+// `{ id, revision, category, severity, title, details?, actions }` — neither
+// `kind` nor `reason`.
+//
+// Titles are placeholders: the bridges fill them from provider error text.
+function airMeta(sessionFailure: unknown) {
+  return { jetbrains: { air: { version: 1, sessionFailure } } }
+}
+
+test('parseSessionFailure keeps a claude-agent-acp quota verdict, which carries no kind', () => {
+  // `quota_exhausted`: category `limit`, actions `[]`, attached to the prompt
+  // response by `failActiveWithSessionFailure`. No `reason` — the bridge sets
+  // one only on sign-in refusals.
+  assert.deepEqual(
+    parseSessionFailure(
+      airMeta({
+        id: 'prompt-uuid-1:error',
+        revision: 1,
+        category: 'limit',
+        severity: 'error',
+        title: 'The Claude account has no available quota.',
+        actions: [],
+      }),
+    ),
+    {
+      id: 'prompt-uuid-1:error',
+      label: 'quota_exhausted',
+      revision: 1,
+      title: 'The Claude account has no available quota.',
+      category: 'limit',
+      severity: 'error',
+      actions: [],
     },
-  })
-  assert.deepEqual(failure, {
-    id: 't:error',
-    kind: 'quota_exhausted',
-    title: 'Out of quota',
-    category: 'limit',
-    severity: 'error',
-    actions: undefined,
-  })
-  assert.equal(parseSessionFailure({ jetbrains: { air: { sessionFailure: { id: 'x' } } } }), undefined)
+  )
+})
+
+test('parseSessionFailure keeps the claude-agent-acp reason beside the derived label', () => {
+  // `publishRefusal` in hide-claude-auth.js: `auth_required` refined by
+  // `claude_subscription_not_supported`, session-scoped, with details.
+  assert.deepEqual(
+    parseSessionFailure(
+      airMeta({
+        id: 'session-1:session-error:epoch-1:1',
+        revision: 1,
+        category: 'access',
+        severity: 'error',
+        title: 'Sign in to continue using Claude.',
+        details: 'This integration does not support using claude.ai subscriptions.',
+        reason: 'claude_subscription_not_supported',
+        actions: ['login'],
+      }),
+    ),
+    {
+      id: 'session-1:session-error:epoch-1:1',
+      label: 'auth_required',
+      reason: 'claude_subscription_not_supported',
+      revision: 1,
+      title: 'Sign in to continue using Claude.',
+      category: 'access',
+      severity: 'error',
+      details: 'This integration does not support using claude.ai subscriptions.',
+      actions: ['login'],
+    },
+  )
+})
+
+test('parseSessionFailure keeps a codex-acp quota verdict, which carries neither kind nor reason', () => {
+  // `usageLimitExceeded` maps to `quota_exhausted`: category `limit`, actions `[]`.
+  assert.deepEqual(
+    parseSessionFailure(
+      airMeta({
+        id: 'turn-1:error',
+        revision: 1,
+        category: 'limit',
+        severity: 'error',
+        title: "You've hit your usage limit.",
+        actions: [],
+      }),
+    ),
+    {
+      id: 'turn-1:error',
+      label: 'quota_exhausted',
+      revision: 1,
+      title: "You've hit your usage limit.",
+      category: 'limit',
+      severity: 'error',
+      actions: [],
+    },
+  )
+})
+
+test('parseSessionFailure labels by category where the wire cannot tell kinds apart', () => {
+  // codex-acp's retry warning (`recordRetryWarning`) empties the actions, so a
+  // rate-limit retry is `limit` + `[]` like a quota exhaustion. It must not be
+  // read as one.
+  assert.equal(
+    parseSessionFailure(
+      airMeta({ id: 't:error', revision: 2, category: 'limit', severity: 'warning', title: 'Retrying', actions: [] }),
+    )?.label,
+    'limit',
+  )
+  // `limit` + `new_session` is a context or a budget exhaustion in both bridges.
+  assert.equal(
+    parseSessionFailure(
+      airMeta({ id: 't:error', category: 'limit', severity: 'error', title: 'Too long', actions: ['new_session'] }),
+    )?.label,
+    'limit',
+  )
+  // `service` + `retry` is an overload or a provider error.
+  assert.equal(
+    parseSessionFailure(
+      airMeta({ id: 't:error', category: 'service', severity: 'error', title: 'Busy', actions: ['retry'] }),
+    )?.label,
+    'service',
+  )
+})
+
+test('parseSessionFailure takes a kind the harness does send over the inferred one', () => {
+  const failure = parseSessionFailure(
+    airMeta({ id: 't:error', kind: 'budget_exhausted', category: 'limit', title: 'Budget spent', actions: [] }),
+  )
+  assert.equal(failure?.label, 'budget_exhausted')
+  assert.equal(failure?.kind, 'budget_exhausted')
+  // Severity absent on the wire means `error` (codex-acp's documented default).
+  assert.equal(failure?.severity, 'error')
+})
+
+test('parseSessionFailure drops a malformed decoration and keeps a sloppy one', () => {
+  // Nothing a host could show: no title, or no id.
+  assert.equal(parseSessionFailure(airMeta({ id: 'x' })), undefined)
+  assert.equal(parseSessionFailure(airMeta({ title: 'Out of quota' })), undefined)
+  assert.equal(parseSessionFailure(airMeta('junk')), undefined)
   assert.equal(parseSessionFailure({}), undefined)
+  assert.equal(parseSessionFailure(undefined), undefined)
+  // Showable, with junk around it: the junk goes, the verdict stays.
+  assert.deepEqual(
+    parseSessionFailure(airMeta({ id: 'x', title: 'Out', revision: 'two', reason: '', actions: ['retry', 7] })),
+    { id: 'x', label: 'unknown', title: 'Out', category: 'unknown', severity: 'error', actions: ['retry'] },
+  )
 })

@@ -2824,10 +2824,11 @@ test('a quota exhaustion arrives as a typed failure on turn_end, not a dead end_
     _meta: {
       jetbrains: {
         air: {
+          // claude-agent-acp 0.79.0's `sessionFailureMeta()` shape: the
+          // bridge's kind stays internal, so none rides the wire.
           sessionFailure: {
             id: 'turn-1:error',
             revision: 1,
-            kind: 'quota_exhausted',
             category: 'limit',
             severity: 'error',
             title: 'The Claude account has no available quota.',
@@ -2842,7 +2843,8 @@ test('a quota exhaustion arrives as a typed failure on turn_end, not a dead end_
   assert.ok(turnEnd && turnEnd.kind === 'turn_end')
   assert.deepEqual(turnEnd.failure, {
     id: 'turn-1:error',
-    kind: 'quota_exhausted',
+    label: 'quota_exhausted',
+    revision: 1,
     title: 'The Claude account has no available quota.',
     category: 'limit',
     severity: 'error',
