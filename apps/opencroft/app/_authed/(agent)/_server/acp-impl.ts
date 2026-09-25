@@ -84,6 +84,7 @@ interface AgentNodeData {
   apiKeySecret?: string
   defaultModeId?: string
   baseUrl?: string
+  responsesApi?: boolean
   systemPrompt?: string
   reasoningEffort?: string
   temperature?: number
@@ -412,8 +413,15 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     // In a container the harness gets its own /agents/<slug> workdir (created in
     // the container on spawn); on the host it's a persistent dir in the data volume.
     cwd: containerName ? `/agents/${workspaceSlug}` : join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
+    // A harness's own home (Codex's CODEX_HOME) lives beside the workspace, not
+    // in it and not in the server user's home: the agent can't edit its own
+    // harness config, and nothing the host keeps in ~/.codex reaches it.
+    harnessHome: containerName
+      ? `/agents/.harness-home/${workspaceSlug}`
+      : join(process.cwd(), 'data', 'agent-harness-home', workspaceSlug),
     containerName,
     baseUrl: agent.baseUrl || process.env.OPENCLAW_GATEWAY_URL,
+    responsesApi: agent.responsesApi,
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
     temperature: agent.temperature,

@@ -16,13 +16,12 @@ import test, { after } from 'node:test'
 // database connection (agent-client is host-agnostic, `slug` is dependency-free
 // and drizzle-orm's `eq` is a pure query builder), so hoisting them cannot make
 // `@opencroft/db` connect before PGLITE_PATH is in place.
-import { handleUpdate } from 'agent-client/agent-client'
+import { connectionKey, handleUpdate } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
 // The parser half of the delivery format, used below to read a delivered turn
 // back the way the transcript does — so a test asserts on the author and send
 // time a reader would see, rather than on the tag's spelling.
 import { decodeBatch } from 'agent-client/queue-tags'
-import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { and, eq } from 'drizzle-orm'
 
@@ -641,7 +640,7 @@ test('deleteThread tears the session down before dropping the row it is reachabl
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -775,7 +774,7 @@ test('deleteGroupChat tears down every thread session before the rows they are r
       cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
       baseUrl: process.env.OPENCLAW_GATEWAY_URL,
     }
-    store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    store.connections.set(connectionKey(selection), {
       connection: observingConnection(),
       lastSessionId: null,
       loadSession: false,
@@ -921,7 +920,7 @@ test('deleteGroupChat drains threads started while it is tearing down, instead o
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1013,7 +1012,7 @@ test('deleteGroupChat sweeps a session re-created after its own thread was torn 
       cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
       baseUrl: process.env.OPENCLAW_GATEWAY_URL,
     }
-    store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+    store.connections.set(connectionKey(selection), {
       connection: connectionFor(agentNodeId),
       lastSessionId: null,
       loadSession: false,
@@ -1339,7 +1338,7 @@ test('removing an agent tears its session down before dropping the membership ro
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1486,7 +1485,7 @@ test('a changed topic rides the next send into an open thread, once', async () =
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1565,7 +1564,7 @@ test('a thread started with no message opens its session and says nothing into i
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1621,7 +1620,7 @@ test('a changed pin set rides the next send the same way the topic does', async 
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1681,7 +1680,7 @@ test('a group-chat thread can be compacted at all', async () => {
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1745,7 +1744,7 @@ test('compaction restores CURRENT topic and pins, not what the thread was told w
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -1846,7 +1845,7 @@ test('the name is never delivered to an agent', async () => {
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2011,7 +2010,7 @@ test('a new thread is told the pins, and records what it was told', async () => 
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2063,7 +2062,7 @@ test('a chat with nothing pinned sends the envelope it sent before pins existed'
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2128,7 +2127,7 @@ test('a first prompt that fails leaves the context unrecorded, and a later send 
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2411,7 +2410,7 @@ test('an agent can send into a thread of a chat it is in, through the shared del
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2534,7 +2533,7 @@ test('an agent may send into a thread whose agent is itself', async () => {
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2614,7 +2613,7 @@ test('compactThreadAsAgent compacts the addressed thread and re-delivers standin
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -2858,7 +2857,7 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -3023,7 +3022,7 @@ function seedMockConnection(
   if (!store) {
     throw new Error('agent-client global store must exist after import')
   }
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: Boolean(opts?.resumable),
@@ -4474,7 +4473,13 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
   const { queueStore } = await import('@/app/_authed/(agent)/_server/queue-store')
   await queueStore.append(
     colonKey,
-    { id: 'mig-held-1', kind: 'message', sender: 'Reader', sentAt: new Date().toISOString(), text: 'held across the migration' },
+    {
+      id: 'mig-held-1',
+      kind: 'message',
+      sender: 'Reader',
+      sentAt: new Date().toISOString(),
+      text: 'held across the migration',
+    },
     'end',
   )
 
@@ -4514,7 +4519,11 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
     dotKey,
   )
   const held = await db.select().from(agentQueueEntryTable).where(eq(agentQueueEntryTable.sessionKey, dotKey))
-  assert.equal(held.length, queuedBefore.dot + queuedBefore.colon, 'everything that was under either key is under the new one, and nothing was dropped')
+  assert.equal(
+    held.length,
+    queuedBefore.dot + queuedBefore.colon,
+    'everything that was under either key is under the new one, and nothing was dropped',
+  )
   assert.ok(
     held.some((e) => e.id === 'mig-held-1'),
     'the held message moved with the key — by identity, since a count alone cannot tell which entries these are',
@@ -4531,7 +4540,13 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
 
   // The old spelling still delivers — through the alias, into the same session.
   const before = agentClient.listSessions().length
-  const viaAlias = await model.deliverThreadFromNode(colonKey, 'addressed by the old spelling', NODE_PRINCIPAL, 'wait', 'Node')
+  const viaAlias = await model.deliverThreadFromNode(
+    colonKey,
+    'addressed by the old spelling',
+    NODE_PRINCIPAL,
+    'wait',
+    'Node',
+  )
   // Named, because the two refusals a delivery can give are one sentence to
   // the caller: without this, a sender that lost its grant and an address that
   // resolves to nothing both surface here as a prompt that never arrives.
@@ -4683,7 +4698,7 @@ test('asleep, a node delivery into an idle session still reports delivered — w
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -4746,7 +4761,7 @@ test('asleep, group_chat_send returns exactly the result it returns awake', asyn
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -4841,7 +4856,7 @@ test('awake, the status still tracks the running turn — delivered when idle, q
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,
@@ -4856,7 +4871,11 @@ test('awake, the status still tracks the running turn — delivered when idle, q
 
     await waitForPrompts(prompts, 1)
     const behind = await model.deliverThreadFromNode(thread.sessionKey, 'second', NODE_PRINCIPAL, 'wait', 'Node')
-    assert.equal(behind.status, 'queued', 'and a session with a turn running reports queued — the value is still produced')
+    assert.equal(
+      behind.status,
+      'queued',
+      'and a session with a turn running reports queued — the value is still produced',
+    )
   } finally {
     releaseTurn?.()
   }
@@ -4991,7 +5010,7 @@ test('a thread whose agent is mid-turn is refused, and is deletable once the tur
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,

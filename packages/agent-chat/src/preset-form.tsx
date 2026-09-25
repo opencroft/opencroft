@@ -3,10 +3,11 @@
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import type { AgentProfile } from 'agent-client/profiles'
 import { reasoningEfforts } from 'agent-client/reasoning'
-import { adaptersForProvider, findAdapter, findProvider } from 'agent-client/resolve'
+import { adaptersForProvider, findAdapter, findProvider, responsesApiOptIn } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from 'ui/components/ui/button'
+import { Checkbox } from 'ui/components/ui/checkbox'
 import { Field, FieldDescription, FieldLabel } from 'ui/components/ui/field'
 import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import { ControlledTextarea } from 'ui/components/ui/input/controlled-textarea'
@@ -125,7 +126,7 @@ export function AgentPresetForm({
   const toggleRole = (id: string) =>
     onRoleIdsChange?.(roleIds.includes(id) ? roleIds.filter((r) => r !== id) : [...roleIds, id])
   const provider = findProvider(selection.providerId)
-  const adapters = adaptersForProvider(selection.providerId)
+  const adapters = adaptersForProvider(selection.providerId, selection)
   const isCustomEndpoint = selection.providerId === 'openai-compatible'
   // The adapter's KIND, not its id. These agree today because exactly one
   // adapter carries `kind: 'native'` and happens to be spelled `native` too --
@@ -212,6 +213,30 @@ export function AgentPresetForm({
               placeholder='https://api.openai.com/v1'
             />
           </Field>
+          {responsesApiOptIn(provider) && (
+            <Field orientation='horizontal'>
+              <Checkbox
+                id='preset-responses-api'
+                checked={selection.responsesApi === true}
+                // Turning it off drops a Responses-only harness the list no longer offers.
+                onCheckedChange={(checked) =>
+                  onSelectionChange({
+                    responsesApi: checked === true,
+                    ...(checked !== true && findAdapter(selection.adapterId)?.protocol === 'openai-responses'
+                      ? { adapterId: '' }
+                      : {}),
+                  })
+                }
+              />
+              <FieldLabel htmlFor='preset-responses-api' className='font-normal'>
+                Endpoint supports the Responses API
+              </FieldLabel>
+              <FieldDescription>
+                Offers Codex, which speaks only OpenAI's Responses API. Most OpenAI-compatible servers implement Chat
+                Completions only.
+              </FieldDescription>
+            </Field>
+          )}
           <Field>
             <FieldLabel>Model</FieldLabel>
             <Flex row className='gap-2'>

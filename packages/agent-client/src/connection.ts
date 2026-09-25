@@ -28,4 +28,8 @@ export type AgentConnection = Pick<
   // Optional: the native harness has no wire to carry one, and the engine only
   // calls it on connections whose harness advertised the matching extension.
   extMethod?: ClientSideConnection['extMethod']
+  // ACP `authenticate`, sent after initialize for adapters with an
+  // `authenticate` hook. Optional for the same reason: the native harness
+  // has nothing to authenticate against.
+  authenticate?: ClientSideConnection['authenticate']
 }

@@ -35,6 +35,9 @@ export interface AgentData {
   defaultModeId?: string
   /** Optional OpenAI-compatible base-URL override (wins over the provider endpoint). */
   baseUrl?: string
+  /** The endpoint also serves OpenAI's Responses API — what offers Responses-only
+   * harnesses (Codex) on a provider that isn't OpenAI itself. */
+  responsesApi?: boolean
   /** System prompt for the Custom (native) harness; ignored by ACP agents. */
   systemPrompt?: string
   /** Reasoning effort (e.g. 'low' | 'medium' | 'high'); empty = off. */
@@ -211,11 +214,25 @@ function LocalProfileFields({
 }) {
   const provider = catalog.providers.find((p) => p.id === data.providerId)
   const adapter = catalog.adapters.find((a) => a.id === data.adapterId)
+  // Mirrors agent-client's adapterOffered (resolve.ts): a Responses-API-only
+  // harness is offered on a provider with an OpenAI-compatible endpoint only
+  // when the profile says that endpoint serves the Responses API too.
+  const responsesOptIn = Boolean(
+    provider?.protocols.includes('openai') && !provider.protocols.includes('openai-responses'),
+  )
   const adapters = catalog.adapters.filter(
-    (a) => a.protocol === 'native' || (provider ? provider.protocols.includes(a.protocol) : true),
+    (a) =>
+      a.protocol === 'native' ||
+      (provider
+        ? provider.protocols.includes(a.protocol) ||
+          (a.protocol === 'openai-responses' && responsesOptIn && data.responsesApi === true)
+        : true),
   )
   const models = provider?.models ?? []
   const isNative = adapter?.kind === 'native'
+  // Turning the opt-in off drops a Responses-only harness the list no longer offers.
+  const setResponsesApi = (on: boolean) =>
+    updateData({ responsesApi: on, ...(!on && adapter?.protocol === 'openai-responses' ? { adapterId: '' } : {}) })
 
   // Computed per the actual selected model (not a static catalog), so it also
   // covers a model discovered from an OpenAI-compatible endpoint or typed in
@@ -394,6 +411,25 @@ function LocalProfileFields({
         />
         <p className='text-[10px] text-muted-foreground'>Optional OpenAI-compatible endpoint override.</p>
       </div>
+      {responsesOptIn ? (
+        <div className='flex flex-col gap-1'>
+          <div className='flex items-center gap-2'>
+            <input
+              type='checkbox'
+              checked={data.responsesApi ?? false}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setResponsesApi(e.target.checked)}
+              className='rounded border-input'
+            />
+            <Label className='text-xs cursor-pointer' onClick={() => setResponsesApi(!data.responsesApi)}>
+              Endpoint supports the Responses API
+            </Label>
+          </div>
+          <p className='text-[10px] text-muted-foreground'>
+            Offers Codex, which speaks only OpenAI&apos;s Responses API (<code>/responses</code>). Most
+            OpenAI-compatible servers implement Chat Completions only.
+          </p>
+        </div>
+      ) : null}
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Docker container</Label>
         <Input

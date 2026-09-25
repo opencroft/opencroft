@@ -32,8 +32,8 @@ import test, { after } from 'node:test'
 // None of these opens a database connection, so importing them statically
 // cannot make `@opencroft/db` connect before PGLITE_PATH is in place.
 import { requestHandler } from '@tanstack/react-start/server'
+import { connectionKey } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
-import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 import { eq, inArray } from 'drizzle-orm'
 
@@ -119,7 +119,7 @@ await db.insert(space).values({
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,

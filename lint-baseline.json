@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 948,
-  "total": 341,
+  "filesScanned": 961,
+  "total": 337,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -47,9 +47,6 @@
     },
     "apps/opencroft/app/_authed/(approvals)/_components/mcp-request-list.tsx": {
       "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(apps)/_components/sidebar-apps.tsx": {
-      "lint/correctness/useExhaustiveDependencies": 1
     },
     "apps/opencroft/app/_authed/(apps)/_server/runtime.ts": {
       "lint/suspicious/noAssignInExpressions": 1
@@ -67,7 +64,6 @@
       "lint/a11y/useValidAriaRole": 2
     },
     "apps/opencroft/app/_authed/(dashboard)/_canvas/node-inspector.tsx": {
-      "lint/correctness/noUnusedFunctionParameters": 1,
       "lint/correctness/useExhaustiveDependencies": 1
     },
     "apps/opencroft/app/_authed/(dashboard)/_canvas/node-palette.tsx": {
@@ -292,9 +288,6 @@
     },
     "apps/opencroft/app/_authed/(filemanager)/api/files.upload.ts": {
       "assist/source/organizeImports": 1,
-      "format": 1
-    },
-    "apps/opencroft/app/_authed/(group-chats)/_server/model.test.ts": {
       "format": 1
     },
     "apps/opencroft/app/_authed/(group-chats)/_server/model.ts": {
@@ -539,9 +532,6 @@
       "lint/correctness/useExhaustiveDependencies": 1
     },
     "packages/agent-chat/tsconfig.json": {
-      "format": 1
-    },
-    "packages/agent-client/src/agent-client.test.ts": {
       "format": 1
     },
     "packages/agent-client/src/oauth-login.ts": {

@@ -24,14 +24,54 @@ export function isNativeSelection(selection: AgentSelection): boolean {
   return findAdapter(selection.adapterId)?.kind === 'native'
 }
 
-export function adaptersForProvider(providerId: string): HarnessAdapter[] {
+// Whether an adapter is offered for a provider: in-process-protocol adapters
+// always; otherwise the provider must list an endpoint of the adapter's
+// protocol. A Responses-API-only adapter is also offered on a provider with an
+// OpenAI-compatible endpoint when the selection opts in (`responsesApi`) —
+// "compatible" says nothing about `/responses`, so it is never assumed.
+export function adapterOffered(
+  adapter: Pick<HarnessAdapter, 'protocol'>,
+  provider: Pick<AgentProvider, 'endpoints'>,
+  selection?: Pick<AgentSelection, 'responsesApi'>,
+): boolean {
+  if (adapter.protocol === 'native' || provider.endpoints[adapter.protocol] !== undefined) {
+    return true
+  }
+  return (
+    adapter.protocol === 'openai-responses' &&
+    provider.endpoints.openai !== undefined &&
+    selection?.responsesApi === true
+  )
+}
+
+export function adaptersForProvider(
+  providerId: string,
+  selection?: Pick<AgentSelection, 'responsesApi'>,
+): HarnessAdapter[] {
   const provider = findProvider(providerId)
   if (!provider) {
     return []
   }
-  return HARNESS_ADAPTERS.filter(
-    (adapter) => adapter.protocol === 'native' || provider.endpoints[adapter.protocol] !== undefined,
+  return HARNESS_ADAPTERS.filter((adapter) => adapterOffered(adapter, provider, selection))
+}
+
+// Whether a provider could offer Responses-API-only harnesses given the opt-in:
+// it has an OpenAI-compatible endpoint but no Responses endpoint of its own.
+// Forms show the "supports the Responses API" switch only then.
+export function responsesApiOptIn(provider: Pick<AgentProvider, 'endpoints'> | undefined): boolean {
+  return Boolean(
+    provider && provider.endpoints.openai !== undefined && provider.endpoints['openai-responses'] === undefined,
   )
+}
+
+// The harness home an adapter with `homeEnv` is pointed at: the host-owned
+// `harnessHome` when given, else `.harness-home/<id>` RELATIVE to the agent's
+// workdir — the harness resolves a relative home against the directory it was
+// started in, and ensureDirs are created against that same directory. A plain
+// string join: this module is client-safe (no node:path).
+export function harnessHomeDir(adapter: Pick<HarnessAdapter, 'id'>, selection: AgentSelection): string {
+  const root = selection.harnessHome ? selection.harnessHome.replace(/\/+$/, '') : '.harness-home'
+  return `${root}/${adapter.id}`
 }
 
 export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
@@ -39,8 +79,15 @@ export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
   const provider = findProvider(selection.providerId)
   const env: Record<string, string> = {}
 
+  const ensureDirs: string[] = []
+
   if (adapter?.staticEnv) {
     Object.assign(env, adapter.staticEnv)
+  }
+  if (adapter?.homeEnv) {
+    const home = harnessHomeDir(adapter, selection)
+    env[adapter.homeEnv] = home
+    ensureDirs.push(home)
   }
   if (adapter && provider) {
     const keyEnv = adapter.keyEnv ?? (adapter.protocol === 'native' ? provider.keyEnv : undefined)
@@ -88,6 +135,7 @@ export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
     args: adapter?.args ?? [],
     cwd: selection.cwd,
     env,
+    ...(ensureDirs.length ? { ensureDirs } : {}),
   }
   if (selection.containerName) {
     return wrapInDocker(spawnConfig, selection.containerName)
@@ -103,8 +151,15 @@ export function buildSpawnConfig(selection: AgentSelection): SpawnConfig {
 function wrapInDocker(config: SpawnConfig, container: string): SpawnConfig {
   const envFlags = Object.keys(config.env).flatMap((name) => ['-e', name])
   const dir = shellQuote(config.cwd)
-  const inner = config.cwd
-    ? ['sh', '-c', `mkdir -p ${dir} && cd ${dir} && exec "$0" "$@"`, config.command, ...config.args]
+  // Directories the harness needs are container paths, so they are created in
+  // the container — after entering the workdir, which is what a relative one
+  // is relative to — and never on the host.
+  const steps = [
+    ...(config.cwd ? [`mkdir -p ${dir}`, `cd ${dir}`] : []),
+    ...(config.ensureDirs?.length ? [`mkdir -p ${config.ensureDirs.map(shellQuote).join(' ')}`] : []),
+  ]
+  const inner = steps.length
+    ? ['sh', '-c', `${steps.join(' && ')} && exec "$0" "$@"`, config.command, ...config.args]
     : [config.command, ...config.args]
   return {
     command: 'docker',

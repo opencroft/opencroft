@@ -1,7 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { resolve as resolvePath } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 import type {
@@ -23,7 +24,14 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk'
-import { ClientSideConnection, ndJsonStream, PROTOCOL_VERSION, type Stream } from '@agentclientprotocol/sdk'
+import {
+  type AuthenticateRequest,
+  ClientSideConnection,
+  type InitializeResponse,
+  ndJsonStream,
+  PROTOCOL_VERSION,
+  type Stream,
+} from '@agentclientprotocol/sdk'
 
 import { type AttachmentRef, type DeliveredAttachment, isImageMime, type PromptAttachment } from './attachments'
 import { type ChatMessageRecord, toChatMessages } from './chat-completion'
@@ -31,6 +39,7 @@ import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { errorMessage } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
+import type { HarnessAdapter } from './harness-adapters'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
@@ -54,7 +63,7 @@ import { type PermissionHandler, permissionContext } from './permission-context'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
-import { buildSpawnConfig, findAdapter, isNativeSelection } from './resolve'
+import { buildSpawnConfig, findAdapter, findProvider, isNativeSelection } from './resolve'
 import { foldRestoredState, restorableEvents } from './session-restore'
 import { fileSkillHandler, fileSkills } from './skills'
 import { findTurnBoundary } from './turns'
@@ -509,6 +518,10 @@ interface ConnEntry {
   // supportsMidTurnInput; the other is the adapter's forced flag). Only
   // meaningful once `initialized` has resolved.
   steeringSupported: boolean
+  // The agent's `mcpCapabilities` from initialize, as advertised (absent when it
+  // advertised none). buildMcpServers drops a transport only on an explicit
+  // `false` here — see mcpTransportAccepted.
+  mcpCapabilities?: { http?: boolean; sse?: boolean }
   // Whether the agent advertised the `session/fork` capability at initialize
   // (agentCapabilities.sessionCapabilities.fork; `{}` means supported, per the
   // same spelling as elicitation). Only meaningful once `initialized` has
@@ -535,7 +548,7 @@ interface ConnEntry {
 }
 
 interface ClientStore {
-  // One live harness subprocess per distinct spawn config (keyed by spawnKey).
+  // One live harness subprocess per distinct spawn config (keyed by connectionKey).
   connections: Map<string, ConnEntry>
   sessions: Map<string, SessionState>
   lastSessionId: string | null
@@ -1780,8 +1793,100 @@ function configOptionRequest(
     : { sessionId, configId, value: String(value) }
 }
 
-function spawnKey(config: SpawnConfig): string {
-  return JSON.stringify(config)
+// A live connection's identity: everything that makes two harness processes
+// different — the spawn config, and for an adapter that authenticates after
+// initialize, the inputs of that request (endpoint and key), which are not all
+// part of the spawn. It is a DIGEST, never the material itself: the spawn env
+// and the auth inputs carry the profile's key, and this string is a map key
+// that diagnostics print. Exported so tests can seed a connection under the
+// key the engine will look up.
+export function connectionKey(selection: AgentSelection): string {
+  return digestKey(buildSpawnConfig(selection), selection)
+}
+
+function digestKey(config: SpawnConfig, selection: AgentSelection): string {
+  const auth = findAdapter(selection.adapterId)?.authenticate
+    ? { providerId: selection.providerId, baseUrl: selection.baseUrl ?? '', apiKey: selection.apiKey }
+    : undefined
+  return createHash('sha256').update(JSON.stringify({ config, auth })).digest('hex')
+}
+
+// The values a connection must never let past the wire: the selection's key.
+// Too-short values are left alone — redacting a 2-character "key" would mangle
+// ordinary text and protect nothing.
+function secretsOf(selection: AgentSelection): string[] {
+  return selection.apiKey && selection.apiKey.length >= 8 ? [selection.apiKey] : []
+}
+
+function redact(text: string, secrets: string[]): string {
+  let out = text
+  for (const secret of secrets) {
+    out = out.split(secret).join('[redacted]')
+  }
+  return out
+}
+
+// An error safe to surface: its message (and its cause chain's) with the
+// secrets replaced. A fresh Error, so the original — which may carry the
+// secret in a message, a cause or an attached request — goes no further.
+function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
+  const parts: string[] = []
+  let cursor: unknown = error
+  for (let depth = 0; cursor !== undefined && cursor !== null && depth < 4; depth += 1) {
+    parts.push(errorMessage(cursor))
+    cursor = cursor instanceof Error ? cursor.cause : undefined
+  }
+  const [first, ...rest] = parts.map((part) => redact(part, secrets))
+  const message = `${prefix}${first ?? 'unknown error'}${rest.length ? ` (${rest.join('; ')})` : ''}`
+  return new Error(message)
+}
+
+// Runs an adapter's `authenticate` hook right after initialize. The hook sees
+// what the agent advertised and throws a user-facing error when it can't
+// proceed (no key, method not offered); the agent's own rejection is reported
+// as an authentication failure. Either way the error is rebuilt with the
+// selection's secrets redacted, since the request carried the key and an agent
+// may echo it back.
+async function authenticateConnection(
+  adapter: HarnessAdapter,
+  connection: AgentConnection,
+  selection: AgentSelection,
+  init: InitializeResponse,
+  secrets: string[],
+): Promise<void> {
+  const authenticate = adapter.authenticate
+  const provider = findProvider(selection.providerId)
+  if (!authenticate || !provider) {
+    throw new Error(`${adapter.label} needs a provider on the agent profile to authenticate against.`)
+  }
+  let request: AuthenticateRequest
+  try {
+    request = authenticate(provider, selection, init)
+  } catch (error) {
+    throw redactedError(error, secrets)
+  }
+  if (!connection.authenticate) {
+    throw new Error(`${adapter.label} requires authentication, which this connection cannot send.`)
+  }
+  try {
+    await connection.authenticate(request)
+  } catch (error) {
+    throw redactedError(error, secrets, `${adapter.label} authentication failed: `)
+  }
+}
+
+// Whether the agent accepts an MCP server's transport: stdio always (ACP's
+// baseline), http/sse unless the agent said `false` for it explicitly. An
+// absent capability keeps today's behavior for agents that advertise nothing.
+function mcpTransportAccepted(server: AcpMcpServer, capabilities: ConnEntry['mcpCapabilities']): boolean {
+  const type = (server as { type?: string }).type
+  if (type === 'http') {
+    return capabilities?.http !== false
+  }
+  if (type === 'sse') {
+    return capabilities?.sse !== false
+  }
+  return true
 }
 
 // Map a generic effort word ("low" | "high" | …) to the value id of an ACP
@@ -2025,7 +2130,7 @@ export function supportsImagePrompt(selection: AgentSelection): boolean {
   if (isNativeSelection(selection)) {
     return NATIVE_PROMPT_CAPABILITIES.image
   }
-  return store.connections.get(spawnKey(buildSpawnConfig(selection)))?.imagePrompt === true
+  return store.connections.get(connectionKey(selection))?.imagePrompt === true
 }
 
 // Whether this agent accepts a prompt while a turn is running, feeding it into
@@ -2046,13 +2151,14 @@ export function supportsImagePrompt(selection: AgentSelection): boolean {
 // CAPABILITY only. Whether a given message actually steers is also the
 // reader's cadence's call — see steersMidTurn.
 export function supportsMidTurnInput(selection: AgentSelection): boolean {
-  if (findAdapter(selection.adapterId)?.supportsMidTurnInput === true) {
+  const adapter = findAdapter(selection.adapterId)
+  if (adapter?.supportsMidTurnInput === true) {
     return true
   }
-  if (isNativeSelection(selection)) {
+  if (isNativeSelection(selection) || adapter?.advertisedSteering === 'ignore') {
     return false
   }
-  return store.connections.get(spawnKey(buildSpawnConfig(selection)))?.steeringSupported === true
+  return store.connections.get(connectionKey(selection))?.steeringSupported === true
 }
 
 // Whether THIS session's messages go into a running turn: the harness must be
@@ -2198,9 +2304,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
 
   // Built-in local server + extras + configured servers. The internal entry is
   // returned separately so a per-session header can be attached to it only.
+  //
+  // Servers whose transport the agent explicitly refused at initialize are
+  // left out and returned as `dropped`: codex-acp, for one, rejects the WHOLE
+  // session request over a single `sse` entry. The caller reports them in the
+  // session (reportDroppedMcp) so a missing server is never silent.
   async function buildMcpServers(
     selection: AgentSelection,
-  ): Promise<{ internal: AcpMcpServer; servers: AcpMcpServer[] }> {
+  ): Promise<{ internal: AcpMcpServer; servers: AcpMcpServer[]; dropped: AcpMcpServer[] }> {
     const rawUrl = await mcp.ensureUrl()
     // A containerized harness reaches the internal server via `docker exec`
     // (see resolve.ts wrapInDocker), so the loopback address it was given has
@@ -2213,7 +2324,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       headers: [],
     }
     const configured = options.loadMcpServers ? await options.loadMcpServers(selection) : await readMcpConfig()
-    return { internal, servers: [internal, ...(options.extraMcpServers ?? []), ...resolveMcpServers(configured)] }
+    const all = [internal, ...(options.extraMcpServers ?? []), ...resolveMcpServers(configured)]
+    const capabilities = connEntryFor(selection)?.mcpCapabilities
+    const servers = all.filter((server) => mcpTransportAccepted(server, capabilities))
+    return { internal, servers, dropped: all.filter((server) => !servers.includes(server)) }
+  }
+
+  // Tell the session which configured MCP servers were left out of it, and why.
+  function reportDroppedMcp(sessionId: string, selection: AgentSelection, dropped: AcpMcpServer[]): void {
+    if (!dropped.length) {
+      return
+    }
+    const label = findAdapter(selection.adapterId)?.label ?? 'This harness'
+    const list = dropped.map((server) => `${server.name} (${(server as { type?: string }).type ?? 'stdio'})`).join(', ')
+    emit(sessionId, {
+      kind: 'error',
+      message: `MCP server${dropped.length > 1 ? 's' : ''} not connected: ${list}. ${label} does not accept that transport; use stdio or http for it.`,
+    })
   }
 
   // Tag the internal server entry with a per-session token so the MCP server can
@@ -2289,7 +2416,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return ensureNativeConnection(selection)
     }
     const spawnConfig = buildSpawnConfig(selection)
-    const key = spawnKey(spawnConfig)
+    const key = digestKey(spawnConfig, selection)
+    const adapter = findAdapter(selection.adapterId)
+    const secrets = secretsOf(selection)
     // One live harness subprocess per distinct spawn config. Distinct profiles
     // (different harness/model/cwd) keep their own connection so their sessions
     // run concurrently in the background; identical configs share one
@@ -2299,6 +2428,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (existing) {
       await existing.initialized
       return existing.connection
+    }
+    // A host spawn's required directories (a harness home) are created here,
+    // against the harness's own workdir; a container spawn creates its own
+    // inside the container (resolve.ts wrapInDocker carries none out).
+    for (const dir of spawnConfig.ensureDirs ?? []) {
+      await mkdir(resolvePath(spawnConfig.cwd || '.', dir), { recursive: true })
+    }
+    // The mkdir above yields: another caller may have connected meanwhile.
+    const raced = store.connections.get(key)
+    if (raced) {
+      await raced.initialized
+      return raced.connection
     }
     const child = spawn(spawnConfig.command, spawnConfig.args, {
       // Empty cwd (docker-exec form sets the container workdir via `-w`) falls
@@ -2315,7 +2456,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // the caller why the process is gone (see harnessStartError).
     const failure: HarnessFailure = { stderr: [] }
     child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
+      // Redacted before it is printed or kept: a harness echoing its own
+      // environment or a failed request must not put the key in a log.
+      const text = redact(chunk.toString(), secrets)
       console.error('[acp-agent]', text)
       failure.stderr.push(text)
       if (failure.stderr.length > STDERR_TAIL) {
@@ -2326,7 +2469,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // takes the host server down; handle it so the failure surfaces as a rejected
     // initialize()/prompt() instead.
     child.on('error', (error) => {
-      console.error('[acp-agent] spawn failed:', error)
+      console.error('[acp-agent] spawn failed:', redact(errorMessage(error), secrets))
       failure.spawnError = error
       store.connections.delete(key)
     })
@@ -2362,8 +2505,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     store.connections.set(key, entry)
     entry.initialized = (async () => {
+      let initResult: InitializeResponse
       try {
-        const initResult = await connection.initialize({
+        initResult = await connection.initialize({
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {
             fs: { readTextFile: true, writeTextFile: true },
@@ -2414,6 +2558,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             // (see usage-meta). Without the declaration the bridge falls back
             // to a bare rejection and the reason degrades to an error string.
             ...({ subagents: {} } as Record<string, unknown>),
+            // Gateway auth (a client-supplied endpoint + headers, see the
+            // adapter's `authenticate` hook) is declared only on connections
+            // whose adapter authenticates that way. Declaring it everywhere
+            // would tell every harness we can take it, changing what they offer.
+            ...(adapter?.authenticate ? ({ auth: { _meta: { gateway: true } } } as Record<string, unknown>) : {}),
             _meta: {
               jetbrains: {
                 air: { version: 1, capabilities: ['asyncTasks', 'nativeSubagentSessions', 'sessionFailure'] },
@@ -2456,6 +2605,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           (initResult as { agentCapabilities?: { promptCapabilities?: { image?: boolean } } }).agentCapabilities
             ?.promptCapabilities?.image,
         )
+        entry.mcpCapabilities = (
+          initResult as { agentCapabilities?: { mcpCapabilities?: { http?: boolean; sse?: boolean } } }
+        ).agentCapabilities?.mcpCapabilities
       } catch (error) {
         // The handshake fails the moment the process's stdout closes, which can
         // land marginally before its last stderr chunk and its 'exit' — so give
@@ -2463,7 +2615,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // evidence missing. Only on the failure path, so it costs nothing
         // otherwise.
         await new Promise((resolve) => setTimeout(resolve, EXIT_GRACE_MS))
-        throw harnessStartError(failure, error)
+        throw redactedError(harnessStartError(failure, error), secrets)
+      }
+      if (adapter?.authenticate) {
+        await authenticateConnection(adapter, connection, selection, initResult, secrets).catch((error: unknown) => {
+          // The process is alive but unusable for this profile: take it down
+          // so the next attempt starts clean instead of reusing it.
+          store.connections.delete(key)
+          child.kill()
+          throw error
+        })
       }
     })()
     await entry.initialized
@@ -2486,10 +2647,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // repeated resumes (e.g. on every MCP-config refresh) don't leak tokens.
       // permissionsFor resolves via the session record, which is already set.
       dropSessionTokens(sessionId)
-      const { internal, servers } = await buildMcpServers(session.selection)
+      const { internal, servers, dropped } = await buildMcpServers(session.selection)
       const token = randomUUID()
       store.acpTokenSession.set(token, sessionId)
       mcpServers = tagInternal(internal, servers, token)
+      reportDroppedMcp(sessionId, session.selection, dropped)
     }
     // Copied before the resume: reconcileResumedState compares against it, and
     // the live record is what the resume's answer overwrites.
@@ -2517,7 +2679,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (isNativeSelection(selection)) {
       return undefined
     }
-    return store.connections.get(spawnKey(buildSpawnConfig(selection)))
+    return store.connections.get(connectionKey(selection))
   }
 
   // Resolve a live connection for an already-created session, using the spawn
@@ -4034,11 +4196,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // internal entry only.
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
+      let droppedMcp: AcpMcpServer[] = []
       if (!native && supportsTools(selection)) {
-        const { internal, servers } = await buildMcpServers(selection)
+        const { internal, servers, dropped } = await buildMcpServers(selection)
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
         mcpServers = tagInternal(internal, servers, token)
+        droppedMcp = dropped
       }
       const response = await connection.newSession({
         cwd: selection.cwd,
@@ -4088,6 +4252,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // process stopped takes them back, at the cadence it was reading at,
       // before it can be sent anything new.
       await restoreSessionState(sessionId)
+      reportDroppedMcp(sessionId, selection, droppedMcp)
       if (response.modes) {
         emitSessionModes(sessionId)
       }
@@ -4182,12 +4347,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Mint a per-session MCP token before the replay, mirroring createSession.
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
+      let droppedMcp: AcpMcpServer[] = []
       if (supportsTools(selection)) {
-        const { internal, servers } = await buildMcpServers(selection)
+        const { internal, servers, dropped } = await buildMcpServers(selection)
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
         store.acpTokenSession.set(token, sessionId)
         mcpServers = tagInternal(internal, servers, token)
+        droppedMcp = dropped
       }
       store.titleCounter += 1
       const loadedAt = Date.now()
@@ -4275,6 +4442,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // history, and the queue snapshot would be published against a
       // half-built transcript.
       await restoreSessionState(sessionId)
+      reportDroppedMcp(sessionId, selection, droppedMcp)
       // The replay streams history but no turn boundary, so the client would stay
       // stuck "waiting". A terminal turn_end marks the resumed session idle.
       //
@@ -4346,12 +4514,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // permissions, not the previous process's.
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
+      let droppedMcp: AcpMcpServer[] = []
       if (supportsTools(selection)) {
-        const { internal, servers } = await buildMcpServers(selection)
+        const { internal, servers, dropped } = await buildMcpServers(selection)
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
         store.acpTokenSession.set(token, sessionId)
         mcpServers = tagInternal(internal, servers, token)
+        droppedMcp = dropped
       }
       const restored = restorableEvents(events)
       const state = foldRestoredState(restored)
@@ -4429,6 +4599,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // replay: a drain must not deliver into a session the agent has not
       // taken back yet.
       await restoreSessionState(sessionId)
+      reportDroppedMcp(sessionId, selection, droppedMcp)
       // A log that ends mid-turn is a session whose process stopped while it
       // was working, and nothing is coming to close it — the client would sit
       // "waiting" forever on a turn that ended when the process did. A log that
@@ -4538,7 +4709,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // loss the durable queue exists to prevent. Only the host knows which
       // deletion is final, so `clear` is the host's call. See QueueStore.
       if (session && !isNativeSelection(session.selection)) {
-        const key = spawnKey(buildSpawnConfig(session.selection))
+        const key = connectionKey(session.selection)
         const entry = store.connections.get(key)
         if (entry) {
           let closed = false
@@ -4553,9 +4724,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           if (!closed) {
             const hasSibling = [...store.sessions.values()].some(
               (other) =>
-                other !== session &&
-                !isNativeSelection(other.selection) &&
-                spawnKey(buildSpawnConfig(other.selection)) === key,
+                other !== session && !isNativeSelection(other.selection) && connectionKey(other.selection) === key,
             )
             if (!hasSibling) {
               entry.process?.kill()

@@ -1,7 +1,14 @@
+import type { AuthenticateRequest, InitializeResponse } from '@agentclientprotocol/sdk'
+
 import type { AgentProvider } from './agent-providers'
 import type { AgentSelection } from './types'
 
-export type Protocol = 'anthropic' | 'openai' | 'gemini' | 'native'
+// 'openai-responses' is an endpoint that serves OpenAI's Responses API
+// (`/responses`), which is NOT implied by 'openai' (Chat Completions): many
+// OpenAI-compatible servers implement only the latter. A provider lists it when
+// the whole provider speaks it; a selection on any other 'openai' provider can
+// opt in with `responsesApi` (see resolve.ts adapterOffered).
+export type Protocol = 'anthropic' | 'openai' | 'openai-responses' | 'gemini' | 'native'
 
 export interface HarnessAdapter {
   id: string
@@ -62,6 +69,28 @@ export interface HarnessAdapter {
   // harness's own (OpenCode's config JSON). Receives the resolved key env var
   // name (the adapter's keyEnv, else the provider's).
   selectionEnv?: (provider: AgentProvider, selection: AgentSelection, keyEnv?: string) => Record<string, string>
+  // Builds the ACP `authenticate` request sent once per connection, right
+  // after `initialize`, for harnesses that will not open a session until the
+  // client authenticates (codex-acp). Receives the initialize response so the
+  // adapter picks from the methods the agent actually advertised, and throws a
+  // user-facing Error when it can't (no key, method not offered). Declaring
+  // the hook is also what makes the client advertise gateway auth support
+  // (`clientCapabilities.auth._meta.gateway`) on that connection — only there.
+  // The request may carry the selection's key: the engine sends it on the
+  // wire and nowhere else (never in logs, errors, events or the connection key).
+  authenticate?: (provider: AgentProvider, selection: AgentSelection, init: InitializeResponse) => AuthenticateRequest
+  // Env var naming the harness's own home directory (config, credentials,
+  // transcripts). When set, every spawn points it at a directory OpenCroft owns
+  // — `<selection.harnessHome>/<adapter id>`, created before the spawn — so
+  // nothing the host user keeps in the harness's default home (a leftover
+  // login, providers, MCP servers, approval settings, instructions) leaks into
+  // the agent.
+  homeEnv?: string
+  // What to make of the steering extension the harness advertises at connect
+  // (`_meta.steering.supported`). 'trust' (default) turns mid-turn input on when
+  // advertised; 'ignore' keeps the engine queueing mid-turn prompts regardless,
+  // for a harness whose steering contract the engine doesn't handle yet.
+  advertisedSteering?: 'trust' | 'ignore'
 }
 
 // OpenCode assembles its model catalog from its OWN provider configuration:
@@ -114,6 +143,63 @@ function opencodeSelectionEnv(
         },
       },
     }),
+  }
+}
+
+// codex-acp takes no model variable: its thread config comes from the Codex
+// config file, with CODEX_CONFIG (a JSON object) merged over it on every thread
+// start, resume and fork. The profile's model goes there, so the first turn
+// already runs on it; a `model[effort]` id is split into the model and Codex's
+// `model_reasoning_effort` key, the bracket form codex-acp itself uses for
+// combined ids.
+function codexSelectionEnv(_provider: AgentProvider, selection: AgentSelection): Record<string, string> {
+  const match = /^(.+)\[([^\]]+)\]$/.exec(selection.model)
+  const model = match ? match[1] : selection.model
+  const effort = match ? match[2] : undefined
+  if (!model) {
+    return {}
+  }
+  return {
+    CODEX_CONFIG: JSON.stringify({ model, ...(effort ? { model_reasoning_effort: effort } : {}) }),
+  }
+}
+
+// codex-acp opens no session until the client authenticates: an API key in the
+// environment is only read inside its `api-key` method, and OPENAI_BASE_URL is
+// ignored. The `gateway` method carries both endpoint and credential, holds
+// them in the adapter process's memory (nothing written to the Codex home, no
+// restart) and makes every thread use that provider — so it is used for OpenAI
+// itself too, rather than a second code path. Verified against codex-acp
+// 1.13.1 source (CodexAuthMethod.ts, CodexAcpClient.ts), not live.
+export const CODEX_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
+
+function codexGatewayAuth(
+  provider: AgentProvider,
+  selection: AgentSelection,
+  init: InitializeResponse,
+): AuthenticateRequest {
+  if (!selection.apiKey) {
+    throw new Error(
+      'Codex needs an API key: set one on the agent profile (it is sent to the endpoint as a Bearer token).',
+    )
+  }
+  const offered = (init.authMethods ?? []).some((method) => method.id === 'gateway')
+  if (!offered) {
+    throw new Error(
+      "This Codex adapter does not offer gateway authentication, so the profile's endpoint and key cannot be applied.",
+    )
+  }
+  const baseUrl =
+    selection.baseUrl || provider.endpoints['openai-responses'] || provider.endpoints.openai || CODEX_DEFAULT_BASE_URL
+  return {
+    methodId: 'gateway',
+    _meta: {
+      gateway: {
+        baseUrl,
+        headers: { Authorization: `Bearer ${selection.apiKey}` },
+        providerName: provider.label,
+      },
+    },
   }
 }
 
@@ -189,10 +275,33 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     id: 'codex',
     label: 'Codex',
     command: 'npx',
-    args: ['-y', '@zed-industries/codex-acp@latest'],
-    protocol: 'openai',
-    baseUrlEnv: 'OPENAI_BASE_URL',
-    keyEnv: 'OPENAI_API_KEY',
+    // PINNED, unlike every other adapter here (which run @latest). The Codex
+    // integration was written against this release's source without a live
+    // session (no key was available), so the only honest claim the Harness
+    // Support page can make is "integrated against 1.13.1". A bump is a
+    // deliberate change that re-reads the changelog against that page's rows.
+    // This is the maintained agentclientprotocol adapter over the Codex App
+    // Server; @zed-industries/codex-acp is frozen upstream.
+    args: ['-y', '@agentclientprotocol/codex-acp@1.13.1'],
+    // codex-acp speaks the Responses API only (its gateway provider is
+    // `wire_api: "responses"`), so Chat-Completions-only endpoints never offer it.
+    protocol: 'openai-responses',
+    // No baseUrlEnv / modelEnv: codex-acp reads neither OPENAI_BASE_URL nor a
+    // model variable. The endpoint travels in the gateway authenticate request
+    // below, the model in CODEX_CONFIG (codexSelectionEnv).
+    keyEnv: 'CODEX_API_KEY',
+    homeEnv: 'CODEX_HOME',
+    // Hides the browser ChatGPT login, which would open a browser on the
+    // server; this adapter always authenticates with the profile's key.
+    staticEnv: { NO_BROWSER: '1' },
+    selectionEnv: codexSelectionEnv,
+    authenticate: codexGatewayAuth,
+    // codex-acp advertises steering, but its `_session/steering` ignores
+    // `idleBehavior` and answers `startedNewTurn` with a turn of its own, which
+    // the engine would re-deliver as a prompt. Remove this line in the change
+    // that teaches steerIntoRunningTurn to treat `startedNewTurn` as delivered.
+    advertisedSteering: 'ignore',
+    note: "Needs an endpoint that serves OpenAI's Responses API: OpenAI itself, or an OpenAI-compatible endpoint marked as supporting it. The profile's key is sent to that endpoint as a Bearer token.",
   },
   {
     id: 'qwen',

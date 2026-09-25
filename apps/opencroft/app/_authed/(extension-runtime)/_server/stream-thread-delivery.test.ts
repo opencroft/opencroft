@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
 
+import { connectionKey } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
-import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
 import { slug } from '@/app/_authed/(server)/_server/types'
@@ -144,7 +144,7 @@ function seedAgentSessionConnection(connection: AgentConnection, agentName = 'Ag
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: false,

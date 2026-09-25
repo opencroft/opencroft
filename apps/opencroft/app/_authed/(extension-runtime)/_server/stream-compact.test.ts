@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { connectionKey } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
-import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
@@ -78,7 +78,7 @@ async function setupSession() {
     setSessionConfigOption: async () => ({ configOptions: [] }),
     closeSession: async () => ({}),
   } as unknown as AgentConnection
-  const key = JSON.stringify(buildSpawnConfig(selection))
+  const key = connectionKey(selection)
   acpStore().connections.set(key, {
     connection,
     lastSessionId: null,

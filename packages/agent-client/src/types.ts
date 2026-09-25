@@ -16,6 +16,10 @@ export interface SpawnConfig {
   args: string[]
   cwd: string
   env: Record<string, string>
+  // Directories that must exist before the harness starts (e.g. a harness home
+  // it refuses to create itself). Created on the host for a host spawn, and
+  // inside the container by the docker-exec wrapper for a container spawn.
+  ensureDirs?: string[]
 }
 
 export interface AgentSelection {
@@ -27,6 +31,17 @@ export interface AgentSelection {
   // Optional base-URL override (e.g. a custom OpenAI-compatible endpoint).
   // When set, it wins over the provider's table endpoint in buildSpawnConfig.
   baseUrl?: string
+  // The profile's word that its OpenAI-compatible endpoint also serves OpenAI's
+  // Responses API. Harnesses that speak only that API (Codex) are offered for a
+  // provider without a Responses endpoint of its own only when this is set —
+  // most compatible servers implement Chat Completions alone.
+  responsesApi?: boolean
+  // A directory the host owns for harness state. An adapter that declares
+  // `homeEnv` gets `<harnessHome>/<adapter id>` as its home, so the harness
+  // never reads the host user's own config for it. Must be valid where the
+  // harness runs (inside the container for a container spawn). Unset: the
+  // engine derives one inside `cwd`.
+  harnessHome?: string
   // System prompt for the in-process Custom (native) harness. Ignored by ACP
   // agents, which carry their own. Lets each profile define its own prompt.
   systemPrompt?: string

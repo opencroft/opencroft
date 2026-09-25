@@ -27,8 +27,8 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { connectionKey } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
-import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -104,7 +104,7 @@ function seedMockConnection(
     setSessionConfigOption: async () => ({}),
     closeSession: async () => ({}),
   } as unknown as AgentConnection
-  const key = JSON.stringify(buildSpawnConfig(selection))
+  const key = connectionKey(selection)
   acpStore().connections.set(key, {
     connection,
     lastSessionId: null,

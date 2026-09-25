@@ -62,7 +62,8 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
   {
     id: 'openai',
     label: 'OpenAI',
-    endpoints: { openai: '' },
+    // Both of OpenAI's own APIs, at the harness's default URL.
+    endpoints: { openai: '', 'openai-responses': '' },
     models: ['gpt-5', 'gpt-5-codex'],
     keyEnv: 'OPENAI_API_KEY',
   },

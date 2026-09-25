@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   type AgentClientOptions,
   buildClient,
+  connectionKey,
   createAgentClient,
   handleUpdate,
   interceptDraftSessionUpdates,
@@ -185,7 +186,7 @@ async function setup(
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  const key = JSON.stringify(buildSpawnConfig(selection))
+  const key = connectionKey(selection)
   store.connections.set(key, {
     connection,
     lastSessionId: null,
@@ -297,7 +298,11 @@ test('an attachment travels as an image block beside the text, and the user even
       { type: 'image', data: 'AAAA', mimeType: 'image/png' },
     ],
   ])
-  assert.deepEqual(userEvents(h.events).at(-1), { kind: 'user', text: 'look at this', attachments: [{ ...SHOT, message: 0 }] })
+  assert.deepEqual(userEvents(h.events).at(-1), {
+    kind: 'user',
+    text: 'look at this',
+    attachments: [{ ...SHOT, message: 0 }],
+  })
   assert.equal(kinds(h.events).includes('error'), false)
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
@@ -350,7 +355,10 @@ test('an attachment that is not an image is reported rather than sent as one', a
   await settle()
   assert.deepEqual(h.promptBlockCalls, [[{ type: 'text', text: 'read this' }]])
   const errors = h.events.filter((event) => event.kind === 'error')
-  assert.match((errors[0] as Extract<ChatEvent, { kind: 'error' }>).message, /1 attachment could not be sent as an image/)
+  assert.match(
+    (errors[0] as Extract<ChatEvent, { kind: 'error' }>).message,
+    /1 attachment could not be sent as an image/,
+  )
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
@@ -589,8 +597,8 @@ test('an opencode spawn carries its provider as an OpenCode config document', ()
 })
 
 test('an opencode baseUrl override wins over the provider endpoint', () => {
-  const content = buildSpawnConfig({ ...OPENCODE_SELECTION, baseUrl: 'https://proxy.example.test/v4' })
-    .env.OPENCODE_CONFIG_CONTENT
+  const content = buildSpawnConfig({ ...OPENCODE_SELECTION, baseUrl: 'https://proxy.example.test/v4' }).env
+    .OPENCODE_CONFIG_CONTENT
   assert.equal(JSON.parse(content).provider.zai.options.baseURL, 'https://proxy.example.test/v4')
 })
 
@@ -698,7 +706,7 @@ test('loadSession seeds configOptions from the response when nothing was replaye
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -752,7 +760,7 @@ test('a replay reproduces subagent transcripts: announced, nested, and closed', 
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -831,7 +839,7 @@ function restoreSetup(options: { resumable?: boolean; forkSupported?: boolean } 
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -936,9 +944,7 @@ test('a restored session keeps the agent word on forking, not its age', async ()
   assert.equal(meta.canFork, true)
 
   const plain = restoreSetup()
-  const plainMeta = await plain.client.restoreSession(plain.sessionId, plain.selection, [
-    { kind: 'user', text: 'one' },
-  ])
+  const plainMeta = await plain.client.restoreSession(plain.sessionId, plain.selection, [{ kind: 'user', text: 'one' }])
   assert.ok(plainMeta)
   assert.equal(plainMeta.canFork, false, 'no advertisement, no fork — same word a fresh session answers by')
   await h.client.deleteSession(h.sessionId)
@@ -1068,7 +1074,10 @@ test('a restored queue snapshot carries nothing, so delivered messages do not co
   const harness = restoreSetup()
   await harness.client.restoreSession(harness.sessionId, harness.selection, [
     { kind: 'user', text: 'first' },
-    { kind: 'queue', items: [{ id: 'q1', kind: 'message', sender: 'Reader', sentAt: '2026-01-01T00:00:00.000Z', text: 'held' }] },
+    {
+      kind: 'queue',
+      items: [{ id: 'q1', kind: 'message', sender: 'Reader', sentAt: '2026-01-01T00:00:00.000Z', text: 'held' }],
+    },
     { kind: 'turn_end', stopReason: 'end_turn' },
   ])
 
@@ -1094,7 +1103,10 @@ test('a restored transcript keeps every event at the position it was recorded at
   const harness = restoreSetup()
   const recorded: ChatEvent[] = [
     { kind: 'user', text: 'first' },
-    { kind: 'queue', items: [{ id: 'q1', kind: 'message', sender: 'Reader', sentAt: '2026-01-01T00:00:00.000Z', text: 'held' }] },
+    {
+      kind: 'queue',
+      items: [{ id: 'q1', kind: 'message', sender: 'Reader', sentAt: '2026-01-01T00:00:00.000Z', text: 'held' }],
+    },
     { kind: 'agent_message', text: 'working' },
     { kind: 'user', text: 'second' },
     { kind: 'turn_end', stopReason: 'end_turn' },
@@ -1144,10 +1156,10 @@ test('a restored session keeps the modes and usage its log recorded', async () =
   ])
 
   assert.equal(harness.client.sessionModes(harness.sessionId)?.current, 'plan')
-  assert.deepEqual(
-    harness.client.listSessions().find((session) => session.id === harness.sessionId)?.usage,
-    { used: 4200, size: 200000 },
-  )
+  assert.deepEqual(harness.client.listSessions().find((session) => session.id === harness.sessionId)?.usage, {
+    used: 4200,
+    size: 200000,
+  })
   await harness.client.deleteSession(harness.sessionId)
 })
 
@@ -1210,7 +1222,7 @@ test('a replay emits one reconstructed boundary per replayed message, not per ch
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -1270,7 +1282,7 @@ test('a replay that stops on unfinished work closes with resumed, not replayed',
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -1315,7 +1327,7 @@ test('a replay ending on a settled tool call closes with replayed, not resumed',
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -1364,7 +1376,7 @@ test('a snapshot arriving between two chunks does not open a boundary', async ()
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -1459,7 +1471,7 @@ test('a replayed task-notification is dropped without splitting the turn it land
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -1512,7 +1524,7 @@ test('a subagent is woken the same way, and it is no more the reader’s busines
   } as unknown as AgentConnection
   const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
-  store.connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  store.connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -1900,7 +1912,10 @@ test('a host-raised askUser and a url elicitation both await the user until they
   assert.ok(h.client.awaitingUserSessionKeys().includes('agent:asks:host'))
   await completeElicitation({ elicitationId: 'elic-awaiting' })
   await login
-  assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:host'), 'completed by the agent, no longer awaiting')
+  assert.ok(
+    !h.client.awaitingUserSessionKeys().includes('agent:asks:host'),
+    'completed by the agent, no longer awaiting',
+  )
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -2236,7 +2251,10 @@ test('a session reopened under the same id ends the subscriptions of the record 
   const fresh: ChatEvent[] = []
   harness.client.subscribe(harness.sessionId, (event) => fresh.push(event))
   harness.client.askUser(harness.sessionId, { message: 'still there?' })
-  assert.ok(fresh.some((event) => event.kind === 'ask_user'), 'a new subscription reads the new record')
+  assert.ok(
+    fresh.some((event) => event.kind === 'ask_user'),
+    'a new subscription reads the new record',
+  )
   assert.equal(stale.length, replayed, 'and the old one hears nothing of it')
   await harness.client.deleteSession(harness.sessionId)
 })
@@ -2275,7 +2293,7 @@ test('deleteSession kills the subprocess when close fails and no sibling session
       throw new Error('agent does not support session.close')
     },
   } as unknown as AgentConnection
-  const key = JSON.stringify(buildSpawnConfig(selection))
+  const key = connectionKey(selection)
   const store = acpStore()
   store.connections.set(key, {
     connection,
@@ -2311,7 +2329,7 @@ test('deleteSession does not kill the subprocess while a sibling session still s
       throw new Error('agent does not support session.close')
     },
   } as unknown as AgentConnection
-  const key = JSON.stringify(buildSpawnConfig(selection))
+  const key = connectionKey(selection)
   const store = acpStore()
   store.connections.set(key, {
     connection,
@@ -4627,7 +4645,6 @@ test('userTurnAt names a turn by event index, and reports the ordinal that rewin
   await h.client.deleteSession(h.sessionId)
 })
 
-
 // ── session/fork over ACP ───────────────────────────────────────────────────
 //
 // An external agent that advertised `session/fork` forks its own transcript;
@@ -4841,7 +4858,10 @@ test('a fork into a named key adopts it for the fork alone', async () => {
   const forked = acpStore().sessions.get(meta.id) as { selection: { sessionKey?: string } }
   assert.equal(forked.selection.sessionKey, 'group-chat:forked')
   // The source keeps its own key: both sessions answer to exactly one address.
-  const source = acpStore().sessions.get(h.sessionId) as { meta: { sessionKey?: string }; selection: { sessionKey?: string } }
+  const source = acpStore().sessions.get(h.sessionId) as {
+    meta: { sessionKey?: string }
+    selection: { sessionKey?: string }
+  }
   assert.equal(source.meta.sessionKey, 'group-chat:source')
   assert.equal(source.selection.sessionKey, 'group-chat:source')
 
@@ -6567,7 +6587,7 @@ function codexSetup(
       return { configOptions: codexConfigOptions(state) }
     },
   } as unknown as AgentConnection
-  acpStore().connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  acpStore().connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
@@ -6758,7 +6778,7 @@ test('a Codex session/load replay rebuilds the transcript and seeds modes and op
       }
     },
   } as unknown as AgentConnection
-  acpStore().connections.set(JSON.stringify(buildSpawnConfig(selection)), {
+  acpStore().connections.set(connectionKey(selection), {
     connection,
     lastSessionId: null,
     loadSession: true,
