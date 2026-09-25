@@ -90,7 +90,7 @@ export interface HarnessAdapter {
   // wire and nowhere else (never in logs, errors, events or the connection key).
   authenticate?: (provider: AgentProvider, selection: AgentSelection, init: InitializeResponse) => AuthenticateRequest
   // Env var naming the harness's own home directory (config, credentials,
-  // transcripts). When set, every spawn points it at a directory OpenCroft owns
+  // transcripts). When set, every spawn points it at a directory the host owns
   // — `<selection.harnessHome>/<adapter id>`, created before the spawn — so
   // nothing the host user keeps in the harness's default home (a leftover
   // login, providers, MCP servers, approval settings, instructions) leaks into

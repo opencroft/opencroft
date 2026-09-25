@@ -12,8 +12,9 @@ export interface AgentPlacement {
   // directory in the data volume.
   cwd: string
   // A directory for the harness's own state (Codex's CODEX_HOME), beside the
-  // workspace rather than in it, so the agent can't edit its own harness
-  // config, and not in the server user's home, so nothing kept there reaches it.
+  // workspace rather than in it, so a harness that sandboxes writes to its
+  // workdir (Codex's default modes) can't edit its own config, and not in the
+  // server user's home, so nothing kept there reaches it.
   harnessHome: string
   // Set when the harness runs inside this Docker container via `docker exec`.
   containerName?: string
