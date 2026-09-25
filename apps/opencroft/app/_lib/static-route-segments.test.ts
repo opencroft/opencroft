@@ -34,9 +34,10 @@ import test from 'node:test'
 
 import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
 
-// Generated, gitignored, and present in any checkout that can build or
-// typecheck -- so reading it is not a dependency on someone having remembered
-// to do something.
+// Generated and gitignored. The workspace's `pretest` script writes it before
+// the suite runs, so a fresh checkout has it without anyone having remembered
+// to build or typecheck first. Running this file on its own, outside that
+// script, needs `node scripts/generate-route-tree.mjs` run once beforehand.
 const GENERATED_ROUTE_TREE = join(import.meta.dirname, '..', 'routeTree.gen.ts')
 
 /**

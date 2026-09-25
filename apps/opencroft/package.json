@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "pretest": "node scripts/generate-route-tree.mjs",
     "test": "node ../../scripts/run-tests.mjs app server components scripts",
     "pretypecheck": "node scripts/check-workspace-deps.mjs && node scripts/generate-route-tree.mjs",
     "smoke": "node scripts/smoke-check.mjs",

@@ -16,7 +16,10 @@
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test, { after } from 'node:test'
 
 import { db, spaceApp } from '@opencroft/db'
 
@@ -28,6 +31,43 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
 
 const suffix = crypto.randomUUID().slice(0, 8)
 const spaceSlug = `app-emitters-${suffix}`
+
+// The App this file adds TWO of, to have a type whose action list is worth
+// deduplicating. A fixture extension written into a scratch root, not one
+// picked from the extensions an instance has installed: those live under a
+// gitignored data directory, so a fresh checkout has none, and a test that
+// borrowed one passed only on a machine where something had been installed.
+// Both extension roots point into the scratch root, so whatever IS installed on
+// the machine running this cannot join the population either. Two actions, so
+// that asking for one of them is a real selection rather than the whole list.
+const root = mkdtempSync(join(tmpdir(), 'app-emitters-'))
+process.env.OPENCROFT_LOCAL_EXTENSIONS = join(root, 'local')
+process.env.OPENCROFT_INSTALLED_EXT_ROOT = join(root, 'installed')
+after(() => rmSync(root, { recursive: true, force: true }))
+
+const FIXTURE_EXTENSION = `emitfix-${suffix}`
+const FIXTURE_APP = `${FIXTURE_EXTENSION}-app`
+mkdirSync(join(root, 'local', FIXTURE_EXTENSION), { recursive: true })
+writeFileSync(
+  join(root, 'local', FIXTURE_EXTENSION, 'extension.json'),
+  JSON.stringify({
+    id: `local/${FIXTURE_EXTENSION}`,
+    name: 'App-emitters fixture',
+    version: '0.0.0',
+    provides: {
+      apps: [
+        {
+          slug: FIXTURE_APP,
+          title: 'Fixture app',
+          actions: [
+            { id: 'deploy', label: 'Deploy' },
+            { id: 'status', label: 'Status' },
+          ],
+        },
+      ],
+    },
+  }),
+)
 
 const registry = getSpacesRegistry()
 await registry.ensureLoaded()
@@ -44,20 +84,16 @@ const [row] = await db
   .returning()
 const address = `${spaceSlug}.${row.slug}`
 
-// The App this file adds TWO of, to have a type whose action list is worth
-// deduplicating. Chosen at runtime as the first one in the tree that declares
-// any, rather than named: a host test that names an extension knows about a
-// layer above it, and it would start failing the day that extension changes
-// its mind about having actions.
+// The fixture App, found through the catalog rather than taken from what was
+// written above: a catalog that stopped reading the local root leaves `acting`
+// unset, and the tests below then fail on the guard instead of passing over
+// nothing.
 const catalog = await listAppCatalog()
-const unambiguous = catalog.filter((entry) => catalog.filter((o) => o.appSlug === entry.appSlug).length === 1)
+const fixture = catalog.find((entry) => entry.appSlug === FIXTURE_APP)
 let acting: { appSlug: string; extensionId: string; ids: string[] } | undefined
-for (const entry of unambiguous) {
-  const actions = await listAppActions(entry.appSlug)
-  if (actions.length > 0) {
-    acting = { appSlug: entry.appSlug, extensionId: entry.extensionId, ids: actions.map((action) => action.id) }
-    break
-  }
+if (fixture) {
+  const actions = await listAppActions(fixture.appSlug)
+  acting = { appSlug: fixture.appSlug, extensionId: fixture.extensionId, ids: actions.map((action) => action.id) }
 }
 if (acting) {
   const { extensionId, appSlug } = acting
@@ -75,7 +111,7 @@ if (acting) {
 /** The chosen App, or the reason the tests below could not have meant anything. */
 function actingApp() {
   if (!acting) {
-    throw new Error('No App in this tree declares an action — these tests would quantify over nothing.')
+    throw new Error(`The catalog does not list ${FIXTURE_APP} — these tests would quantify over nothing.`)
   }
   return acting
 }
