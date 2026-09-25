@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { SidebarMenu, SidebarMenuItem } from 'ui/sidebar'
 
 interface BuildInfo {
   branch: string
@@ -10,7 +9,8 @@ interface BuildInfo {
 
 const BUILD_INFO_URL = '/api/build-info'
 
-export function DevBuildBadge() {
+/** `branch@commit` of the running build, or null when the server does not know it. */
+export function useBuildLabel(): string | null {
   const [info, setInfo] = useState<BuildInfo | null>(null)
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export function DevBuildBadge() {
     return () => controller.abort()
   }, [])
 
-  if (!info || (info.branch === 'unknown' && info.commit === 'unknown')) {
+  if (!info) {
     return null
   }
 
@@ -33,17 +33,5 @@ export function DevBuildBadge() {
     .filter(Boolean)
     .join('@')
 
-  if (!label) {
-    return null
-  }
-
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <div className='px-2 py-1 text-[10px] font-mono text-muted-foreground/60 truncate' title={label}>
-          {label}
-        </div>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  )
+  return label || null
 }

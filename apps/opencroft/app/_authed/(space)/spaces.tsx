@@ -5,6 +5,11 @@ import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
 
 export const Route = createFileRoute('/_authed/(space)/spaces')({
+  // `?new=1` opens the new-space dialog on arrival -- where the title bar's
+  // plus beside the space search leads.
+  validateSearch: (search: Record<string, unknown>): { new?: boolean } => ({
+    new: search.new === 1 || search.new === '1' || search.new === true ? true : undefined,
+  }),
   loader: () => listSpaces(),
   head: () => ({ meta: [{ title: pageTitle('Spaces') }] }),
   component: SpacesPage,
@@ -12,5 +17,6 @@ export const Route = createFileRoute('/_authed/(space)/spaces')({
 
 function SpacesPage() {
   const spaces = Route.useLoaderData()
-  return <SpacesTable initialSpaces={spaces} />
+  const { new: startNew } = Route.useSearch()
+  return <SpacesTable initialSpaces={spaces} startNew={startNew} />
 }

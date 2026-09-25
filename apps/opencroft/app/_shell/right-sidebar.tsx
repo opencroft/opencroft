@@ -60,7 +60,11 @@ export function RightSidebar() {
 
   return (
     <SidebarStateProvider storageKey={STORAGE_KEY} keyboardShortcut={null}>
-      <Sidebar side='right' data-testid='right-sidebar'>
+      <Sidebar
+        side='right'
+        data-testid='right-sidebar'
+        className='top-(--title-bar-height) h-[calc(100svh-var(--title-bar-height))]'
+      >
         <PanelTabStrip
           tabs={items.map((panel) => ({ id: panel.id, label: panel.label, icon: resolveIcon(panel.icon) }))}
           activeId={active.id}

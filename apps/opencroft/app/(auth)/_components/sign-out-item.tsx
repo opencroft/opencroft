@@ -2,8 +2,6 @@
 
 import { signOut, useSession } from '@opencroft/auth/client'
 import { useRouter } from '@tanstack/react-router'
-import { LogOut } from 'lucide-react'
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from 'ui/sidebar'
 
 /**
  * Signing out is an action, not a screen.
@@ -12,10 +10,10 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from 'ui/sidebar'
  * footer were stripped there was nothing left of it — which is the answer: a
  * page here would only ask someone to confirm the thing they just asked for.
  *
- * Renders nothing when there is no session, so the auth screens (which sit
+ * Returns null when there is no session, so the auth screens (which sit
  * outside the shell anyway) never show a way to sign out of nothing.
  */
-export function SignOutItem() {
+export function useSignOut(): (() => void) | null {
   const router = useRouter()
   const { data: session } = useSession()
 
@@ -23,7 +21,7 @@ export function SignOutItem() {
     return null
   }
 
-  const onSignOut = () => {
+  return () => {
     void (async () => {
       await signOut()
       // A full navigation rather than a router push: everything already
@@ -33,15 +31,4 @@ export function SignOutItem() {
       await router.navigate({ to: '/login' })
     })()
   }
-
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton tooltip={`Sign out ${session.user.email}`} onClick={onSignOut}>
-          <LogOut />
-          <span>Sign out</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  )
 }

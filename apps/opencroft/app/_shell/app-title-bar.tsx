@@ -1,0 +1,226 @@
+'use client'
+
+import { useSession } from '@opencroft/auth/client'
+import { Link, useLocation, useRouter } from '@tanstack/react-router'
+import { LogOut, MessagesSquare, Puzzle, SettingsIcon, Workflow } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Avatar, AvatarFallback, AvatarImage } from 'ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from 'ui/dropdown-menu'
+import { AppSwitcher, type SwitcherApp } from 'ui/layouts/app-switcher'
+import { SpaceSelector } from 'ui/layouts/space-selector'
+import { TitleBar, TitleBarIconButton, TitleBarSeparator } from 'ui/layouts/title-bar'
+import { Logo } from 'ui/logo'
+import { useSidebar } from 'ui/sidebar'
+import { Wordmark } from 'ui/wordmark'
+
+import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
+import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
+import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { getActiveSpaceSlug } from '@/app/_authed/(space)/_server/actions'
+import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import { useBuildLabel } from '@/app/_components/dev-build-badge'
+import { useSignOut } from '@/app/(auth)/_components/sign-out-item'
+
+const GRAPH_ID = 'graph'
+
+function slugFromPath(pathname: string): string | null {
+  const match = pathname.match(/^\/space\/([^/]+)/)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+/** The space the reader is in: the one in the address, else the active one. */
+function useCurrentSpaceSlug(pathname: string): string | null {
+  const pathSlug = slugFromPath(pathname)
+  const [activeSlug, setActiveSlug] = useState<string | null>(null)
+  useEffect(() => {
+    if (!pathSlug) {
+      getActiveSpaceSlug()
+        .then(setActiveSlug)
+        .catch(() => {})
+    }
+  }, [pathSlug])
+  return pathSlug ?? activeSlug
+}
+
+/**
+ * The space's graph and its App instances, as the title bar lists them.
+ * Refetched on every navigation, not only when the space changes, so an
+ * instance added in the settings shows up as soon as the reader goes anywhere.
+ */
+function useSpaceApps(slug: string | null, pathname: string): SwitcherApp[] {
+  const [instances, setInstances] = useState<SpaceAppInstance[]>([])
+  const [apps, setApps] = useState<AppMeta[]>([])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the refetch trigger, see above
+  useEffect(() => {
+    if (!slug) {
+      return
+    }
+    let cancelled = false
+    Promise.all([listSpaceApps({ data: slug }), listApps()])
+      .then(([nextInstances, nextApps]) => {
+        if (!cancelled) {
+          setInstances(nextInstances)
+          setApps(nextApps)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setInstances([])
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [slug, pathname])
+
+  if (!slug) {
+    return []
+  }
+  const graph: SwitcherApp = { id: GRAPH_ID, label: 'Graph', href: `/space/${slug}`, icon: Workflow, type: 'Graph' }
+  return [
+    graph,
+    ...instances.map((instance) => {
+      const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
+      return {
+        id: instance.id,
+        label: instance.name || meta?.title || instance.appSlug,
+        href: `/space/${slug}/app/${instance.slug}`,
+        icon: resolveIcon(meta?.icon),
+        type: meta?.title ?? instance.appSlug,
+      }
+    }),
+  ]
+}
+
+function initials(name: string) {
+  return name
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('')
+}
+
+function AccountMenu() {
+  const { data: session } = useSession()
+  const signOut = useSignOut()
+  const buildLabel = useBuildLabel()
+  const user = session?.user
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<TitleBarIconButton aria-label='Account' title={user?.email} />}>
+        <Avatar className='size-6'>
+          {user?.image && <AvatarImage src={user.image} alt='' />}
+          <AvatarFallback className='text-xs'>{initials(user?.name || user?.email || '?')}</AvatarFallback>
+        </Avatar>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='w-56'>
+        {user && (
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className='truncate'>{user.name || user.email}</DropdownMenuLabel>
+          </DropdownMenuGroup>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem render={<Link to='/settings' />}>
+          <SettingsIcon />
+          Settings
+        </DropdownMenuItem>
+        <DropdownMenuItem render={<Link to='/extensions' />}>
+          <Puzzle />
+          Extensions
+        </DropdownMenuItem>
+        {signOut && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={signOut}>
+              <LogOut />
+              Sign out
+            </DropdownMenuItem>
+          </>
+        )}
+        {buildLabel && (
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className='truncate font-mono text-[10px] font-normal' title={buildLabel}>
+              {buildLabel}
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * The app's title bar: the sidebar button when the page has a sidebar, the
+ * mark linking home, where the reader is (space, then app), chats and the
+ * account menu.
+ */
+export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; hasSidebar: boolean }) {
+  const pathname = useLocation({ select: (l) => l.pathname })
+  const router = useRouter()
+  const { toggleSidebar } = useSidebar()
+  const slug = useCurrentSpaceSlug(pathname)
+  const apps = useSpaceApps(slug, pathname)
+
+  const navigate = (href: string) => router.history.push(href)
+  const activeApp =
+    pathname === `/space/${slug}`
+      ? GRAPH_ID
+      : apps.find((app) => app.id !== GRAPH_ID && (pathname === app.href || pathname.startsWith(`${app.href}/`)))?.id
+
+  return (
+    <TitleBar
+      onMenu={hasSidebar ? toggleSidebar : undefined}
+      brand={
+        <Link to='/' aria-label='Home'>
+          <Wordmark />
+        </Link>
+      }
+      brandCompact={
+        <Link to='/' aria-label='Home'>
+          <Logo size={24} />
+        </Link>
+      }
+      context={
+        slug && (
+          <>
+            <SpaceSelector
+              spaces={spaces}
+              currentSlug={slug}
+              hrefFor={(space) => `/space/${space}`}
+              settingsHrefFor={(space) => `/space/${space}/settings`}
+              allSpacesHref='/spaces'
+              createHref='/spaces?new=1'
+              onNavigate={navigate}
+            />
+            <TitleBarSeparator />
+            <AppSwitcher
+              apps={apps}
+              activeId={activeApp}
+              createHref={`/space/${slug}/settings?section=apps&tab=add`}
+              onNavigate={navigate}
+            />
+          </>
+        )
+      }
+      trailing={
+        <>
+          <TitleBarIconButton render={<Link to='/group-chats' />} nativeButton={false} aria-label='Chats' title='Chats'>
+            <MessagesSquare />
+          </TitleBarIconButton>
+          <AccountMenu />
+        </>
+      }
+    />
+  )
+}

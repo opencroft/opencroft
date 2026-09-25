@@ -23,16 +23,18 @@ import type { SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/ty
 
 interface Props {
   initialSpaces: SpaceSummary[]
+  /** Open the new-space dialog straight away. */
+  startNew?: boolean
 }
 
 function formatDate(value: string) {
   return new Date(value).toLocaleString()
 }
 
-export function SpacesTable({ initialSpaces }: Props) {
+export function SpacesTable({ initialSpaces, startNew = false }: Props) {
   const router = useRouter()
   const [spaces, setSpaces] = useState<SpaceSummary[]>(initialSpaces)
-  const [newOpen, setNewOpen] = useState(false)
+  const [newOpen, setNewOpen] = useState(startNew)
   const [newName, setNewName] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
