@@ -45,6 +45,18 @@ export async function readPersistedSession(tabKey: string): Promise<PersistedSes
   return normalize(store[tabKey])
 }
 
+/** The tab key whose pointer names this session id, or null when none does. */
+export async function findPersistedTabKey(sessionId: string): Promise<string | null> {
+  const row = await getSettingImpl(SETTING_ID)
+  const store = row ? storeFromRaw(row.data) : {}
+  for (const [tabKey, value] of Object.entries(store)) {
+    if (normalize(value)?.id === sessionId) {
+      return tabKey
+    }
+  }
+  return null
+}
+
 /**
  * `prompted` only ever moves false → true: a session that has been given its
  * context does not lose it because something later re-registered the pointer.

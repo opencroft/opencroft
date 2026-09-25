@@ -198,6 +198,47 @@ export async function requireGroupChatMember(request: Request, groupChatId: stri
   return { userId: sessionUser.id }
 }
 
+/**
+ * The same check, for a request that names an agent session by its key rather
+ * than a group chat by its id: the caller must be a member of the group chat
+ * whose thread owns that key. A retired key of a renamed thread still names it.
+ *
+ * A key no thread owns, no key at all (a session id that resolved to none) and
+ * a thread in a chat the caller is not in are one refusal, as above — telling
+ * them apart would tell an outsider which sessions exist. The sign-in check
+ * comes first for the same reason: an anonymous caller is refused before
+ * anything about the key is looked at.
+ */
+export async function requireSessionKeyMember(
+  request: Request,
+  sessionKey: string | null,
+): Promise<{ sessionKey: string; agentNodeId: string }> {
+  const sessionUser = await requireSignedInUser(request)
+  const threadId = sessionKey ? await threadIdForSessionKey(sessionKey) : null
+  const [row] = threadId
+    ? await db
+        .select({ groupChatId: groupChatThread.groupChatId, agentNodeId: groupChatThread.agentNodeId })
+        .from(groupChatThread)
+        .where(eq(groupChatThread.id, threadId))
+        .limit(1)
+    : []
+  if (!sessionKey || !row || !(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return { sessionKey, agentNodeId: row.agentNodeId }
+}
+
+/** The session keys of every thread in every group chat the caller is a member of. */
+export async function listMemberSessionKeys(request: Request): Promise<Set<string>> {
+  const sessionUser = await requireSignedInUser(request)
+  const rows = await db
+    .select({ sessionKey: groupChatThread.sessionKey })
+    .from(groupChatThread)
+    .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChatThread.groupChatId))
+    .where(eq(groupChatMember.userId, sessionUser.id))
+  return new Set(rows.map((row) => row.sessionKey))
+}
+
 // ── Reading ─────────────────────────────────────────────────────────────
 
 /** The group chats the signed-in user is a member of — never any others. */

@@ -1300,13 +1300,25 @@ export function useAcpSession(
     [edit, sessionId, tabKey],
   )
 
-  const resolvePermission = useCallback((requestId: string, optionId?: string) => {
-    void respondLocal({ data: { type: 'permission', requestId, optionId } })
-  }, [])
+  // A request only ever arrives on this session's stream, so there is a
+  // session to name whenever there is a request to answer.
+  const resolvePermission = useCallback(
+    (requestId: string, optionId?: string) => {
+      if (sessionId) {
+        void respondLocal({ data: { sessionId, type: 'permission', requestId, optionId } })
+      }
+    },
+    [sessionId],
+  )
 
-  const resolveAsk = useCallback((requestId: string, answer?: string | Record<string, ElicitationContentValue>) => {
-    void respondLocal({ data: { type: 'ask', requestId, answer } })
-  }, [])
+  const resolveAsk = useCallback(
+    (requestId: string, answer?: string | Record<string, ElicitationContentValue>) => {
+      if (sessionId) {
+        void respondLocal({ data: { sessionId, type: 'ask', requestId, answer } })
+      }
+    },
+    [sessionId],
+  )
 
   // "Tell what to do different": ACP can't attach a reason to a rejection, so
   // the request is rejected and the typed guidance sent separately. On an

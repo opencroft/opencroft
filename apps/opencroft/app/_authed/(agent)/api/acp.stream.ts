@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { historyEndEvent, SESSION_GONE_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
+import { requireSessionMember, sessionAccessRefusal } from '@/app/_authed/(group-chats)/_server/session-access'
 import { requireSession } from '@/app/_server/require-session'
 
 // How much history a cold (re)connect replays before switching to live events.
@@ -35,6 +36,13 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
         if (!sessionId) {
           return new Response('missing sessionId', { status: 400 })
         }
+        // An id nothing holds is refused here too, so the "gone" frame below is
+        // only ever sent to a member, about a session that ended while they read
+        // it or between the check and the subscribe. A member whose tab kept a
+        // dead id is refused and recovers the same way: EventSource closes on a
+        // non-stream answer, and the client reopens the thread's session.
+        const refused = await sessionAccessRefusal(requireSessionMember(request, sessionId))
+        if (refused) return refused
         const encoder = new TextEncoder()
         const goneFrame = encoder.encode(`data: ${JSON.stringify({ kind: SESSION_GONE_KIND })}\n\n`)
         let unsubscribe = () => {}

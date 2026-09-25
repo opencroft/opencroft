@@ -5480,6 +5480,75 @@ test("a subagent's permission request is asked in the parent chat and answered f
   await h.client.deleteSession(h.sessionId)
 })
 
+// Two sessions, so "the session it was raised in" is told apart from "a
+// session": the request is raised in the second one.
+test('pendingRequestSessionId names the session a permission request was raised in, until it is answered', async () => {
+  const other = await setup('openclaw')
+  const h = await setup('openclaw')
+  const client = buildClient(() => h.sessionId, 'local')
+  const response = client.requestPermission({
+    sessionId: h.sessionId,
+    toolCall: { toolCallId: 'call-1', title: 'Run a command' },
+    options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }],
+  })
+  const asked = h.events.find((event) => event.kind === 'permission_request')
+  assert.ok(asked && asked.kind === 'permission_request')
+  assert.notEqual(other.sessionId, h.sessionId)
+  assert.equal(h.client.pendingRequestSessionId(asked.requestId), h.sessionId)
+  assert.equal(h.client.pendingRequestSessionId('no-such-request'), undefined)
+  h.client.resolvePermission(asked.requestId, 'yes')
+  assert.deepEqual(await response, { outcome: { outcome: 'selected', optionId: 'yes' } })
+  assert.equal(h.client.pendingRequestSessionId(asked.requestId), undefined)
+  await h.client.deleteSession(h.sessionId)
+  await other.client.deleteSession(other.sessionId)
+})
+
+test('pendingRequestSessionId names the session a question was raised in, until it is answered', async () => {
+  const h = await setup('openclaw')
+  const { createElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation)
+  const response = createElicitation({
+    mode: 'form',
+    sessionId: h.sessionId,
+    message: 'Pick one',
+    requestedSchema: { type: 'object', properties: { choice: { type: 'string' } } },
+  })
+  const ask = h.events.find((event) => event.kind === 'ask_user')
+  assert.ok(ask && ask.kind === 'ask_user')
+  assert.equal(h.client.pendingRequestSessionId(ask.requestId), h.sessionId)
+  h.client.resolveElicitation(ask.requestId, { choice: 'a' })
+  assert.deepEqual(await response, { action: 'accept', content: { choice: 'a' } })
+  assert.equal(h.client.pendingRequestSessionId(ask.requestId), undefined)
+  await h.client.deleteSession(h.sessionId)
+})
+
+// The id a reader's chat knows is the parent's: a subagent's request is drawn
+// there, and that is the session an answer to it arrives naming.
+test("pendingRequestSessionId names the parent session for a subagent's permission request", async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:perm-owner' })
+  const childId = 'child-sess-perm-owner'
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: childId,
+    name: 'Builder',
+    task: 'run it',
+    capabilities: {},
+  })
+  const client = buildClient(() => h.sessionId, 'local')
+  const response = client.requestPermission({
+    sessionId: childId,
+    toolCall: { toolCallId: 'call-1', title: 'Run a command' },
+    options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }],
+  })
+  const asked = h.events.find((event) => event.kind === 'permission_request')
+  assert.ok(asked && asked.kind === 'permission_request')
+  assert.equal(h.client.pendingRequestSessionId(asked.requestId), h.sessionId)
+  h.client.resolvePermission(asked.requestId, 'yes')
+  assert.deepEqual(await response, { outcome: { outcome: 'selected', optionId: 'yes' } })
+  assert.equal(h.client.pendingRequestSessionId(asked.requestId), undefined)
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── background tasks (AIR async_task_* ) ────────────────────────────────────
 
 test('a background task is reported, snapshot-prefixed while live, and stoppable', async () => {

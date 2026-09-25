@@ -4,6 +4,12 @@
 // stub substitution keeps its server-side import tail out of the browser
 // bundle. A single plain exported function here has no stub and ships that tail
 // — see the header of acp-impl.ts, which is where plain implementations go.
+//
+// EVERY handler here also starts with a session-access gate from
+// session-access.ts: the caller must be a member of the group chat whose
+// thread owns the session it names. Being signed in is not enough — a session
+// id or key is not a secret, and each of these is a callable endpoint whether
+// or not a page leads to it.
 import { createServerFn } from '@tanstack/react-start'
 import type { TurnEdit } from 'agent-client/queue-tags'
 import type { ElicitationContentValue, Presence, QueueMode } from 'agent-client/types'
@@ -17,9 +23,7 @@ import {
   deliverQueueLocalImpl,
   editTurnLocalImpl,
   ensureLocalSessionImpl,
-  findTargetSessionImpl,
   forgetLocalSessionImpl,
-  hasActiveTurnImpl,
   type OpenedSession,
   promptLocalImpl,
   sessionHistoryPageImpl,
@@ -34,10 +38,21 @@ import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
+import {
+  requireMemberSessionKeys,
+  requireSessionAccess,
+  requireSessionKeyAccess,
+} from '@/app/_authed/(group-chats)/_server/session-access'
 
+// Opens the session under the agent the thread runs, not the one the request
+// names: a thread's agent is fixed, and taking it from the wire would let a
+// member start a different agent under that thread's key.
 export const ensureLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { agentNodeId: string; tabKey: string }) => data)
-  .handler(async ({ data }): Promise<OpenedSession> => ensureLocalSessionImpl(data))
+  .handler(async ({ data }): Promise<OpenedSession> => {
+    const { agentNodeId } = await requireSessionKeyAccess(data.tabKey)
+    return ensureLocalSessionImpl({ agentNodeId, tabKey: data.tabKey })
+  })
 
 // An image the reader attached, on its way to the store. `data` is base64 with
 // no `data:` prefix — what ACP's image block carries, so the payload is never
@@ -46,14 +61,20 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
 // suggestion.
 export const attachImage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { tabKey: string; name: string; mimeType: string; data: string }) => data)
-  .handler(async ({ data }): Promise<StoredAttachment> => attachImageImpl(data))
+  .handler(async ({ data }): Promise<StoredAttachment> => {
+    await requireSessionKeyAccess(data.tabKey)
+    return attachImageImpl(data)
+  })
 
 // The stored size of pictures this conversation already holds, for a composer
 // showing ones it did not upload itself -- an edited message's. Scoped to the
 // tab's conversation; an id from elsewhere is absent from the answer.
 export const attachmentSizes = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { tabKey: string; ids: string[] }) => data)
-  .handler(async ({ data }): Promise<Record<string, number>> => attachmentSizesImpl(data))
+  .handler(async ({ data }): Promise<Record<string, number>> => {
+    await requireSessionKeyAccess(data.tabKey)
+    return attachmentSizesImpl(data)
+  })
 
 // `queue` says how this message relates to anything already held: `wait` to be
 // delivered on its own when the turn ends, `push` to interrupt and deliver the
@@ -78,7 +99,10 @@ export const promptLocal = createServerFn({ method: 'POST', strict: { output: fa
       attachments?: string[]
     }) => data,
   )
-  .handler(async ({ data }): Promise<{ interrupted: boolean }> => promptLocalImpl(data))
+  .handler(async ({ data }): Promise<{ interrupted: boolean }> => {
+    await requireSessionAccess(data.sessionId)
+    return promptLocalImpl(data)
+  })
 
 // How often this session's agent reads its queue. Remembered, so a session
 // reopened after a restart reads at the cadence it was set to rather than
@@ -86,19 +110,17 @@ export const promptLocal = createServerFn({ method: 'POST', strict: { output: fa
 export const setPresenceLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; presence: Presence }) => data)
   .handler(async ({ data }): Promise<{ ok: true }> => {
+    await requireSessionAccess(data.sessionId)
     await setPresenceLocalImpl(data)
     return { ok: true }
   })
-
-export const findTargetSession = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { baseKey: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string } | null> => await findTargetSessionImpl(data))
 
 // Drop a message from the session's server-side queue before it's delivered.
 // Clients observe the result via the 'queue' snapshot event on the stream.
 export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; id: string }) => data)
   .handler(async ({ data }): Promise<void> => {
+    await requireSessionAccess(data.sessionId)
     agentClient.removeQueued(data.sessionId, data.id)
   })
 
@@ -110,42 +132,40 @@ export const removeQueuedLocal = createServerFn({ method: 'POST', strict: { outp
 // to the host's registry. It can do neither for a session it no longer holds,
 // so a stop pressed on a host task after its session was unloaded goes to the
 // registry directly — the task outlived its session, and so must its stop.
+// Only a task that session started: the registry is addressed by task id
+// alone, so the gate on the session would otherwise cover any task.
 export const stopBackgroundTaskLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; asyncTaskId: string }) => data)
   .handler(async ({ data }): Promise<{ stopped: boolean }> => {
+    const sessionKey = await requireSessionAccess(data.sessionId)
     if (await agentClient.stopAsyncTask(data.sessionId, data.asyncTaskId)) {
       return { stopped: true }
     }
-    return { stopped: await backgroundTasks.requestStop(data.asyncTaskId) }
-  })
-
-// While YOLO is on, every session is pinned to bypass and mode changes are
-// refused here rather than applied and then quietly undone by the enforcement
-// pass. Returns the refusal as DATA, not a thrown error: a thrown createServerFn
-// error reaches the browser with only its message, leaving the client unable to
-// tell a refusal from a transport failure.
-export const setLocalMode = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { sessionId: string; modeId: string }) => data)
-  .handler(async ({ data }): Promise<{ ok: true } | { ok: false; reason: 'yolo-locked' }> => {
-    if (modeLockedByYolo()) {
-      return { ok: false, reason: 'yolo-locked' }
+    if ((await backgroundTasks.get(data.asyncTaskId))?.sessionKey !== sessionKey) {
+      return { stopped: false }
     }
-    await agentClient.setMode(data.sessionId, data.modeId)
-    return { ok: true }
+    return { stopped: await backgroundTasks.requestStop(data.asyncTaskId) }
   })
 
 // Change one of the session's agent-advertised config options (model/effort/
 // mode/…). Applies to this session only — never written back into the
 // profile the session was started from.
+//
+// While YOLO is on, every session is pinned to bypass and mode changes are
+// refused here rather than applied and then quietly undone by the enforcement
+// pass. Returns the refusal as DATA, not a thrown error: a thrown createServerFn
+// error reaches the browser with only its message, leaving the client unable to
+// tell a refusal from a transport failure.
 export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; configId: string; value: string | boolean }) => data)
   .handler(async ({ data }): Promise<{ ok: true } | { ok: false; reason: 'yolo-locked' }> => {
+    await requireSessionAccess(data.sessionId)
     // Modes reach the client twice — as session modes AND as a `mode` config
-    // option built from the same list — so the YOLO lock has to hold on both
-    // paths, or the selector becomes a way around it. This is the path the UI
-    // actually takes (setLocalMode has no callers), which is why the refusal is
-    // returned as data rather than swallowed: a caller that cannot tell refused
-    // from applied can only present the change as having worked.
+    // option built from the same list — and this is the one door that changes
+    // either, so the YOLO lock holds here or the selector becomes a way around
+    // it. The refusal is returned as data rather than swallowed: a caller that
+    // cannot tell refused from applied can only present the change as having
+    // worked.
     if (data.configId === 'mode' && modeLockedByYolo()) {
       return { ok: false, reason: 'yolo-locked' }
     }
@@ -166,7 +186,10 @@ export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { o
 
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
-  .handler(async ({ data: sessionId }): Promise<void> => cancelLocalImpl(sessionId))
+  .handler(async ({ data: sessionId }): Promise<void> => {
+    await requireSessionAccess(sessionId)
+    return cancelLocalImpl(sessionId)
+  })
 
 // The reader's Stop, which is not the same thing as a cancel: with unread
 // messages held it cancels AND delivers them, because a stop with something
@@ -176,7 +199,10 @@ export const cancelLocal = createServerFn({ method: 'POST', strict: { output: fa
 // ahead, and must not sweep the queue out while doing it.
 export const stopLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
-  .handler(async ({ data: sessionId }): Promise<{ delivered: number }> => stopLocalImpl(sessionId))
+  .handler(async ({ data: sessionId }): Promise<{ delivered: number }> => {
+    await requireSessionAccess(sessionId)
+    return stopLocalImpl(sessionId)
+  })
 
 // Deliver everything waiting, now — the Unread section's divider. Distinct
 // from stopLocal, which is the reader's Stop and carries its own meaning:
@@ -184,15 +210,17 @@ export const stopLocal = createServerFn({ method: 'POST', strict: { output: fals
 // exactly as a push would.
 export const deliverQueueLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((sessionId: string) => sessionId)
-  .handler(async ({ data: sessionId }): Promise<void> => deliverQueueLocalImpl(sessionId))
-
-export const hasActiveTurn = createServerFn({ method: 'GET', strict: { output: false } })
-  .inputValidator((sessionId: string) => sessionId)
-  .handler(async ({ data: sessionId }): Promise<boolean> => hasActiveTurnImpl(sessionId))
+  .handler(async ({ data: sessionId }): Promise<void> => {
+    await requireSessionAccess(sessionId)
+    return deliverQueueLocalImpl(sessionId)
+  })
 
 export const forgetLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)
-  .handler(async ({ data: tabKey }): Promise<void> => forgetLocalSessionImpl(tabKey))
+  .handler(async ({ data: tabKey }): Promise<void> => {
+    await requireSessionKeyAccess(tabKey)
+    return forgetLocalSessionImpl(tabKey)
+  })
 
 // Commit an edited turn: rewind to it and re-send it with the reader's words.
 //
@@ -209,9 +237,16 @@ export const forgetLocalSession = createServerFn({ method: 'POST', strict: { out
 // ordinary send (see WirePromptOrigin). Refuses with null when there is no user
 // turn at that index, and throws when an edit names a message the turn does not
 // have.
+//
+// The fork lands under the key the session belongs to, not the `tabKey` the
+// request names: taking it from the wire would let a member of one chat fork
+// another chat's session into their own thread.
 export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { tabKey: string; sessionId: string; eventIndex: number; edits: TurnEdit<string>[] }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string } | null> => editTurnLocalImpl(data))
+  .handler(async ({ data }): Promise<{ sessionId: string } | null> => {
+    const tabKey = await requireSessionAccess(data.sessionId)
+    return editTurnLocalImpl({ ...data, tabKey })
+  })
 
 // Tab keys of chat sessions currently blocked on someone (an unresolved
 // permission request or an unanswered question), tab keys with a turn actively
@@ -221,14 +256,20 @@ export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: 
 // once, from a shared module every chat list surface reads
 // (use-session-activity.ts), to set each chat's process-visibility indicator:
 // warning (pending), primary (active/background), success (alive but
-// neither), or none (not in `alive`).
+// neither), or none (not in `alive`). Only the caller's own threads: a key
+// names its chat and thread, so the whole engine's list would describe every
+// conversation on the instance.
 export const listSessionActivity = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<{ pending: string[]; active: string[]; background: string[]; alive: string[] }> => ({
-    pending: agentClient.awaitingUserSessionKeys(),
-    active: agentClient.activeSessionKeys(),
-    background: [...backgroundWorkSessionKeys()],
-    alive: agentClient.aliveSessionKeys(),
-  }),
+  async (): Promise<{ pending: string[]; active: string[]; background: string[]; alive: string[] }> => {
+    const mine = await requireMemberSessionKeys()
+    const own = (keys: Iterable<string>) => [...keys].filter((key) => mine.has(key))
+    return {
+      pending: own(agentClient.awaitingUserSessionKeys()),
+      active: own(agentClient.activeSessionKeys()),
+      background: own(backgroundWorkSessionKeys()),
+      alive: own(agentClient.aliveSessionKeys()),
+    }
+  },
 )
 
 // Stop a session's agent process without closing the chat: ends the ACP
@@ -240,7 +281,10 @@ export const listSessionActivity = createServerFn({ method: 'GET', strict: { out
 // session — the chat and its history are untouched.
 export const stopProcessLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((tabKey: string) => tabKey)
-  .handler(async ({ data: tabKey }): Promise<void> => stopLocalSessionProcessImpl(tabKey))
+  .handler(async ({ data: tabKey }): Promise<void> => {
+    await requireSessionKeyAccess(tabKey)
+    return stopLocalSessionProcessImpl(tabKey)
+  })
 
 // How many agent records one press of "load older messages" fetches. Smaller
 // than the opening window (acp.stream.ts's INITIAL_HISTORY_RECORDS) because a
@@ -259,14 +303,19 @@ const HISTORY_PAGE_RECORDS = 10
 // history_end payload for the first call, or an earlier page's for the next).
 export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((data: { sessionId: string; beforeIndex: number }) => data)
-  .handler(
-    async ({ data }): Promise<AuthoredRecordsWindow | null> =>
-      sessionHistoryPageImpl(data.sessionId, data.beforeIndex, HISTORY_PAGE_RECORDS),
-  )
+  .handler(async ({ data }): Promise<AuthoredRecordsWindow | null> => {
+    await requireSessionAccess(data.sessionId)
+    return sessionHistoryPageImpl(data.sessionId, data.beforeIndex, HISTORY_PAGE_RECORDS)
+  })
 
+// Answers a permission request or a question. `sessionId` is the session that
+// raised it: the request id alone names no session to check access against, so
+// an answer is taken only when the two agree — otherwise it is dropped, exactly
+// as an answer to a request already settled is.
 export const respondLocal = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator(
     (data: {
+      sessionId: string
       type: 'permission' | 'ask'
       requestId: string
       optionId?: string
@@ -274,6 +323,10 @@ export const respondLocal = createServerFn({ method: 'POST', strict: { output: f
     }) => data,
   )
   .handler(async ({ data }): Promise<void> => {
+    await requireSessionAccess(data.sessionId)
+    if (agentClient.pendingRequestSessionId(data.requestId) !== data.sessionId) {
+      return
+    }
     if (data.type === 'permission') {
       agentClient.resolvePermission(data.requestId, data.optionId)
       return

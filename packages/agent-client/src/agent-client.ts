@@ -4774,6 +4774,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return { delivered: unread }
     },
 
+    // The session a pending permission request or question was raised in, or
+    // undefined once it is answered or if it never existed — so a host can
+    // decide who may answer it before it does.
+    pendingRequestSessionId(requestId: string): string | undefined {
+      return (store.pendingPermissions.get(requestId) ?? store.pendingElicitations.get(requestId))?.sessionId
+    },
+
     resolvePermission(requestId: string, optionId?: string): void {
       const pending = store.pendingPermissions.get(requestId)
       if (!pending) {

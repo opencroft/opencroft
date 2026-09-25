@@ -1,4 +1,5 @@
 import { readAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
+import { requireSessionKeyMember, sessionAccessRefusal } from '@/app/_authed/(group-chats)/_server/session-access'
 import { requireSession } from '@/app/_server/require-session'
 import { ensureServerStarted } from '@/server/startup'
 
@@ -15,6 +16,10 @@ import { ensureServerStarted } from '@/server/startup'
 // the store's own readAttachment, so there is one place that decides whether an
 // id belongs to a conversation, not a second one here to get wrong. An id from
 // another conversation answers 404, the same as a deleted one.
+//
+// The key itself is checked before that: only a member of the group chat whose
+// thread owns it gets as far as the lookup, and a key naming no thread is
+// refused with the same 403 as one naming a chat the caller is not in.
 export async function attachmentResponse(request: Request, id: string): Promise<Response> {
   const denied = await requireSession(request)
   if (denied) return denied
@@ -29,6 +34,10 @@ export async function attachmentResponse(request: Request, id: string): Promise<
   // After the session gate: who is asking does not depend on thread keys, and
   // a refused request has no reason to start the server's background work.
   await ensureServerStarted()
+  // After the start for the same reason: membership is found through the
+  // thread that owns the key, so it is asked once keys are in their current form.
+  const refused = await sessionAccessRefusal(requireSessionKeyMember(request, key))
+  if (refused) return refused
   const picture = await readAttachment(key, id)
   if (!picture) {
     return Response.json({ error: 'Attachment not found' }, { status: 404 })
