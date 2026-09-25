@@ -6,9 +6,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  applyTurnEdits,
   buildDelivery,
   decodeBatch,
   encodeBatch,
+  rebuildAttachments,
   rebuildDelivery,
   splitDelivery,
   type TaggedMessage,
@@ -401,4 +403,72 @@ test('an untagged turn edits back to plain text, with no tag invented for it', (
   // had a tag in it — a structure describing the absence of one.
   assert.equal(rebuildDelivery('from before the format', ['rewritten']), 'rewritten')
   assert.equal(rebuildDelivery('from before the format', ['rewritten']).includes('<agent-message'), false)
+})
+
+// ── removing a message by emptying it ───────────────────────────────────────
+
+const THREE = buildDelivery({
+  kind: 'messages',
+  messages: [
+    msg('Alice', '2026-08-21T01:00:00.000Z', 'first'),
+    msg('Bob', '2026-08-21T01:01:00.000Z', 'second'),
+    msg('Dave', '2026-08-21T01:02:00.000Z', 'third'),
+  ],
+  note: 'interrupt',
+})
+
+test('a removed message leaves no body and no tag, and the others keep theirs', () => {
+  const rebuilt = rebuildDelivery(THREE, ['first', null, 'third, rewritten'])
+
+  assert.deepEqual(decodeBatch(rebuilt), [
+    msg('Alice', '2026-08-21T01:00:00.000Z', 'first'),
+    msg('Dave', '2026-08-21T01:02:00.000Z', 'third, rewritten'),
+  ])
+  assert.equal(rebuilt.includes('Bob'), false, `the removed message's tag is gone:\n${rebuilt}`)
+  // Exactly what a delivery of the two survivors would have been, note and all:
+  // nothing of the removed message is left behind, not even a blank line.
+  assert.equal(
+    rebuilt,
+    buildDelivery({
+      kind: 'messages',
+      messages: [
+        msg('Alice', '2026-08-21T01:00:00.000Z', 'first'),
+        msg('Dave', '2026-08-21T01:02:00.000Z', 'third, rewritten'),
+      ],
+      note: 'interrupt',
+    }),
+  )
+})
+
+test('removing every message is refused, tagged or not', () => {
+  assert.throws(() => rebuildDelivery(THREE, [null, null, null]), /removes every message/)
+  assert.throws(() => rebuildDelivery('from before the format', [null]), /removes every message/)
+})
+
+test('applyTurnEdits reads blank words as removal, and places the rest', () => {
+  assert.deepEqual(
+    applyTurnEdits(THREE, [
+      { index: 0, text: '' },
+      { index: 1, text: '  \n ' },
+      { index: 2, text: 'new' },
+    ]),
+    [null, null, 'new'],
+  )
+  // Untouched positions come back as delivered; `place` sees the old text.
+  assert.deepEqual(
+    applyTurnEdits(THREE, [{ index: 1, text: 'new' }], (current, words) => `${current}|${words}`),
+    ['first', 'second|new', 'third'],
+  )
+  assert.throws(() => applyTurnEdits(THREE, [{ index: 3, text: 'x' }]), /not in a turn of 3/)
+})
+
+test("a removed message's attachments go with it, and the survivors are renumbered", () => {
+  const shot = (id: string, message: number) => ({ id, name: `${id}.png`, mimeType: 'image/png', message })
+  assert.deepEqual(
+    rebuildAttachments([shot('a', 0), shot('b', 1), shot('c', 2), shot('d', 2)], ['first', null, 'third']),
+    [shot('a', 0), shot('c', 1), shot('d', 1)],
+  )
+  // Nothing removed: the positions are untouched.
+  const all = [shot('a', 0), shot('c', 2)]
+  assert.deepEqual(rebuildAttachments(all, ['first', 'second', 'third']), all)
 })

@@ -25,9 +25,9 @@ export interface ChatEditBarProps {
    *  rather than a second bar of its own. */
   onPrev: () => void
   onNext: () => void
-  /** Put the SELECTED message back to what it originally said. Only that one:
-   *  the reader is looking at one message, and a reset that silently reverted
-   *  the others would undo work that is not on screen. */
+  /** Put EVERY message of the turn back to what it originally said, not only
+   *  the selected one: reset starts the edit over, and the turn is what is
+   *  being edited. The mode stays open. */
   onReset: () => void
   /** Leave edit mode, dropping every pending edit in the turn. The counterpart
    *  of committing them all at once from the composer. */
@@ -45,8 +45,8 @@ const editBarControlClass = 'size-6 shrink-0'
  * The bar above the composer while a delivered turn is being edited.
  *
  * One row: what mode this is, what the open message originally said, where it
- * sits in the turn, and the two ways out — put this one back, or abandon all of
- * them. Committing is deliberately NOT here; it belongs to the composer's own
+ * sits in the turn, and two controls — start the edit over, or abandon it and
+ * leave. Committing is deliberately NOT here; it belongs to the composer's own
  * send control, because committing is what sending an edit IS.
  *
  * **Fully controlled, and it owns no draft.** It never sees the text being
@@ -76,6 +76,17 @@ export function ChatEditBar({
   className,
 }: ChatEditBarProps) {
   return (
+    // The a11y lint asks for a <fieldset> here and it is wrong about this
+    // element: a fieldset groups form controls inside a form, whereas this is
+    // an inline editing toolbar, and role='group' with an aria-label is the
+    // correct expression of what it is. The swap would not be free visually
+    // either -- this row depends on `min-w-0` propagating for `truncate`, and
+    // a fieldset's user-agent min-width fights flex shrinking.
+    //
+    // The suppression sits above the ELEMENT, not above the attribute it is
+    // about: a biome-ignore among the attributes attaches to nothing, and is
+    // reported as unused while the diagnostic it names still fires.
+    // biome-ignore lint/a11y/useSemanticElements: an inline editing toolbar is not a form-control group; role='group' with aria-label is the correct expression, and <fieldset>'s user-agent min-width would fight the min-w-0 this row needs for truncation
     <div
       className={cn('flex min-w-0 items-center gap-1 px-1 text-xs text-muted-foreground', className)}
       // Named as a group so the pager and the original text are reachable as
@@ -116,11 +127,18 @@ export function ChatEditBar({
             <ChevronLeft className='size-3.5' />
           </Button>
           {/* Tabular figures so the number does not shuffle its neighbours as
-              it changes. Announced as a sentence rather than as "2 / 3", which
-              is read aloud as arithmetic. */}
-          <span className='tabular-nums' aria-label={`Message ${index + 1} of ${count}`}>
+              it changes. The figures are hidden from assistive technology and
+              the sentence beside them is what gets announced, because "2 / 3"
+              is read aloud as arithmetic.
+
+              The sentence is a sibling rather than an `aria-label` on the span:
+              a generic span has no role to carry one, so the label was dropped
+              and the announcement this comment used to promise never actually
+              happened. */}
+          <span className='tabular-nums' aria-hidden='true'>
             {index + 1} / {count}
           </span>
+          <span className='sr-only'>{`Message ${index + 1} of ${count}`}</span>
           <Button
             type='button'
             size='icon'
@@ -144,8 +162,8 @@ export function ChatEditBar({
         className={editBarControlClass}
         onMouseDown={(e) => e.preventDefault()}
         onClick={onReset}
-        title='Reset this message'
-        aria-label='Reset this message'
+        title='Reset all edits'
+        aria-label='Reset all edits'
       >
         <RotateCcw className='size-3.5' />
       </Button>

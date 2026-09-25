@@ -300,17 +300,82 @@ export function splitDelivery(prompt: string): SplitDelivery {
  * otherwise produce — words re-attributed to the wrong sender — is exactly the
  * one this function exists to make impossible. Callers hand back what they were
  * given, or nothing.
+ *
+ * A `null` text REMOVES that message: no body and no tag, as if it had never
+ * been in the delivery. The position still has to be stated, for the same
+ * reason as above -- a removal is a claim about one particular message, and a
+ * shorter array would say nothing about which. Removing every message throws:
+ * a turn with no messages is not an edit of that turn, and the interrupt note
+ * on its own would be a delivery addressed to nobody.
  */
-export function rebuildDelivery(original: string, texts: string[]): string {
+export function rebuildDelivery(original: string, texts: (string | null)[]): string {
   const { prefix, messages, tagged } = splitDelivery(original)
   if (texts.length !== messages.length) {
     throw new Error(`Edited turn has ${texts.length} parts, the delivered turn has ${messages.length}`)
+  }
+  const kept = messages.flatMap((message, index) => {
+    const text = texts[index]
+    return text === null ? [] : [{ ...message, text }]
+  })
+  if (kept.length === 0) {
+    throw new Error('Edited turn removes every message it has')
   }
   // Untagged in, untagged out. There is exactly one part in this case (see
   // `decodeBatch`), and its text is the whole prompt -- so the edit replaces
   // the whole prompt, which is what an untagged turn IS.
   if (!tagged) {
-    return texts[0]
+    return kept[0].text
   }
-  return prefix + encodeBatch(messages.map((message, index) => ({ ...message, text: texts[index] })))
+  return prefix + encodeBatch(kept)
+}
+
+/**
+ * The texts `rebuildDelivery` takes, from a delivered turn and the edits made to
+ * it: every message as delivered, except where an edit names its position.
+ *
+ * An edit whose words are blank REMOVES its message (`null`) rather than
+ * leaving an empty one behind. An empty message is not something anybody said,
+ * and sent on it would still carry a tag naming its author.
+ *
+ * `place` puts an edit's words where the message's old text stood. By default
+ * the words replace it outright; a host that wraps each message in context of
+ * its own passes the function that carries that context over.
+ */
+export function applyTurnEdits(
+  original: string,
+  edits: readonly { index: number; text: string }[],
+  place: (current: string, words: string) => string = (_current, words) => words,
+): (string | null)[] {
+  const texts: (string | null)[] = splitDelivery(original).messages.map((message) => message.text)
+  for (const edit of edits) {
+    const current = texts[edit.index]
+    if (current === undefined || current === null) {
+      throw new Error(`Edited message ${edit.index} is not in a turn of ${texts.length}`)
+    }
+    texts[edit.index] = edit.text.trim() === '' ? null : place(current, edit.text)
+  }
+  return texts
+}
+
+/**
+ * The attachments of a delivery after `rebuildDelivery` removed some of its
+ * messages: a removed message's attachments go with it, and every survivor's
+ * position is renumbered to where its message now stands.
+ *
+ * `texts` is the same array handed to `rebuildDelivery`, so the two cannot
+ * disagree about which messages survived.
+ */
+export function rebuildAttachments<T extends { message: number }>(
+  attachments: readonly T[],
+  texts: readonly (string | null)[],
+): T[] {
+  const positions: number[] = []
+  let next = 0
+  for (const text of texts) {
+    positions.push(text === null ? -1 : next++)
+  }
+  return attachments.flatMap((attachment) => {
+    const message = positions[attachment.message] ?? -1
+    return message === -1 ? [] : [{ ...attachment, message }]
+  })
 }

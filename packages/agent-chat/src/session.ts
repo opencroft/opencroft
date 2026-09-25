@@ -128,7 +128,8 @@ export interface AgentChatSession {
   // Commit the turn: re-send it with these words in place of the messages at
   // these positions, everything else unchanged. Only the messages the reader
   // actually changed need be listed, and each carries the position it
-  // replaces — the array's own order says nothing.
+  // replaces — the array's own order says nothing. Blank words REMOVE that
+  // message from the re-sent turn, tag and all, rather than sending it empty.
   //
   // Words only, never authorship: who sent each message and when is the
   // transcript's, and a host resolves it from the stored turn rather than

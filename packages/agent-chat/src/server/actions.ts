@@ -10,7 +10,7 @@ import {
   resolveSessionPermissions,
 } from 'agent-client/permissions'
 import type { AgentProfile, ProfilesFile } from 'agent-client/profiles'
-import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
+import { applyTurnEdits, rebuildDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, ElicitationContentValue, QueueMode, SessionMeta } from 'agent-client/types'
 
 import { getRuntime, type RoleRecord, resolveReaderName, type SkillRecord } from './runtime'
@@ -197,14 +197,7 @@ const _editAgentTurn = createServerFn({ method: 'POST' })
     if (!turn) {
       return null
     }
-    const texts = splitDelivery(turn.text).messages.map((message) => message.text)
-    for (const edit of data.edits) {
-      if (texts[edit.index] === undefined) {
-        throw new Error(`Edited message ${edit.index} is not in a turn of ${texts.length}`)
-      }
-      texts[edit.index] = edit.text
-    }
-    const text = rebuildDelivery(turn.text, texts)
+    const text = rebuildDelivery(turn.text, applyTurnEdits(turn.text, data.edits))
     const meta = await agent.forkSession(data.sessionId, turn.turnIndex)
     if (!meta) {
       return null

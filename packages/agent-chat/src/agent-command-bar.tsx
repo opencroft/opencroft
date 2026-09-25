@@ -35,6 +35,7 @@ import { ModelSelector } from './components/model-selector'
 import { PresenceSelector, type PresenceValue } from './components/presence-selector'
 import type { UsageTokens } from './components/usage-cost'
 import { ConfigOptionsBar } from './config-options-bar'
+import { changedEdits, type EditDrafts, originalDrafts, othersHaveText } from './edit-drafts'
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
 
@@ -569,16 +570,24 @@ export function useAgentCommandBar({
   // a state updater is not a place to do the rest of that work from.
   const [editPosition, setEditPosition] = useState(0)
   const editPositionRef = useRef(0)
-  const editDraftsRef = useRef(new Map<number, string>())
+  const editDraftsRef = useRef<EditDrafts>(new Map())
   const wasEditingRef = useRef(false)
   // What the composer held before the edit opened. Leaving the mode puts it
   // back: the reader's unsent text was never theirs to give up, and emptying
   // the composer on cancel destroyed exactly the draft `onChangeText` refuses
   // to overwrite while an edit is open.
   const preEditTextRef = useRef('')
+  // Whether an empty composer may still commit (see `othersHaveText`). The
+  // drafts are refs, so this is settled wherever they change underneath the
+  // composer: opening, paging and resetting, which all end in `loadEditPart`.
+  const [canCommitEmpty, setCanCommitEmpty] = useState(false)
 
   const loadEditPart = useCallback(
     (text: string) => {
+      const current = editRef.current
+      setCanCommitEmpty(
+        current ? othersHaveText(current.parts, editDraftsRef.current, current.parts[editPositionRef.current]) : false,
+      )
       textRef.current = text
       setValue(text)
       textareaRef.current?.focus()
@@ -608,7 +617,7 @@ export function useAgentCommandBar({
       preEditTextRef.current = textRef.current
     }
     wasEditingRef.current = true
-    editDraftsRef.current = new Map(edit.parts.map((part) => [part.index, part.text]))
+    editDraftsRef.current = originalDrafts(edit.parts)
     editPositionRef.current = 0
     setEditPosition(0)
     loadEditPart(edit.parts[0]?.text ?? '')
@@ -635,26 +644,24 @@ export function useAgentCommandBar({
     [loadEditPart],
   )
 
-  // Only the open message goes back, and only to what it originally said. The
-  // others are not on screen, and reverting work the reader cannot see would be
-  // the one undo they could not undo.
-  const resetEditPart = useCallback(() => {
-    const part = editRef.current?.parts[editPositionRef.current]
-    if (!part) {
+  // Every message of the turn goes back to what it originally said, not only
+  // the open one: reset is "start this edit over", and the turn is the thing
+  // being edited. The editor stays open, on the message it was on.
+  const resetEdits = useCallback(() => {
+    const current = editRef.current
+    const open = current?.parts[editPositionRef.current]
+    if (!current || !open) {
       return
     }
-    editDraftsRef.current.set(part.index, part.text)
-    loadEditPart(part.text)
+    editDraftsRef.current = originalDrafts(current.parts)
+    loadEditPart(open.text)
   }, [loadEditPart])
 
   // Commit every message at once, which is what the turn IS -- it was delivered
   // as one thing and it is re-sent as one thing. `open` is the text the
   // composer is handing over for the message currently in it; the rest come
-  // from the drafts paging put there.
-  //
-  // Unchanged messages are left out entirely rather than sent back as
-  // themselves: what did not change is not an edit, and the host re-sends the
-  // stored message for every position it is not given.
+  // from the drafts paging put there. Only what changed is sent (see
+  // `changedEdits`).
   const commitOpenEdit = useCallback((open: string) => {
     const current = editRef.current
     if (!current) {
@@ -665,11 +672,7 @@ export function useAgentCommandBar({
     if (openPart) {
       drafts.set(openPart.index, open)
     }
-    commitEditRef.current?.(
-      current.parts
-        .filter((part) => (drafts.get(part.index) ?? part.text) !== part.text)
-        .map((part) => ({ index: part.index, text: drafts.get(part.index) ?? part.text })),
-    )
+    commitEditRef.current?.(changedEdits(current.parts, drafts))
   }, [])
 
   // Clamped rather than trusted: `parts` comes from the session and the
@@ -685,11 +688,11 @@ export function useAgentCommandBar({
           count={edit.parts.length}
           onPrev={() => goToEditPart(editPosition - 1)}
           onNext={() => goToEditPart(editPosition + 1)}
-          onReset={resetEditPart}
+          onReset={resetEdits}
           onCancel={() => cancelEditRef.current?.()}
         />
       ) : null,
-    [edit, editPart, editPosition, goToEditPart, resetEditPart],
+    [edit, editPart, editPosition, goToEditPart, resetEdits],
   )
 
   const onSend = useCallback(
@@ -804,7 +807,9 @@ export function useAgentCommandBar({
         editBar={editBarNode}
         attachments={attachments}
         onFiles={onFiles}
-        emptySendLabel={emptySendLabel}
+        // Mid-edit an empty composer means "remove this message", which commits
+        // only while another message still has words (see `othersHaveText`).
+        emptySendLabel={edit ? (canCommitEmpty ? 'Commit edits' : undefined) : emptySendLabel}
         submitMode={edit ? 'commit' : 'send'}
         approval={approval}
         autoApprove={autoApprove}
@@ -844,6 +849,7 @@ export function useAgentCommandBar({
       onFiles,
       emptySendLabel,
       edit,
+      canCommitEmpty,
       approval,
       autoApprove,
       handleToggleAutoApprove,

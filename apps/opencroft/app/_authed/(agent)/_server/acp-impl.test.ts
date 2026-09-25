@@ -444,6 +444,33 @@ test('committing an edit recreates the session and deletes the pre-edit one, lea
   assert.equal(liveIds.includes(result.sessionId), true, 'the recreated session is the live one')
 })
 
+// An emptied message is removed from the re-sent turn. Emptying every one of
+// them leaves nothing to send, so the commit is refused BEFORE the conversation
+// is forked -- the tab stays on the session it had, with nothing torn down.
+test('an edit that empties every message is refused, and nothing is forked', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { forkable: true })
+  const tabKey = `edit-empty-tab-${crypto.randomUUID()}`
+
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'first message',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  const eventIndex = (agentClient.getSessionEvents(opened.sessionId) ?? []).findIndex((event) => event.kind === 'user')
+  assert.ok(eventIndex >= 0)
+  const sessionsBefore = agentClient.listSessions().length
+
+  await assert.rejects(
+    editTurnLocalImpl({ tabKey, sessionId: opened.sessionId, eventIndex, edits: [{ index: 0, text: '  ' }] }),
+    /removes every message/,
+  )
+  assert.equal(tabSessions.get(tabKey)?.id, opened.sessionId, 'the tab still points at its own session')
+  assert.equal(agentClient.listSessions().length, sessionsBefore, 'no fork was made')
+})
+
 // A picture goes as a stored id, resolved here against the tab's own
 // conversation: the name the transcript shows comes from the store, an id from
 // anywhere else refuses the send, and an edit re-sends the pictures with the

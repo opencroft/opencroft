@@ -29,7 +29,7 @@ import { getSessionUser } from '@opencroft/auth/server'
 import { getRequest } from '@tanstack/react-start/server'
 import { supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
 import { usableContextWindow } from 'agent-client/context-window'
-import { rebuildDelivery, splitDelivery } from 'agent-client/queue-tags'
+import { applyTurnEdits, rebuildAttachments, rebuildDelivery } from 'agent-client/queue-tags'
 import type { AgentSelection, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
 
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
@@ -662,19 +662,14 @@ export async function editTurnLocalImpl(data: {
   // The old delivery stamp goes; the re-delivery gets its own, which is what
   // that stamp means. Everything else about the framing stays.
   const original = stripDeliveryStamp(turn.text)
-  const { messages } = splitDelivery(original)
-  const texts = messages.map((message) => message.text)
-  for (const edit of data.edits) {
-    const current = texts[edit.index]
-    if (current === undefined) {
-      throw new Error(`Edited message ${edit.index} is not in a turn of ${texts.length}`)
-    }
-    // The reader's words go back behind the context they never saw. Dropping it
-    // would quietly strip a message of what it was sent with; regenerating it
-    // would attach today's canvas to a message sent from a different one.
-    texts[edit.index] = splitEnvelope(current).context + edit.text
-  }
+  // The reader's words go back behind the context they never saw. Dropping it
+  // would quietly strip a message of what it was sent with; regenerating it
+  // would attach today's canvas to a message sent from a different one. A
+  // message the reader emptied is removed whole, context included: there is no
+  // message left for the context to be about.
+  const texts = applyTurnEdits(original, data.edits, (current, words) => splitEnvelope(current).context + words)
   const text = rebuildDelivery(original, texts)
+  const attachments = rebuildAttachments(turn.attachments, texts)
   // NAMED WITH THE TAB'S OWN KEY, the way the fork-to-new-thread flow below
   // already names one. `opts.sessionKey` exists so a caller can say what the
   // fork answers to; what the engine refuses to do is INHERIT a key silently.
@@ -747,13 +742,13 @@ export async function editTurnLocalImpl(data: {
   // for incoming messages does not hold back their own edit.
   //
   // The pictures go again with the messages they came with: an edit changes
-  // words, and the editor never offered to take one away. Their positions hold
-  // because an edit replaces messages in place and never changes how many
-  // there are.
+  // words, and the editor never offered to take one away. The one exception is
+  // a message the reader removed, whose pictures leave with it; the survivors
+  // are renumbered to where their messages now stand.
   await agentClient.prompt(meta.id, text, {
     queue: 'wait',
     origin: { kind: 'system' },
-    ...(turn.attachments.length > 0 ? { attachments: turn.attachments } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
   })
   return { sessionId: meta.id }
 }
