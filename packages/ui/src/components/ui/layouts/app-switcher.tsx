@@ -161,7 +161,8 @@ function AppMenu({ groups, headings, activeId, createHref, onNavigate, trigger, 
 /**
  * The apps of a space as one entry per type across the title bar. A type with
  * a single app is a plain link; a type with several opens a searchable list of
- * them. The active type names the app that is open. When the bar is too narrow
+ * them. The open type is highlighted; which of its apps is open is marked in
+ * its list. When the bar is too narrow
  * for the row, the whole thing folds into one list grouped by type.
  */
 export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitcherProps) {
@@ -176,7 +177,9 @@ export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitc
           const current = items.find((app) => app.id === activeId)
           const shown = current ?? items[0]
           const variant = current ? 'secondary' : 'ghost'
-          const label = current ? current.label : type
+          // The bar names types; which app of the type is open is the check
+          // in its list.
+          const label = type
 
           if (items.length === 1) {
             return (
@@ -221,7 +224,7 @@ export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitc
           trigger={<Button variant='ghost' size='sm' className={cn(TRIGGER, 'max-w-full')} />}
         >
           {active ? <Glyph icon={active.icon} /> : <LayoutGrid className='size-4' />}
-          <span className='min-w-0 truncate'>{active?.label ?? 'Apps'}</span>
+          <span className='min-w-0 truncate'>{active?.type ?? 'Apps'}</span>
           <ChevronDown className='size-3.5 text-muted-foreground' />
         </AppMenu>
       </div>
