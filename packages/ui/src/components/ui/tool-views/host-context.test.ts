@@ -31,6 +31,12 @@ const FORBIDDEN_CALLS = ['useReactFlow', 'useOverlay', 'useCanvasNodes', 'useOpt
 // and anything under the app's own tree.
 const FORBIDDEN_TEXT = ['sseEventsStore', "'@/app/", '"@/app/']
 
+// useOptionalOverlay contains "useOverlay" as a substring, so match the call,
+// not the name.
+function calls(source: string, hook: string): boolean {
+  return new RegExp(`(^|[^a-zA-Z])${hook}\\s*\\(`).test(source)
+}
+
 const dir = import.meta.dirname
 const sources = readdirSync(dir).filter((f) => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.endsWith('.test.ts'))
 
@@ -38,14 +44,32 @@ test('the tool views directory is not empty (guards against a silently passing c
   assert.ok(sources.length > 0, 'no tool view sources were found to check')
 })
 
+test('the matchers catch what they are meant to catch (guards against a check that can never fail)', () => {
+  assert.equal(calls('const canvas = useCanvasNodes()', 'useCanvasNodes'), true)
+  assert.equal(calls('useOptionalOverlay({ content })', 'useOverlay'), false)
+  const appImport = "import { x } from '@/app/_authed/x'"
+  assert.ok(
+    FORBIDDEN_TEXT.some((text) => appImport.includes(text)),
+    'an import from the app tree is not caught',
+  )
+})
+
+test('the views and their chrome do read the host through useToolViewHost()', () => {
+  for (const file of ['tool-views.tsx', 'op-block.tsx']) {
+    const source = readFileSync(join(dir, file), 'utf8')
+    assert.ok(calls(source, 'useToolViewHost'), `${file} does not call useToolViewHost()`)
+  }
+})
+
 for (const file of sources) {
   test(`${file} reads its host only through useToolViewHost()`, () => {
     const source = readFileSync(join(dir, file), 'utf8')
     for (const hook of FORBIDDEN_CALLS) {
-      // useOptionalOverlay contains "useOverlay" as a substring, so match the
-      // call, not the name.
-      const called = new RegExp(`(^|[^a-zA-Z])${hook}\\s*\\(`).test(source)
-      assert.equal(called, false, `${file} calls ${hook}(). Read the host through useToolViewHost() instead.`)
+      assert.equal(
+        calls(source, hook),
+        false,
+        `${file} calls ${hook}(). Read the host through useToolViewHost() instead.`,
+      )
     }
     for (const text of FORBIDDEN_TEXT) {
       assert.equal(
