@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, ListTodo, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheck, TerminalSquare, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, ClipboardList, Copy, Ellipsis, GitFork, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheckBig, SquarePen, TerminalSquare, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -876,12 +876,12 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
 // The agent's plan as one checklist. Not interactive — the agent owns the list
 // and rewrites it wholesale on every update; the reader only watches it. The
 // whole point of the drawing is the frontier: done entries strike through, the
-// one in progress spins, the rest wait.
+// one in progress carries the amber pen, the rest wait as empty squares.
 function PlanChecklist({ item }: { item: Extract<DetailItem, { kind: 'plan' }> }) {
   return (
     <div className='rounded-md border border-border/60 bg-muted/20 px-3 py-2'>
       <div className='flex items-center gap-1.5 text-xs font-medium text-muted-foreground'>
-        <ListTodo className='size-3.5' />
+        <ClipboardList className='size-3.5 text-blue-500' />
         Plan
       </div>
       <ul className='mt-1.5 flex flex-col gap-1'>
@@ -897,11 +897,11 @@ function PlanChecklist({ item }: { item: Extract<DetailItem, { kind: 'plan' }> }
             // biome-ignore lint/suspicious/noArrayIndexKey: plan entries carry no id and their text may repeat
             <li key={i} className='flex items-start gap-2 text-sm leading-5'>
               {completed ? (
-                <SquareCheck className='mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+                <SquareCheckBig className='mt-0.5 size-3.5 shrink-0 text-green-500' />
               ) : inProgress ? (
-                <Loader2 className='mt-0.5 size-3.5 shrink-0 animate-spin text-primary' />
+                <SquarePen className='mt-0.5 size-3.5 shrink-0 text-amber-500' />
               ) : (
-                <Square className='mt-0.5 size-3.5 shrink-0 text-muted-foreground/60' />
+                <Square className='mt-0.5 size-3.5 shrink-0 text-foreground' />
               )}
               <span className={cn('min-w-0', completed && 'text-muted-foreground line-through')}>{entry.content}</span>
             </li>
