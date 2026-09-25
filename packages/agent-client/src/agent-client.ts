@@ -38,7 +38,7 @@ import { type ChatMessageRecord, toChatMessages } from './chat-completion'
 import { findSelectOption, MODE_SELECTOR, MODEL_SELECTOR, THOUGHT_LEVEL_SELECTOR } from './config-selectors'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
-import { errorMessage } from './errors'
+import { errorMessage, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
 import type { HarnessAdapter, HarnessTurnEnd } from './harness-adapters'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
@@ -1975,6 +1975,53 @@ function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
   return new Error(message)
 }
 
+// How much of an error's `data` a chat line carries, and how much the server
+// log does. The chat gets the cause in a sentence; the log gets the payload,
+// bounded only so one runaway dump cannot flood it.
+const CHAT_DETAIL_LIMIT = 300
+const LOG_DATA_LIMIT = 4000
+
+function clip(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+// An agent's refusal as a reader should see it: its message, and the cause
+// its `data` names when the message does not already say it. Redacted before
+// it is clipped, so a cut can never land inside a secret and leave half of it.
+function describedAgentError(error: unknown, secrets: string[]): string {
+  const { message, data } = rpcErrorParts(error)
+  const detail = rpcErrorDetail(data)
+  const shown = redact(message, secrets)
+  if (!detail) {
+    return shown
+  }
+  const cause = redact(detail, secrets)
+  return shown.includes(cause) ? shown : `${shown} (${clip(cause, CHAT_DETAIL_LIMIT)})`
+}
+
+// The whole refusal, for the server log. A chat line is a summary, and a
+// summary is what left the server log with nothing to show for an edit that
+// kept failing with a bare "Internal error": the code and `data` a harness
+// sent were read by nobody. Named by the ACP method that was refused and the
+// session it was for, since several sessions share one harness process.
+function logAgentError(sessionId: string, call: string, error: unknown, secrets: string[]): void {
+  const { code, message, data } = rpcErrorParts(error)
+  const payload = data === undefined ? '' : ` data ${clip(redact(safeJson(data), secrets), LOG_DATA_LIMIT)}`
+  console.error(
+    `[agent-client] ${call} failed for session ${sessionId}: code ${code ?? 'none'} message ${JSON.stringify(redact(message, secrets))}${payload}`,
+  )
+}
+
+// A refused agent call, told to the session's chat and logged in full. The
+// selection's secrets are read off the session itself, so no caller can
+// forget them.
+function reportAgentError(sessionId: string, call: string, error: unknown, prefix = ''): void {
+  const session = store.sessions.get(sessionId)
+  const secrets = session ? secretsOf(session.selection) : []
+  logAgentError(sessionId, call, error, secrets)
+  emit(sessionId, { kind: 'error', message: `${prefix}${describedAgentError(error, secrets)}` })
+}
+
 // ACP's `auth_required` error code (the SDK's ErrorCode union names the number
 // but exports no constant for it).
 const AUTH_REQUIRED_CODE = -32000
@@ -2532,8 +2579,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // advertised the capability — forkSession checked). Mirrors loadSession's
   // session setup: a fork is a NEW session to the agent, so it gets this
   // session's MCP servers with a fresh permission token, bound to the id the
-  // agent mints for the fork. `boundary` is the event-log index the cutoff
-  // names (null = no cutoff); see forkCutoffMeta for how it travels.
+  // agent mints for the fork. A harness that ignores them here (see
+  // forkNeedsResume) is handed them again by the resume that opens the fork,
+  // under a token of their own, and this one is retired then. `boundary` is
+  // the event-log index the cutoff names (null = no cutoff); see
+  // forkCutoffMeta for how it travels.
   async function forkExternalSession(
     session: SessionState,
     entry: ConnEntry | undefined,
@@ -2834,7 +2884,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // the public resumeSession() and refreshMcpServers' deferred path (via
   // settleTurn) — the latter is the reason this can't just live inline in
   // resumeSession: it needs to be callable without going through `this`.
-  async function performResumeSession(sessionId: string): Promise<void> {
+  //
+  // `wanted` is the state the resume is reconciled against, when it is not the
+  // record's own: a fork's record may already hold what the fork answered,
+  // and what the reader chose is the source's.
+  async function performResumeSession(
+    sessionId: string,
+    wanted?: { modes: SessionModes | null; configOptions: SessionConfigOption[] },
+  ): Promise<void> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
@@ -2854,7 +2911,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     // Copied before the resume: reconcileResumedState compares against it, and
     // the live record is what the resume's answer overwrites.
-    const logged = { modes: session.modes ? { ...session.modes } : null, configOptions: session.configOptions }
+    const logged = wanted ?? {
+      modes: session.modes ? { ...session.modes } : null,
+      configOptions: session.configOptions,
+    }
     // A harness whose resume rejoins a live session rather than rebuilding it
     // would keep its old MCP servers; closing first makes the resume a fresh
     // start (see HarnessAdapter.mcpRefreshReopens). A close that fails leaves
@@ -3055,6 +3115,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       session.configOptions = response.configOptions
     }
     const refused: string[] = []
+    const secrets = secretsOf(session.selection)
     const wantedMode = logged.modes?.current
     if (
       wantedMode &&
@@ -3066,7 +3127,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         await connection.setSessionMode({ sessionId, modeId: wantedMode })
         session.modes.current = wantedMode
       } catch (error) {
-        refused.push(`mode "${wantedMode}": ${errorMessage(error)}`)
+        logAgentError(sessionId, 'session/set_mode', error, secrets)
+        refused.push(`mode "${wantedMode}": ${describedAgentError(error, secrets)}`)
       }
     }
     // In logged order, each against the harness's CURRENT options: setting one
@@ -3089,7 +3151,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         )
         session.configOptions = answer.configOptions
       } catch (error) {
-        refused.push(`${current.name || current.id} "${String(wanted.currentValue)}": ${errorMessage(error)}`)
+        logAgentError(sessionId, 'session/set_config_option', error, secrets)
+        refused.push(
+          `${current.name || current.id} "${String(wanted.currentValue)}": ${describedAgentError(error, secrets)}`,
+        )
       }
     }
     if (JSON.stringify(session.modes) !== JSON.stringify(logged.modes)) {
@@ -3227,10 +3292,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Surfaced rather than swallowed — the message is still delivered, by a
       // prompt once the turn ends, but a steering channel that errors is worth
       // a line in the transcript while the contract is this young.
-      emit(sessionId, {
-        kind: 'error',
-        message: `steering failed, delivered as a prompt instead: ${errorMessage(error)}`,
-      })
+      reportAgentError(sessionId, '_session/steering', error, 'steering failed, delivered as a prompt instead: ')
     }
     if (store.sessions.get(sessionId) !== session) {
       return 'gone'
@@ -3476,7 +3538,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // of a transient not-waiting blip in consumers that fold an error as
         // the end of a turn. The terminal bookkeeping still waits for the last
         // settlement (see settleTurn).
-        emit(sessionId, { kind: 'error', message: errorMessage(error) })
+        reportAgentError(sessionId, 'session/prompt', error)
         settleTurn(sessionId, {})
       },
     )
@@ -3637,7 +3699,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           ),
         )
       },
-      (error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+      (error: unknown) => reportAgentError(sessionId, 'prompt delivery', error),
     )
   }
 
@@ -4103,7 +4165,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // notifications included: a prompt started while it is in flight would
       // ride the very connection it is re-establishing.
       void performResumeSession(sessionId)
-        .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+        .catch((error: unknown) => reportAgentError(sessionId, 'session/resume', error))
         .then(() => deliverAfterTurn(sessionId))
       return
     }
@@ -4157,7 +4219,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // and the caller is better told it did not arrive.
       () => settleNotifications(batch, store.sessions.get(sessionId) === session),
       (error: unknown) => {
-        emit(sessionId, { kind: 'error', message: errorMessage(error) })
+        reportAgentError(sessionId, 'notification delivery', error)
         settleNotifications(batch, false)
       },
     )
@@ -4251,7 +4313,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return
     }
     void steerNotifications(sessionId, session).catch((error: unknown) =>
-      emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+      reportAgentError(sessionId, '_session/steering', error),
     )
   }
 
@@ -4559,7 +4621,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         await entry.connection.extMethod('_session/async_task/stop', { sessionId, asyncTaskId })
         return true
       } catch (error) {
-        emit(sessionId, { kind: 'error', message: errorMessage(error) })
+        reportAgentError(sessionId, '_session/async_task/stop', error)
         return false
       }
     },
@@ -4723,7 +4785,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         await connection
           .setSessionMode({ sessionId, modeId: defaultModeId })
           .then(() => recordModeChange(sessionId, defaultModeId))
-          .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
+          .catch((error: unknown) => reportAgentError(sessionId, 'session/set_mode', error))
       }
       // Apply the reasoning preference to ACP agents that expose a thought_level
       // config option (the native harness handles reasoning via providerOptions).
@@ -4733,7 +4795,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         const value = option ? matchReasoningValue(option.options, effort) : undefined
         if (option && value) {
           await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
-            emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+            reportAgentError(sessionId, 'session/set_config_option', error),
           )
         }
       }
@@ -4752,7 +4814,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           const value = matchModelValue(option.options, selection.model)
           if (value && value !== option.currentValue) {
             await this.setConfigOption(sessionId, option.id, value).catch((error: unknown) =>
-              emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+              reportAgentError(sessionId, 'session/set_config_option', error),
             )
           } else if (!value) {
             const offered = selectOptionValues(option.options)
@@ -5094,7 +5156,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           continue
         }
         await performResumeSession(sessionId).catch((error: unknown) =>
-          emit(sessionId, { kind: 'error', message: errorMessage(error) }),
+          reportAgentError(sessionId, 'session/resume', error),
         )
       }
     },
@@ -5377,20 +5439,39 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // A fork is a new session to an external harness, and it starts on
       // whatever that harness starts new sessions on: codex-acp 1.13.1 installs
       // a fresh state on INITIAL_AGENT_MODE (`agent`, auto-approval) for a
-      // forked thread, and claude-agent-acp 0.79.0 rebuilds its session when the
-      // MCP list differs. A fork of a session the reader put on "Ask for
-      // approval" would otherwise run the edited turn with approvals it never
-      // gave. The source's current state is what the reader chose, so it is the
-      // wanted state, reconciled exactly as a resume is — and before this
-      // returns, because every caller re-sends the edited turn right after.
+      // forked thread, and claude-agent-acp opens its fork through a resume
+      // (below), which re-applies the model the agent's environment pins over
+      // the one the reader picked. A fork of a session the reader put on "Ask
+      // for approval" would otherwise run the edited turn with approvals it
+      // never gave. The source's current state is what the reader chose, so it
+      // is the wanted state, reconciled exactly as a resume is — and before
+      // this returns, because every caller re-sends the edited turn right after.
       //
       // The native harness copies the source's mode into the fork itself and
       // is left to do so.
       if (!native) {
-        await reconcileResumedState(response.sessionId, connection, response, {
-          modes: session.modes ? { ...session.modes } : null,
-          configOptions: session.configOptions,
-        })
+        const wanted = { modes: session.modes ? { ...session.modes } : null, configOptions: session.configOptions }
+        if (findAdapter(session.selection.adapterId)?.forkNeedsResume === true && entry?.resumeSession === true) {
+          // The harness only wrote the fork down (see forkNeedsResume), and a
+          // prompt to it would be refused, so it is opened the way a reopened
+          // chat is: a resume that builds it, with this side's MCP servers
+          // under a token minted for it. Before that, every edit on such a
+          // harness failed its re-sent turn, and so did every message after
+          // it, until something happened to resume the fork. A fork that
+          // cannot be opened is a fork nothing can be sent to, so its record
+          // goes and the caller is refused before it points anything at it.
+          try {
+            await performResumeSession(response.sessionId, wanted)
+          } catch (error) {
+            const secrets = secretsOf(session.selection)
+            logAgentError(response.sessionId, 'session/resume', error, secrets)
+            dropSession(response.sessionId)
+            dropSessionTokens(response.sessionId)
+            throw new Error(`The fork was made but could not be opened: ${describedAgentError(error, secrets)}`)
+          }
+        } else {
+          await reconcileResumedState(response.sessionId, connection, response, wanted)
+        }
       }
       return meta
     },

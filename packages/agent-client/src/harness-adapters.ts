@@ -67,6 +67,19 @@ export interface HarnessAdapter {
   // the live session and rebuilds the session itself when the MCP servers
   // differ (acp-agent.js getOrCreateSession, 0.79.0).
   mcpRefreshReopens?: boolean
+  // Whether a session this harness forks has to be resumed before it takes a
+  // prompt. claude-agent-acp answers `session/fork` by writing the forked
+  // transcript and returning its id and nothing else (fork-session.js
+  // forkSession; the same in 0.78.0, 0.79.0 and 0.81.2): it builds no live
+  // session and ignores the request's MCP servers, and a prompt to that id is
+  // refused with "Session not found" (acp-agent.js prompt) until a
+  // session/resume builds one. ACP's fork "creates a new session", so this is
+  // a gap in that bridge rather than the protocol's shape, and not a general
+  // rule: codex-acp's fork is a live thread, and resuming it would rejoin the
+  // thread under a fresh MCP token it may never receive (see
+  // mcpRefreshReopens). Honored only when the agent advertised
+  // `sessionCapabilities.resume`.
+  forkNeedsResume?: boolean
   // Advertised command names (as the harness spells them, without a leading
   // `/`) that are dropped from the session's `available_commands` before any
   // subscriber sees them. For commands that act on the harness process rather
@@ -285,6 +298,9 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // elicitation. Implementation-defined for the same @latest reason as the
     // note above.
     supportsElicitation: true,
+    // The bridge's fork is a transcript on disk, not a session — see the flag.
+    // Implementation-defined for the same @latest reason as the notes above.
+    forkNeedsResume: true,
     // The Claude Agent SDK hands the model its plan tools (TodoWrite,
     // TaskCreate/Update/List) only behind this opt-in flag, default off, and
     // the bridge's TodoWrite -> `plan` translation is the only source of the
@@ -307,6 +323,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // Same bridge binary as 'claude' — see the notes there.
     supportsMidTurnInput: false,
     supportsElicitation: true,
+    forkNeedsResume: true,
     staticEnv: CLAUDE_AGENT_ENV,
     note: 'Auth with a Claude Pro/Max subscription: run `claude setup-token`, then paste the OAuth token as the API key secret.',
   },
