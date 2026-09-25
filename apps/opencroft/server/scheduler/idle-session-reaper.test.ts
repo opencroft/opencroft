@@ -118,7 +118,9 @@ test('a group-chat thread session, idle past its threshold on an opted-in agent,
   assert.deepEqual(due, [sessionKey], 'the AGENT segment, not the chat, is what the config lookup keys on')
 })
 
-test('a group-chat thread key in the legacy colon spelling resolves to the same owning agent', () => {
+// The colon spelling was retired with the stored keys that carried it, so a key
+// in it names no owning agent -- the same answer a pre-slug key gets below.
+test('a group-chat key in the retired colon spelling names no owning agent and is skipped', () => {
   const now = 1_000_000
   const sessionKey = 'group-chat:my-chat:dave:standup'
   const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
@@ -126,7 +128,7 @@ test('a group-chat thread key in the legacy colon spelling resolves to the same 
 
   const due = selectDueSessions(sessions, statuses, (agentSlug) => (agentSlug === 'dave' ? ENABLED : null), now)
 
-  assert.deepEqual(due, [sessionKey])
+  assert.deepEqual(due, [])
 })
 
 test('a group-chat key that does not split into four slug segments (pre-slug thread) is skipped', () => {

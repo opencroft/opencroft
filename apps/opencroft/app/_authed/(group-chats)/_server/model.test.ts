@@ -23,7 +23,7 @@ import type { AgentConnection } from 'agent-client/connection'
 // time a reader would see, rather than on the tag's spelling.
 import { decodeBatch } from 'agent-client/queue-tags'
 import type { AgentSelection } from 'agent-client/types'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, like } from 'drizzle-orm'
 
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { slug } from '@/app/_authed/(server)/_server/types'
@@ -2366,7 +2366,7 @@ test('thread turns are refused for a non-member agent and for a fabricated ref, 
     'a non-member (or unknown) agent is refused',
   )
   await assert.rejects(
-    () => model.listThreadTurnsAsAgent('Agent Session', 'bogus:fake:thread'),
+    () => model.listThreadTurnsAsAgent('Agent Session', 'bogus.fake.thread'),
     /not.found|not available/i,
     'a fabricated ref is refused the same way',
   )
@@ -2774,7 +2774,7 @@ test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent d
   await waitForPrompts(prompts, 1)
 
   await model.deliverThreadFromNode(
-    'node-delivery-forms:agent-session:standup',
+    'node-delivery-forms.agent-session.standup',
     'by path',
     NODE_PRINCIPAL,
     'wait',
@@ -2793,7 +2793,7 @@ test('deliverThreadFromNode resolves the same forms sendMessageInThreadAsAgent d
 })
 
 test('deliverThreadFromNode reports not-found for an unresolvable reference', async () => {
-  const outcome = await model.deliverThreadFromNode('nothing:here:at-all', 'hello', NODE_PRINCIPAL, 'wait', 'Node')
+  const outcome = await model.deliverThreadFromNode('nothing.here.at-all', 'hello', NODE_PRINCIPAL, 'wait', 'Node')
   assert.deepEqual(outcome, { status: 'not-found' })
 })
 
@@ -3139,7 +3139,7 @@ test('an agent can address a thread by its readable path, by a whole key, or by 
   await waitForPrompts(prompts, 1)
 
   // The readable path, as it appears in the key.
-  await model.sendMessageInThreadAsAgent('Agent Solo', 'addressing:agent-session:standup', 'by path', 'wait')
+  await model.sendMessageInThreadAsAgent('Agent Solo', 'addressing.agent-session.standup', 'by path', 'wait')
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by path/)
 
@@ -3186,7 +3186,7 @@ test('two threads sharing a slug in one chat are addressed apart by the agent in
 
   await model.sendMessageInThreadAsAgent(
     'Agent Solo',
-    'ambiguous:agent-session-two:code-review',
+    'ambiguous.agent-session-two.code-review',
     'meant for the second',
     'wait',
   )
@@ -3196,7 +3196,7 @@ test('two threads sharing a slug in one chat are addressed apart by the agent in
 
   await model.sendMessageInThreadAsAgent(
     'Agent Solo',
-    'ambiguous:agent-session:code-review',
+    'ambiguous.agent-session.code-review',
     'meant for the first',
     'wait',
   )
@@ -3538,7 +3538,7 @@ test('an address a chat rename freed still reaches the same chat and the same th
   // And through the agent-facing surface, which takes the readable half.
   await model.sendMessageInThreadAsAgent(
     'Agent Solo',
-    'old-chat-name:agent-session:planning',
+    'old-chat-name.agent-session.planning',
     'also the old path',
     'wait',
   )
@@ -3915,7 +3915,7 @@ test('a caller that is not a member of the chat is refused, with the refusal a m
     model.startThreadAsAgent('Agent Session', chat.id, 'Agent Session Two', 'let me in'),
   )
   const missingThread = await captureRefusal(() =>
-    model.sendMessageInThreadAsAgent('Agent Session', 'nope:nope:nope', 'x', 'wait'),
+    model.sendMessageInThreadAsAgent('Agent Session', 'nope.nope.nope', 'x', 'wait'),
   )
   assert.deepEqual(refusal, missingThread, 'a non-member caller learns exactly what a bad thread reference teaches')
 })
@@ -4154,7 +4154,7 @@ test("renaming is the UI rename's gate: a caller outside the chat is refused as 
 
   // 'Agent A' is a real agent that was never added to this chat.
   const outsider = await captureRefusal(() => model.renameThreadAsAgent('Agent A', ref, { folder: 'Mine' }))
-  const missing = await captureRefusal(() => model.renameThreadAsAgent('Agent A', 'nope:nope:nope', { folder: 'Mine' }))
+  const missing = await captureRefusal(() => model.renameThreadAsAgent('Agent A', 'nope.nope.nope', { folder: 'Mine' }))
 
   assert.deepEqual(outsider, missing)
   assert.deepEqual(await foldersOf(chatId), [])
@@ -4289,14 +4289,12 @@ test('a thread an agent starts is stamped with the CALLING agent, not the one it
 })
 
 // ---------------------------------------------------------------------------
-// Thread references: dots are what we hand out, colons are what we store, and
-// both resolve. The rule is ADDITIVE -- the stored form is tried exactly as
-// given first, and only a miss makes the dotted form worth converting. The last
-// two tests here are the ones that fail if that order is reversed or if the
-// dot/colon test is applied to the whole reference instead of its body.
+// Thread references: dots are what we store and what we hand out, and only
+// dots resolve. The colon spelling was retired together with the stored keys
+// that carried it, so a reference written in it is refused -- never converted.
 // ---------------------------------------------------------------------------
 
-test('a thread answers to the dotted form and to the colon form alike', async () => {
+test('a thread answers to its dotted reference and its whole key, and not to the retired colon spelling', async () => {
   const owner = await makeUser('dotted-ref-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'Dotted Refs')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
@@ -4304,43 +4302,34 @@ test('a thread answers to the dotted form and to the colon form alike', async ()
   const prompts: string[] = []
   seedMockConnection(prompts)
 
-  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
   await waitForPrompts(prompts, 1)
 
   await model.sendMessageInThreadAsAgent('Agent Solo', 'dotted-refs.agent-session.standup', 'by dots', 'wait')
   await waitForPrompts(prompts, 2)
   assert.match(prompts[1] ?? '', /by dots/)
-
-  // The deprecated spelling of the same address keeps working -- every
-  // reference written down before this change is in that form, and those are
-  // not ours to rewrite.
-  await model.sendMessageInThreadAsAgent('Agent Solo', 'dotted-refs:agent-session:standup', 'by colons', 'wait')
+  assert.equal(started.thread.sessionKey, 'group-chat.dotted-refs.agent-session.standup')
+  await model.sendMessageInThreadAsAgent('Agent Solo', started.thread.sessionKey, 'by whole key', 'wait')
   await waitForPrompts(prompts, 3)
-  assert.match(prompts[2] ?? '', /by colons/)
-})
+  assert.match(prompts[2] ?? '', /by whole key/)
 
-test('a dotted reference still resolves when it carries the stored prefix', async () => {
-  // The prefix contributes a colon of its own, so a dot/colon test applied to
-  // the WHOLE reference refuses to convert this one -- and refuses precisely
-  // the spelling the rule exists to accept. The test belongs on the body.
-  const owner = await makeUser('prefixed-dotted-owner@example.test')
-  const chat = await model.createGroupChat(reqAs(owner), 'Prefixed Dots')
-  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
-  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-solo' })
-  const prompts: string[] = []
-  seedMockConnection(prompts)
-
-  await model.startThread(reqAs(owner), chat.id, 'agent-session', 'first', { title: 'Standup' })
-  await waitForPrompts(prompts, 1)
-
-  await model.sendMessageInThreadAsAgent(
-    'Agent Solo',
-    'group-chat:prefixed-dots.agent-session.standup',
-    'prefixed and dotted',
-    'wait',
+  // Compared against a reference naming nothing: a colon spelling of a live
+  // thread is refused in exactly the same words, and nothing reaches the agent.
+  const nothing = await captureRefusal(() =>
+    model.sendMessageInThreadAsAgent('Agent Solo', 'nope.nope.nope', 'x', 'wait'),
   )
-  await waitForPrompts(prompts, 2)
-  assert.match(prompts[1] ?? '', /prefixed and dotted/)
+  for (const colonRef of [
+    'dotted-refs:agent-session:standup',
+    'group-chat:dotted-refs:agent-session:standup',
+    'group-chat:dotted-refs.agent-session.standup',
+  ]) {
+    assert.deepEqual(
+      await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Solo', colonRef, 'by colons', 'wait')),
+      nothing,
+      `${colonRef} no longer resolves`,
+    )
+  }
+  assert.equal(prompts.length, 3, 'no colon reference delivered anything')
 })
 
 test('the ref handed out is the dotted form, and it is what the key says', async () => {
@@ -4446,7 +4435,7 @@ test('an address already taken is refused in terms of the address', async () => 
 
 // ── the colon→dot key migration ──────────────────────────────────────────
 
-test('the migration moves a colon-era thread — row, queue, pointer, live registry — and aliases the old key', async () => {
+test('the migration moves a colon-era thread — row, queue, pointer, live registry — and retires the colon spelling', async () => {
   const owner = await makeUser('mig-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'migration era')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
@@ -4482,6 +4471,15 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
     },
     'end',
   )
+  // And a colon alias an earlier move wrote, as a database migrated before the
+  // colon spelling was retired holds them.
+  await db.insert(groupChatThreadAlias).values({
+    threadId: started.thread.id,
+    groupChatId: chat.id,
+    agentNodeId: 'agent-session',
+    sessionKey: 'group-chat:migration-era:agent-session:older-name',
+    slug: null,
+  })
 
   // Counted across the migration rather than after it, because a delivered
   // entry is MARKED rather than deleted — the opening message is still a row
@@ -4535,29 +4533,32 @@ test('the migration moves a colon-era thread — row, queue, pointer, live regis
   )
   assert.equal((await sessionStore.readPersistedSession(dotKey))?.id, pointer.id)
   assert.equal(await sessionStore.readPersistedSession(colonKey), null)
-  const [alias] = await db.select().from(groupChatThreadAlias).where(eq(groupChatThreadAlias.sessionKey, colonKey))
-  assert.equal(alias?.threadId, started.thread.id, 'the freed colon address is aliased, not dropped')
-
-  // The old spelling still delivers — through the alias, into the same session.
-  const before = agentClient.listSessions().length
-  const viaAlias = await model.deliverThreadFromNode(
-    colonKey,
-    'addressed by the old spelling',
-    NODE_PRINCIPAL,
-    'wait',
-    'Node',
+  assert.ok(run.aliasesRetired >= 2, "this move's own colon alias and the forged older one were both retired")
+  assert.deepEqual(
+    await db.select().from(groupChatThreadAlias).where(like(groupChatThreadAlias.sessionKey, 'group-chat:%')),
+    [],
+    'a completed move leaves no colon alias: the one marking its state retires once nothing is filed under it',
   )
+
+  // The new key delivers, into the same session; the old spelling does not.
+  const before = agentClient.listSessions().length
+  const viaDot = await model.deliverThreadFromNode(dotKey, 'addressed by the new key', NODE_PRINCIPAL, 'wait', 'Node')
   // Named, because the two refusals a delivery can give are one sentence to
   // the caller: without this, a sender that lost its grant and an address that
   // resolves to nothing both surface here as a prompt that never arrives.
-  assert.equal(viaAlias.status === 'not-found' || viaAlias.status === 'not-a-member', false)
+  assert.equal(viaDot.status === 'not-found' || viaDot.status === 'not-a-member', false)
   await waitForPrompts(prompts, 2)
-  assert.match(prompts[1] ?? '', /addressed by the old spelling/)
-  assert.equal(agentClient.listSessions().length, before, 'the alias lands in the same session, not a fresh one')
+  assert.match(prompts[1] ?? '', /addressed by the new key/)
+  assert.equal(agentClient.listSessions().length, before, 'the moved key lands in the same session, not a fresh one')
+  assert.deepEqual(
+    await model.deliverThreadFromNode(colonKey, 'addressed by the old spelling', NODE_PRINCIPAL, 'wait', 'Node'),
+    { status: 'not-found' },
+  )
 
   // Runs safely twice: the second pass finds nothing colon-shaped.
   const again = await model.migrateThreadSessionKeys()
   assert.deepEqual(again.moves, [], 'the second run finds nothing colon-shaped left')
+  assert.equal(again.aliasesRetired, 0)
   assert.equal(again.stores.threads.colon, again.skipped.length)
   assert.equal(model.describeThreadKeyMigration(again), null, 'and the second start logs nothing')
 })

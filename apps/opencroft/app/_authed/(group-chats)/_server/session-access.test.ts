@@ -168,7 +168,7 @@ async function captureRefusal(run: () => Promise<unknown>): Promise<{ code: stri
 
 const NOT_AVAILABLE = { code: 'not-found', message: 'Not available' }
 const SIGN_IN = { code: 'unauthenticated', message: 'Sign in to use group chats' }
-const UNKNOWN_KEY = 'group-chat:no-such-chat:agent-session:no-such-thread'
+const UNKNOWN_KEY = 'group-chat.no-such-chat.agent-session.no-such-thread'
 const UNKNOWN_ID = 'no-such-session-id'
 
 // ── Fixture ─────────────────────────────────────────────────────────────

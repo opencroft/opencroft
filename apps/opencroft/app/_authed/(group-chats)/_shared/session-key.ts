@@ -12,17 +12,8 @@
 // either table.
 export const SESSION_KEY_PREFIX = 'group-chat.'
 
-// The storage form from before the dot migration. Stored rows in this form
-// still exist until the migration has run on a given database, and addresses
-// written down elsewhere keep it far longer -- so parsing accepts both while
-// ONLY the dot form is ever minted. This constant, and every branch reading
-// it, is what the contract phase deletes once no stored key and no stored
-// reference carries a colon.
-export const LEGACY_SESSION_KEY_PREFIX = 'group-chat:'
-
-/** Either stored spelling of a group-chat thread key, old or new. */
 export function isGroupChatSessionKey(sessionKey: string): boolean {
-  return sessionKey.startsWith(SESSION_KEY_PREFIX) || sessionKey.startsWith(LEGACY_SESSION_KEY_PREFIX)
+  return sessionKey.startsWith(SESSION_KEY_PREFIX)
 }
 
 export function mintSessionKey(groupSlug: string, agentSlug: string, threadSlug: string): string {
@@ -43,13 +34,8 @@ export interface SessionKeyParts {
  * since.
  *
  * Unambiguous because every segment is `slugify` output, whose alphabet is
- * `[a-z0-9-]` -- it can contain neither separator, so a key with exactly four
- * segments splits exactly one way in either spelling.
- *
- * BOTH stored spellings parse, and only the dot form is minted -- which means
- * any re-mint (a chat or thread rename) migrates a lingering colon key's
- * format as a side effect of the rename, through the same key-move machinery
- * the migration itself drives.
+ * `[a-z0-9-]` -- it cannot contain the separator, so a key with exactly four
+ * segments splits exactly one way.
  *
  * NULL FOR ANYTHING ELSE, which is how a key from before slugs existed is
  * recognised. Those carry ids where these carry slugs, so no rename can stale
@@ -57,9 +43,7 @@ export interface SessionKeyParts {
  * guess at its shape.
  */
 export function partsOfSessionKey(sessionKey: string): SessionKeyParts | null {
-  const match =
-    /^group-chat\.([^.:]+)\.([^.:]+)\.([^.:]+)$/.exec(sessionKey) ??
-    /^group-chat:([^.:]+):([^.:]+):([^.:]+)$/.exec(sessionKey)
+  const match = /^group-chat\.([^.:]+)\.([^.:]+)\.([^.:]+)$/.exec(sessionKey)
   if (!match?.[1] || !match[2] || !match[3]) {
     return null
   }
@@ -67,9 +51,9 @@ export function partsOfSessionKey(sessionKey: string): SessionKeyParts | null {
 }
 
 /**
- * How many of `sessionKeys` are threads of the chat addressed by `chatSlug`,
- * in either stored spelling -- how many of one chat's threads sit in an
- * activity set, say. A key of any other shape counts for nothing.
+ * How many of `sessionKeys` are threads of the chat addressed by `chatSlug` --
+ * how many of one chat's threads sit in an activity set, say. A key of any
+ * other shape counts for nothing.
  */
 export function countChatThreadKeys(sessionKeys: Iterable<string>, chatSlug: string): number {
   let count = 0

@@ -317,6 +317,7 @@ function keepDestinationPresence(incoming: Presence, existing: Presence | undefi
 
 interface MovableStore {
   settingId: string
+  keys: (raw: Record<string, unknown>) => string[]
   moved: (raw: Record<string, unknown>, moves: readonly TabKeyMove[]) => Record<string, unknown> | null
   dropped: (raw: Record<string, unknown>, moves: readonly TabKeyMove[]) => Record<string, unknown> | null
 }
@@ -330,6 +331,7 @@ function movable<T>(
 ): MovableStore {
   return {
     settingId,
+    keys: (raw) => Object.keys(fromRaw(raw)),
     moved: (raw, moves) => {
       const next = movedEntries(fromRaw(raw), moves, merge)
       return next ? toRaw(next) : null
@@ -377,6 +379,16 @@ export async function copyTabKeys(moves: readonly TabKeyMove[]): Promise<void> {
       mutateSettingData(store.settingId, (raw) => store.moved(raw, moves) ?? raw),
     )
   }
+}
+
+/** Every key each key-addressed settings row holds, by setting id. */
+export async function tabKeysBySetting(): Promise<Map<string, string[]>> {
+  const bySetting = new Map<string, string[]>()
+  for (const store of KEY_ADDRESSED_STORES) {
+    const row = await getSettingImpl(store.settingId)
+    bySetting.set(store.settingId, row ? store.keys(row.data) : [])
+  }
+  return bySetting
 }
 
 /** Forget every `from` key. The pointer goes first, mirroring `copyTabKeys`. */

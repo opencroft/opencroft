@@ -61,6 +61,7 @@ import {
   resolveOrCreateSession,
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { storedGroupChatKeys } from '@/app/_authed/(group-chats)/_server/orphaned-session-keys'
 import {
   folderNameByThreadId,
   readThreadLayout,
@@ -70,10 +71,10 @@ import {
 import { GroupChatAccessError, type GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import {
   isGroupChatSessionKey,
-  LEGACY_SESSION_KEY_PREFIX,
   mintSessionKey,
   partsOfSessionKey,
   SESSION_KEY_PREFIX,
+  type SessionKeyParts,
 } from '@/app/_authed/(group-chats)/_shared/session-key'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 
@@ -770,6 +771,8 @@ export interface ThreadKeyMigrationReport {
   moves: Array<{ from: string; to: string; pointerMoved: boolean }>
   /** Keys left as found, each with the reason. */
   skipped: Array<{ sessionKey: string; reason: string }>
+  /** Colon-form alias rows deleted: addresses nothing resolves any more. */
+  aliasesRetired: number
   /** Per-store spelling census, taken after the run. */
   stores: {
     threads: { colon: number; dot: number }
@@ -779,14 +782,14 @@ export interface ThreadKeyMigrationReport {
 }
 
 /**
- * One log line for a run that moved something, or null for a run that did not.
+ * One log line for a run that changed something, or null for a run that did not.
  *
- * Keyed on moves alone: a pre-slug key is colon-prefixed forever, so every
+ * Keyed on writes alone: a pre-slug key is colon-prefixed forever, so every
  * later run finds and skips it again, and counting skips as work would make an
  * already-migrated store report on every start.
  */
 export function describeThreadKeyMigration(report: ThreadKeyMigrationReport): string | null {
-  if (report.moves.length === 0) {
+  if (report.moves.length === 0 && report.aliasesRetired === 0) {
     return null
   }
   const withoutPointer = report.moves.filter((move) => !move.pointerMoved).length
@@ -794,7 +797,8 @@ export function describeThreadKeyMigration(report: ThreadKeyMigrationReport): st
   return (
     `moved ${report.moves.length} thread key(s) to the dot form ` +
     `(${withoutPointer} without a durable session pointer), ` +
-    `left ${report.skipped.length} pre-slug key(s) as found; ` +
+    `left ${report.skipped.length} pre-slug key(s) as found, ` +
+    `retired ${report.aliasesRetired} colon alias(es); ` +
     `stores now colon/dot -- threads ${threads.colon}/${threads.dot}, ` +
     `queue ${queue.colon}/${queue.dot}, aliases ${aliases.colon}/${aliases.dot}`
   )
@@ -811,11 +815,48 @@ async function countKeySpellings(table: typeof groupChatThread | typeof agentQue
 }
 
 /**
+ * The colon storage form from before the dot migration, taken apart.
+ *
+ * The ONLY reader of that form left. Resolution, parsing and every emitted
+ * reference know the dot form alone; this exists so a database that was never
+ * migrated -- above all a restored backup from before the move -- is migrated
+ * at start instead of stranding every thread it holds.
+ */
+function partsOfColonSessionKey(sessionKey: string): SessionKeyParts | null {
+  const match = /^group-chat:([^.:]+):([^.:]+):([^.:]+)$/.exec(sessionKey)
+  if (!match?.[1] || !match[2] || !match[3]) {
+    return null
+  }
+  return { chatSlug: match[1], agentSlug: match[2], threadSlug: match[3] }
+}
+
+/**
+ * Delete the colon aliases no store holds any state under, and count them.
+ * One that still holds something is marking an incomplete move and stays --
+ * see `migrateThreadSessionKeys`.
+ */
+async function retireEmptyColonAliases(): Promise<number> {
+  const colonAliases = await db
+    .select({ id: groupChatThreadAlias.id, sessionKey: groupChatThreadAlias.sessionKey })
+    .from(groupChatThreadAlias)
+    .where(like(groupChatThreadAlias.sessionKey, 'group-chat:%'))
+  if (colonAliases.length === 0) {
+    return 0
+  }
+  const stored = await storedGroupChatKeys()
+  const empty = colonAliases.filter((alias) => alias.sessionKey && !stored.has(alias.sessionKey))
+  if (empty.length > 0) {
+    await db.delete(groupChatThreadAlias).where(inArray(groupChatThreadAlias.id, empty.map((alias) => alias.id)))
+  }
+  return empty.length
+}
+
+/**
  * Move every stored colon-form thread key to its dot spelling — the same
  * key-move a chat rename drives, where the new key differs in FORMAT rather
- * than slug. Nothing here is a new mechanism: staging, the transaction shape,
- * the freed-key alias and the settle are the rename's own, so every
- * intermediate state is the same designed-harmless state a rename can leave.
+ * than slug. Nothing here is a new mechanism: staging, the transaction shape
+ * and the settle are the rename's own, so every intermediate state is the same
+ * designed-harmless state a rename can leave.
  *
  * Per DATABASE, not per instance — two instances sharing a database share
  * these rows, so the second one finds them already moved and this no-ops.
@@ -825,14 +866,19 @@ async function countKeySpellings(table: typeof groupChatThread | typeof agentQue
  * refuses a destination that sprang into existence, and a thread whose key a
  * rename already re-minted no longer matches the colon selection.
  *
- * The alias table is NOT converted: its rows hold freed old addresses so
- * that references written down before a move keep landing — after this runs,
- * holding the colon spellings is its job, one alias per migrated thread.
- * Those rows retire in the contract phase, with the tolerance that reads
- * them.
+ * The freed colon key gets an alias in the same transaction that moves the
+ * row, and it is not for resolving -- nothing resolves the colon spelling any
+ * more. It is what marks state still filed under that key as the thread's
+ * while the move is incomplete: a settle step that failed, or a process that
+ * died between the transaction and the settle, leaves the queue or transcript
+ * there, and the orphaned-key sweep keeps state under a live alias rather than
+ * forgetting it. So a colon alias is retired only once no store holds anything
+ * under it -- which, after a settle that completed, is the same run.
  *
  * Run by the server at start, before anything can look a thread up. A run
- * with nothing to move writes nothing.
+ * with nothing to move or retire writes nothing. It can be deleted once no
+ * backup taken before the move is still a rollback point -- restoring one
+ * under code without this strands every thread in it.
  */
 export async function migrateThreadSessionKeys(): Promise<ThreadKeyMigrationReport> {
   const rows = await db
@@ -848,12 +894,12 @@ export async function migrateThreadSessionKeys(): Promise<ThreadKeyMigrationRepo
   const moves: Array<{ threadId: string; groupChatId: string; agentNodeId: string; from: string; to: string }> = []
   const skipped: Array<{ sessionKey: string; reason: string }> = []
   for (const row of rows) {
-    const parts = partsOfSessionKey(row.sessionKey)
+    const parts = partsOfColonSessionKey(row.sessionKey)
     if (!parts) {
       // A colon-prefixed key that does not split into four slug segments is
-      // from before slugs existed. Left exactly as found — it resolves
-      // verbatim, no rename can stale it, and rewriting it would break a
-      // working address to tidy a spelling.
+      // from before slugs existed. Left exactly as found — it resolves as the
+      // exact stored key, no rename can stale it, and rewriting it would break
+      // a working address to tidy a spelling.
       skipped.push({ sessionKey: row.sessionKey, reason: 'not a four-segment slug key; left as found' })
       continue
     }
@@ -887,6 +933,7 @@ export async function migrateThreadSessionKeys(): Promise<ThreadKeyMigrationRepo
     })
     await settleSessionKeyMoves(moves)
   }
+  const aliasesRetired = await retireEmptyColonAliases()
 
   // The census is taken after the move so acceptance is a reading of the
   // stores, not an inference from the loop having finished. The per-move
@@ -900,6 +947,7 @@ export async function migrateThreadSessionKeys(): Promise<ThreadKeyMigrationRepo
       })),
     ),
     skipped,
+    aliasesRetired,
     stores: {
       threads: await countKeySpellings(groupChatThread),
       queue: await countKeySpellings(agentQueueEntry),
@@ -1642,30 +1690,18 @@ export async function groupChatWakeSession(sessionKey: string): Promise<{ sessio
  * The readable address handed out for a stored key: no prefix, dots between
  * the segments.
  *
- * DOTS ARE WHAT WE STORE AND WHAT WE EMIT. The colon branch below is the
- * transition read for rows a given database has not migrated yet -- the same
- * thread under its old spelling -- and goes with the contract phase.
+ * DOTS ARE WHAT WE STORE AND WHAT WE EMIT.
  *
  * Switching the emitted form was safe because no tool schema promises one:
  * they all declare a thread reference opaque, so a caller that stores what it
  * is given and hands it back keeps working whichever form it received.
  *
- * A key with neither prefix is returned untouched -- it is a pre-slug key,
- * whose segments are ids rather than slugs and mean nothing taken apart.
+ * A key without the prefix is returned whole -- a pre-slug key, whose segments
+ * are ids rather than slugs and mean nothing taken apart. Handed back, it
+ * resolves as the exact stored key.
  */
 export function threadRefFromSessionKey(sessionKey: string): string {
-  if (sessionKey.startsWith(SESSION_KEY_PREFIX)) {
-    return sessionKey.slice(SESSION_KEY_PREFIX.length)
-  }
-  if (sessionKey.startsWith(LEGACY_SESSION_KEY_PREFIX)) {
-    const legacyBody = sessionKey.slice(LEGACY_SESSION_KEY_PREFIX.length)
-    // Only a key that PARSES is respelled. A stored key whose segments are not
-    // slugs can carry a dot as data, and rewriting its colons would hand out a
-    // reference that no longer names it -- the same reason the migration
-    // leaves such a key alone instead of tidying its spelling.
-    return partsOfSessionKey(sessionKey) ? legacyBody.replaceAll(':', '.') : legacyBody
-  }
-  return sessionKey
+  return sessionKey.startsWith(SESSION_KEY_PREFIX) ? sessionKey.slice(SESSION_KEY_PREFIX.length) : sessionKey
 }
 
 // The compaction machinery addresses a session by its STORED key, and its ack
@@ -2814,44 +2850,13 @@ export async function requireAgentNode(agent: AgentRef): Promise<string> {
  * before slugs existed keeps working.
  */
 async function resolveByKey(ref: string): Promise<ThreadDeliveryTarget | null> {
-  // Candidates in trust order. The reference exactly as given goes first:
-  // whatever resolved before this function learned about either separator
-  // still resolves, including a pre-slug key matched as a whole string. Then
-  // the canonical dot key, then the colon key the store held before the
-  // migration -- that last candidate is the transition tolerance the contract
-  // phase removes, once no stored key and no written-down reference carries a
-  // colon.
-  //
-  // Between those, the same body under each prefix with its separators
-  // UNTOUCHED. Prefixing is always safe; converting is not, because a stored
-  // key can carry a character that merely looks like a separator -- a bare
-  // reference to `a.b.c` names the stored `group-chat:a.b.c`, and no converted
-  // candidate spells that. This is the lookup the old code did first, and
-  // dropping it is how a reference stops resolving without anything failing.
-  //
-  // The two converting candidates come last because they are safe for anything
-  // the system MINTS -- slug segments are `slugify` output, alphabet
-  // `[a-z0-9-]`, holding neither separator -- and not for everything the store
-  // HOLDS. A key whose segments are not slugs is reached by one of the three
-  // above or not at all.
-  const body = ref.startsWith(SESSION_KEY_PREFIX)
-    ? ref.slice(SESSION_KEY_PREFIX.length)
-    : ref.startsWith(LEGACY_SESSION_KEY_PREFIX)
-      ? ref.slice(LEGACY_SESSION_KEY_PREFIX.length)
-      : ref
-  const candidates = [
-    ref,
-    `${SESSION_KEY_PREFIX}${body}`,
-    `${LEGACY_SESSION_KEY_PREFIX}${body}`,
-    `${SESSION_KEY_PREFIX}${body.replaceAll(':', '.')}`,
-    `${LEGACY_SESSION_KEY_PREFIX}${body.replaceAll('.', ':')}`,
-  ]
-  const tried = new Set<string>()
+  // The reference exactly as given first -- a full key, including a pre-slug
+  // key matched as a whole string -- then the readable body under the prefix.
+  // No separator is ever converted: the colon spelling was retired with the
+  // stored keys that carried it, and a reference written in it resolves to
+  // nothing.
+  const candidates = ref.startsWith(SESSION_KEY_PREFIX) ? [ref] : [ref, `${SESSION_KEY_PREFIX}${ref}`]
   for (const candidate of candidates) {
-    if (tried.has(candidate)) {
-      continue
-    }
-    tried.add(candidate)
     const hit = await lookupStoredKey(candidate)
     if (hit) {
       return hit
