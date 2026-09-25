@@ -40,7 +40,7 @@ import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { errorMessage } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
-import type { HarnessAdapter } from './harness-adapters'
+import type { HarnessAdapter, HarnessTurnEnd } from './harness-adapters'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
@@ -383,7 +383,44 @@ interface SessionState {
   // through. Sessions without mid-turn input only ever see 0/1 (one
   // prompt-turn at a time, the ACP default); a steering-capable agent can hold
   // several, and the turn is over only when the count returns to 0.
+  //
+  // It also counts the two things below that keep the session busy without
+  // being a prompt of ours: steers out (`steerHolds`) and turns the harness
+  // started itself (`harnessTurns`). Everything that asks "may I start a
+  // delivery now" reads this one number, so neither needs a check of its own.
   activeTurns: number
+  /**
+   * How many of `activeTurns` are steers rather than turns: steering requests
+   * still awaiting the harness's answer.
+   *
+   * Counted because the answer decides what happens next, and nothing may be
+   * handed over before it arrives. A harness that ignores `idleBehavior`
+   * answers a steer that finds no live turn by starting a turn of its own;
+   * a queued prompt dispatched at the settlement in the meantime would land on
+   * top of that turn. Not a turn, though, so it never keeps the turn that
+   * really ended from reporting `turn_end` (see runningTurns).
+   */
+  steerHolds?: number
+  /**
+   * Turns the harness started on its own from a steer (the answer
+   * `startedNewTurn`), counted in `activeTurns`. No session/prompt of ours
+   * belongs to them, so they end on the harness's own word that it is idle
+   * (HarnessAdapter.harnessTurnEnd) and on nothing else.
+   */
+  harnessTurns?: number
+  /**
+   * What such a turn has reported so far that its `turn_end` must carry: the
+   * typed failure it published as a session update (there is no prompt
+   * response for it to ride), and whether it was asked to stop.
+   */
+  harnessTurnFailure?: SessionFailure
+  harnessTurnCancelled?: boolean
+  /**
+   * The connection whose process runs those turns. Their only end is a status
+   * that process sends, so a process that dies must end them itself — and
+   * only its own: a replacement spawned under the same key runs none of them.
+   */
+  harnessTurnConnection?: ConnEntry
   // Prompts received while a turn was active, delivered FIFO as turns end.
   // Every change is published as a 'queue' snapshot event.
   queue: QueuedPrompt[]
@@ -451,10 +488,10 @@ interface SessionState {
    * The batch out for a steer right now, awaiting the harness's answer.
    *
    * On the session rather than in the steering call's own scope, so that the
-   * two things that can overtake that answer can still reach the batch: the
-   * turn settling first (startNotificationTurn takes it back and delivers it
-   * as a turn of its own) and the session going away (releaseNotifications
-   * owes every caller an answer, this batch's included).
+   * one thing that can overtake that answer can still reach the batch: the
+   * session going away (releaseNotifications owes every caller an answer, this
+   * batch's included). A turn settling first no longer can: the steer's hold
+   * keeps the settlement from handing anything over until the answer is in.
    */
   notificationSteer?: HeldNotification[]
   // True only while session/load is replaying this session's history. The
@@ -760,6 +797,10 @@ let onEventHook: ((sessionId: string, event: ChatEvent, sessionKey?: string) => 
 // its caller, is module-level too.
 let onCompactionHook: ((sessionId: string, compaction: CompactionState) => void) | undefined
 
+// Where handleUpdate hands the harness's "I am idle" to the client that owns
+// the session's turn accounting (settleTurn lives in createAgentClient).
+let onHarnessTurnEndHook: ((sessionId: string, signal: HarnessTurnEnd) => void) | undefined
+
 // A record leaving the store ends every subscription on it.
 //
 // A subscriber holds the RECORD, not the id, and emit only reaches the record
@@ -815,6 +856,13 @@ function emit(sessionId: string, event: ChatEvent): void {
       onEventHook(sessionId, event, session.meta.sessionKey)
     } catch {}
   }
+}
+
+// Turns actually running: prompts of ours and turns the harness started. The
+// steers out are the rest of `activeTurns`, and they are not turns — a turn
+// that ended while one was out has ended, and says so (see settleTurn).
+function runningTurns(session: SessionState): number {
+  return session.activeTurns - (session.steerHolds ?? 0)
 }
 
 function hasTurnInFlight(sessionId: string): boolean {
@@ -1539,6 +1587,21 @@ export function handleUpdate(notification: SessionNotification): void {
         session.meta.title = update.title
       }
       emit(sessionId, { kind: 'session_info', title: update.title ?? undefined })
+      // A turn the harness started itself has no prompt response, so what that
+      // response would have said arrives here: the typed failure the turn
+      // published, and the harness's word that it went idle. Only while such a
+      // turn is open — the same words about a turn of ours are the prompt
+      // response's to report — and never from a replay, which is history.
+      if (session && (session.harnessTurns ?? 0) > 0 && !session.replaying) {
+        const failure = parseSessionFailure(update._meta)
+        if (failure?.severity === 'error') {
+          session.harnessTurnFailure = failure
+        }
+        const ended = findAdapter(session.selection.adapterId)?.harnessTurnEnd?.(update)
+        if (ended) {
+          onHarnessTurnEndHook?.(sessionId, ended)
+        }
+      }
       break
     }
     case 'compaction_update': {
@@ -2360,6 +2423,7 @@ const EXIT_GRACE_MS = 200
 export function createAgentClient(options: AgentClientOptions = {}) {
   onEventHook = options.onEvent
   onCompactionHook = options.onCompaction
+  onHarnessTurnEndHook = (sessionId, signal) => endHarnessTurns(sessionId, signal)
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
   const mcp = createMcpServer({
@@ -2600,6 +2664,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       failure.exit = { code, signal }
       if (ownsEntry()) {
         store.connections.delete(key)
+      }
+      // A turn this process started from a steer ends only on an idle status
+      // from this process, which will now never come. Left open, it would hold
+      // its session busy for good: the queue never drains and a Stop reaches a
+      // process that is not there. Matched by entry, not key, so a successor
+      // under the same key is never touched.
+      for (const [sessionId, session] of store.sessions) {
+        if ((session.harnessTurns ?? 0) > 0 && session.harnessTurnConnection === entry) {
+          endHarnessTurns(sessionId, 'error', 'The agent process exited during a turn it started.')
+        }
       }
     })
     const stream = interceptDraftSessionUpdates(
@@ -3061,6 +3135,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (!store.sessions.has(sessionId)) {
       return
     }
+    // A turn the harness started itself ends on its idle status, which says
+    // nothing about why; this is the only place that knows it was stopped.
+    const session = store.sessions.get(sessionId)
+    if (session && (session.harnessTurns ?? 0) > 0) {
+      session.harnessTurnCancelled = true
+    }
     try {
       const connection = await connectionForSession(sessionId)
       await connection.cancel({ sessionId })
@@ -3075,22 +3155,39 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // past the guard. The counter is released — and the next queued prompt
   // delivered — only by settleTurn, once this prompt's promise settles.
   /**
-   * Inject a message into the session's RUNNING turn via the harness's
-   * `_session/steering` extension. True means delivered: the injection was
-   * accepted and the running turn owns the response. False means "use the
-   * normal prompt path" for any reason at all — the harness never advertised
-   * the extension (a forced-only adapter), the connection exposes no
-   * extension channel (native harness, a seeded test double), the turn ended
-   * in the race window (`idleBehavior: promptRequired` answers without
-   * injecting), or the request itself failed. Callers treat every false
-   * identically, so a steering failure degrades to exactly the delivery that
-   * existed before steering did.
+   * Hand a message to the session's RUNNING turn through the harness's
+   * `_session/steering` extension, and say how that went:
    *
-   * The user event emits only AFTER an accepted injection, not before the
-   * request: a false return falls through to deliverPrompt's own emit, and
-   * emitting on both sides would show the message twice. The response frame
-   * arrives before the model can have replied to the injection, so the
-   * transcript still orders the message ahead of everything it caused.
+   *  - `delivered`: the harness took it. Either it went into the live turn
+   *    (`injected`), or the harness found no live turn and started one of its
+   *    own with it (`startedNewTurn`). Both are the message arriving, and
+   *    neither may be followed by a prompt: that would put it in front of the
+   *    agent twice. A turn the harness started is counted as running until
+   *    the harness says it is idle (see endHarnessTurns).
+   *  - `declined`: the harness said no, answered something else, or the
+   *    request failed. The steer's hold on `activeTurns` is KEPT: the caller
+   *    puts what it was delivering back where it came from FIRST, and only
+   *    then lets go (releaseSteerHold) — letting go may hand over at once, and
+   *    what it hands over first must be the thing that was declined.
+   *  - `unavailable`: nothing was asked and nothing is held — this harness or
+   *    connection has no steering channel.
+   *  - `gone`: the session left while the harness was answering.
+   *
+   * The hold is taken BEFORE the request, because the answer decides what the
+   * session may do next and nothing may be handed over until it is in: with
+   * `startedNewTurn`, a queued prompt dispatched at the turn's settlement in
+   * the meantime would land on top of the turn the harness just started.
+   *
+   * `idleBehavior: promptRequired` still goes out, for the harnesses that
+   * honour it (they answer instead of starting a turn). One that ignores it
+   * (codex-acp 1.13.1, CodexAcpServer.ts performSteeringRequest) is exactly
+   * why `startedNewTurn` has to mean delivered.
+   *
+   * The user event emits only AFTER the harness took the message: a declined
+   * steer is delivered later by a prompt, which emits its own, and emitting on
+   * both sides would show the message twice. The answer arrives before the
+   * model can have replied to the message, so the transcript still orders it
+   * ahead of everything it caused.
    */
   async function steerIntoRunningTurn(
     sessionId: string,
@@ -3099,37 +3196,105 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     prompt: ContentBlock[],
     attachments: DeliveredAttachment[],
     problems: string[],
-  ): Promise<boolean> {
+  ): Promise<'delivered' | 'declined' | 'unavailable' | 'gone'> {
     if (!supportsMidTurnInput(session.selection)) {
-      return false
+      return 'unavailable'
     }
     const entry = connEntryFor(session.selection)
     if (!entry?.steeringSupported || typeof entry.connection.extMethod !== 'function') {
-      return false
+      return 'unavailable'
     }
+    session.activeTurns += 1
+    session.steerHolds = (session.steerHolds ?? 0) + 1
+    // A slash-led text is a harness command, and a command is never
+    // conversational input to somebody else's turn. It is also the one input
+    // a harness that starts turns from steers may run WITHOUT starting a turn
+    // (codex-acp answers `startedNewTurn` after a command-only prompt), which
+    // would leave a turn counted that no idle status will ever close.
+    const first = prompt[0]
+    if (first?.type === 'text' && first.text.trimStart().startsWith('/')) {
+      return 'declined'
+    }
+    let outcome: string | undefined
     try {
       const result = await entry.connection.extMethod('_session/steering', {
         sessionId,
         prompt,
         _meta: { steering: { idleBehavior: 'promptRequired' } },
       })
-      if ((result as { outcome?: string }).outcome !== 'injected') {
-        return false
-      }
+      outcome = (result as { outcome?: string }).outcome
     } catch (error) {
-      // Surfaced rather than swallowed — the fallback prompt below still
-      // delivers the message, but a steering channel that errors is worth a
-      // line in the transcript while the contract is this young.
+      // Surfaced rather than swallowed — the message is still delivered, by a
+      // prompt once the turn ends, but a steering channel that errors is worth
+      // a line in the transcript while the contract is this young.
       emit(sessionId, {
         kind: 'error',
         message: `steering failed, delivered as a prompt instead: ${errorMessage(error)}`,
       })
-      return false
+    }
+    if (store.sessions.get(sessionId) !== session) {
+      return 'gone'
+    }
+    if (outcome !== 'injected' && outcome !== 'startedNewTurn') {
+      return 'declined'
     }
     store.lastSessionId = sessionId
     entry.lastSessionId = sessionId
     emitDelivery(sessionId, deliveredText, attachments, problems)
-    return true
+    if (outcome === 'startedNewTurn' && findAdapter(session.selection.adapterId)?.harnessTurnEnd) {
+      // The hold becomes the harness's turn: still counted, no longer a steer.
+      session.steerHolds = Math.max(0, (session.steerHolds ?? 0) - 1)
+      session.harnessTurns = (session.harnessTurns ?? 0) + 1
+      session.harnessTurnConnection = entry
+    } else {
+      releaseSteerHold(sessionId, session)
+    }
+    return 'delivered'
+  }
+
+  /**
+   * Let go of a steer's hold on the session. The last thing a settled turn was
+   * waiting for, it hands over what the settlement could not (handOver).
+   */
+  function releaseSteerHold(sessionId: string, session: SessionState): void {
+    session.steerHolds = Math.max(0, (session.steerHolds ?? 0) - 1)
+    session.activeTurns = Math.max(0, session.activeTurns - 1)
+    if (session.activeTurns === 0 && store.sessions.get(sessionId) === session) {
+      handOver(sessionId, session)
+    }
+  }
+
+  /**
+   * The harness says the session is idle: every turn it started from a steer
+   * is over. Settled as ONE turn, since that is what the reader saw run, with
+   * the failure the turn published as its own and `cancelled` when a Stop
+   * asked for it. A `systemError` that came with no typed failure is reported
+   * the way a failed prompt is: an error, and no `turn_end` with a reason the
+   * harness never gave. So is an end the engine declares itself (`message`:
+   * the process is gone), whatever the turn had reported before it.
+   */
+  function endHarnessTurns(sessionId: string, signal: HarnessTurnEnd, message?: string): void {
+    const session = store.sessions.get(sessionId)
+    const count = session?.harnessTurns ?? 0
+    if (!session || count === 0) {
+      return
+    }
+    const failure = session.harnessTurnFailure
+    const cancelled = session.harnessTurnCancelled === true
+    session.harnessTurns = 0
+    session.harnessTurnFailure = undefined
+    session.harnessTurnCancelled = undefined
+    session.harnessTurnConnection = undefined
+    session.activeTurns = Math.max(1, session.activeTurns - (count - 1))
+    if (message || (signal === 'error' && !failure)) {
+      emit(sessionId, { kind: 'error', message: message ?? 'The agent reported a system error and stopped.' })
+      settleTurn(sessionId, {})
+      return
+    }
+    settleTurn(sessionId, {
+      stopReason: cancelled ? 'cancelled' : 'end_turn',
+      ...(failure ? { failure } : {}),
+    })
   }
 
   /**
@@ -3220,7 +3385,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     text: string,
     steerable = false,
     attachments: DeliveredAttachment[] = [],
-  ): Promise<void> {
+  ): Promise<'requeue' | undefined> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return
@@ -3229,21 +3394,26 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // not by any caller of prompt(), so it sees the text at the one instant
     // it is truly handed to the harness.
     const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
-    // Mid-turn message delivery goes through `_session/steering`: injected into
-    // the running turn, whose own settlement stays the turn's end — no prompt
-    // promise, no turn accounting. The gate here is the MECHANISM, not the
-    // cadence: WHETHER this run may deliver now (realtime passes straight
-    // through; every other cadence held it for a boundary/window) was already
-    // decided upstream in `prompt`/`drainQueue`, so by the time a message run
-    // reaches this point the only question left is HOW to hand it over. Steer
-    // whenever the harness can take it, because a steer preserves the turn's
-    // background subagents where a `session/cancel` would finish them
-    // `cancelled`. Every other case falls through to the prompt below: a
-    // forced-only adapter keeps the legacy overlapping session/prompt, a
+    // Mid-turn message delivery goes through `_session/steering`: into the
+    // running turn, or into a turn the harness starts with it — either way the
+    // harness has it and no prompt of ours follows. The gate here is the
+    // MECHANISM, not the cadence: WHETHER this run may deliver now (realtime
+    // passes straight through; every other cadence held it for a
+    // boundary/window) was already decided upstream in `prompt`/`drainQueue`,
+    // so by the time a message run reaches this point the only question left
+    // is HOW to hand it over. Steer whenever the harness can take it, because
+    // a steer preserves the turn's background subagents where a
+    // `session/cancel` would finish them `cancelled`. A forced-only adapter
+    // (no steering channel) keeps the legacy overlapping session/prompt, and a
     // system/command run (`steerable` false) must start its own turn rather
-    // than become conversational input, and an `injected: false` answer means
-    // the turn ended in the race window, where a normal prompt is simply
-    // correct.
+    // than become conversational input.
+    //
+    // A DECLINED steer goes back to the front of the queue (see dispatchRun),
+    // which is the delivery that existed before steering did: the running
+    // turn's settlement hands it over, or letting go of the steer's hold does
+    // when that turn has already ended. Never as a prompt on the spot — a
+    // prompt overlapping the turn is what a harness without forced mid-turn
+    // input was never promised.
     //
     // The blocks are built once, whichever way the delivery goes: a steer that
     // falls back to a prompt hands over the same ones, and reading the
@@ -3251,7 +3421,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     let built: { blocks: ContentBlock[]; problems: string[] } | undefined
     if (steerable && session.activeTurns > 0 && supportsMidTurnInput(session.selection)) {
       built = await promptBlocks(session, deliveredText, attachments)
-      const injected = await steerIntoRunningTurn(
+      const steer = await steerIntoRunningTurn(
         sessionId,
         session,
         deliveredText,
@@ -3259,8 +3429,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         attachments,
         built.problems,
       )
-      if (injected) {
+      if (steer === 'delivered' || steer === 'gone') {
         return
+      }
+      if (steer === 'declined') {
+        return 'requeue'
       }
     }
     // Counted BEFORE anything below awaits. Until this line the session reads
@@ -3440,7 +3613,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // entry (`/compact` above all) is harness machinery that must start its
     // own turn, never become conversational input to somebody else's.
     return deliverPrompt(sessionId, text, first.kind === 'message', attachments).then(
-      () => {
+      (result) => {
+        if (result === 'requeue') {
+          requeueRun(sessionId, session, run, note)
+          return
+        }
         // Only now: the durable copy is what makes a message survive a process
         // that dies, so it must outlive every step that could still fail to
         // hand the message over. Dropped before the hand-over, a harness that
@@ -3462,6 +3639,34 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       },
       (error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }),
     )
+  }
+
+  /**
+   * Put a run whose steer was declined back at the front of the queue, as it
+   * was before it was taken, and let go of the steer's hold.
+   *
+   * Its durable rows were never dropped (that waits for a hand-over), so only
+   * memory needs restoring. The interrupt note it consumed comes back with it,
+   * and so does the right to skip the reading window: this run was already
+   * due once, and a push that bought it must not end up waiting an hour.
+   * Shown as waiting only when a turn is still running — on an idle session
+   * letting go of the hold delivers it at once, and announcing it would flash
+   * it into the unread list and straight back out.
+   */
+  function requeueRun(sessionId: string, session: SessionState, run: QueuedPrompt[], note?: DeliveryNote): void {
+    if (store.sessions.get(sessionId) !== session) {
+      return
+    }
+    const queued = new Set(session.queue.map((entry) => entry.id))
+    session.queue = [...run.filter((entry) => !queued.has(entry.id)), ...session.queue]
+    if (note && !session.nextDeliveryNote) {
+      session.nextDeliveryNote = note
+    }
+    session.bypassPresenceOnce = true
+    if (session.activeTurns > 1) {
+      emitQueue(sessionId, session.queue)
+    }
+    releaseSteerHold(sessionId, session)
   }
 
   /**
@@ -3797,7 +4002,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return
     }
     session.activeTurns = Math.max(0, session.activeTurns - 1)
-    if (session.activeTurns > 0) {
+    if (runningTurns(session) > 0) {
       return
     }
     // Before turn_end, so the transcript closes the turn's open questions
@@ -3877,6 +4082,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         ...(turnCost ? { cost: turnCost } : {}),
       })
     }
+    // The turn has ended, but a steer still out holds everything it would
+    // hand over: the harness's answer may yet be a turn of its own. The steer
+    // hands over when it lets go (releaseSteerHold), or the turn it became
+    // does when it settles.
+    if (session.activeTurns > 0) {
+      return
+    }
+    handOver(sessionId, session)
+  }
+
+  /**
+   * What an idle session is owed once its last turn and steer are done: the
+   * MCP resume a refresh deferred, then held notifications and the queue.
+   */
+  function handOver(sessionId: string, session: SessionState): void {
     if (session.pendingMcpRefresh) {
       session.pendingMcpRefresh = false
       // Everything the turn hands over waits for the resume, held
@@ -3922,17 +4142,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (!session || session.activeTurns > 0) {
       return false
     }
-    // A batch still out for a steer on an idle session is one whose turn
-    // settled before the harness answered, and a turn that has ended cannot
-    // take an injection (`idleBehavior: promptRequired`), so the answer on its
-    // way is a refusal. Taken back here, ahead of anything held since, it
-    // reaches the agent before the queue rather than behind whatever the
-    // queue starts next. Should a harness inject anyway, the notification
-    // arrives twice — the side at-least-once delivery is allowed to err on.
-    if (session.notificationSteer) {
-      session.notifications = [...session.notificationSteer, ...(session.notifications ?? [])]
-      session.notificationSteer = undefined
-    }
+    // No batch can still be out for a steer here: its hold counts in
+    // `activeTurns`, so the session is idle only once the harness has answered
+    // and a declined batch is back at the front of `notifications`. Taking it
+    // back before the answer is what once delivered a notification twice,
+    // when the answer turned out to be a turn the harness started with it.
     if (!session.notifications?.length || options.shouldHoldDelivery?.() === true) {
       return false
     }
@@ -3965,9 +4179,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    *
    * Declined (the extension absent, the turn ending in the race window, the
    * request failing): the batch goes back to the front of what is held, and
-   * the turn's own settlement delivers it. Not retried here: a harness that
-   * just declined would decline again for the same reason, and the settlement
-   * is coming either way.
+   * the turn's own settlement delivers it — or, when the turn already ended
+   * while the harness was answering, letting go of the steer's hold does (see
+   * releaseSteerHold). Not retried here: a harness that just declined would
+   * decline again for the same reason, and the settlement is coming either
+   * way.
    */
   async function steerNotifications(sessionId: string, session: SessionState): Promise<void> {
     const batch = (session.notifications ?? []).splice(0)
@@ -3979,7 +4195,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const deliveredText = options.transformDeliveredPrompt ? options.transformDeliveredPrompt(text) : text
     // A notification carries nothing beside its text, so its one block is
     // built here rather than through promptBlocks: there is nothing to read.
-    const injected = await steerIntoRunningTurn(
+    const steer = await steerIntoRunningTurn(
       sessionId,
       session,
       deliveredText,
@@ -3987,15 +4203,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       [],
       [],
     )
-    if (session.notificationSteer !== batch) {
-      // Overtaken while the harness was answering: the turn settled first and
-      // its settlement took the batch back to deliver as a turn, or the
-      // session went away and answered for it. This answer decides nothing.
+    if (steer === 'gone' || session.notificationSteer !== batch) {
+      // Overtaken while the harness was answering: the session went away and
+      // answered for the batch. This answer decides nothing.
       return
     }
     session.notificationSteer = undefined
-    if (!injected) {
+    if (steer !== 'delivered') {
+      // Back in front BEFORE the hold goes: letting go of it may be what
+      // hands over, and what it hands over first is this batch.
       session.notifications = [...batch, ...(session.notifications ?? [])]
+      if (steer === 'declined') {
+        releaseSteerHold(sessionId, session)
+      }
       return
     }
     settleNotifications(batch, true)

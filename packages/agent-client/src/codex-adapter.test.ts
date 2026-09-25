@@ -5,8 +5,10 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { connectionKey, createAgentClient } from './agent-client'
+import { connectionKey, createAgentClient, supportsMidTurnInput } from './agent-client'
 import { AGENT_PROVIDERS } from './agent-providers'
+import type { AgentConnection } from './connection'
+import { foldEvents } from './fold'
 import { CODEX_DEFAULT_BASE_URL, HARNESS_ADAPTERS } from './harness-adapters'
 import { awaitOauthLogin, disconnectOauth, oauthLoginStatus, startOauthLogin } from './oauth-login'
 import { adaptersForProvider, buildSpawnConfig, findAdapter, findProvider } from './resolve'
@@ -599,3 +601,206 @@ test('a session without a stored login says to sign in first, and opens once the
     assertNoLeak(h)
   })
 })
+
+// ── steering: codex-acp's `_session/steering` contract ─────────────────────
+//
+// The fake plays codex-acp 1.13.1's steering (see its header): it ignores
+// `idleBehavior`, and a steer that finds no live turn becomes a turn Codex
+// starts and runs by itself. Every test counts what reached the agent, because
+// the defect this pins is a message arriving twice.
+
+const READER = { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } } as const
+
+function connectionOf(selection: AgentSelection): AgentConnection {
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  const entry = store?.connections.get(connectionKey(selection)) as { connection: AgentConnection } | undefined
+  assert.ok(entry, 'the session has a live connection')
+  return entry.connection
+}
+
+async function steeringSession(h: Parameters<Parameters<typeof withFakeAgent>[2]>[0]) {
+  const selection = codexSelection({ cwd: h.cwd })
+  const meta = await h.client.createSession(selection)
+  const fake = (method: string, params: Record<string, unknown> = {}) =>
+    connectionOf(selection).extMethod?.(method, params)
+  const sent = (method: string) => h.requests().filter((request) => request.method === method)
+  const prompts = () => sent('session/prompt').map((request) => JSON.stringify(request.params.prompt))
+  const said = (word: string) => h.events.filter((event) => event.kind === 'user' && event.text.includes(word))
+  const turnEnds = () =>
+    h.events.filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+  // A first turn, running.
+  await h.client.prompt(meta.id, 'first', READER)
+  await until(() => h.events.some((event) => event.kind === 'agent_message'), 'the first turn to stream')
+  return { selection, id: meta.id, fake, sent, prompts, said, turnEnds }
+}
+
+// The race codex-acp answers `startedNewTurn` in: the steer reaches the live
+// turn's end instead of the turn, and Codex starts a turn of its own with it.
+async function steerIntoAnEndingTurn(
+  h: Parameters<Parameters<typeof withFakeAgent>[2]>[0],
+  s: Awaited<ReturnType<typeof steeringSession>>,
+): Promise<void> {
+  await s.fake('_fake/steer_mode', { mode: 'late' })
+  const sending = h.client.prompt(s.id, 'steered', READER)
+  await until(() => s.sent('_session/steering').length === 1, 'the steer to go out')
+  await s.fake('_fake/finish')
+  await sending
+  await until(() => s.said('steered').length === 1, 'the steered message to show')
+  // Long enough for a prompt the engine might still send to reach the log: a
+  // re-delivery is exactly what the callers count.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+}
+
+test('the codex entry trusts the steering codex-acp advertises, and reads its idle status as the end of a turn', async () => {
+  const adapter = findAdapter('codex')
+  assert.equal(adapter?.advertisedSteering, undefined, 'no override: the advertised steering is used')
+  const end = adapter?.harnessTurnEnd
+  assert.ok(end)
+  const status = (type: string) =>
+    ({ sessionUpdate: 'session_info_update', _meta: { codex: { threadStatus: { type } } } }) as Parameters<
+      typeof end
+    >[0]
+  assert.equal(end(status('idle')), 'idle')
+  assert.equal(end(status('systemError')), 'error')
+  assert.equal(end(status('active')), undefined)
+  assert.equal(end({ sessionUpdate: 'session_info_update', title: 'x' } as Parameters<typeof end>[0]), undefined)
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    assert.equal(supportsMidTurnInput(s.selection), true, 'a Codex session takes mid-turn input')
+    await s.fake('_fake/finish')
+  })
+})
+
+test('Codex: a steer into a live turn is injected once, and the turn ends on its own prompt', async () => {
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    await h.client.prompt(s.id, 'steered', READER)
+    await until(() => s.said('steered').length === 1, 'the injected message to show')
+    assert.equal(s.sent('_session/steering').length, 1)
+    assert.equal(s.sent('session/prompt').length, 1, 'no prompt of its own')
+    assert.equal(s.turnEnds().length, 0, 'the turn it joined is still running')
+    await s.fake('_fake/finish')
+    await until(() => s.turnEnds().length === 1, 'the turn to end')
+    assert.equal(h.client.hasActiveTurn(s.id), false)
+    assert.equal(s.said('steered').length, 1, 'recorded once')
+  })
+})
+
+test('Codex: a steer answered with a turn of its own is delivered once, and holds the session until Codex is idle', async () => {
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    await steerIntoAnEndingTurn(h, s)
+    assert.equal(s.sent('session/prompt').length, 1, 'never re-sent as a prompt: Codex already has it')
+    assert.equal(s.said('steered').length, 1, 'and recorded once')
+    assert.deepEqual(
+      s.turnEnds().map((event) => event.stopReason),
+      ['end_turn'],
+      'the turn it missed reported its own end',
+    )
+    assert.equal(h.client.hasActiveTurn(s.id), true, 'the turn Codex started counts as running')
+
+    // Something sent meanwhile waits for that turn, as it would behind any.
+    h.client.setPresence(s.id, { kind: 'online' })
+    await h.client.prompt(s.id, 'later', READER)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(s.sent('session/prompt').length, 1, 'nothing is started on top of the turn Codex runs')
+
+    await s.fake('_fake/finish')
+    await until(() => s.turnEnds().length === 2, 'the turn Codex started to end')
+    assert.equal(s.turnEnds()[1].stopReason, 'end_turn')
+    await until(() => s.sent('session/prompt').length === 2, 'the waiting message to go out')
+    assert.match(s.prompts()[1], /later/)
+    await s.fake('_fake/finish')
+    await until(() => s.turnEnds().length === 3, 'the last turn to end')
+    assert.equal(h.client.hasActiveTurn(s.id), false, 'nothing left counted as running')
+
+    // Three replies, three blocks: the item ids Codex stamps keep them apart.
+    const replies = foldEvents(h.events).filter((message) => message.kind === 'assistant')
+    assert.equal(replies.length, 3)
+  })
+})
+
+test('Codex: a turn it started carries its typed failure on its turn_end', async () => {
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    await steerIntoAnEndingTurn(h, s)
+    await s.fake('_fake/finish', { fail: true })
+    await until(() => s.turnEnds().length === 2, 'the failed turn to end')
+    assert.equal(s.turnEnds()[1].failure?.id, 'failure-2')
+    assert.equal(s.turnEnds()[0].failure, undefined, 'the turn before it did not fail')
+    assert.equal(h.client.hasActiveTurn(s.id), false)
+  })
+})
+
+test('Codex: a turn it started ends on a systemError status too, as an error', async () => {
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    await steerIntoAnEndingTurn(h, s)
+    const errors = h.events.filter((event) => event.kind === 'error').length
+    await s.fake('_fake/finish', { systemError: true })
+    await until(() => h.client.hasActiveTurn(s.id) === false, 'the session to be idle')
+    assert.equal(h.events.filter((event) => event.kind === 'error').length, errors + 1)
+    assert.equal(s.turnEnds().length, 1, 'no turn_end with a reason Codex never gave')
+  })
+})
+
+test('Codex: stopping a turn it started reports it cancelled', async () => {
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    await steerIntoAnEndingTurn(h, s)
+    await h.client.cancel(s.id)
+    await until(() => s.turnEnds().length === 2, 'the stopped turn to end')
+    assert.equal(s.turnEnds()[1].stopReason, 'cancelled')
+    assert.equal(h.client.hasActiveTurn(s.id), false)
+  })
+})
+
+test('Codex: a process that dies during a turn it started ends that turn, and the session moves on', async () => {
+  await withFakeAgent('codex', 'steering', async (h) => {
+    const s = await steeringSession(h)
+    await steerIntoAnEndingTurn(h, s)
+    h.client.setPresence(s.id, { kind: 'online' })
+    await h.client.prompt(s.id, 'later', READER)
+    assert.equal(s.sent('session/prompt').length, 1, 'held behind the turn Codex runs')
+
+    await s.fake('_fake/exit')
+    // The held message goes to the replacement process: the queue drains.
+    await until(() => s.sent('session/prompt').length === 2, 'the waiting message to go out')
+    assert.match(s.prompts()[1], /later/)
+    assert.ok(
+      h.events.some((event) => event.kind === 'error' && event.message.includes('process exited')),
+      'and the turn that died is reported, not passed off as finished',
+    )
+    // And Stop reaches a live turn again rather than a process that is gone.
+    await h.client.cancel(s.id)
+    await until(() => h.client.hasActiveTurn(s.id) === false, 'the stopped turn to end')
+    assert.equal(s.turnEnds().at(-1)?.stopReason, 'cancelled')
+  })
+})
+
+for (const mode of ['failed', 'throw'] as const) {
+  test(`Codex: a steer that ${mode === 'failed' ? 'answers failed' : 'throws'} is delivered once, as a prompt after the turn`, async () => {
+    await withFakeAgent('codex', 'steering', async (h) => {
+      const s = await steeringSession(h)
+      await s.fake('_fake/steer_mode', { mode })
+      await h.client.prompt(s.id, 'steered', READER)
+      await until(() => s.sent('_session/steering').length === 1, 'the steer to go out')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.equal(s.sent('session/prompt').length, 1, 'not forced in on top of the running turn')
+      assert.equal(s.said('steered').length, 0, 'not shown as delivered: it was not')
+      assert.equal(
+        h.events.some((event) => event.kind === 'error' && event.message.startsWith('steering failed')),
+        mode === 'throw',
+        'a steering channel that errors says so',
+      )
+      await s.fake('_fake/steer_mode', { mode: 'normal' })
+      await s.fake('_fake/finish')
+      await until(() => s.sent('session/prompt').length === 2, 'the message to go out as a prompt')
+      assert.match(s.prompts()[1], /steered/)
+      assert.equal(s.said('steered').length, 1, 'recorded once, when it was delivered')
+      await s.fake('_fake/finish')
+      await until(() => s.turnEnds().length === 2, 'both turns to end')
+      assert.equal(s.sent('_session/steering').length, 1, 'tried once, delivered once')
+    })
+  })
+}

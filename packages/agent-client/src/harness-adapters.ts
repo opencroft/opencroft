@@ -1,4 +1,4 @@
-import type { AuthenticateRequest, InitializeResponse } from '@agentclientprotocol/sdk'
+import type { AuthenticateRequest, InitializeResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AgentProvider } from './agent-providers'
 import type { AgentSelection } from './types'
@@ -9,6 +9,10 @@ import type { AgentSelection } from './types'
 // the whole provider speaks it; a selection on any other 'openai' provider can
 // opt in with `responsesApi` (see resolve.ts adapterOffered).
 export type Protocol = 'anthropic' | 'openai' | 'openai-responses' | 'gemini' | 'native'
+
+// A harness's own word that a turn it started is over: 'idle' when it simply
+// finished (or was stopped), 'error' when the harness reports it ended broken.
+export type HarnessTurnEnd = 'idle' | 'error'
 
 export interface HarnessAdapter {
   id: string
@@ -97,6 +101,14 @@ export interface HarnessAdapter {
   // advertised; 'ignore' keeps the engine queueing mid-turn prompts regardless,
   // for a harness whose steering contract the engine doesn't handle yet.
   advertisedSteering?: 'trust' | 'ignore'
+  // Reads the harness's own "this session is idle again" off one session
+  // update. Needed for turns the harness starts ITSELF: a harness that
+  // ignores `idleBehavior` answers a steer that finds no live turn with
+  // `startedNewTurn`, and no session/prompt of ours belongs to that turn, so
+  // nothing else can tell the engine it ended. Without it such a turn is still
+  // delivered (never re-sent), but the engine cannot hold the session busy
+  // for it, and a message sent meanwhile may start a turn beside it.
+  harnessTurnEnd?: (update: SessionNotification['update']) => HarnessTurnEnd | undefined
 }
 
 // OpenCode assembles its model catalog from its OWN provider configuration:
@@ -209,6 +221,27 @@ function codexGatewayAuth(
   }
 }
 
+// codex-acp forwards the Codex thread's status changes as a session info
+// update with `_meta.codex.threadStatus` (CodexEventHandler.ts,
+// `thread/status/changed`), and its own steering example treats `idle` and
+// `systemError` as "the turn finished" (examples/steering.ts). That is the only
+// end a turn it started from a steer has on the wire: the steering request is
+// answered the moment that turn starts (CodexAcpServer.ts,
+// startNewTurnFromExternalPrompt), and the turn's prompt response goes to
+// nobody. Read from the 1.13.1 source, not observed live.
+function codexHarnessTurnEnd(update: SessionNotification['update']): HarnessTurnEnd | undefined {
+  if (update.sessionUpdate !== 'session_info_update') {
+    return undefined
+  }
+  const codex = update._meta?.codex
+  const status = codex && typeof codex === 'object' ? (codex as { threadStatus?: unknown }).threadStatus : undefined
+  const type = status && typeof status === 'object' ? (status as { type?: unknown }).type : undefined
+  if (type === 'idle') {
+    return 'idle'
+  }
+  return type === 'systemError' ? 'error' : undefined
+}
+
 // Environment every spawn of the Claude Agent SDK bridge gets — see the note
 // on the 'claude' adapter below.
 const CLAUDE_AGENT_ENV: Record<string, string> = { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }
@@ -302,11 +335,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     staticEnv: { NO_BROWSER: '1' },
     selectionEnv: codexSelectionEnv,
     authenticate: codexGatewayAuth,
-    // codex-acp advertises steering, but its `_session/steering` ignores
-    // `idleBehavior` and answers `startedNewTurn` with a turn of its own, which
-    // the engine would re-deliver as a prompt. Remove this line in the change
-    // that teaches steerIntoRunningTurn to treat `startedNewTurn` as delivered.
-    advertisedSteering: 'ignore',
+    harnessTurnEnd: codexHarnessTurnEnd,
     // `/logout` signs out the account the adapter process holds (the
     // profile's gateway credential), breaking the session for everyone on it.
     hiddenCommands: ['logout'],

@@ -5551,6 +5551,64 @@ test('steering that returns promptRequired falls through to a normal prompt', as
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a declined steer is not forced in on top of the running turn: it waits for the turn and goes once', async () => {
+  for (const outcome of ['failed', 'promptRequired']) {
+    const h = await setup('openclaw', { steeringSupported: true, steerOutcome: outcome })
+    await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+    await settle()
+    await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+    await settle()
+    assert.deepEqual(deliveries(h), [['first']], `${outcome}: no prompt overlaps the turn`)
+    assert.equal(
+      h.events.filter((event) => event.kind === 'user' && event.text.includes('second')).length,
+      0,
+      `${outcome}: not shown as delivered`,
+    )
+    assert.deepEqual(queueSnapshots(h.events).at(-1), ['second'], `${outcome}: shown as waiting instead`)
+    h.endTurn()
+    await settle()
+    assert.deepEqual(deliveries(h), [['first'], ['second']], `${outcome}: delivered once, after the turn`)
+    assert.equal(h.events.filter((event) => event.kind === 'user' && event.text.includes('second')).length, 1)
+    h.endTurn()
+    await settle()
+    await h.client.deleteSession(h.sessionId)
+  }
+})
+
+test('a steer that throws is reported, and the message still goes once after the turn', async () => {
+  const failing = Promise.reject(new Error('channel down'))
+  failing.catch(() => {})
+  const h = await setup('openclaw', { steeringSupported: true, steerOutcome: failing })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.ok(h.events.some((event) => event.kind === 'error' && event.message.includes('channel down')))
+  assert.deepEqual(deliveries(h), [['first']])
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['first'], ['second']])
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a message steer answered with a turn of the harness is delivered once and never re-sent', async () => {
+  // openclaw has no idle signal, so the turn is delivered but not tracked; the
+  // Codex contract tests (codex-adapter.test.ts) cover the tracked case.
+  const h = await setup('openclaw', { steeringSupported: true, steerOutcome: 'startedNewTurn' })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['first']], 'the harness has it: no prompt follows')
+  assert.equal(h.events.filter((event) => event.kind === 'user' && event.text.includes('second')).length, 1)
+  assert.equal(h.client.hasActiveTurn(h.sessionId), false)
+  await h.client.deleteSession(h.sessionId)
+})
+
 test('without steering support a mid-turn message queues as before', async () => {
   const h = await setup('openclaw')
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
@@ -6338,10 +6396,13 @@ test('a notification whose steer is declined is held for the end of the turn, no
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a turn that ends while a notification steer is still unanswered delivers it before the queue', async () => {
-  // The race window: the harness answers the prompt ahead of the steer, and a
-  // turn that has ended refuses the injection. Waiting for that refusal before
-  // touching the queue would let the queue go first.
+test('a turn that ends while a notification steer is still unanswered hands nothing over until the answer', async () => {
+  // The race window: the harness answers the prompt ahead of the steer. What
+  // the steer's answer will be is not known yet — a refusal, or a turn the
+  // harness started with the notification (codex-acp ignores `idleBehavior`)
+  // — so the settlement may deliver neither the batch nor the queue. Taking
+  // the batch back to deliver it as a turn is what once put a notification in
+  // front of the agent twice.
   let answer: (outcome: string) => void = () => {}
   const h = await setup('openclaw', {
     steeringSupported: true,
@@ -6357,15 +6418,70 @@ test('a turn that ends while a notification steer is still unanswered delivers i
   await settle()
   h.endTurn()
   await settle()
-  assert.equal(h.promptCalls[1], NOTE, 'the settlement took the notification back and delivered it first')
-  assert.equal(await outcomeOf(notified), true)
+  assert.deepEqual(
+    h.events.filter((event) => event.kind === 'turn_end').length,
+    1,
+    'the turn that ended says so at once',
+  )
+  assert.equal(h.promptCalls.length, 1, 'but nothing is handed over while the steer is unanswered')
+  assert.equal(await outcomeOf(notified), 'pending')
   answer('promptRequired')
   await settle()
-  assert.equal(h.promptCalls.length, 2, 'the late refusal changes nothing')
+  assert.equal(h.promptCalls[1], NOTE, 'refused: the notification goes first, as its own turn')
+  assert.equal(await outcomeOf(notified), true)
   assert.equal(h.events.filter((event) => event.kind === 'user' && event.text === NOTE).length, 1)
   h.endTurn()
   await settle()
   assert.deepEqual(partsOf(h.promptCalls[2]), ['queued'])
+  h.endTurn()
+  await settle()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification steer answered with a turn of the harness is delivered once, never re-sent', async () => {
+  let answer: (outcome: string) => void = () => {}
+  const h = await setup('openclaw', {
+    steeringSupported: true,
+    steerOutcome: new Promise<string>((resolve) => {
+      answer = resolve
+    }),
+  })
+  h.client.setPresence(h.sessionId, { kind: 'online' })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.prompt(h.sessionId, 'queued', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const notified = h.client.notify(h.sessionId, NOTE)
+  await settle()
+  h.endTurn()
+  await settle()
+  answer('startedNewTurn')
+  await settle()
+  assert.equal(await outcomeOf(notified), true, 'the harness has it')
+  assert.equal(h.events.filter((event) => event.kind === 'user' && event.text === NOTE).length, 1)
+  assert.ok(!h.promptCalls.includes(NOTE), 'and it never goes out a second time as a prompt')
+  // openclaw has no idle signal to end a turn the harness starts, so that
+  // turn cannot be tracked: the session is not held busy for it forever.
+  assert.deepEqual(partsOf(h.promptCalls[1]), ['queued'], 'the queue goes on')
+  h.endTurn()
+  await settle()
+  assert.equal(h.client.hasActiveTurn(h.sessionId), false, 'no turn is left counted that nothing can end')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a slash-led notification is never steered into a running turn', async () => {
+  // A command is never conversational input to somebody else's turn, and a
+  // harness that starts turns from steers may run it without starting one —
+  // leaving a turn counted that no idle status would ever close.
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'working', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const notified = h.client.notify(h.sessionId, '/compact')
+  await settle()
+  assert.equal(h.extMethodCalls.length, 0, 'nothing was asked of the steering channel')
+  assert.equal(await outcomeOf(notified), 'pending', 'held for the turn to end')
+  h.endTurn()
+  await settle()
+  assert.deepEqual(h.promptCalls.slice(1), ['/compact'], 'and delivered as a turn of its own')
   h.endTurn()
   await settle()
   await h.client.deleteSession(h.sessionId)

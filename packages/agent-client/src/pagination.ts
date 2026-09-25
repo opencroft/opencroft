@@ -157,7 +157,8 @@ function entityOf(event: ChatEvent): string | null {
 // Legal record-start indices within `events[start, end)` — the in-turn
 // counterpart of `turnStarts`, one level finer. A record is a singleton
 // event, a maximal run of same-kind streaming chunks (agent_message /
-// agent_thought — foldEvents concatenates these while consecutive), or a
+// agent_thought — a run foldEvents may still split on message ids, so
+// keeping it whole never cuts inside one of its blocks), or a
 // closed request/response group (see groupId/isResolution). A boundary is
 // only emitted once every group open at that point has closed, so a window
 // cut at any returned index can never separate a tool_call from its

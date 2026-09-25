@@ -38,6 +38,7 @@ export type ChatMessage =
 
 type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
 type PlanMessage = Extract<ChatMessage, { kind: 'plan' }>
+type TextMessage = Extract<ChatMessage, { kind: 'assistant' | 'thought' }>
 
 // A tool call is settled once it reaches one of these statuses — every other
 // status ('pending', 'in_progress') means more updates are still expected for
@@ -174,6 +175,56 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
     counter += 1
     return String(counter)
   }
+  // The harness's message boundaries (`messageId`) for the turn being folded:
+  // which text block each id's chunks are landing in. A chunk continues the
+  // block its id already has across user bubbles, and across nothing else. A
+  // steered message is shown the moment it is injected, so the tail of the
+  // reply it interrupted streams in AFTER that bubble and must finish the
+  // reply it belongs to, not open a block that runs on into the next one.
+  // Anything the agent itself drew in between is a real step in order: the
+  // Claude bridge stamps one API message's id on all its text, so its `text,
+  // tool call, text` would otherwise pull the second text above the tool call.
+  // Cleared at the turn's end, so a harness that reuses ids from one turn to
+  // the next can never reach back into an earlier turn's reply.
+  const openBlocks = new Map<string, TextMessage>()
+  // The id each block was opened under. Only an id on BOTH sides can split
+  // two chunks: a harness that stamps nothing (or stamps one id throughout)
+  // folds by kind and position alone, exactly as it always did.
+  const blockIds = new Map<TextMessage, string>()
+  const onlyUserMessagesAfter = (block: TextMessage) => {
+    for (let i = messages.length - 1; i >= 0 && messages[i] !== block; i--) {
+      if (messages[i].kind !== 'user') {
+        return false
+      }
+    }
+    return true
+  }
+  const appendChunk = (kind: TextMessage['kind'], text: string, messageId: string | undefined) => {
+    const key = `${kind}:${messageId}`
+    const open = messageId === undefined ? undefined : openBlocks.get(key)
+    if (open && onlyUserMessagesAfter(open)) {
+      open.text += text
+      return
+    }
+    const last = messages.at(-1)
+    if (last && (last.kind === 'assistant' || last.kind === 'thought') && last.kind === kind) {
+      const lastId = blockIds.get(last)
+      if (messageId === undefined || lastId === undefined || lastId === messageId) {
+        last.text += text
+        if (messageId !== undefined && lastId === undefined) {
+          blockIds.set(last, messageId)
+          openBlocks.set(key, last)
+        }
+        return
+      }
+    }
+    const block: TextMessage = { id: nextId(), kind, text }
+    messages.push(block)
+    if (messageId !== undefined) {
+      blockIds.set(block, messageId)
+      openBlocks.set(key, block)
+    }
+  }
 
   for (const event of events) {
     switch (event.kind) {
@@ -181,22 +232,9 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
         messages.push({ id: nextId(), kind: 'user', text: event.text })
         break
       }
-      case 'agent_message': {
-        const last = messages.at(-1)
-        if (last?.kind === 'assistant') {
-          last.text += event.text
-        } else {
-          messages.push({ id: nextId(), kind: 'assistant', text: event.text })
-        }
-        break
-      }
+      case 'agent_message':
       case 'agent_thought': {
-        const last = messages.at(-1)
-        if (last?.kind === 'thought') {
-          last.text += event.text
-        } else {
-          messages.push({ id: nextId(), kind: 'thought', text: event.text })
-        }
+        appendChunk(event.kind === 'agent_message' ? 'assistant' : 'thought', event.text, event.messageId)
         break
       }
       case 'tool_call': {
@@ -309,6 +347,10 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
       }
       case 'error': {
         messages.push({ id: nextId(), kind: 'error', text: event.message })
+        break
+      }
+      case 'turn_end': {
+        openBlocks.clear()
         break
       }
       default:
