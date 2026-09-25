@@ -62,8 +62,8 @@ import {
   listGroupChatsForUserView,
   listThreadsInGroupChatView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
+import { getThreadLayout, putThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-access'
 import type { ThreadLayout, VersionedThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
-import { getThreadLayout, putThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
 import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'

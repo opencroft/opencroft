@@ -61,6 +61,12 @@ import {
   resolveOrCreateSession,
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import {
+  folderNameByThreadId,
+  readThreadLayout,
+  updateThreadLayout,
+  withThreadInFolder,
+} from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 import { GroupChatAccessError, type GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import {
   isGroupChatSessionKey,
@@ -2521,6 +2527,19 @@ export async function clearThread(request: Request, threadId: string): Promise<v
  */
 export async function renameThread(request: Request, threadId: string, title: string): Promise<void> {
   const sessionUser = await requireSignedInUser(request)
+  const row = await threadRowForRename(threadId)
+  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await applyThreadRename(row, title)
+}
+
+type ThreadRenameRow = Pick<
+  typeof groupChatThread.$inferSelect,
+  'id' | 'groupChatId' | 'agentNodeId' | 'sessionKey' | 'slug'
+>
+
+async function threadRowForRename(threadId: string): Promise<ThreadRenameRow> {
   const [row] = await db
     .select({
       id: groupChatThread.id,
@@ -2535,9 +2554,15 @@ export async function renameThread(request: Request, threadId: string, title: st
   if (!row) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
-  }
+  return row
+}
+
+/**
+ * The rename itself, with NO gate: `renameThread` and `renameThreadAsAgent`
+ * are the gates in front of it, the same split `createThread` has.
+ */
+async function applyThreadRename(row: ThreadRenameRow, title: string): Promise<void> {
+  const threadId = row.id
   const trimmed = title.trim()
   if (!trimmed) {
     throw new Error('A thread needs a title')
@@ -2688,6 +2713,11 @@ export interface AgentThreadRef {
    */
   ref: string
   title: string | null
+  /**
+   * The thread-list folder this thread is filed in, by the name a person sees
+   * on the list; null for a thread at the top level.
+   */
+  folder: string | null
   /** The agent this thread talks to — which may be the caller itself. */
   agentNodeId: string
   createdAt: Date
@@ -2958,6 +2988,13 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
   // defensible default (see startThreadAsAgent): without this the caller would
   // be made to guess a name and get the deliberately vague refusal for a typo.
   const membersByChatId = await agentMembersByChat(chats.map((c) => c.id))
+  // Read from the same shared layout the thread list draws, so the folder named
+  // here is the one a person sees the thread in.
+  const folderByChatId = new Map(
+    await Promise.all(
+      chats.map(async (c) => [c.id, folderNameByThreadId((await readThreadLayout(c.id)).layout)] as const),
+    ),
+  )
   return chats.map((chat) => ({
     ref: chat.id,
     name: chat.name,
@@ -2966,14 +3003,44 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
     threads: threads
       .filter((t) => t.groupChatId === chat.id)
       .map((t) => ({
-        ref: t.slug && isGroupChatSessionKey(t.sessionKey) ? threadRefFromSessionKey(t.sessionKey) : t.id,
+        ref: agentThreadRef(t),
         title: t.title,
+        folder: folderByChatId.get(chat.id)?.get(t.id) ?? null,
         agentNodeId: t.agentNodeId,
         createdAt: t.createdAt,
         contextUsage: contextUsageByKey.get(t.sessionKey) ?? null,
         queuedMessages: metaBySessionKey.get(t.sessionKey)?.queuedMessages ?? 0,
       })),
   }))
+}
+
+/** The reference `group_chat_list` hands out for a thread: readable where it has a slug, its id otherwise. */
+function agentThreadRef(t: { id: string; slug: string | null; sessionKey: string }): string {
+  return t.slug && isGroupChatSessionKey(t.sessionKey) ? threadRefFromSessionKey(t.sessionKey) : t.id
+}
+
+/**
+ * File a thread in the folder of that name, creating the folder if the chat has
+ * none. No gate: every caller has already established that the one asking is a
+ * member of the thread's chat.
+ */
+async function placeThreadInFolder(groupChatId: string, threadId: string, folder: string): Promise<void> {
+  await updateThreadLayout(groupChatId, (layout) => withThreadInFolder(layout, threadId, folder))
+}
+
+/**
+ * A folder name as an agent passed it: trimmed, and refused when nothing is left.
+ * Checked before anything is written, so a bad name costs nothing.
+ */
+function folderNameArgument(folder: string | undefined): string | undefined {
+  if (folder === undefined) {
+    return undefined
+  }
+  const trimmed = folder.trim()
+  if (!trimmed) {
+    throw new Error('A folder needs a name')
+  }
+  return trimmed
 }
 
 /**
@@ -3078,14 +3145,20 @@ async function agentMembersOfChat(groupChatId: string): Promise<Array<{ nodeId: 
  * caller's own unknown name still refuses informatively through
  * `requireAgentNode`, because being told YOU are unrecognised leaks nothing
  * about anyone else.
+ *
+ * `folder` files the new thread in the thread-list folder of that name, made if
+ * the chat has none -- the same layout write a person's drag makes. It happens
+ * AFTER the first message is out: a delegation that was sent matters more than
+ * where it is filed, so a placement that fails leaves a delivered thread at the
+ * top level and says so, rather than a filed thread nobody was told about.
  */
 export async function startThreadAsAgent(
   callerAgent: AgentRef,
   groupChatId: string,
   targetAgentName: string,
   firstMessage: string,
-  opts?: { title?: string },
-): Promise<StartThreadResult> {
+  opts?: { title?: string; folder?: string },
+): Promise<StartThreadResult & { folder: string | null }> {
   const callerNodeId = await requireAgentNode(callerAgent)
   // The caller's membership is the gate, and a chat that does not exist has no
   // members — so a bad id and a chat the caller is not in refuse identically,
@@ -3097,11 +3170,12 @@ export async function startThreadAsAgent(
   if (!trimmed) {
     throw new Error('A message needs some text')
   }
+  const folder = folderNameArgument(opts?.folder)
   const target = (await agentMembersOfChat(groupChatId)).find((m) => m.name === targetAgentName.trim())
   if (!target) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  return createThread(groupChatId, target.nodeId, trimmed, {
+  const started = await createThread(groupChatId, target.nodeId, trimmed, {
     title: opts?.title,
     createdByUserId: null,
     // THE CALLER, NOT THE TARGET, for the same reason `sender` below is: the
@@ -3115,6 +3189,67 @@ export async function startThreadAsAgent(
     // display name it was addressed by — see authorForAgentNode.
     sender: await authorForAgentNode(callerNodeId, agentRefName(callerAgent)),
   })
+  if (folder) {
+    try {
+      await placeThreadInFolder(groupChatId, started.thread.id, folder)
+    } catch (error) {
+      throw new Error(
+        `The thread "${threadRefFromSessionKey(started.thread.sessionKey)}" was started and its message sent, but it could not be ` +
+          `filed in the folder "${folder}": ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  return { ...started, folder: folder ?? null }
+}
+
+/**
+ * Rename a thread, file it in a folder, or both, as an agent — the tool-surface
+ * counterpart to the thread list's rename and drag.
+ *
+ * THE UI RENAME'S GATE, NOT A NEW ONE. A person may rename any thread of a chat
+ * they are a member of; an agent may rename any thread of a chat IT is a member
+ * of, resolved through `resolveThreadForAgent` like every other tool here. The
+ * title change is `renameThread`'s own code past its gate, so the address moves
+ * exactly as it does for a person and the old one keeps resolving through the
+ * alias that records it.
+ *
+ * Title first, folder second: a refused title (taken, or nothing to build an
+ * address from) then changes nothing at all.
+ *
+ * Returns the thread's reference AFTER the rename, since a new title can move it.
+ */
+export async function renameThreadAsAgent(
+  agent: AgentRef,
+  threadRef: string,
+  changes: { title?: string; folder?: string },
+): Promise<{ ref: string; title: string | null; folder: string | null }> {
+  const agentNodeId = await requireAgentNode(agent)
+  const target = await resolveThreadForAgent(agentNodeId, threadRef)
+  const folder = folderNameArgument(changes.folder)
+  if (changes.title === undefined && folder === undefined) {
+    throw new Error('Nothing to change: pass a title, a folder, or both')
+  }
+  if (changes.title !== undefined) {
+    await applyThreadRename(await threadRowForRename(target.id), changes.title)
+  }
+  if (folder) {
+    await placeThreadInFolder(target.groupChatId, target.id, folder)
+  }
+  const [row] = await db
+    .select({
+      id: groupChatThread.id,
+      slug: groupChatThread.slug,
+      sessionKey: groupChatThread.sessionKey,
+      title: groupChatThread.title,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, target.id))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const { layout } = await readThreadLayout(target.groupChatId)
+  return { ref: agentThreadRef(row), title: row.title, folder: folderNameByThreadId(layout).get(row.id) ?? null }
 }
 
 /**

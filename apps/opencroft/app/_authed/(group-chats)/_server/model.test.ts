@@ -3983,6 +3983,185 @@ test('an empty first message is refused before a thread is created', async () =>
 })
 
 // ---------------------------------------------------------------------------
+// THREAD-LIST FOLDERS FROM THE TOOL SURFACE. An agent files a thread by the
+// folder name a person reads off the list, at creation or afterwards, and the
+// list output says where each thread is filed. The layout itself -- and the
+// race a person's drag can open against this write -- is covered in
+// thread-layout-store.test.ts; these check the wiring and the gates.
+// ---------------------------------------------------------------------------
+
+// Dynamic for the same reason as the imports at the top: it reads and writes
+// the settings table.
+const layoutStore = await import('./thread-layout-store')
+
+async function chatForFolders(email: string, name: string): Promise<string> {
+  const owner = await makeUser(email)
+  const chat = await model.createGroupChat(reqAs(owner), name, 'organise the threads')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  seedMockConnection([], 'Agent Session Two')
+  return chat.id
+}
+
+async function listedThread(chatId: string, threadRef: string) {
+  const chat = (await model.listGroupChatsForAgentView('Agent Session')).find((c) => c.ref === chatId)
+  return chat?.threads.find((t) => t.ref === threadRef)
+}
+
+/** Each folder of the chat's layout as `name[threadIds]`, in order. */
+async function foldersOf(chatId: string): Promise<string[]> {
+  const { layout } = await layoutStore.readThreadLayout(chatId)
+  return layout.entries.flatMap((e) => (e.kind === 'folder' ? [`${e.folder.name}[${e.folder.threadIds}]`] : []))
+}
+
+test('a thread started into a folder nobody has made yet lands in a new folder of that name', async () => {
+  const chatId = await chatForFolders('folders-new@example.test', 'folders new')
+
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'go', {
+    folder: '  Sprint 12 ',
+  })
+
+  assert.equal(started.folder, 'Sprint 12', 'the name as a person would read it, trimmed')
+  assert.deepEqual(await foldersOf(chatId), [`Sprint 12[${started.thread.id}]`])
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+  assert.equal((await listedThread(chatId, ref))?.folder, 'Sprint 12', 'group_chat_list names the folder')
+})
+
+test('a thread started into an existing folder joins it, and no second folder is made', async () => {
+  const chatId = await chatForFolders('folders-existing@example.test', 'folders existing')
+  const first = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'one', {
+    title: 'First',
+  })
+  // A person made the folder and filed a thread in it, the way a drag writes.
+  const { version } = await layoutStore.readThreadLayout(chatId)
+  await layoutStore.writeThreadLayout(
+    chatId,
+    {
+      entries: [
+        { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [first.thread.id] } },
+      ],
+    },
+    version,
+  )
+
+  const second = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'two', {
+    title: 'Second',
+    folder: 'Reviews',
+  })
+
+  assert.deepEqual(await foldersOf(chatId), [`Reviews[${first.thread.id},${second.thread.id}]`])
+})
+
+test('a thread started with no folder leaves the layout untouched and lists at the top level', async () => {
+  const chatId = await chatForFolders('folders-omitted@example.test', 'folders omitted')
+
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'loose')
+
+  assert.equal(started.folder, null)
+  assert.equal((await layoutStore.readThreadLayout(chatId)).version, 0, 'nothing was written to the layout')
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+  assert.equal((await listedThread(chatId, ref))?.folder, null)
+})
+
+test('a blank folder name is refused before a thread is created', async () => {
+  const chatId = await chatForFolders('folders-blank@example.test', 'folders blank')
+
+  await assert.rejects(
+    () => model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'hi', { folder: '   ' }),
+    /A folder needs a name/,
+  )
+  const threads = await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chatId))
+  assert.equal(threads.length, 0)
+})
+
+test('renaming a thread as an agent moves its address the way the UI rename does, and the old one still resolves', async () => {
+  const chatId = await chatForFolders('folders-rename@example.test', 'folders rename')
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'hi', {
+    title: 'Draft Name',
+  })
+  const oldRef = model.threadRefFromSessionKey(started.thread.sessionKey)
+
+  const renamed = await model.renameThreadAsAgent('Agent Session', oldRef, { title: 'Final Name' })
+
+  assert.equal(renamed.title, 'Final Name')
+  assert.match(renamed.ref, /\.final-name$/, 'the address follows the title')
+  assert.equal(renamed.folder, null, 'a title-only rename files nothing')
+  const nodeId = await model.requireAgentNode('Agent Session')
+  assert.equal((await model.resolveThreadForAgent(nodeId, oldRef)).id, started.thread.id, 'the old ref still lands')
+  assert.equal((await model.resolveThreadForAgent(nodeId, renamed.ref)).id, started.thread.id)
+  assert.equal((await layoutStore.readThreadLayout(chatId)).version, 0, 'nothing was written to the layout')
+})
+
+test('filing an existing thread moves it out of its folder into the named one, creating it when missing', async () => {
+  const chatId = await chatForFolders('folders-move@example.test', 'folders move')
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'hi', {
+    folder: 'Inbox',
+  })
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+
+  const moved = await model.renameThreadAsAgent('Agent Session', ref, { folder: 'Done' })
+
+  assert.deepEqual(moved, { ref, title: started.thread.title, folder: 'Done' }, 'a folder-only call keeps the address')
+  assert.deepEqual(await foldersOf(chatId), ['Inbox[]', `Done[${started.thread.id}]`])
+  assert.equal((await listedThread(chatId, ref))?.folder, 'Done')
+})
+
+test('a rename with both a title and a folder does both', async () => {
+  const chatId = await chatForFolders('folders-both@example.test', 'folders both')
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'hi')
+
+  const changed = await model.renameThreadAsAgent(
+    'Agent Session',
+    model.threadRefFromSessionKey(started.thread.sessionKey),
+    { title: 'Release Notes', folder: 'Docs' },
+  )
+
+  assert.equal(changed.title, 'Release Notes')
+  assert.match(changed.ref, /\.release-notes$/)
+  assert.equal(changed.folder, 'Docs')
+  assert.equal((await listedThread(chatId, changed.ref))?.folder, 'Docs')
+})
+
+test('a refused title changes nothing, not even the folder asked for in the same call', async () => {
+  const chatId = await chatForFolders('folders-refused@example.test', 'folders refused')
+  await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'a', { title: 'Taken' })
+  const other = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'b', { title: 'Other' })
+
+  const refusal = await captureRefusal(() =>
+    model.renameThreadAsAgent('Agent Session', model.threadRefFromSessionKey(other.thread.sessionKey), {
+      title: 'Taken',
+      folder: 'Somewhere',
+    }),
+  )
+
+  assert.equal(refusal.code, 'slug-taken')
+  assert.deepEqual(await foldersOf(chatId), [])
+})
+
+test('a rename with nothing to change is refused', async () => {
+  const chatId = await chatForFolders('folders-nothing@example.test', 'folders nothing')
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'hi')
+
+  await assert.rejects(
+    () => model.renameThreadAsAgent('Agent Session', model.threadRefFromSessionKey(started.thread.sessionKey), {}),
+    /Nothing to change/,
+  )
+})
+
+test("renaming is the UI rename's gate: a caller outside the chat is refused as for a missing thread", async () => {
+  const chatId = await chatForFolders('folders-outsider@example.test', 'folders outsider')
+  const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'hi')
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+
+  // 'Agent A' is a real agent that was never added to this chat.
+  const outsider = await captureRefusal(() => model.renameThreadAsAgent('Agent A', ref, { folder: 'Mine' }))
+  const missing = await captureRefusal(() => model.renameThreadAsAgent('Agent A', 'nope:nope:nope', { folder: 'Mine' }))
+
+  assert.deepEqual(outsider, missing)
+  assert.deepEqual(await foldersOf(chatId), [])
+})
+
+// ---------------------------------------------------------------------------
 // WHO SENT THE FIRST MESSAGE, AND WHEN.
 //
 // A thread's opening message is somebody's words, and it was the one message

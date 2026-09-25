@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { readThreadLayout, type ThreadLayout, writeThreadLayout } from './thread-layout-store'
+import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/read-model'
+import { layoutToNodes, nodesToLayout } from '../_lib/thread-tree-layout'
+import {
+  folderNameByThreadId,
+  MAX_THREAD_LAYOUT_ATTEMPTS,
+  readThreadLayout,
+  type ThreadLayout,
+  updateThreadLayout,
+  withThreadInFolder,
+  writeThreadLayout,
+} from './thread-layout-store'
 
 const CHAT = 'chat-a'
 const OTHER_CHAT = 'chat-b'
@@ -75,4 +85,176 @@ test('each chat has its own layout', async () => {
 
   assert.deepEqual((await readThreadLayout(CHAT)).layout, layout('a1'))
   assert.deepEqual((await readThreadLayout(OTHER_CHAT)).layout, layout('b1'))
+})
+
+// ── Filing a thread by folder name ─────────────────────────────────────
+
+const ARRANGED: ThreadLayout = {
+  entries: [
+    { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
+    { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+    { kind: 'thread', threadId: 't3' },
+  ],
+}
+
+test('a thread is filed at the end of the folder with exactly that name', () => {
+  assert.deepEqual(withThreadInFolder(ARRANGED, 't3', 'Reviews'), {
+    entries: [
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1', 't3'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+    ],
+  })
+})
+
+test('a thread the layout has never seen is filed the same way', () => {
+  assert.deepEqual(withThreadInFolder(ARRANGED, 'new', 'Ops'), {
+    entries: [
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2', 'new'] } },
+      { kind: 'thread', threadId: 't3' },
+    ],
+  })
+})
+
+test('with no folder of that name, one is made open after the last folder, with an id nobody holds', () => {
+  assert.deepEqual(withThreadInFolder(ARRANGED, 't3', 'Later'), {
+    entries: [
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: 'folder-3', name: 'Later', open: true, threadIds: ['t3'] } },
+    ],
+  })
+  // Into an unarranged chat: the folder becomes its first entry.
+  assert.deepEqual(withThreadInFolder({ entries: [] }, 't1', 'Later'), {
+    entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Later', open: true, threadIds: ['t1'] } }],
+  })
+})
+
+test('the name match is exact: a different case is a different folder', () => {
+  const next = withThreadInFolder(ARRANGED, 't3', 'reviews')
+  assert.deepEqual(
+    next?.entries.flatMap((e) => (e.kind === 'folder' ? [`${e.folder.name}:${e.folder.threadIds.join(',')}`] : [])),
+    ['Reviews:t1', 'Ops:t2', 'reviews:t3'],
+  )
+})
+
+test('moving between folders takes the thread out of the old one, which stays even when empty', () => {
+  assert.deepEqual(withThreadInFolder(ARRANGED, 't1', 'Ops'), {
+    entries: [
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2', 't1'] } },
+      { kind: 'thread', threadId: 't3' },
+    ],
+  })
+})
+
+test('a thread already in that folder needs no write', () => {
+  assert.equal(withThreadInFolder(ARRANGED, 't1', 'Reviews'), null)
+})
+
+test('each filed thread reports its folder name; a top-level thread reports none', () => {
+  assert.deepEqual(
+    [...folderNameByThreadId(ARRANGED)],
+    [
+      ['t1', 'Reviews'],
+      ['t2', 'Ops'],
+    ],
+  )
+})
+
+// Parity with a person's move: the thread list draws the placed thread inside
+// its folder, and the tree it would write back is the same layout -- nothing in
+// the placement is something the list would silently normalise away.
+test('the thread list draws a placed thread in its folder and would write the same layout back', () => {
+  const placed = withThreadInFolder(ARRANGED, 'new', 'Later')
+  assert.ok(placed)
+  const threads = ['t1', 't2', 't3', 'new'].map(
+    (id): GroupChatThreadEntry => ({
+      id,
+      groupChatId: CHAT,
+      title: id,
+      agent: { nodeId: 'node', name: 'Anna', avatarUrl: null },
+      createdAt: new Date(0),
+      sessionKey: `group-chat.chat.anna.${id}`,
+      agentIsMember: true,
+      hasDraft: false,
+    }),
+  )
+  const nodes = layoutToNodes(placed, threads, new Map())
+  const later = nodes.find((n) => n.type === 'folder' && n.folder.name === 'Later')
+  assert.deepEqual(later?.type === 'folder' && later.folder.items.map((i) => i.id), ['new'])
+  assert.deepEqual(nodesToLayout(nodes), placed)
+})
+
+// ── The operation-based write, and a race during it ──────────────────────
+
+test('a change lands on a chat nobody has arranged yet', async () => {
+  await updateThreadLayout('chat-op-fresh', (current) => withThreadInFolder(current, 'new', 'Inbox'))
+  assert.deepEqual((await readThreadLayout('chat-op-fresh')).layout, {
+    entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Inbox', open: true, threadIds: ['new'] } }],
+  })
+})
+
+test('a change with nothing to do writes nothing', async () => {
+  const chat = 'chat-op-noop'
+  await writeThreadLayout(chat, ARRANGED, 0)
+  const before = await readThreadLayout(chat)
+  await updateThreadLayout(chat, (current) => withThreadInFolder(current, 't1', 'Reviews'))
+  assert.equal((await readThreadLayout(chat)).version, before.version)
+})
+
+// The race to guard against: a person's drag lands between this writer's read
+// and its write. The drag must survive, and so must the new thread.
+test('a drag that lands mid-write is kept, and the change is re-applied on top of it', async () => {
+  const chat = 'chat-op-race'
+  await writeThreadLayout(chat, ARRANGED, 0)
+  const dragged = withThreadInFolder(ARRANGED, 't3', 'Reviews')
+  assert.ok(dragged)
+  let reads = 0
+  let runs = 0
+  await updateThreadLayout(
+    chat,
+    (current) => {
+      runs++
+      return withThreadInFolder(current, 'new', 'Ops')
+    },
+    async (id) => {
+      const current = await readThreadLayout(id)
+      if (++reads === 1) {
+        // A person drags t3 into Reviews after this writer has read.
+        assert.notEqual(await writeThreadLayout(id, dragged, current.version), null, 'the drag lands')
+      }
+      return current
+    },
+  )
+  assert.equal(runs, 2, 'the lost race is re-applied once, against a fresh read')
+  assert.deepEqual((await readThreadLayout(chat)).layout, {
+    entries: [
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1', 't3'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2', 'new'] } },
+    ],
+  })
+})
+
+test('a list contended on every attempt gives up with an error, leaving the last writer standing', async () => {
+  const chat = 'chat-op-contended'
+  await writeThreadLayout(chat, layout('t1'), 0)
+  let runs = 0
+  await assert.rejects(
+    updateThreadLayout(
+      chat,
+      (current) => {
+        runs++
+        return withThreadInFolder(current, 'new', 'Inbox')
+      },
+      async (id) => {
+        const current = await readThreadLayout(id)
+        await writeThreadLayout(id, layout(`drag-${runs}`), current.version)
+        return current
+      },
+    ),
+    new RegExp(`changed ${MAX_THREAD_LAYOUT_ATTEMPTS} times`),
+  )
+  assert.equal(runs, MAX_THREAD_LAYOUT_ATTEMPTS)
+  assert.deepEqual((await readThreadLayout(chat)).layout, layout(`drag-${MAX_THREAD_LAYOUT_ATTEMPTS - 1}`))
 })

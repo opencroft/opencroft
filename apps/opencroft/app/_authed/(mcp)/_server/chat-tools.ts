@@ -11,6 +11,7 @@ import {
   deleteThreadAsAgent,
   listGroupChatsForAgentView,
   listThreadTurnsAsAgent,
+  renameThreadAsAgent,
   sendMessageInThreadAsAgent,
   startThreadAsAgent,
   threadCompactStatusAsAgent,
@@ -31,7 +32,8 @@ export const definitions = [
     description:
       'List the group chats you are a member of, with their topic and their threads. ' +
       'Use the `ref` values from this result to address a thread in group_chat_send — ' +
-      'they are opaque handles, not a format to construct. Each thread also carries `contextUsage`: ' +
+      'they are opaque handles, not a format to construct. Each thread carries `folder`: the name of the ' +
+      'thread-list folder it is filed in, or null for a thread at the top level. Each thread also carries `contextUsage`: ' +
       "`{ usedTokens, contextLimit, asOf? }` as last reported by that thread session's own harness, the " +
       'same figure its context ring renders — never estimated here. An offline thread with prior ' +
       'activity reports its last-known reading here too, with `asOf` (ms since epoch) set — its absence ' +
@@ -185,8 +187,38 @@ export const definitions = [
             'Optional name for the thread, which also becomes its address. Omit for an ad-hoc thread, ' +
             'which gets a short generated name instead — most threads are ad-hoc.',
         },
+        folder: {
+          type: 'string',
+          description:
+            "Optional thread-list folder to file the thread in, by its name as shown in the chat's thread " +
+            'list (and in `folder` from group_chat_list). An exact name match goes into that folder; with ' +
+            'none, the folder is created. Omit to leave the thread at the top level.',
+        },
       },
       required: ['chat', 'agent', 'message'],
+    },
+  },
+  {
+    name: 'group_chat_rename_thread',
+    description:
+      'Rename a thread of a group chat you are a member of, file it in a thread-list folder, or both — ' +
+      'what a person does from the thread list. Pass at least one of `title` and `folder`. A new title ' +
+      "also becomes the thread's address: use the `ref` this returns from then on, though the old one " +
+      'keeps working. A `folder` is matched by exact name and created if the chat has none by that name.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        title: { type: 'string', description: 'The new name for the thread.' },
+        folder: {
+          type: 'string',
+          description: 'The folder to move the thread into, by its name as shown in the thread list.',
+        },
+      },
+      required: ['thread'],
     },
   },
   {
@@ -427,8 +459,9 @@ export const handlers: Record<string, ToolHandler> = {
     if (!message) {
       fail(-32602, 'Missing required param: message')
     }
-    const { thread } = await startThreadAsAgent(callerAgent, chat, agent, message, {
+    const { thread, folder } = await startThreadAsAgent(callerAgent, chat, agent, message, {
       title: args.title as string | undefined,
+      folder: args.folder as string | undefined,
     })
     // The ref, in the same shape group_chat_list hands out, so the caller can
     // address the thread it just made without a second lookup. Built by the
@@ -438,11 +471,35 @@ export const handlers: Record<string, ToolHandler> = {
     const ref = threadRefFromSessionKey(thread.sessionKey)
     return textResult(
       JSON.stringify(
-        { ref, title: thread.title, sent: true, note: 'The reply lands in the thread, not here.' },
+        {
+          ref,
+          title: thread.title,
+          folder,
+          sent: true,
+          note: 'The reply lands in the thread, not here.',
+        },
         null,
         2,
       ),
     )
+  },
+
+  // ── group_chat_rename_thread ────────────────────────────────────
+  //
+  // No approval wrapper, same reasoning as group_chat_send: a person may do
+  // exactly this from the thread list of a chat they are in, and the membership
+  // gate (renameThreadAsAgent's own) is the same control their rename answers to.
+  group_chat_rename_thread: async (args, caller) => {
+    const agent = requireCallingAgent(caller)
+    const thread = args.thread as string | undefined
+    if (!thread) {
+      fail(-32602, 'Missing required param: thread')
+    }
+    const renamed = await renameThreadAsAgent(agent, thread, {
+      title: args.title as string | undefined,
+      folder: args.folder as string | undefined,
+    })
+    return textResult(JSON.stringify(renamed, null, 2))
   },
 
   // ── group_chat_delete_thread ────────────────────────────────────

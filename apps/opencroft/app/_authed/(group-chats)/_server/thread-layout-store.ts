@@ -1,4 +1,3 @@
-import { requireGroupChatMember } from '@/app/_authed/(group-chats)/_server/model'
 import { getSetting, upsertSettingCas } from '@/server/data'
 
 // Folder structure and order for ONE group chat's thread list.
@@ -66,17 +65,19 @@ function parseLayout(raw: string): ThreadLayout {
  * Nothing reachable from the browser may call them. A layout is per chat, and
  * the settings table is global, so an ungated write would let any signed-in
  * person rearrange -- or fill with nonsense -- the thread list of a chat they
- * are not in. The gated pair further down is what a server function calls;
- * these stay exported because the concurrency behaviour is worth testing
- * without a signed-in session to build first.
+ * are not in. The gated pair in thread-layout-access.ts is what a server
+ * function calls, and the group-chat model calls `updateThreadLayout` below
+ * only behind its own agent-membership gate; these stay exported because the
+ * concurrency behaviour is worth testing without a signed-in session to build
+ * first.
  *
- * That sentence stays true AFTER the gate below, by a route the gate cannot
+ * That sentence stays true AFTER the gated pair, by a route the gate cannot
  * reach: the generic settings writes take a caller-supplied id, carry no
  * authorization of their own, and are callable endpoints regardless of which
  * page links to them. Worse for this row than a plain overwrite -- the generic
  * write does not touch `version`, so the next drag compare-and-swaps against a
  * version that is stale without looking stale, succeeds, and clobbers with no
- * refusal and no toast. The gate here closes the door this file opened; it
+ * refusal and no toast. That gate closes the door this file opened; it
  * cannot close one standing open beside it, and every other feature in that
  * table has the same exposure. Not this module's to fix.
  */
@@ -107,7 +108,8 @@ export async function readThreadLayout(groupChatId: string): Promise<VersionedTh
  *
  * Persisting the operation instead of the whole tree would remove the conflict
  * rather than detect it, but that is a change to what the list component
- * reports, so it belongs to that component's own contract.
+ * reports, so it belongs to that component's own contract. A server-side
+ * writer that HAS an operation uses `updateThreadLayout` instead.
  */
 export async function writeThreadLayout(
   groupChatId: string,
@@ -118,32 +120,111 @@ export async function writeThreadLayout(
   return row?.version ?? null
 }
 
-// ── Membership-gated, and the only pair a server function may call ───────
-//
-// Same split as artifacts.ts next door: the check lives with the data rather
-// than in the createServerFn wrapper, so a new caller cannot reach the rows by
-// skipping a layer.
-
-/** The layout of a chat the caller is a member of. */
-export async function getThreadLayout(request: Request, groupChatId: string): Promise<VersionedThreadLayout> {
-  await requireGroupChatMember(request, groupChatId)
-  return readThreadLayout(groupChatId)
-}
+/** How many lost races `updateThreadLayout` absorbs before it gives up. */
+export const MAX_THREAD_LAYOUT_ATTEMPTS = 5
 
 /**
- * Replace the layout of a chat the caller is a member of.
+ * Apply ONE change to the layout as it stands now, re-applying it on a lost race.
  *
- * `null` still means the version check refused it, and it means nothing about
- * membership: a non-member gets the same refusal every other group-chat read
- * gets, thrown, rather than a quiet null that a client would report as a lost
- * race.
+ * This is the retry `writeThreadLayout` warns against, made safe by what is
+ * retried: not a tree built before somebody else's write, but the change
+ * itself, run again against a fresh read. Whatever the other writer did -- a
+ * member's drag, another agent's placement -- is in that read, so it survives,
+ * and the change lands on top of it. Every write is still the same
+ * compare-and-swap, so a person's drag based on the older version is refused
+ * and re-read on their side exactly as it would be against another person.
+ *
+ * `change` returns `null` when the layout already says what it wants, and
+ * nothing is written. It may run more than once, so it must be a pure function
+ * of the layout it is handed.
+ *
+ * Throws after `MAX_THREAD_LAYOUT_ATTEMPTS` lost races rather than looping: a
+ * list rewritten that often in a row is contended by something other than
+ * people, and a bounded refusal says so where an unbounded loop would hang.
+ *
+ * `read` is replaceable so a test can land a competing write between the read
+ * and the write -- the window this exists for -- deterministically, against
+ * the real store.
  */
-export async function putThreadLayout(
-  request: Request,
+export async function updateThreadLayout(
   groupChatId: string,
-  layout: ThreadLayout,
-  expectedVersion: number,
-): Promise<number | null> {
-  await requireGroupChatMember(request, groupChatId)
-  return writeThreadLayout(groupChatId, layout, expectedVersion)
+  change: (layout: ThreadLayout) => ThreadLayout | null,
+  read: (groupChatId: string) => Promise<VersionedThreadLayout> = readThreadLayout,
+): Promise<void> {
+  for (let attempt = 0; attempt < MAX_THREAD_LAYOUT_ATTEMPTS; attempt++) {
+    const current = await read(groupChatId)
+    const next = change(current.layout)
+    if (!next) {
+      return
+    }
+    if ((await writeThreadLayout(groupChatId, next, current.version)) !== null) {
+      return
+    }
+  }
+  throw new Error(`The thread list changed ${MAX_THREAD_LAYOUT_ATTEMPTS} times while it was being written; try again`)
+}
+
+// ── Folders, by the name a person sees ───────────────────────────────────
+//
+// An agent names a folder the way a person reads it off the list, so these
+// work on names. The folder id stays what the list component keys on and is
+// never shown.
+
+/**
+ * The layout with `threadId` filed at the end of the folder named `folderName`,
+ * or `null` when it is already in that folder.
+ *
+ * The thread is taken out of wherever it was first -- top level or another
+ * folder -- so it appears once. The first folder with exactly that name takes
+ * it; with none, a folder is created the way the list's own "Move to new
+ * folder" creates one: open, after the last folder. A folder the thread leaves
+ * is kept even when empty, as it is after a person drags its last thread out.
+ */
+export function withThreadInFolder(layout: ThreadLayout, threadId: string, folderName: string): ThreadLayout | null {
+  const target = layout.entries.find(
+    (entry): entry is Extract<ThreadLayoutEntry, { kind: 'folder' }> =>
+      entry.kind === 'folder' && entry.folder.name === folderName,
+  )
+  if (target?.folder.threadIds.includes(threadId)) {
+    return null
+  }
+  const entries: ThreadLayoutEntry[] = layout.entries
+    .filter((entry) => entry.kind === 'folder' || entry.threadId !== threadId)
+    .map((entry) => {
+      if (entry.kind === 'thread') {
+        return entry
+      }
+      const threadIds = entry.folder.threadIds.filter((id) => id !== threadId)
+      return {
+        kind: 'folder',
+        folder: { ...entry.folder, threadIds: entry === target ? [...threadIds, threadId] : threadIds },
+      }
+    })
+  if (!target) {
+    const lastFolder = entries.findLastIndex((entry) => entry.kind === 'folder')
+    entries.splice(lastFolder + 1, 0, {
+      kind: 'folder',
+      folder: { id: unusedFolderId(layout), name: folderName, open: true, threadIds: [threadId] },
+    })
+  }
+  return { entries }
+}
+
+/** Same id scheme as the list component's, skipping any the layout holds. */
+function unusedFolderId(layout: ThreadLayout): string {
+  const taken = new Set(layout.entries.flatMap((entry) => (entry.kind === 'folder' ? [entry.folder.id] : [])))
+  let n = 1
+  while (taken.has(`folder-${n}`)) {
+    n++
+  }
+  return `folder-${n}`
+}
+
+/** The name of the folder each filed thread is in. A top-level thread has no entry. */
+export function folderNameByThreadId(layout: ThreadLayout): Map<string, string> {
+  return new Map(
+    layout.entries.flatMap((entry) =>
+      entry.kind === 'folder' ? entry.folder.threadIds.map((id) => [id, entry.folder.name] as const) : [],
+    ),
+  )
 }
