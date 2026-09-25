@@ -63,6 +63,7 @@ export function CommandAutocomplete({ items, activeIndex, onSelect, onHover }: C
   const activeRef = useRef<HTMLButtonElement | null>(null)
   // Keep the keyboard-active row visible as arrows move it; 'nearest' so mouse
   // scrolling isn't yanked back when the index hasn't left the viewport.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeIndex is the trigger, not an input -- the body reads the ref it moves
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex])

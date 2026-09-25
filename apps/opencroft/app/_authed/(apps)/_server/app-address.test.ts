@@ -162,23 +162,17 @@ test('a transfer hands back the moved row, and the address that reached it stops
 // "OpenCroft" arriving beside a target's own "opencroft" becomes
 // "OpenCroft 2" / `opencroft-2`, never "Service" / `service` just because
 // that happened to be the space it came from.
-test('a transfer onto a taken slug suffixes its OWN name and slug, not the donor space\'s', async () => {
+test("a transfer onto a taken slug suffixes its OWN name and slug, not the donor space's", async () => {
   // Donor space is named "Service" on purpose -- an implementation that
   // falls back to the donor's own name/slug on collision would produce
   // "Service" / `service` here, which is the exact bug being guarded against.
   const donor = await spaceHolding(`Service-${suffix}`, 'placeholder-donor')
-  await db
-    .update(spaceApp)
-    .set({ name: 'OpenCroft', slug: 'opencroft' })
-    .where(eq(spaceApp.id, donor.row.id))
+  await db.update(spaceApp).set({ name: 'OpenCroft', slug: 'opencroft' }).where(eq(spaceApp.id, donor.row.id))
   await getSpacesRegistry().createGraph(donor.space.slug, 'OpenCroft', 'opencroft', donor.row.id)
   const from = `${donor.space.slug}.opencroft`
 
   const target = await spaceHolding(`OpenCroft-${suffix}`, 'placeholder-target')
-  await db
-    .update(spaceApp)
-    .set({ name: 'Design Kit', slug: 'opencroft' })
-    .where(eq(spaceApp.id, target.row.id))
+  await db.update(spaceApp).set({ name: 'Design Kit', slug: 'opencroft' }).where(eq(spaceApp.id, target.row.id))
   await getSpacesRegistry().createGraph(target.space.slug, 'Design Kit', 'opencroft', target.row.id)
 
   const moved = await transferSpaceAppImpl(from, target.space.slug)

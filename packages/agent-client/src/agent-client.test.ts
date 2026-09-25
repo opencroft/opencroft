@@ -777,7 +777,7 @@ test('a replay reproduces subagent transcripts: announced, nested, and closed', 
   // And the cold-open tail window a reconnecting chat is served must carry
   // them too — this is the read the SSE stream actually performs.
   const window = client.getRecordsWindow(sessionId, { records: 20 })
-  assert.ok(window && window.events.some((event) => event.kind === 'subagent_event'))
+  assert.ok(window?.events.some((event) => event.kind === 'subagent_event'))
   await client.deleteSession(sessionId)
 })
 
@@ -1702,13 +1702,14 @@ test('a restored session still hands a cold subscriber the live plan', async () 
 
 test('a form elicitation surfaces its schema and resolves with the content object', async () => {
   const h = await setup('openclaw')
-  const client = buildClient(() => h.sessionId, 'local')
+  const { createElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation)
   const schema = {
     type: 'object' as const,
     properties: { choice: { type: 'string' as const, oneOf: [{ const: 'a', title: 'A' }] } },
     required: ['choice'],
   }
-  const response = client.createElicitation!({
+  const response = createElicitation({
     mode: 'form',
     sessionId: h.sessionId,
     message: 'Pick one',
@@ -1726,8 +1727,9 @@ test('a form elicitation surfaces its schema and resolves with the content objec
 
 test('a url elicitation surfaces its link and resolves from the agent completion notification', async () => {
   const h = await setup('openclaw')
-  const client = buildClient(() => h.sessionId, 'local')
-  const response = client.createElicitation!({
+  const { createElicitation, completeElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation && completeElicitation)
+  const response = createElicitation({
     mode: 'url',
     sessionId: h.sessionId,
     message: 'Authenticate',
@@ -1737,7 +1739,7 @@ test('a url elicitation surfaces its link and resolves from the agent completion
   const ask = h.events.find((event) => event.kind === 'ask_user')
   assert.ok(ask && ask.kind === 'ask_user')
   assert.equal(ask.url, 'https://example.invalid/login')
-  await client.completeElicitation!({ elicitationId: 'elic-1' })
+  await completeElicitation({ elicitationId: 'elic-1' })
   assert.deepEqual(await response, { action: 'accept' })
   assert.ok(h.events.some((event) => event.kind === 'ask_user_resolved' && event.requestId === ask.requestId))
   await h.client.deleteSession(h.sessionId)
@@ -1764,14 +1766,15 @@ test('a host-raised askUser renders as the same ask_user event and answers with 
 
 test('a plain-message elicitation still takes a free-text answer, and no answer still cancels', async () => {
   const h = await setup('openclaw')
-  const client = buildClient(() => h.sessionId, 'local')
-  const first = client.createElicitation!({ mode: '_test/free-text', sessionId: h.sessionId, message: 'Say something' })
+  const { createElicitation } = buildClient(() => h.sessionId, 'local')
+  assert.ok(createElicitation)
+  const first = createElicitation({ mode: '_test/free-text', sessionId: h.sessionId, message: 'Say something' })
   const firstAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
   assert.ok(firstAsk && firstAsk.kind === 'ask_user')
   assert.equal(firstAsk.form, undefined)
   h.client.resolveElicitation(firstAsk.requestId, 'hello')
   assert.deepEqual(await first, { action: 'accept', content: { answer: 'hello' } })
-  const second = client.createElicitation!({ mode: '_test/free-text', sessionId: h.sessionId, message: 'Say more' })
+  const second = createElicitation({ mode: '_test/free-text', sessionId: h.sessionId, message: 'Say more' })
   const secondAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
   assert.ok(secondAsk && secondAsk.kind === 'ask_user')
   h.client.resolveElicitation(secondAsk.requestId)

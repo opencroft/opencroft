@@ -975,9 +975,11 @@ function SubagentBlock({
         <div className='flex flex-col gap-2 border-t border-border/40 px-3 py-2'>
           {item.items.map((child, i) => {
             if (child.kind === 'assistant-text') {
+              // biome-ignore lint/suspicious/noArrayIndexKey: text and thinking entries carry no id and their text may repeat; the host rebuilds this list whole
               return child.text.trim() ? <Markdown key={i} text={child.text} /> : null
             }
             if (child.kind === 'thinking') {
+              // biome-ignore lint/suspicious/noArrayIndexKey: as for the text entry above
               return <ThinkingBlock key={i} text={child.text} />
             }
             if (child.kind === 'subagent') {

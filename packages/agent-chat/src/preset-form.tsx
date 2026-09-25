@@ -379,8 +379,8 @@ export function AgentPresetForm({
           placeholder={isNative ? 'Ask the endpoint' : 'Unknown'}
         />
         <FieldDescription>
-          Tokens. Leave empty to use the window the harness reports; set it to override that figure, or when the
-          harness reports none — the context ring shows a bare token count without one.
+          Tokens. Leave empty to use the window the harness reports; set it to override that figure, or when the harness
+          reports none — the context ring shows a bare token count without one.
         </FieldDescription>
       </Field>
 

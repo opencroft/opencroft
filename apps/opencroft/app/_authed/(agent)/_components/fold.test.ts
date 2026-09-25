@@ -54,7 +54,10 @@ test('thinking is waiting minus delegation: dots drop while a subagent runs, wai
   assert.equal(during.thinking, false, 'but nothing is being generated: no dots')
 
   const closed = fold(
-    [...spawned, { kind: 'subagent', subagent: { subagentSessionId: 'child-1', name: 'Worker', task: 'dig', state: 'completed' } }],
+    [
+      ...spawned,
+      { kind: 'subagent', subagent: { subagentSessionId: 'child-1', name: 'Worker', task: 'dig', state: 'completed' } },
+    ],
     0,
   )
   assert.equal(closed.thinking, true, 'the delegation over, the open turn is the agent thinking again')

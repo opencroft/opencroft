@@ -108,10 +108,7 @@ export interface AgentClientOptions {
   //
   // Absent means a host with no attachment store: a prompt's attachments are
   // then reported as not having travelled, and the text goes alone.
-  loadAttachments?: (request: {
-    sessionKey?: string
-    ids: readonly string[]
-  }) => Promise<readonly PromptAttachment[]>
+  loadAttachments?: (request: { sessionKey?: string; ids: readonly string[] }) => Promise<readonly PromptAttachment[]>
   tools?: ToolsInput
   skills?: SkillsInput
   skillHandler?: SkillHandler
@@ -1824,7 +1821,10 @@ function supportsTools(selection: AgentSelection): boolean {
 // has no "fork empty" spelling, so no fork point is sent and the agent copies
 // the whole transcript. This session's log still rewinds (the reader sees the
 // edit land), but the agent's own copy of the older turns stays in its context.
-function forkCutoffMeta(session: { events: ChatEvent[] }, boundary: number | null): Record<string, unknown> | undefined {
+function forkCutoffMeta(
+  session: { events: ChatEvent[] },
+  boundary: number | null,
+): Record<string, unknown> | undefined {
   if (boundary === null) {
     return undefined
   }
@@ -3847,7 +3847,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             const offered = selectOptionValues(option.options)
               .map((entry) => entry.value)
               .filter((entry): entry is string => typeof entry === 'string')
-            const list = offered.length > 8 ? `${offered.slice(0, 8).join(', ')} … (${offered.length} offered)` : offered.join(', ')
+            const list =
+              offered.length > 8
+                ? `${offered.slice(0, 8).join(', ')} … (${offered.length} offered)`
+                : offered.join(', ')
             emit(sessionId, {
               kind: 'error',
               message: `Model "${selection.model}" is not offered by ${

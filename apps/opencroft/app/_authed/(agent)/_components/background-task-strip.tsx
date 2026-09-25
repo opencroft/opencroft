@@ -2,7 +2,6 @@
 
 import type { AsyncTaskInfo } from 'agent-client/types'
 import { Loader2, Pause, Square } from 'lucide-react'
-
 import { Button } from 'ui/components/ui/button'
 
 // The live background-work strip: the detached tasks a harness reported that
@@ -27,9 +26,7 @@ export function BackgroundTaskStrip({
   }
   return (
     <div className='flex flex-col gap-1.5 rounded-md border border-border/60 bg-muted/20 p-2'>
-      <div className='px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
-        Background work
-      </div>
+      <div className='px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>Background work</div>
       {tasks.map((task) => (
         <div key={task.asyncTaskId} className='flex items-center gap-2 rounded px-1 py-0.5'>
           {task.state === 'paused' ? (

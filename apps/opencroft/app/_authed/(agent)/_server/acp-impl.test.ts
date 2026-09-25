@@ -32,9 +32,9 @@ import { buildSpawnConfig } from 'agent-client/resolve'
 import type { AgentSelection } from 'agent-client/types'
 
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
+import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import {
   editTurnLocalImpl,
   ensureLocalSessionImpl,
@@ -189,7 +189,12 @@ test('once a message is delivered, a later ensureLocalSession call for the same 
   const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(opened.created, true)
 
-  await promptLocalImpl({ sessionId: opened.sessionId, text: 'hello', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await promptLocalImpl({
+    sessionId: opened.sessionId,
+    text: 'hello',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
 
   const resumed = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(resumed.created, false, 'a session that already received a message is never "new" again')
@@ -222,7 +227,12 @@ test('a restart before the first turn ends resumes the same session instead of c
   const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'implement the fix',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   forgetInMemorySession(tabKey)
 
   const afterRestart = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
@@ -259,7 +269,12 @@ test('a dead pointer falls back to a fresh session that still gets the full cont
   const tabKey = `agent-test-tab-${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'implement the fix',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   assert.deepEqual(await readPersistedSession(tabKey), { id: first.sessionId, prompted: true })
 
   // The pointer survives, the session does not.
@@ -328,7 +343,12 @@ test('a message after unload reattaches to the SAME session instead of starting 
   const tabKey = `resume-test-tab-${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'implement the fix',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await stopLocalSessionProcessImpl(tabKey)
 
   const afterUnload = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
@@ -368,7 +388,12 @@ test('a restore that fails keeps the recorded transcript and the pointer, and th
   seedMockConnection(selection, { canLoad: true, resumable: true })
   const tabKey = `resume-test-tab-${crypto.randomUUID()}`
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'remember me', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'remember me',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await flushSessionEvents()
   const recorded = await readSessionEvents(tabKey)
   assert.ok(recorded.some((event) => event.kind === 'user'))
@@ -377,7 +402,11 @@ test('a restore that fails keeps the recorded transcript and the pointer, and th
   seedMockConnection(selection, { canLoad: true, resumable: true, resumeFails: true })
   await assert.rejects(ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey }), /would not start/)
   assert.deepEqual(await readSessionEvents(tabKey), recorded, 'the transcript is exactly as it was')
-  assert.deepEqual(await readPersistedSession(tabKey), { id: first.sessionId, prompted: true }, 'and still names the session')
+  assert.deepEqual(
+    await readPersistedSession(tabKey),
+    { id: first.sessionId, prompted: true },
+    'and still names the session',
+  )
 
   seedMockConnection(selection, { canLoad: true, resumable: true })
   const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
@@ -767,7 +796,12 @@ test('reattaching an unloaded session restores its last usage live -- never as a
   const tabKey = `dock-test-tab-${crypto.randomUUID()}`
 
   const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
-  await promptLocalImpl({ sessionId: first.sessionId, text: 'implement the fix', queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'implement the fix',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
   await writePersistedUsage(first.sessionId, { used: 8_000, size: 200_000 })
   await stopLocalSessionProcessImpl(tabKey)
 

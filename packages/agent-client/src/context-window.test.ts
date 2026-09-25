@@ -71,7 +71,11 @@ test('a non-positive configured window is not configured — the reported size s
   // what gets shown, the harness's figure is.
   assert.equal(knownContextWindow(selection({ contextWindow: 0 }), 200_000), 200_000)
   assert.equal(knownContextWindow(selection({ contextWindow: -1 }), 200_000), 200_000)
-  assert.equal(knownContextWindow(selection({ contextWindow: 0 }), undefined), undefined, 'and with nothing reported, nothing shows')
+  assert.equal(
+    knownContextWindow(selection({ contextWindow: 0 }), undefined),
+    undefined,
+    'and with nothing reported, nothing shows',
+  )
 })
 
 test('a non-finite window is not a window, from either source', () => {

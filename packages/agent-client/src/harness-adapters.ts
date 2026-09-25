@@ -230,7 +230,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // advertised id — a model that matches nothing is reported as an error
     // event instead of being skipped silently.
     selectionEnv: opencodeSelectionEnv,
-    note: 'Models come from the selected provider, wired into OpenCode automatically as an OpenAI-compatible provider — the chat model picker lists them as `provider/model`. Context variants like `[1m]` are not offered (the OpenAI-compatible endpoint rejects them). Leave the model blank for OpenCode\'s default.',
+    note: "Models come from the selected provider, wired into OpenCode automatically as an OpenAI-compatible provider — the chat model picker lists them as `provider/model`. Context variants like `[1m]` are not offered (the OpenAI-compatible endpoint rejects them). Leave the model blank for OpenCode's default.",
   },
   {
     id: 'copilot',

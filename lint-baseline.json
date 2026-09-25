@@ -30,12 +30,9 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 839,
-  "total": 380,
+  "filesScanned": 948,
+  "total": 341,
   "entries": {
-    "apps/opencroft/app/_authed/(agent)/_server/acp-impl.test.ts": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
     },
@@ -66,11 +63,6 @@
     "apps/opencroft/app/_authed/(dashboard)/_canvas/flow-editor.css": {
       "lint/complexity/noImportantStyles": 11
     },
-    "apps/opencroft/app/_authed/(dashboard)/_canvas/flow-editor.tsx": {
-      "lint/a11y/useAriaPropsForRole": 1,
-      "lint/a11y/useFocusableInteractive": 1,
-      "lint/a11y/useSemanticElements": 1
-    },
     "apps/opencroft/app/_authed/(dashboard)/_canvas/node-frame.tsx": {
       "lint/a11y/useValidAriaRole": 2
     },
@@ -82,9 +74,6 @@
       "lint/a11y/useButtonType": 1,
       "lint/complexity/noUselessFragments": 1,
       "lint/correctness/noUnreachable": 1
-    },
-    "apps/opencroft/app/_authed/(dashboard)/_canvas/use-clipboard.ts": {
-      "lint/style/noNonNullAssertion": 2
     },
     "apps/opencroft/app/_authed/(docker)/_server/actions-parse.ts": {
       "lint/style/useNodejsImportProtocol": 1
@@ -101,9 +90,6 @@
     "apps/opencroft/app/_authed/(extension-editor)/_actions/installed-extensions-actions.test.ts": {
       "format": 1
     },
-    "apps/opencroft/app/_authed/(extension-editor)/_actions/installed-extensions-actions.ts": {
-      "lint/style/useTemplate": 1
-    },
     "apps/opencroft/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl.ts": {
       "lint/suspicious/noExplicitAny": 1
     },
@@ -113,27 +99,8 @@
     "apps/opencroft/app/_authed/(extension-editor)/_components/code-panel.tsx": {
       "format": 1
     },
-    "apps/opencroft/app/_authed/(extension-editor)/_components/extension-editor.tsx": {
-      "lint/complexity/useOptionalChain": 1,
-      "lint/correctness/useExhaustiveDependencies": 2
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_components/extension-workspace.tsx": {
-      "lint/suspicious/noArrayIndexKey": 2
-    },
     "apps/opencroft/app/_authed/(extension-editor)/_components/extensions-list-panel.tsx": {
-      "format": 1,
-      "lint/a11y/useButtonType": 2,
       "lint/correctness/useExhaustiveDependencies": 2
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_components/extensions-page.tsx": {
-      "lint/complexity/useOptionalChain": 1,
-      "lint/correctness/useExhaustiveDependencies": 2
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_components/file-tabs.tsx": {
-      "lint/a11y/noAutofocus": 1,
-      "lint/a11y/noStaticElementInteractions": 1,
-      "lint/a11y/useButtonType": 2,
-      "lint/a11y/useKeyWithClickEvents": 1
     },
     "apps/opencroft/app/_authed/(extension-editor)/_components/preview-panel.tsx": {
       "lint/correctness/useExhaustiveDependencies": 1
@@ -142,7 +109,6 @@
       "lint/style/useTemplate": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/server/index.ts": {
-      "assist/source/organizeImports": 1,
       "lint/complexity/useLiteralKeys": 8
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/server/openai.ts": {
@@ -173,7 +139,6 @@
       "format": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-tool.tsx": {
-      "assist/source/organizeImports": 1,
       "lint/correctness/noUnusedFunctionParameters": 1,
       "lint/correctness/noUnusedVariables": 1
     },
@@ -249,9 +214,6 @@
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/server.tsx": {
       "assist/source/organizeImports": 1,
       "format": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal.tsx": {
-      "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/text-generation.tsx": {
       "assist/source/organizeImports": 1
@@ -329,10 +291,6 @@
       "lint/style/useTemplate": 5
     },
     "apps/opencroft/app/_authed/(filemanager)/api/files.upload.ts": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
-    "apps/opencroft/app/_authed/(group-chats)/_server/actions.ts": {
       "assist/source/organizeImports": 1,
       "format": 1
     },
@@ -424,9 +382,6 @@
     "apps/opencroft/app/_authed/(mcp)/_server/audit.ts": {
       "lint/style/useTemplate": 1
     },
-    "apps/opencroft/app/_authed/(mcp)/_server/caller.test.ts": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(mcp)/_server/property-path.test.ts": {
       "format": 1
     },
@@ -483,9 +438,6 @@
     },
     "apps/opencroft/app/_lib/wsl/actions.ts": {
       "lint/style/useNodejsImportProtocol": 1
-    },
-    "apps/opencroft/app/_shell/app-layout.tsx": {
-      "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/api/build-info.ts": {
       "lint/style/useNodejsImportProtocol": 1
@@ -619,9 +571,6 @@
     },
     "packages/terminal/src/server/ssh.ts": {
       "lint/style/noNonNullAssertion": 6
-    },
-    "packages/ui/src/components/experimental/segmented-button.tsx": {
-      "lint/a11y/useButtonType": 1
     },
     "packages/ui/src/ext.ts": {
       "assist/source/organizeImports": 1
