@@ -2808,6 +2808,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // Snapshots are emitted only when the end state differs from the logged one:
   // a resume that changed nothing — every resume on a harness that keeps its
   // state — must not append to the host's log each time a chat reopens.
+  //
+  // An external fork goes through here too, with the source session's state
+  // as `logged` (see forkSession): a fork answer is the same kind of fresh
+  // start as a resume answer.
   async function reconcileResumedState(
     sessionId: string,
     connection: AgentConnection,
@@ -4971,7 +4975,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         selection: opts?.sessionKey ? { ...session.selection, sessionKey: opts.sessionKey } : session.selection,
         events: forkedEvents,
         subscribers: new Set(),
-        modes: response.modes ? toSessionModes(response.modes) : session.modes,
+        // A copy when the source's is carried over: setMode and the reconcile
+        // below write `current` in place, and a fork's mode change must not
+        // move the session it branched from.
+        modes: response.modes ? toSessionModes(response.modes) : session.modes ? { ...session.modes } : null,
         // Shares the source session's array reference — safe because every
         // write path (config_option_update, setConfigOption, the loadSession
         // seed above) replaces it wholesale rather than mutating in place.
@@ -4986,6 +4993,24 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // they branched it.
         presence: session.presence,
       })
+      // A fork is a new session to an external harness, and it starts on
+      // whatever that harness starts new sessions on: codex-acp 1.13.1 installs
+      // a fresh state on INITIAL_AGENT_MODE (`agent`, auto-approval) for a
+      // forked thread, and claude-agent-acp 0.79.0 rebuilds its session when the
+      // MCP list differs. A fork of a session the reader put on "Ask for
+      // approval" would otherwise run the edited turn with approvals it never
+      // gave. The source's current state is what the reader chose, so it is the
+      // wanted state, reconciled exactly as a resume is — and before this
+      // returns, because every caller re-sends the edited turn right after.
+      //
+      // The native harness copies the source's mode into the fork itself and
+      // is left to do so.
+      if (!native) {
+        await reconcileResumedState(response.sessionId, connection, response, {
+          modes: session.modes ? { ...session.modes } : null,
+          configOptions: session.configOptions,
+        })
+      }
       return meta
     },
 

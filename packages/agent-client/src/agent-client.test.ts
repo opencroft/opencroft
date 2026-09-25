@@ -6538,8 +6538,20 @@ function recordedCodexSession(mode: string, available = CODEX_MODES): ChatEvent[
 // `keepsState` models the other kind of harness: one whose resume of a live
 // session answers with what it already had (claude-agent-acp 0.79.0,
 // getOrCreateSession, when the resume changes nothing).
+//
+// A session/fork goes through the same tryCreateSession: the forked thread
+// keeps the source's model (SessionFork.ts reads it off the thread) but gets
+// a fresh SessionState on the initial mode, and forkSession answers with
+// `modes` and `configOptions` built from it. `keepsState` forks carry the
+// source's mode over instead.
 function codexSetup(
-  options: { closeSupported?: boolean; refuseMode?: boolean; keepsState?: boolean; startMode?: string } = {},
+  options: {
+    closeSupported?: boolean
+    refuseMode?: boolean
+    keepsState?: boolean
+    startMode?: string
+    forkSupported?: boolean
+  } = {},
 ) {
   counter += 1
   const selection: AgentSelection = {
@@ -6552,12 +6564,16 @@ function codexSetup(
   }
   const sessionId = `codex-thread-${counter}`
   const state = { mode: options.startMode ?? 'agent', model: 'gpt-5' }
+  const forkId = `${sessionId}-fork`
+  const forkState = { mode: '', model: '' }
+  // Each request lands on the thread it names: a fork's mode is its own.
+  const stateOf = (id: string) => (id === forkId ? forkState : state)
   const wire: string[] = []
-  const setMode = (modeId: string) => {
+  const setMode = (id: string, modeId: string) => {
     if (options.refuseMode) {
       throw new Error('Invalid params')
     }
-    state.mode = modeId
+    stateOf(id).mode = modeId
   }
   const connection = {
     resumeSession: async () => {
@@ -6574,19 +6590,33 @@ function codexSetup(
       wire.push('close')
       return {}
     },
-    setSessionMode: async (params: { modeId: string }) => {
+    unstable_forkSession: async () => {
+      wire.push('fork')
+      forkState.mode = options.keepsState ? state.mode : 'agent'
+      forkState.model = state.model
+      return {
+        sessionId: forkId,
+        modes: { availableModes: CODEX_MODES, currentModeId: forkState.mode },
+        configOptions: codexConfigOptions(forkState),
+      }
+    },
+    prompt: async (params: { sessionId: string }) => {
+      wire.push(`prompt on ${stateOf(params.sessionId).mode}`)
+      return { stopReason: 'end_turn' }
+    },
+    setSessionMode: async (params: { sessionId: string; modeId: string }) => {
       wire.push(`mode:${params.modeId}`)
-      setMode(params.modeId)
+      setMode(params.sessionId, params.modeId)
       return {}
     },
-    setSessionConfigOption: async (params: { configId: string; value: string }) => {
+    setSessionConfigOption: async (params: { sessionId: string; configId: string; value: string }) => {
       wire.push(`config:${params.configId}=${params.value}`)
       if (params.configId === 'mode') {
-        setMode(params.value)
+        setMode(params.sessionId, params.value)
       } else {
-        state.model = params.value
+        stateOf(params.sessionId).model = params.value
       }
-      return { configOptions: codexConfigOptions(state) }
+      return { configOptions: codexConfigOptions(stateOf(params.sessionId)) }
     },
   } as unknown as AgentConnection
   acpStore().connections.set(connectionKey(selection), {
@@ -6594,13 +6624,19 @@ function codexSetup(
     lastSessionId: null,
     loadSession: true,
     resumeSession: true,
-    forkSupported: false,
+    forkSupported: options.forkSupported === true,
     closeSupported: options.closeSupported === true,
     initialized: Promise.resolve(),
   })
   const observed: ChatEvent[] = []
-  const client = createAgentClient({ onEvent: (_sessionId, event) => observed.push(event) })
-  return { client, sessionId, selection, wire, state, observed }
+  const observedFor: Array<{ sessionId: string; event: ChatEvent }> = []
+  const client = createAgentClient({
+    onEvent: (eventSessionId, event) => {
+      observed.push(event)
+      observedFor.push({ sessionId: eventSessionId, event })
+    },
+  })
+  return { client, sessionId, selection, wire, state, forkId, forkState, observed, observedFor }
 }
 
 function storedConfigOptions(sessionId: string): unknown {
@@ -6711,6 +6747,56 @@ test('an adapter that opts in closes before the refresh resume, and only when th
   } finally {
     delete adapter.mcpRefreshReopens
   }
+})
+
+test('a fork of a Codex session runs its re-sent turn on the mode of the source, not the one forks start on', async () => {
+  // The edit flow: fork at the edited turn, then re-send it to the fork. The
+  // fork answers on `agent` (auto-approval) whatever the source ran on, so a
+  // read-only session's edit would run with approvals the reader never gave.
+  const h = codexSetup({ forkSupported: true })
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('read-only'))
+  h.wire.length = 0
+
+  const meta = await h.client.forkSession(h.sessionId, 0)
+  assert.ok(meta)
+  assert.equal(meta.id, h.forkId)
+  await h.client.prompt(meta.id, 'fix it properly', { queue: 'wait', origin: { kind: 'system' } })
+  await settle()
+
+  // Both ways Codex takes the mode, as on a resume, and both before the turn.
+  assert.deepEqual(h.wire, ['fork', 'mode:read-only', 'config:mode=read-only', 'prompt on read-only'])
+  assert.equal(h.forkState.mode, 'read-only', 'the forked thread runs on the choice the source runs on')
+  assert.equal(h.state.mode, 'read-only', 'and the source is left where it was')
+  assert.equal(h.client.sessionModes(meta.id)?.current, 'read-only')
+  assert.deepEqual(h.client.sessionModes(meta.id)?.available, h.client.sessionModes(h.sessionId)?.available)
+  assert.deepEqual(storedConfigOptions(meta.id), codexConfigOptions({ mode: 'read-only', model: 'gpt-5' }))
+  // The fork ends where the source is, which is what its carried-over log
+  // already says: no snapshot, no complaint.
+  assert.deepEqual(
+    h.observedFor.filter(
+      ({ sessionId, event }) =>
+        sessionId === meta.id && (event.kind === 'modes' || event.kind === 'config_options' || event.kind === 'error'),
+    ),
+    [],
+  )
+  await h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(meta.id)
+})
+
+test('a fork whose harness carried the source state over is sent nothing before its turn', async () => {
+  const h = codexSetup({ forkSupported: true, startMode: 'read-only', keepsState: true })
+  await h.client.restoreSession(h.sessionId, h.selection, recordedCodexSession('read-only'))
+  h.wire.length = 0
+
+  const meta = await h.client.forkSession(h.sessionId, 0)
+  assert.ok(meta)
+  await h.client.prompt(meta.id, 'fix it properly', { queue: 'wait', origin: { kind: 'system' } })
+  await settle()
+
+  assert.deepEqual(h.wire, ['fork', 'prompt on read-only'])
+  assert.equal(h.client.sessionModes(meta.id)?.current, 'read-only')
+  await h.client.deleteSession(h.sessionId)
+  await h.client.deleteSession(meta.id)
 })
 
 test('a Codex session/load replay rebuilds the transcript and seeds modes and options from the answer', async () => {
