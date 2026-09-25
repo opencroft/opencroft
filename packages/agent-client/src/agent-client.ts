@@ -35,6 +35,7 @@ import {
 
 import { type AttachmentRef, type DeliveredAttachment, isImageMime, type PromptAttachment } from './attachments'
 import { type ChatMessageRecord, toChatMessages } from './chat-completion'
+import { findSelectOption, MODE_SELECTOR, MODEL_SELECTOR, THOUGHT_LEVEL_SELECTOR } from './config-selectors'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { errorMessage } from './errors'
@@ -557,6 +558,10 @@ interface ClientStore {
     {
       sessionId: string
       resolve: (response: RequestPermissionResponse) => void
+      // What the request offered, so a rejection without a chosen option can
+      // still be answered with the request's own reject (see
+      // rejectionResponse).
+      options?: RequestPermissionRequest['options']
     }
   >
   pendingElicitations: Map<
@@ -1642,6 +1647,32 @@ function pickAllowOption(request: RequestPermissionRequest): string {
   return request.options.find((option) => option.kind.startsWith('allow'))?.optionId ?? 'allow'
 }
 
+// A rejection, answered with the request's own reject option where it has
+// one, and as ACP `cancelled` only where it has none.
+//
+// `cancelled` is the protocol's word for "the prompt turn was cancelled", and
+// an agent may act on it as exactly that: codex-acp maps it to Codex's
+// `cancel`, which aborts the whole turn (docs/permission-extension.md), so
+// rejecting one command would also throw away the turn's progress. A reject
+// option is the agent's own "no" for THIS call.
+//
+// Codex offers two, both `reject_once`: `decline` ("continue without running
+// it") and `cancel` ("tell Codex what to do differently", which again aborts),
+// in whatever order Codex listed its decisions (src/permissions/options.ts).
+// `decline` is named because it is the one that leaves the turn running; any
+// other agent's first `reject_once` stands in for it. Never `reject_always`,
+// for the reason pickAllowOption never picks `allow_always`: a programmatic
+// answer must not write a persistent rule into the agent's own state.
+export function pickRejectOption(options: RequestPermissionRequest['options'] | undefined): string | undefined {
+  const rejects = (options ?? []).filter((option) => option.kind === 'reject_once')
+  return (rejects.find((option) => option.optionId === 'decline') ?? rejects[0])?.optionId
+}
+
+function rejectionResponse(options: RequestPermissionRequest['options'] | undefined): RequestPermissionResponse {
+  const optionId = pickRejectOption(options)
+  return optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } }
+}
+
 // Resolve the session an elicitation belongs to, scoped to the connection it
 // arrived on, with the global last-prompted session as a fallback. The optional
 // permissionHandler lets the host auto-approve / bypass requests before they
@@ -1680,13 +1711,14 @@ export function buildClient(
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
       }
       if (outcome === 'deny') {
-        return { outcome: { outcome: 'cancelled' } }
+        return rejectionResponse(request.options)
       }
       return new Promise<RequestPermissionResponse>((resolve) => {
         const requestId = randomUUID()
         store.pendingPermissions.set(requestId, {
           sessionId,
           resolve,
+          options: request.options,
         })
         emit(sessionId, {
           kind: 'permission_request',
@@ -1768,7 +1800,7 @@ export function buildClient(
 }
 
 function toSessionModes(modes: {
-  availableModes: { id: string; name: string; description?: string | null }[]
+  availableModes: { id: string; name: string; description?: string | null; _meta?: Record<string, unknown> | null }[]
   currentModeId: string
 }): SessionModes {
   return {
@@ -1776,6 +1808,10 @@ function toSessionModes(modes: {
       id: mode.id,
       name: mode.name,
       description: mode.description ?? undefined,
+      // Kept for classification: an agent may say what a mode DOES here
+      // (codex-acp's `_meta.kind`), which outlasts a renamed id. See
+      // session-modes.ts.
+      ...(mode._meta ? { _meta: mode._meta } : {}),
     })),
     current: modes.currentModeId,
   }
@@ -1895,6 +1931,63 @@ function mcpTransportAccepted(server: AcpMcpServer, capabilities: ConnEntry['mcp
   return true
 }
 
+// ACP carries the permission mode twice -- as session modes and as the `mode`
+// config option -- and nothing obliges an agent to keep both current after a
+// change. codex-acp 1.13.1 answers session/set_mode with `{}` and pushes neither
+// current_mode_update nor config_option_update (src/CodexAcpServer.ts
+// setSessionMode), so without these two the dial and the mode list disagree
+// until the session is reopened. Each side is only written with a value the
+// other already offers, so this never invents a state the agent did not list.
+
+// A successful session/set_mode, recorded on both sides.
+function recordModeChange(sessionId: string, modeId: string): void {
+  const session = store.sessions.get(sessionId)
+  if (session?.modes) {
+    session.modes.current = modeId
+  }
+  emit(sessionId, { kind: 'mode_changed', current: modeId })
+  const option = session ? findSelectOption(session.configOptions, MODE_SELECTOR) : undefined
+  if (!session || !option || option.currentValue === modeId || !selectValues(option.options).includes(modeId)) {
+    return
+  }
+  session.configOptions = session.configOptions.map((entry) =>
+    entry === option ? { ...option, currentValue: modeId } : entry,
+  )
+  emit(sessionId, { kind: 'config_options', options: session.configOptions })
+}
+
+// The other direction: the `mode` config option was just set, and the agent's
+// answer names the mode it is now in.
+function syncModesFromConfig(sessionId: string, configId: string, options: readonly SessionConfigOption[]): void {
+  const session = store.sessions.get(sessionId)
+  const option = findSelectOption(options, MODE_SELECTOR)
+  if (!session?.modes || option?.id !== configId) {
+    return
+  }
+  const current = option.currentValue
+  if (current === session.modes.current || !session.modes.available.some((mode) => mode.id === current)) {
+    return
+  }
+  session.modes.current = current
+  emit(sessionId, { kind: 'mode_changed', current })
+}
+
+// Every value a select offers, flat or grouped.
+function selectValues(options: unknown): string[] {
+  if (!Array.isArray(options)) {
+    return []
+  }
+  return (options as Array<{ value?: unknown; options?: unknown }>).flatMap((entry) =>
+    Array.isArray(entry.options)
+      ? (entry.options as Array<{ value?: unknown }>).flatMap((inner) =>
+          typeof inner.value === 'string' ? [inner.value] : [],
+        )
+      : typeof entry.value === 'string'
+        ? [entry.value]
+        : [],
+  )
+}
+
 // Map a generic effort word ("low" | "high" | …) to the value id of an ACP
 // agent's thought_level select option, matching against its values/labels. The
 // options may be flat or grouped; both are flattened defensively.
@@ -1956,28 +2049,6 @@ function matchModelValue(options: unknown, model: string): string | undefined {
   }
   const bySuffix = flat.filter((option) => option.value?.toLowerCase().endsWith(`/${target}`))
   return bySuffix.length === 1 ? bySuffix[0].value : undefined
-}
-
-// Which config option carries which meaning. ACP marks it with `category`, and
-// every bridge measured on this instance sends one, but the spec is explicit
-// that the field is "UX only", MUST NOT be required for correctness, and that
-// clients MUST handle a missing or unknown one gracefully. So the conventional
-// id -- the same id the chat's own controls key on -- is the fallback. Category
-// is tried first because it is the protocol's own statement of meaning, where
-// an id is a name two unrelated options could both pick.
-interface ConfigSelector {
-  category: string
-  id: string
-}
-
-const MODEL_SELECTOR: ConfigSelector = { category: 'model', id: 'model' }
-const THOUGHT_LEVEL_SELECTOR: ConfigSelector = { category: 'thought_level', id: 'effort' }
-
-function findSelectOption(options: readonly SessionConfigOption[], selector: ConfigSelector) {
-  const hit =
-    options.find((entry) => entry.type === 'select' && entry.category === selector.category) ??
-    options.find((entry) => entry.type === 'select' && entry.id === selector.id)
-  return hit?.type === 'select' ? hit : undefined
 }
 
 // The model that did most of the turn's work, off the harness's per-model
@@ -4274,13 +4345,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       ) {
         await connection
           .setSessionMode({ sessionId, modeId: defaultModeId })
-          .then(() => {
-            const session = store.sessions.get(sessionId)
-            if (session?.modes) {
-              session.modes.current = defaultModeId
-            }
-            emit(sessionId, { kind: 'mode_changed', current: defaultModeId })
-          })
+          .then(() => recordModeChange(sessionId, defaultModeId))
           .catch((error: unknown) => emit(sessionId, { kind: 'error', message: errorMessage(error) }))
       }
       // Apply the reasoning preference to ACP agents that expose a thought_level
@@ -4670,11 +4735,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     async setMode(sessionId: string, modeId: string): Promise<void> {
       const connection = await connectionForSession(sessionId)
       await connection.setSessionMode({ sessionId, modeId })
-      const session = store.sessions.get(sessionId)
-      if (session?.modes) {
-        session.modes.current = modeId
-      }
-      emit(sessionId, { kind: 'mode_changed', current: modeId })
+      recordModeChange(sessionId, modeId)
     },
 
     // Change a dynamic session config option (mode/model/thought_level/etc.)
@@ -4691,6 +4752,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         session.configOptions = response.configOptions
       }
       emit(sessionId, { kind: 'config_options', options: response.configOptions })
+      syncModesFromConfig(sessionId, configId, response.configOptions)
     },
 
     // Ends the session on the agent side before dropping our own state, so its
@@ -5278,11 +5340,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return
       }
       store.pendingPermissions.delete(requestId)
-      pending.resolve(optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } })
+      // No option chosen is a rejection, answered as the request's own reject
+      // where it offers one. The event names the option actually sent, so the
+      // transcript shows what the agent was told.
+      const response = optionId
+        ? { outcome: { outcome: 'selected' as const, optionId } }
+        : rejectionResponse(pending.options)
+      pending.resolve(response)
       emit(pending.sessionId, {
         kind: 'permission_resolved',
         requestId,
-        optionId,
+        optionId: response.outcome.outcome === 'selected' ? response.outcome.optionId : undefined,
       })
     },
 

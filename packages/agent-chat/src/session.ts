@@ -175,10 +175,11 @@ export interface AgentChatSession {
   // Every unresolved free-text elicitation ("ask") for this session.
   asks: PendingAsk[]
   // Answers a pending permission request. Omitting `optionId` (or passing an
-  // empty string) is not "no-op" — it resolves the request as *cancelled*
-  // rather than selected, i.e. the agent is told the request was dismissed
-  // with no option chosen. That is how a plain rejection is expressed, and
-  // what `respondPermissionText` issues before sending its guidance.
+  // empty string) is not "no-op" — it rejects the request: the engine answers
+  // with the request's own one-time reject option, and as *cancelled* only
+  // when the request offers none (agent-client's pickRejectOption). That is
+  // how a plain rejection is expressed, and what `respondPermissionText`
+  // issues before sending its guidance.
   resolvePermission: (requestId: string, optionId?: string) => void
   // Deny the pending permission and tell the agent what to do differently,
   // in the same turn — not every host offers this (a session with no way to

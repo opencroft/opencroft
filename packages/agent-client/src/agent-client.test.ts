@@ -6515,7 +6515,9 @@ function recordedCodexSession(mode: string, available = CODEX_MODES): ChatEvent[
   return [
     {
       kind: 'modes',
-      available: available.map((entry) => ({ id: entry.id, name: entry.name, description: entry.description })),
+      // As the engine records them: each mode keeps the `_meta` the harness
+      // sent (codex-acp's `kind`), so a reopen compares like with like.
+      available: available.map((entry) => ({ ...entry })),
       current: mode,
     },
     { kind: 'config_options', options: codexConfigOptions({ mode, model: 'gpt-5' }) } as ChatEvent,

@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CANONICAL_MODES, type CanonicalModeInfo, canonicalModeId, classifyModes } from './session-modes'
+import {
+  CANONICAL_MODES,
+  type CanonicalModeId,
+  type CanonicalModeInfo,
+  canonicalModeId,
+  classifyModes,
+  modeIdForCanonical,
+  mostSupervisedModeId,
+  SUPERVISION_ORDER,
+} from './session-modes'
 import type { SessionMode } from './types'
 
 // The exact list @agentclientprotocol/claude-agent-acp 0.66.0 builds in
@@ -100,4 +109,22 @@ test('every canonical mode carries its own id and a unique order', () => {
   for (const [key, info] of Object.entries(CANONICAL_MODES)) {
     assert.equal(info.id, key, `${key} does not carry its own id`)
   }
+})
+
+// Regression cover for the Codex registrations (codex-contract.test.ts): a
+// per-adapter table added for one agent must leave Claude's reading alone.
+test("Claude's most supervised mode is still Manual, and its bypass is still found", () => {
+  assert.equal(mostSupervisedModeId('claude', CLAUDE_CODE_MODES), 'default')
+  assert.equal(modeIdForCanonical('claude-subscription', CLAUDE_CODE_MODES, 'bypass'), 'bypassPermissions')
+})
+
+test('a Claude session without bypass offered has no bypass to force', () => {
+  const withoutBypass = CLAUDE_CODE_MODES.filter((mode) => mode.id !== 'bypassPermissions')
+  assert.equal(modeIdForCanonical('claude', withoutBypass, 'bypass'), undefined)
+})
+
+test('the supervision ranking covers every mode but bypass, exactly once', () => {
+  const ranked = [...SUPERVISION_ORDER].sort()
+  const expected = (Object.keys(CANONICAL_MODES) as CanonicalModeId[]).filter((id) => id !== 'bypass').sort()
+  assert.deepEqual(ranked, expected)
 })

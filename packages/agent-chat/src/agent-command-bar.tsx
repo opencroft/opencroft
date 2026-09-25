@@ -2,7 +2,7 @@
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { canonicalEffortId } from 'agent-client/session-effort'
-import { canonicalModeId } from 'agent-client/session-modes'
+import { canonicalModeOf } from 'agent-client/session-modes'
 import {
   type ReactElement,
   type ReactNode,
@@ -22,8 +22,10 @@ import {
   flattenOptions,
   MODE_CONFIG_ID,
   MODEL_CONFIG_ID,
+  modeEntries,
   selectLeftoverBooleanOptions,
   selectLeftoverConfigs,
+  selectOwnButtonOptions,
 } from './agent-command-bar-configs'
 import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
 import { AttachButton } from './components/attach-button'
@@ -439,25 +441,30 @@ export function useAgentCommandBar({
   // The kit selectors take our own values and nothing else, so wire ids are
   // resolved here and mapped back on select. That keeps the synonym registry --
   // which is logic, not presentation -- on this side of the boundary.
+  //
+  // Each control is found by the option's meaning, not by one agent's id for
+  // it (see selectOwnButtonOptions), so what is sent back is the id THIS
+  // agent used, and a host lock names the control by its conventional id.
   const dial = useMemo(() => {
-    const pick = (id: string) =>
-      (configOptions ?? []).find((option) => option.id === id) as
-        | { currentValue?: unknown; options?: unknown }
-        | undefined
-    const modeOption = pick(MODE_CONFIG_ID)
-    const effortOption = pick(EFFORT_CONFIG_ID)
-    const modelOption = pick(MODEL_CONFIG_ID)
-    const fastOption = pick(FAST_MODE_CONFIG_ID) as
-      | { currentValue?: unknown; options?: unknown; type?: unknown; description?: unknown }
+    const own = selectOwnButtonOptions(configOptions)
+    const modeOption = own.mode as { id: string; currentValue?: unknown; options?: unknown } | undefined
+    const effortOption = own.effort as { id: string; currentValue?: unknown; options?: unknown } | undefined
+    const modelOption = own.model as { id: string; currentValue?: unknown; options?: unknown } | undefined
+    const fastOption = own.fast as
+      | { id: string; currentValue?: unknown; options?: unknown; type?: unknown; description?: unknown }
       | undefined
     const fastBoolean = fastOption?.type === 'boolean'
-    const modeWire = flattenOptions(modeOption?.options)
+    const modeWire = modeEntries(modeOption?.options)
     const effortWire = flattenOptions(effortOption?.options)
+    // Read with each value's `_meta`, where an agent may state what the mode
+    // does -- see canonicalModeOf.
+    const modeMeta = new Map(modeWire.map((entry) => [entry.id, entry._meta]))
     // A wire value nothing recognises passes through as itself: the kit renders
     // it with its own label and no grade colour, which is the honest answer.
-    const modeOf = (value: string) => (adapterId ? canonicalModeId(adapterId, value) : undefined) ?? value
+    const modeOf = (value: string) =>
+      (adapterId ? canonicalModeOf(adapterId, { id: value, _meta: modeMeta.get(value) }) : undefined) ?? value
     const effortOf = (value: string) => (adapterId ? canonicalEffortId(adapterId, value) : undefined) ?? value
-    const modeBack = new Map(modeWire.map((entry) => [modeOf(entry.value), entry.value]))
+    const modeBack = new Map(modeWire.map((entry) => [modeOf(entry.id), entry.id]))
     const effortBack = new Map(effortWire.map((entry) => [effortOf(entry.value), entry.value]))
     const effortValues = effortWire.map((entry) => effortOf(entry.value))
     // `default` is offered even by an agent that advertises no such value: it
@@ -473,9 +480,11 @@ export function useAgentCommandBar({
       }
     }
     return {
-      modeOption,
-      effortOption,
-      modeValues: modeWire.map((entry) => modeOf(entry.value)),
+      modeId: modeOption?.id ?? MODE_CONFIG_ID,
+      effortId: effortOption?.id ?? EFFORT_CONFIG_ID,
+      modelId: modelOption?.id ?? MODEL_CONFIG_ID,
+      fastId: fastOption?.id ?? FAST_MODE_CONFIG_ID,
+      modeValues: modeWire.map((entry) => modeOf(entry.id)),
       effortValues,
       modeCurrent: modeOf(String(modeOption?.currentValue ?? '')),
       effortCurrent: effortOf(String(effortOption?.currentValue ?? '')),
@@ -499,6 +508,14 @@ export function useAgentCommandBar({
     [controls, insertText, sendMessage, session.waiting],
   )
 
+  // A host pins a control by its conventional id, not knowing what a given
+  // agent calls the option; the agent's own id is honoured too.
+  const lockedReason = useCallback(
+    (optionId: string, conventionalId: string) =>
+      lockedConfigOptions?.[optionId] ?? lockedConfigOptions?.[conventionalId],
+    [lockedConfigOptions],
+  )
+
   // The bar's pre-settings control group, right after the approval shield.
   // Model leads: it is the least often changed of the three but the one whose
   // current value most changes what the others even mean. Effort before mode:
@@ -514,16 +531,16 @@ export function useAgentCommandBar({
           <ModelSelector
             options={dial.modelOptions}
             current={dial.modelCurrent}
-            onSelect={(value) => onSetConfigOptionRef.current?.(MODEL_CONFIG_ID, value)}
-            lockedReason={lockedConfigOptions?.[MODEL_CONFIG_ID]}
+            onSelect={(value) => onSetConfigOptionRef.current?.(dial.modelId, value)}
+            lockedReason={lockedReason(dial.modelId, MODEL_CONFIG_ID)}
           />
         ) : null}
         {dial.effortValues.length > 0 ? (
           <EffortSelector
             options={dial.effortValues}
             current={dial.effortCurrent}
-            onSelect={(value) => onSetConfigOptionRef.current?.(EFFORT_CONFIG_ID, dial.effortBack.get(value) ?? value)}
-            lockedReason={lockedConfigOptions?.[EFFORT_CONFIG_ID]}
+            onSelect={(value) => onSetConfigOptionRef.current?.(dial.effortId, dial.effortBack.get(value) ?? value)}
+            lockedReason={lockedReason(dial.effortId, EFFORT_CONFIG_ID)}
           />
         ) : null}
         {dial.fastOffered ? (
@@ -531,12 +548,9 @@ export function useAgentCommandBar({
             enabled={dial.fastEnabled}
             description={dial.fastDescription}
             onToggle={(next) =>
-              onSetConfigOptionRef.current?.(
-                FAST_MODE_CONFIG_ID,
-                dial.fastBoolean ? next : next ? FAST_MODE_ON : FAST_MODE_OFF,
-              )
+              onSetConfigOptionRef.current?.(dial.fastId, dial.fastBoolean ? next : next ? FAST_MODE_ON : FAST_MODE_OFF)
             }
-            lockedReason={lockedConfigOptions?.[FAST_MODE_CONFIG_ID]}
+            lockedReason={lockedReason(dial.fastId, FAST_MODE_CONFIG_ID)}
           />
         ) : null}
         {/* Presence, immediately LEFT of the permission-mode dial: the two are
@@ -553,13 +567,13 @@ export function useAgentCommandBar({
           <ModeSelector
             options={dial.modeValues}
             current={dial.modeCurrent}
-            onSelect={(value) => onSetConfigOptionRef.current?.(MODE_CONFIG_ID, dial.modeBack.get(value) ?? value)}
-            lockedReason={lockedConfigOptions?.[MODE_CONFIG_ID]}
+            onSelect={(value) => onSetConfigOptionRef.current?.(dial.modeId, dial.modeBack.get(value) ?? value)}
+            lockedReason={lockedReason(dial.modeId, MODE_CONFIG_ID)}
           />
         ) : null}
       </>
     ),
-    [dial, lockedConfigOptions, presence],
+    [dial, lockedReason, presence],
   )
 
   const autoApproveRef = useRef(onToggleAutoApprove)

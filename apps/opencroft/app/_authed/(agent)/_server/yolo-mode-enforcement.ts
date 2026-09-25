@@ -1,4 +1,4 @@
-import { modeIdForCanonical } from 'agent-client/session-modes'
+import { modeIdForCanonical, mostSupervisedModeId } from 'agent-client/session-modes'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { isYoloMode, subscribeYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
@@ -70,7 +70,10 @@ async function restoreMode(sessionId: string): Promise<void> {
   // Still advertised? A session that resumed against a different model may no
   // longer offer the mode it was in, in which case leaving it in bypass would
   // be the worst answer — fall back to the most supervised mode it does offer.
-  const supervised = modeIdForCanonical(modes.adapterId, modes.available, 'manual-edits')
+  // Ranked across the whole family rather than asked for Manual Edits by name:
+  // not every agent has one (Codex's most supervised preset is Accept Edits),
+  // and a session without it would otherwise have no fallback at all.
+  const supervised = mostSupervisedModeId(modes.adapterId, modes.available)
   const target = modes.available.some((mode) => mode.id === previous) ? previous : supervised
   if (!target) {
     return

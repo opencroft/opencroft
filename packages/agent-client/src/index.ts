@@ -17,6 +17,17 @@ export type {
   ChatMessageRecord,
 } from './chat-completion'
 export { completeChat, streamChat, toChatMessages } from './chat-completion'
+// Which config option carries which meaning -- category first, then id (also
+// importable via the subpath).
+export type { ConfigSelector } from './config-selectors'
+export {
+  FAST_MODE_SELECTOR,
+  findConfigOption,
+  findSelectOption,
+  MODE_SELECTOR,
+  MODEL_SELECTOR,
+  THOUGHT_LEVEL_SELECTOR,
+} from './config-selectors'
 export { resolveSelectionContextWindow, selectionModels } from './endpoint'
 export type { ChatBlock, ChatMessage } from './fold'
 export { buildBlocks, foldEvents, isTerminalToolStatus } from './fold'
@@ -35,7 +46,15 @@ export type { CanonicalEffortId, CanonicalEffortInfo } from './session-effort'
 export { CANONICAL_EFFORTS, canonicalEffortId } from './session-effort'
 // Canonical permission-mode vocabulary (also importable via the subpath).
 export type { CanonicalModeId, CanonicalModeInfo, ClassifiedMode } from './session-modes'
-export { CANONICAL_MODES, canonicalModeId, classifyModes, modeIdForCanonical } from './session-modes'
+export {
+  CANONICAL_MODES,
+  canonicalModeId,
+  canonicalModeOf,
+  classifyModes,
+  modeIdForCanonical,
+  mostSupervisedModeId,
+  SUPERVISION_ORDER,
+} from './session-modes'
 export type { SkillDef } from './skills'
 // The synonym registry both vocabularies are built on.
 export type { SynonymRegistration, SynonymResolver } from './synonyms'

@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 961,
-  "total": 337,
+  "filesScanned": 967,
+  "total": 335,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -508,12 +508,6 @@
       "lint/suspicious/noAssignInExpressions": 1
     },
     "apps/opencroft/vite.config.ts": {
-      "format": 1
-    },
-    "packages/agent-chat/src/agent-command-bar-configs.ts": {
-      "format": 1
-    },
-    "packages/agent-chat/src/agent-command-bar.test.ts": {
       "format": 1
     },
     "packages/agent-chat/src/components/author-runs.test.ts": {

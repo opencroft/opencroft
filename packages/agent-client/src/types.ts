@@ -560,4 +560,7 @@ export interface SessionMode {
   id: string
   name: string
   description?: string
+  // The agent's own extension data for the mode, passed through untouched.
+  // Some agents state what a mode does here, which session-modes.ts reads.
+  _meta?: Record<string, unknown>
 }
