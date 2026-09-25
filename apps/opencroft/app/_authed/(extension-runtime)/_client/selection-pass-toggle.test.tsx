@@ -30,7 +30,9 @@ const dom = await installDomEnvironment()
 
 const { act, useEffect } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { SelectionProvider, useSelection } = await import('@/app/_authed/(extension-runtime)/_client/selection-context')
+const { PASS_ENABLED_KEY, SelectionProvider, useSelection } = await import(
+  '@/app/_authed/(extension-runtime)/_client/selection-context'
+)
 
 after(() => dom.cleanup())
 
@@ -38,7 +40,13 @@ type Scope = ReturnType<typeof useSelection>
 
 // Renders the scope and hands the live context value back, so a test can drive
 // it the way the toggle and a publisher do rather than through markup.
-async function mountScope(): Promise<{ scope: () => Scope; unmount: () => Promise<void> }> {
+//
+// `fresh` wipes the stored answer first, which is every test's starting point
+// except the one mount that is meant to find what an earlier mount stored.
+async function mountScope({ fresh = true } = {}): Promise<{ scope: () => Scope; unmount: () => Promise<void> }> {
+  if (fresh) {
+    window.localStorage.removeItem(PASS_ENABLED_KEY)
+  }
   let latest: Scope | null = null
   function Probe(): ReactNode {
     const value = useSelection()
@@ -139,20 +147,67 @@ test('the answer can be given before anything is selected, and the next selectio
   }
 })
 
-test('the answer belongs to the mounted scope and does not outlive it', async () => {
-  // A standing preference, but standing within the surface that asked for it.
-  // Navigating away unmounts the provider, and a fresh one starts from the
-  // default — the same rule the selection itself has always followed. Pinned
-  // because "standing" invites someone to persist it, and that is a decision
-  // rather than a tidy-up.
+test('the answer outlives the mounted scope, in both directions', async () => {
+  // This test used to pin the opposite: a fresh provider started from the
+  // default, so reloading or navigating away and back turned passing on again.
+  // The answer is meant to be remembered, so it now
+  // persists per browser. What the old test protected, the default for someone
+  // who has never answered, is still pinned by the first test in this file.
+  //
+  // Both directions, so a remount that happened to land on the default could
+  // not pass for one that read the stored answer.
   const first = await mountScope()
   await act(async () => first.scope().togglePass())
   assert.equal(first.scope().passEnabled, false)
   await first.unmount()
 
-  const second = await mountScope()
+  const second = await mountScope({ fresh: false })
   try {
-    assert.equal(second.scope().passEnabled, true, 'a new scope starts from the default')
+    assert.equal(second.scope().passEnabled, false, 'a remount finds the answer held back')
+    await act(async () => second.scope().togglePass())
+  } finally {
+    await second.unmount()
+  }
+
+  const third = await mountScope({ fresh: false })
+  try {
+    assert.equal(third.scope().passEnabled, true, 'and finds it turned back on')
+  } finally {
+    await third.unmount()
+  }
+})
+
+test('two presses before a render land as two', async () => {
+  // Each press flips the value it finds, not the one from the render the
+  // callback was handed out in. Otherwise the second press repeats the first.
+  const { scope, unmount } = await mountScope()
+  try {
+    const { togglePass } = scope()
+    await act(async () => {
+      togglePass()
+      togglePass()
+    })
+    assert.equal(scope().passEnabled, true, 'off and back on')
+    assert.equal(window.localStorage.getItem(PASS_ENABLED_KEY), 'true', 'and storage agrees')
+  } finally {
+    await unmount()
+  }
+})
+
+test('the answer is written where a reload reads it', async () => {
+  // A reload is a mount with nothing in memory, so storage is the only thing
+  // that can carry the answer across it. Both halves: what a press writes, and
+  // what a mount makes of a value it did not write itself.
+  const first = await mountScope()
+  await act(async () => first.scope().togglePass())
+  assert.equal(window.localStorage.getItem(PASS_ENABLED_KEY), 'false', 'the press is stored')
+  await first.unmount()
+
+  window.localStorage.removeItem(PASS_ENABLED_KEY)
+  window.localStorage.setItem(PASS_ENABLED_KEY, 'false')
+  const second = await mountScope({ fresh: false })
+  try {
+    assert.equal(second.scope().passEnabled, false, 'a stored "off" is restored on mount')
   } finally {
     await second.unmount()
   }

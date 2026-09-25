@@ -28,7 +28,9 @@ const dom = await installDomEnvironment()
 
 const { act, useEffect } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { SelectionProvider, useSelection } = await import('@/app/_authed/(extension-runtime)/_client/selection-context')
+const { PASS_ENABLED_KEY, SelectionProvider, useSelection } = await import(
+  '@/app/_authed/(extension-runtime)/_client/selection-context'
+)
 const { SelectionBadge } = await import('@/app/_authed/(extension-runtime)/_client/selection-badge')
 const { SelectionToggle } = await import('@/app/_authed/(extension-runtime)/_client/selection-toggle')
 const { StartThreadComposer } = await import('ui/group-chat/start-thread-composer')
@@ -86,6 +88,8 @@ interface View {
 
 async function mount(tree: ReactNode): Promise<View> {
   latest = null
+  // The answer persists across mounts, so each test starts from none stored.
+  window.localStorage.removeItem(PASS_ENABLED_KEY)
   const root = createRoot(dom.container)
   await act(async () => {
     root.render(

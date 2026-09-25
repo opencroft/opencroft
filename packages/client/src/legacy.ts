@@ -332,9 +332,10 @@ export interface SelectionContextValue {
   selection: UserSelection | null
   /**
    * Whether a selection rides along with the next message. A standing
-   * preference of the scope rather than a property of what is selected:
+   * preference of the reader rather than a property of what is selected:
    * publishing a selection does not touch it, and it can be set with nothing
-   * selected at all.
+   * selected at all. Kept per browser, so every scope starts from the reader's
+   * last answer.
    */
   passEnabled: boolean
   setSelection: (selection: UserSelection | null) => void

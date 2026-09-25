@@ -8,20 +8,28 @@
 // and, while passing is on, prefixes the outgoing message with the selection's
 // content (see message-envelope.ts's wrapUserSelection).
 //
-// THE SCOPE IS THE MOUNTED PROVIDER, BY CONSTRUCTION. State lives in the
-// provider component itself, so navigating away unmounts it and the selection
-// is gone with it — there is nothing app-global to clear and no store that
-// could outlive the surface. One selection per mounted scope; a new
-// `setSelection` replaces the old one (last write wins).
+// THE SELECTION IS SCOPED TO THE MOUNTED PROVIDER, BY CONSTRUCTION. It lives in
+// the provider component itself, so navigating away unmounts it and the
+// selection is gone with it — there is nothing app-global to clear. One
+// selection per mounted scope; a new `setSelection` replaces the old one (last
+// write wins).
 //
 // TWO INDEPENDENT PIECES OF STATE. What is selected, and whether selections are
 // passed. Neither reads the other: a publisher setting a selection does not
 // touch the flag, and the flag can be set with nothing selected at all. That
 // independence is the contract rather than an implementation detail — see the
-// note on `passEnabled`.
+// note on `passEnabled`. They also differ in lifetime: the selection belongs to
+// the surface, the flag to the reader, so only the flag outlives the provider.
 
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+
+import { useLocalStorage } from '@/hooks/utils/use-local-storage'
+
+// One value per browser, like the chat dock's own arrangement keys: the answer
+// is the reader's about selections in general, and the provider sits above any
+// one chat, so there is no narrower owner to key it by.
+export const PASS_ENABLED_KEY = 'opencroft.selection.passEnabled'
 
 export interface UserSelection {
   /** What the badge shows. Presentation only — never sent to the agent. */
@@ -36,7 +44,7 @@ export interface SelectionContextValue {
   /**
    * Whether a selection rides along with the next message.
    *
-   * A STANDING PREFERENCE OF THE SCOPE, not a property of what is selected.
+   * A STANDING PREFERENCE OF THE READER, not a property of what is selected.
    * Setting a selection does not touch it, and it can be set with nothing
    * selected at all — the control that reads it stands on the panel whether or
    * not there is anything to hide.
@@ -47,6 +55,10 @@ export interface SelectionContextValue {
    * only existed while something was selected, so an old "off" made the
    * quotation silently inert. The control is now permanent, so its own state is
    * that notice, and the reader's answer stands until the reader changes it.
+   *
+   * It is kept in `localStorage`, so it also survives a reload, navigating
+   * away and back, and the provider remounting. Before that it was component
+   * state initialised to true, and every new mount started from true again.
    */
   passEnabled: boolean
   /** Replace the selection (last write wins). `null` clears it. */
@@ -70,10 +82,10 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
   // does, the reader's answer about passing is theirs and stays where they left
   // it. See the note on `passEnabled` for what the removed reset protected.
   const [selection, setSelection] = useState<UserSelection | null>(null)
-  const [passEnabled, setPassEnabled] = useState(true)
+  const [passEnabled, setPassEnabled] = useLocalStorage<boolean>(PASS_ENABLED_KEY, true)
 
   const clearSelection = useCallback(() => setSelection(null), [])
-  const togglePass = useCallback(() => setPassEnabled((prev) => !prev), [])
+  const togglePass = useCallback(() => setPassEnabled((prev) => !prev), [setPassEnabled])
 
   const value = useMemo<SelectionContextValue>(
     () => ({ selection, passEnabled, setSelection, clearSelection, togglePass }),

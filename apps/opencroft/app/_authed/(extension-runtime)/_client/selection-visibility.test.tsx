@@ -26,7 +26,9 @@ const dom = await installDomEnvironment()
 
 const { act, useEffect } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { SelectionProvider, useSelection } = await import('@/app/_authed/(extension-runtime)/_client/selection-context')
+const { PASS_ENABLED_KEY, SelectionProvider, useSelection } = await import(
+  '@/app/_authed/(extension-runtime)/_client/selection-context'
+)
 const { SelectionBadge } = await import('@/app/_authed/(extension-runtime)/_client/selection-badge')
 const { SelectionToggle } = await import('@/app/_authed/(extension-runtime)/_client/selection-toggle')
 
@@ -47,6 +49,8 @@ async function mount(): Promise<{
   press: () => Promise<void>
   unmount: () => Promise<void>
 }> {
+  // The answer persists across mounts, so each test starts from none stored.
+  window.localStorage.removeItem(PASS_ENABLED_KEY)
   let latest: Scope | null = null
   function Probe(): ReactNode {
     const value = useSelection()
