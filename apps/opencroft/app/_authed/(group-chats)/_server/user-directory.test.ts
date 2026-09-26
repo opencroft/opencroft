@@ -90,6 +90,18 @@ test('it returns id, name and avatar — and nothing else', async () => {
   assert.equal(serialised.includes('banned'), false, 'no sign-in state may reach the client')
 })
 
+// The second consumer: extensions, through `host.users`. The same read, so the
+// same boundary — pinned here too, because a widening could arrive on either side.
+test("an extension's host.users returns the same three fields and nothing else", async () => {
+  await makeUser('dir-host@example.test', 'Host Example')
+  const { createHost } = await import('@/app/_authed/(extension-runtime)/_server/host')
+  const people = await createHost('local/directory-probe').users.list()
+  const row = people.find((p) => p.name === 'Host Example')
+  assert.ok(row)
+  assert.deepEqual(Object.keys(row).sort(), ['avatarUrl', 'id', 'name'])
+  assert.equal(JSON.stringify(people).includes('dir-host@example.test'), false, 'no email may reach an extension')
+})
+
 test('an anonymous request is refused', async () => {
   await assert.rejects(
     () => directory.listDirectoryUsers(new Request('http://localhost:9999/')),

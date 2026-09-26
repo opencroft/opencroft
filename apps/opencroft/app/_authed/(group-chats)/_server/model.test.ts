@@ -5140,7 +5140,7 @@ test('an agent caller acts as itself: its own chats, its own membership, and a t
   groupChatsForCaller(TEST_EXTENSION, undefined).api
   await model.addMember(reqAs(owner), notMine.id, EXTENSION_PRINCIPAL)
   seedMockConnection([], 'Agent Session Two')
-  const api = groupChatsForCaller(TEST_EXTENSION, 'Agent Session').api
+  const api = groupChatsForCaller(TEST_EXTENSION, { agent: 'Agent Session' }).api
 
   const refs = (await api.list()).map((c) => c.ref)
   assert.ok(refs.includes(mine.id))
@@ -5154,7 +5154,7 @@ test('an agent caller acts as itself: its own chats, its own membership, and a t
 
 test('a caller name that resolves to no single agent refuses every call instead of acting as someone', async () => {
   for (const name of ['No Such Agent', 'Twin Agent']) {
-    const api = groupChatsForCaller(TEST_EXTENSION, name).api
+    const api = groupChatsForCaller(TEST_EXTENSION, { agent: name }).api
     await assert.rejects(() => api.list(), /no single agent is named/)
   }
 })
@@ -5163,7 +5163,7 @@ test('an agent-bound copy stops working when the action it was handed to ends', 
   const owner = await makeUser('ext-sender-ended@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'ext sender ended call')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
-  const bound = groupChatsForCaller(TEST_EXTENSION, 'Agent Session')
+  const bound = groupChatsForCaller(TEST_EXTENSION, { agent: 'Agent Session' })
   assert.ok(
     (await bound.api.list()).some((c) => c.ref === chat.id),
     'usable during the call',
@@ -5194,9 +5194,98 @@ test('an agent caller reads the threads of chats it belongs to', async () => {
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
   seedMockConnection([], 'Agent Session Two')
-  const { api } = groupChatsForCaller(TEST_EXTENSION, 'Agent Session')
+  const { api } = groupChatsForCaller(TEST_EXTENSION, { agent: 'Agent Session' })
   assert.ok('turns' in api)
   const { thread } = await api.startThread({ chat: chat.id, agentNodeId: 'agent-session-2', message: 'read me back' })
   const page = await api.turns(thread.ref)
   assert.ok(Array.isArray(page.turns))
+})
+
+// A PERSON CALLER — an App's own UI, with the signed-in person bound by the
+// host. Sending stays the extension's; the person's chats and the grant act as
+// the person, through the same members gate as the members dialog.
+
+function personCaller(u: TestUser) {
+  return { person: { id: u.id, name: 'Person Caller', avatarUrl: null } }
+}
+
+test("a person caller sees the person's own chats, each with the extension's grant state", async () => {
+  const owner = await makeUser('ext-person-chats@example.test')
+  const granted = await model.createGroupChat(reqAs(owner), 'ext person granted')
+  const ungranted = await model.createGroupChat(reqAs(owner), 'ext person ungranted')
+  await model.addMember(reqAs(owner), granted.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  groupChatsForCaller(TEST_EXTENSION, undefined)
+  await model.addMember(reqAs(owner), granted.id, EXTENSION_PRINCIPAL)
+  const stranger = await makeUser('ext-person-stranger@example.test')
+  const notTheirs = await model.createGroupChat(reqAs(stranger), 'ext person not theirs')
+
+  const { api } = groupChatsForCaller(TEST_EXTENSION, personCaller(owner))
+  assert.ok('personChats' in api)
+  const chats = await api.personChats()
+  const byRef = new Map(chats.map((c) => [c.ref, c]))
+  assert.deepEqual(byRef.get(granted.id), {
+    ref: granted.id,
+    slug: granted.slug,
+    name: granted.name,
+    agents: [{ nodeId: 'agent-session', name: 'Agent Session' }],
+    extensionGranted: true,
+  })
+  assert.equal(byRef.get(ungranted.id)?.extensionGranted, false)
+  assert.equal(byRef.has(notTheirs.id), false, "another person's chat is not listed")
+  assert.equal('turns' in api, false, 'a person caller reads no transcripts through the extension')
+})
+
+test('a person grants the extension into their chat, and it can then deliver there', async () => {
+  const owner = await makeUser('ext-person-grant@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext person grant')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const { api } = groupChatsForCaller(TEST_EXTENSION, personCaller(owner))
+  assert.ok('grantExtension' in api)
+  assert.equal(
+    (await api.list()).some((c) => c.ref === chat.id),
+    false,
+    'sending is the extension: not granted yet',
+  )
+
+  await api.grantExtension(chat.slug)
+
+  const members = await model.listMembers(reqAs(owner), chat.id)
+  assert.deepEqual(
+    members.filter((m) => m.principalType === 'system').map((m) => m.systemId),
+    [EXTENSION_PRINCIPAL.systemId],
+    "exactly the extension's own identity was added",
+  )
+  assert.ok((await api.list()).some((c) => c.ref === chat.id))
+  assert.equal((await api.personChats()).find((c) => c.ref === chat.id)?.extensionGranted, true)
+  await api.grantExtension(chat.id)
+  assert.equal((await model.listMembers(reqAs(owner), chat.id)).length, members.length, 'a second grant adds nothing')
+})
+
+test("a person cannot grant into a chat they are not in: the members gate's refusal, same as a missing chat", async () => {
+  const owner = await makeUser('ext-person-gate-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext person gate')
+  const outsider = await makeUser('ext-person-gate-outsider@example.test')
+  const { api } = groupChatsForCaller(TEST_EXTENSION, personCaller(outsider))
+  assert.ok('grantExtension' in api)
+
+  const refused = await captureRefusal(() => api.grantExtension(chat.id))
+  const missing = await captureRefusal(() => api.grantExtension('no-such-chat'))
+  assert.deepEqual(refused, missing)
+  assert.equal(
+    (await model.listMembers(reqAs(owner), chat.id)).some((m) => m.principalType === 'system'),
+    false,
+    'nothing was granted',
+  )
+})
+
+test('a person-bound copy stops working when the action it was handed to ends', async () => {
+  const owner = await makeUser('ext-person-ended@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext person ended')
+  const bound = groupChatsForCaller(TEST_EXTENSION, personCaller(owner))
+  assert.ok('personChats' in bound.api)
+  const api = bound.api
+  assert.ok((await api.personChats()).some((c) => c.ref === chat.id))
+  bound.end()
+  await assert.rejects(() => api.personChats(), /action call that has ended/)
+  await assert.rejects(() => api.grantExtension(chat.id), /action call that has ended/)
 })

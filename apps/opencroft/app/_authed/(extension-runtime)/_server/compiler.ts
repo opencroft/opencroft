@@ -476,6 +476,7 @@ export const Markdown = __ui.Markdown;
 export const markdownDirectiveBlocks = __ui.markdownDirectiveBlocks;
 export const MarkdownEditor = __ui.MarkdownEditor;
 export const MermaidDiagram = __ui.MermaidDiagram;
+export const callAppAction = __host.callAppAction;
 export const legacy = {
   ...__host,
   ...__ui,
@@ -534,6 +535,7 @@ export const terminal = host.terminal;
 export const ssh = host.ssh;
 export const execContext = host.execContext;
 export const groupChats = host.groupChats;
+export const users = host.users;
 export const events = host.events;
 export const extensionId = host.extensionId;
 `,

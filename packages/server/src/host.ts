@@ -154,6 +154,44 @@ export interface HostAgentGroupChatsApi extends HostGroupChatsApi {
   turns(ref: string, page?: { turns?: number; beforeIndex?: number }): Promise<HostThreadTurnsPage>
 }
 
+/** A chat the signed-in person belongs to, and whether this extension may already deliver into it. */
+export interface HostPersonGroupChat extends HostGroupChat {
+  /** Whether this extension's own system identity is a member — the grant `grantExtension` makes. */
+  extensionGranted: boolean
+}
+
+/**
+ * `groupChats` for an App action a signed-in person invoked from the App's UI.
+ * Sending is unchanged — the inherited calls act as the extension's own system
+ * identity, as they do for any call no agent made — and two calls act as the
+ * PERSON, so a UI can offer the person's own chats and let them grant this
+ * extension into one.
+ */
+export interface HostPersonGroupChatsApi extends HostGroupChatsApi {
+  /** The chats the person is a member of, with their agent members and the extension's grant state. */
+  personChats(): Promise<HostPersonGroupChat[]>
+  /**
+   * Add this extension's own system identity to `chat` (id or slug) as a
+   * member, acting as the person through the chat's members gate: refused
+   * with "Not available" when the person is not a member of it. It can grant
+   * nothing else — no other principal can be named.
+   */
+  grantExtension(chat: string): Promise<void>
+}
+
+/** One person in the user directory. Three fields by design: never an email, role or sign-in state. */
+export interface HostUser {
+  id: string
+  name: string
+  avatarUrl: string | null
+}
+
+/** The people directory — what any signed-in member may already see of every account. */
+export interface HostUsersApi {
+  /** Every account, ordered by name. */
+  list(): Promise<HostUser[]>
+}
+
 export interface HostExecContextApi {
   /** Dispatch an execution-context event to every target connected to `sourceHandleId` on `sourceNodeId` (broadcast). `primary`'s shape is caller-defined -- narrow it at the call site. */
   dispatch(
@@ -249,6 +287,8 @@ export interface ExtensionServerHost {
   sendMessage: HostSendMessageApi
   /** Group chats as this extension's own system identity — see HostGroupChatsApi. */
   groupChats: HostGroupChatsApi
+  /** The people directory: id, name and avatar of every account — see HostUsersApi. */
+  users: HostUsersApi
   mcpTokens: HostMcpTokensApi
   execContext: HostExecContextApi
   /**
@@ -323,6 +363,7 @@ export declare const secrets: ExtensionServerHost['secrets']
 export declare const apps: ExtensionServerHost['apps']
 export declare const sendMessage: ExtensionServerHost['sendMessage']
 export declare const groupChats: ExtensionServerHost['groupChats']
+export declare const users: ExtensionServerHost['users']
 export declare const execContext: ExtensionServerHost['execContext']
 export declare const events: ExtensionServerHost['events']
 export declare const openclaw: ExtensionServerHost['openclaw']

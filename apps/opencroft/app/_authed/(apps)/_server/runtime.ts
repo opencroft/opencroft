@@ -17,6 +17,7 @@ import { asc, eq } from 'drizzle-orm'
 import { appAddressOf, isAppAddress, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import { hostAppHooks, providedApps } from '@/app/_authed/(apps)/_server/host-apps'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
+import type { AppActionCaller } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
@@ -775,16 +776,19 @@ export async function appActionDeclaration(
 }
 
 /**
- * Dispatch one App action against one instance — the `app_call` MCP tool's code
- * path. Takes either spelling of an app reference; see `resolveAppAddress`.
- * `signal` is handed to the action when it runs as a background task, so one
- * that is cancelled or times out can stop.
+ * Dispatch one App action against one instance — the code path of the
+ * `app_call` MCP tool and of an App's own UI (`callAppActionFromUi`). Takes
+ * either spelling of an app reference; see `resolveAppAddress`. `caller` is who
+ * the host established is asking — each entry point binds it from its own
+ * authentication, never from the request's data. `signal` is handed to the
+ * action when it runs as a background task, so one that is cancelled or times
+ * out can stop.
  */
 export async function callAppAction(
   ref: string,
   actionId: string,
   params: Record<string, unknown>,
-  callerAgent?: string,
+  caller?: AppActionCaller,
   signal?: AbortSignal,
 ): Promise<unknown> {
   const row = await requireAppRow(ref)
@@ -796,8 +800,14 @@ export async function callAppAction(
   // Lazy: the extension host reaches back into this module (app handles), and
   // the action path is the only one here that needs the host at all.
   const { groupChatsForCaller } = await import('@/app/_authed/(extension-runtime)/_server/host')
-  const groupChats = groupChatsForCaller(row.extensionId, callerAgent)
-  const ctx = { ...(await instanceContext(row)), callerAgent, signal, groupChats: groupChats.api }
+  const groupChats = groupChatsForCaller(row.extensionId, caller)
+  const ctx = {
+    ...(await instanceContext(row)),
+    ...(caller && 'agent' in caller ? { callerAgent: caller.agent } : {}),
+    ...(caller && 'person' in caller ? { callerPerson: caller.person } : {}),
+    signal,
+    groupChats: groupChats.api,
+  }
   try {
     return await handler(ctx, params)
   } finally {

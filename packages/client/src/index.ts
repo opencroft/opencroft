@@ -264,6 +264,19 @@ export interface MarkdownEditorProps {
  */
 export declare const MarkdownEditor: FC<MarkdownEditorProps>
 
+/**
+ * Run one of an App instance's actions from the App's own UI — the same
+ * handler `app_call` reaches, with the result it returns. The host runs it as
+ * the signed-in person: the handler's `ctx.callerPerson` is taken from the
+ * session, so nothing passed here can say who is asking. Pass the
+ * `instanceId` from {@link AppComponentProps}.
+ */
+export declare const callAppAction: <T = unknown>(
+  instanceId: string,
+  action: string,
+  params?: Record<string, unknown>,
+) => Promise<T>
+
 /** Props the host passes to an App's component when rendering it in a space. */
 export interface AppComponentProps {
   /** Which added instance is being rendered — matches the server hooks' `instanceId`. */

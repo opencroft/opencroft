@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 import * as uiKit from 'ui/ext'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 
+import { callAppActionFromUi } from '@/app/_authed/(apps)/_server/actions'
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashboard)/_canvas/node-card'
@@ -310,6 +311,10 @@ async function callNodeAction(nodeId: string, actionId: string, params?: Record<
   return dispatchNodeAction({ data: { nodeId, actionId, params: params ?? {} } })
 }
 
+async function callAppAction(instanceId: string, action: string, params?: Record<string, unknown>): Promise<unknown> {
+  return callAppActionFromUi({ data: { instanceId, action, params: params ?? {} } })
+}
+
 export interface ExtensionStorage {
   get<T = unknown>(key: string): Promise<T | null>
   set<T = unknown>(key: string, value: T): Promise<void>
@@ -443,6 +448,9 @@ export const extensionHostApi = {
   Position,
   callAction,
   callNodeAction,
+  // An App instance's own actions, run as the signed-in person — see
+  // `callAppActionFromUi`.
+  callAppAction,
   createStorage: createStorageFor,
   createPortal,
   icons: safeIcons,

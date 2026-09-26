@@ -5,7 +5,15 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
-import type { ExtensionServerHost, HostAgentGroupChatsApi, HostMcpTokensApi, HostSecretsApi } from '@opencroft/server'
+import type {
+  ExtensionServerHost,
+  HostAgentGroupChatsApi,
+  HostMcpTokensApi,
+  HostPersonGroupChatsApi,
+  HostSecretsApi,
+  HostUser,
+  HostUsersApi,
+} from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
   exec,
@@ -42,6 +50,7 @@ import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { type AttributedSender, registerExtensionSystemSender, senderForSend } from '@/app/_server/message-author'
+import { listUserDirectory } from '@/app/_server/user-directory'
 import { newGraphId } from '@/lib/graph-id'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
@@ -707,34 +716,63 @@ function groupChatsForSender(who: () => Promise<AttributedSender>): HostGroupCha
   }
 }
 
+/** Who invoked an App action, as the host established it: an agent by name, or a signed-in person. */
+export type AppActionCaller = { agent: string } | { person: HostUser }
+
 /**
  * `groupChats` for one App action invocation: the calling agent when an agent
  * called — who may also read, over the chats it belongs to — and the
- * extension's own system identity otherwise, which may not. Built by the host
- * per call and put on the action's context, never chosen by the extension. The
- * caller ends it with `end()` when the action settles.
+ * extension's own system identity otherwise, which may not. When a signed-in
+ * person called, the extension's identity plus the person's own chats and the
+ * grant of that identity into one of them. Built by the host per call and put
+ * on the action's context, never chosen by the extension. The caller ends it
+ * with `end()` when the action settles.
  */
 export function groupChatsForCaller(
   extensionId: string,
-  callerAgent: string | undefined,
-): { api: HostGroupChatsApi | HostAgentGroupChatsApi; end: () => void } {
-  if (!callerAgent) {
+  caller: AppActionCaller | undefined,
+): { api: HostGroupChatsApi | HostAgentGroupChatsApi | HostPersonGroupChatsApi; end: () => void } {
+  if (!caller) {
     return { api: extensionGroupChats(extensionId), end: () => {} }
   }
   let ended = false
-  const who = boundSender(
-    () => senderForSend({ callerAgent }, [], listAgentNodesImpl),
-    () => !ended,
-  )
+  const live = () => !ended
+  const end = () => {
+    ended = true
+  }
+  if ('person' in caller) {
+    return { api: personGroupChats(extensionId, caller.person.id, live), end }
+  }
+  const who = boundSender(() => senderForSend({ callerAgent: caller.agent }, [], listAgentNodesImpl), live)
   const api: HostAgentGroupChatsApi = {
     ...groupChatsForSender(who),
     turns: async (ref, page) => (await groupChatModel()).threadTurnsForSender(await who(), ref, page),
   }
+  return { api, end }
+}
+
+/**
+ * The extension's own identity for sending, and two calls acting as the
+ * person. The grant names no principal: it can only ever add THIS extension's
+ * identity, through the members gate as the person. Like the agent-bound copy,
+ * it refuses once the action that received it has ended.
+ */
+function personGroupChats(extensionId: string, userId: string, live: () => boolean): HostPersonGroupChatsApi {
+  const systemId = registerExtensionSystemSender(extensionId)
+  const whilePending = async () => {
+    if (!live()) {
+      throw new Error('This group-chat access was bound to an action call that has ended')
+    }
+    return groupChatModel()
+  }
   return {
-    api,
-    end: () => {
-      ended = true
-    },
+    ...extensionGroupChats(extensionId),
+    personChats: async () =>
+      (await (await whilePending()).listGroupChatsForPerson(userId, systemId)).map(({ systemGranted, ...chat }) => ({
+        ...chat,
+        extensionGranted: systemGranted,
+      })),
+    grantExtension: async (chat) => (await whilePending()).grantSystemSenderAsPerson(userId, chat, systemId),
   }
 }
 
@@ -841,6 +879,8 @@ export interface ExtensionHost {
    * when an agent called — see `groupChatsForCaller`.
    */
   groupChats: HostGroupChatsApi
+  /** The people directory, three fields per account — see `@/app/_server/user-directory`. */
+  users: HostUsersApi
   /** An agent node's credentials for the MCP endpoint — see the package declaration. */
   mcpTokens: HostMcpTokensApi
   /**
@@ -956,6 +996,7 @@ export function createHost(extensionId: string): ExtensionHost {
     apps: appsApi(extensionId),
     sendMessage: sendMessageApi,
     groupChats: extensionGroupChats(extensionId),
+    users: { list: listUserDirectory },
     mcpTokens: mcpTokensApi,
     events: {
       broadcast: (name, payload) => {

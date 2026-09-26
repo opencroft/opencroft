@@ -196,14 +196,20 @@ async function isAgentMember(groupChatId: string, agentNodeId: string): Promise<
  */
 export async function requireGroupChatMember(request: Request, groupChatId: string): Promise<{ userId: string }> {
   const sessionUser = await requireSignedInUser(request)
-  const [chat] = await db.select({ id: groupChat.id }).from(groupChat).where(eq(groupChat.id, groupChatId)).limit(1)
-  if (!chat) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
-  }
-  if (!(await isUserMember(groupChatId, sessionUser.id))) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
-  }
+  await requireUserMemberOf(sessionUser.id, groupChatId)
   return { userId: sessionUser.id }
+}
+
+/**
+ * The membership half of THE CHECK, for a person the caller has already
+ * identified — the signed-in session above, or the host's bound `callerPerson`
+ * on an App action. Refuses exactly as `requireGroupChatMember` does.
+ */
+async function requireUserMemberOf(userId: string, groupChatId: string): Promise<void> {
+  const [chat] = await db.select({ id: groupChat.id }).from(groupChat).where(eq(groupChat.id, groupChatId)).limit(1)
+  if (!chat || !(await isUserMember(groupChatId, userId))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
 }
 
 /**
@@ -1155,13 +1161,7 @@ export async function addMember(request: Request, groupChatId: string, principal
   }
 
   if (principal.kind === 'system') {
-    if (!isKnownSystemSender(principal.systemId)) {
-      throw new Error(`No such system sender: "${principal.systemId}"`)
-    }
-    await db
-      .insert(groupChatMember)
-      .values({ groupChatId, principalType: 'system', systemId: principal.systemId })
-      .onConflictDoNothing()
+    await insertSystemMember(groupChatId, principal.systemId)
     return
   }
 
@@ -1173,6 +1173,14 @@ export async function addMember(request: Request, groupChatId: string, principal
     .insert(groupChatMember)
     .values({ groupChatId, principalType: 'user', userId: principal.userId })
     .onConflictDoNothing()
+}
+
+/** The system-sender grant row, validated as `addMember` describes. The caller has already passed the members gate. */
+async function insertSystemMember(groupChatId: string, systemId: string): Promise<void> {
+  if (!isKnownSystemSender(systemId)) {
+    throw new Error(`No such system sender: "${systemId}"`)
+  }
+  await db.insert(groupChatMember).values({ groupChatId, principalType: 'system', systemId }).onConflictDoNothing()
 }
 
 /** Joined, or refused — and every refusal here carries the one collapsed code. */
@@ -3407,6 +3415,62 @@ export async function listGroupChatsForSender(sender: AttributedSender): Promise
     .orderBy(asc(groupChat.name))
   const members = await agentMembersByChat(chats.map((c) => c.id))
   return chats.map((c) => ({ ref: c.id, slug: c.slug, name: c.name, agents: members.get(c.id) ?? [] }))
+}
+
+/** A chat a person belongs to, and whether one system sender holds a grant in it. */
+export interface PersonGroupChat extends SenderGroupChat {
+  systemGranted: boolean
+}
+
+/**
+ * Every chat the person is a member of — the same set `listGroupChatsForUser`
+ * shows them — each saying whether `systemId` is a member too. For a UI that
+ * lets the person choose where an automated sender may deliver.
+ */
+export async function listGroupChatsForPerson(userId: string, systemId: string): Promise<PersonGroupChat[]> {
+  const chats = await db
+    .select({ id: groupChat.id, slug: groupChat.slug, name: groupChat.name })
+    .from(groupChat)
+    .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
+    .where(eq(groupChatMember.userId, userId))
+    .orderBy(asc(groupChat.name))
+  const ids = chats.map((c) => c.id)
+  const granted = new Set(
+    ids.length === 0
+      ? []
+      : (
+          await db
+            .select({ groupChatId: groupChatMember.groupChatId })
+            .from(groupChatMember)
+            .where(and(inArray(groupChatMember.groupChatId, ids), eq(groupChatMember.systemId, systemId)))
+        ).map((row) => row.groupChatId),
+  )
+  const members = await agentMembersByChat(ids)
+  return chats.map((c) => ({
+    ref: c.id,
+    slug: c.slug,
+    name: c.name,
+    agents: members.get(c.id) ?? [],
+    systemGranted: granted.has(c.id),
+  }))
+}
+
+/**
+ * Grant `systemId` membership of a chat (id or slug), acting as the person:
+ * the members gate `addMember` applies — only a member may add — so a chat the
+ * person is not in, or that does not exist, is one refusal, UNAVAILABLE.
+ */
+export async function grantSystemSenderAsPerson(userId: string, chatRef: string, systemId: string): Promise<void> {
+  const trimmed = chatRef.trim()
+  const chat =
+    (trimmed && (await chatRowBySlug(trimmed))) ||
+    (trimmed && (await db.select(chatColumns).from(groupChat).where(eq(groupChat.id, trimmed)).limit(1))[0]) ||
+    null
+  if (!chat) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await requireUserMemberOf(userId, chat.id)
+  await insertSystemMember(chat.id, systemId)
 }
 
 /** A chat by id or slug, if the sender is a member of it — refused as UNAVAILABLE otherwise, whichever it was. */

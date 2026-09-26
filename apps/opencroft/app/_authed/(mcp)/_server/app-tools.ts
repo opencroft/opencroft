@@ -209,7 +209,8 @@ export const handlers: Record<string, ToolHandler> = {
           summary: `${declared?.action?.label ?? action} on ${target}`,
         },
         // Caller handed over, never required — same reasoning as `call` above.
-        run: (actionParams, signal) => callAppAction(app, action, actionParams, caller.agent ?? undefined, signal),
+        run: (actionParams, signal) =>
+          callAppAction(app, action, actionParams, caller.agent ? { agent: caller.agent } : undefined, signal),
       })
       if ('started' in outcome) {
         return textResult(outcome.started)

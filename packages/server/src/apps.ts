@@ -1,4 +1,4 @@
-import type { HostAgentGroupChatsApi, HostGroupChatsApi } from './host'
+import type { HostAgentGroupChatsApi, HostGroupChatsApi, HostPersonGroupChatsApi, HostUser } from './host'
 
 /**
  * Server-side App lifecycle contracts. An extension that provides Apps (see
@@ -31,16 +31,29 @@ export interface AppInstanceContext {
   dataDir: string
 }
 
-/** The context an App action runs in: the instance, plus the agent that asked, when the surface could name one. */
+/**
+ * The context an App action runs in: the instance, plus who asked, when the
+ * surface could name them. At most one of `callerAgent` and `callerPerson` is
+ * set, and both are bound by the host — an extension cannot supply either.
+ */
 export interface AppActionContext extends AppInstanceContext {
+  /** The agent that called, through `app_call`. */
   callerAgent?: string
+  /**
+   * The signed-in person, when the App's own UI called through
+   * `callAppAction` (`@opencroft/client`). Taken from the session by the host,
+   * never from anything the client sent.
+   */
+  callerPerson?: HostUser
   /**
    * Group chats acting as whoever this call is on behalf of: `callerAgent` when
    * an agent called — with `turns` for reading — and the extension's own
-   * system identity otherwise, which cannot read. Bound by the host for this
-   * one call and unusable once it ends — see `HostGroupChatsApi`.
+   * system identity otherwise, which cannot read. When a person called, the
+   * extension's identity again, plus the person's own chats and the grant —
+   * see `HostPersonGroupChatsApi`. Bound by the host for this one call and
+   * unusable once it ends.
    */
-  groupChats: HostGroupChatsApi | HostAgentGroupChatsApi
+  groupChats: HostGroupChatsApi | HostAgentGroupChatsApi | HostPersonGroupChatsApi
   /**
    * Present when the action runs as a background task, and aborted when that
    * task is cancelled or times out. The host cannot stop a handler itself: one

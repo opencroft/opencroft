@@ -8,6 +8,7 @@ import { providedApps } from '@/app/_authed/(apps)/_server/host-apps'
 import {
   addSpaceAppImpl,
   appUpdatesInPlace,
+  callAppAction,
   handleInstanceUpdated,
   removeSpaceAppImpl,
   renameSpaceAppImpl,
@@ -19,12 +20,14 @@ import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 // The page gate guards navigation, not these RPC endpoints, which are
 // callable in their own right. Checked inline because every live caller is a
 // browser route loader or component downstream of the _authed beforeLoad
-// gate; nothing calls these in-process.
-async function requireSession(): Promise<void> {
+// gate; nothing calls these in-process. Opening an App (the page loader's
+// `listSpaceApps`) and calling its actions from its UI pass this same gate.
+async function requireSession() {
   const user = await getSessionUser(getRequest())
   if (!user) {
     throw new Error('Not signed in')
   }
+  return user
 }
 
 async function resolveSpaceId(spaceSlug: string): Promise<string> {
@@ -189,6 +192,20 @@ export const transferSpaceApp = createServerFn({ method: 'POST', strict: { outpu
       throw new Error(`Unknown app instance: ${data.instanceId}`)
     }
     await transferSpaceAppImpl(data.instanceId, data.targetSpaceSlug)
+  })
+
+/**
+ * Run one of an App instance's actions for its own UI — `callAppAction` in
+ * `@opencroft/client`. The same dispatch `app_call` uses, with the signed-in
+ * person as the caller: taken from the session here, never from `data`, so a
+ * client cannot name who it is.
+ */
+export const callAppActionFromUi = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { instanceId: string; action: string; params?: Record<string, unknown> }) => data)
+  .handler(async ({ data }): Promise<unknown> => {
+    const user = await requireSession()
+    const person = { id: user.id, name: user.name, avatarUrl: user.image ?? null }
+    return callAppAction(String(data.instanceId), String(data.action), data.params ?? {}, { person })
   })
 
 /**
