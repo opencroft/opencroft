@@ -39,5 +39,14 @@ export interface DirectoryUser {
 /** Every account, ordered by name. Ungated: each caller applies its own gate first. */
 export async function listUserDirectory(): Promise<DirectoryUser[]> {
   const rows = await db.select({ id: user.id, name: user.name, image: user.image }).from(user).orderBy(asc(user.name))
-  return rows.map((row) => ({ id: row.id, name: row.name, avatarUrl: row.image ?? null }))
+  return rows.map(directoryUserOf)
+}
+
+/**
+ * One account in the directory's shape. Also how a signed-in session is handed
+ * to an extension: an App action's `callerPerson` and a session route's
+ * `person` both come from here, so the two always name a person the same way.
+ */
+export function directoryUserOf(account: { id: string; name: string; image?: string | null }): DirectoryUser {
+  return { id: account.id, name: account.name, avatarUrl: account.image ?? null }
 }

@@ -16,6 +16,7 @@ import {
 } from '@/app/_authed/(apps)/_server/runtime'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
+import { directoryUserOf } from '@/app/_server/user-directory'
 
 // The page gate guards navigation, not these RPC endpoints, which are
 // callable in their own right. Checked inline because every live caller is a
@@ -204,8 +205,9 @@ export const callAppActionFromUi = createServerFn({ method: 'POST', strict: { ou
   .inputValidator((data: { instanceId: string; action: string; params?: Record<string, unknown> }) => data)
   .handler(async ({ data }): Promise<unknown> => {
     const user = await requireSession()
-    const person = { id: user.id, name: user.name, avatarUrl: user.image ?? null }
-    return callAppAction(String(data.instanceId), String(data.action), data.params ?? {}, { person })
+    return callAppAction(String(data.instanceId), String(data.action), data.params ?? {}, {
+      person: directoryUserOf(user),
+    })
   })
 
 /**

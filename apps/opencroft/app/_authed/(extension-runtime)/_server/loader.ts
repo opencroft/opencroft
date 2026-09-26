@@ -13,7 +13,7 @@ import {
 import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
 import { listAllExtensionIds, readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
 import { extDir, extDistFile, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
-import type { ExtensionManifest, ExtensionRouteHandler } from '@/app/_authed/(extension-runtime)/_types'
+import type { ExtensionManifest, ExtensionRoute } from '@/app/_authed/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
 
 export type NodeActionHandler = (ctx: unknown) => Promise<unknown>
@@ -34,7 +34,7 @@ interface CachedModule {
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   /** Per-node-action authorization policy, keyed typeId then actionId, declared alongside `nodeActions`; an action it does not list is 'signed-in'. */
   nodeActionAccess?: Record<string, Record<string, ActionAccess>>
-  routes?: Record<string, ExtensionRouteHandler>
+  routes?: Record<string, ExtensionRoute>
   tools?: ExtensionToolHandlers
   /** Per-App server lifecycle hooks, keyed by App slug — see `AppsExport` in `@opencroft/server`. */
   apps?: opencroft.AppsExport
@@ -259,7 +259,7 @@ interface ExtensionServerModule {
   exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   nodeActionAccess?: Record<string, Record<string, ActionAccess>>
-  routes?: Record<string, ExtensionRouteHandler>
+  routes?: Record<string, ExtensionRoute>
   tools?: ExtensionToolHandlers
   apps?: opencroft.AppsExport
   load?: ExtensionLifecycle
@@ -270,7 +270,7 @@ interface ExtensionServerModule {
     exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
     nodeActions?: Record<string, Record<string, NodeActionHandler>>
     nodeActionAccess?: Record<string, Record<string, ActionAccess>>
-    routes?: Record<string, ExtensionRouteHandler>
+    routes?: Record<string, ExtensionRoute>
     tools?: ExtensionToolHandlers
     apps?: opencroft.AppsExport
     load?: ExtensionLifecycle

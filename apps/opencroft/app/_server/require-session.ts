@@ -23,7 +23,9 @@ import { getRequest } from '@tanstack/react-start/server'
 //                                whatever external caller the user configured
 //   /api/ext/.../http/[...path] an extension's own declared HTTP handler —
 //                                "proxies, webhooks, SSE all work" is that
-//                                file's own description of its job
+//                                file's own description of its job. A route
+//                                the extension declares as a session route
+//                                is gated, by dispatchExtensionRoute.
 //
 // Returns a 401 Response to short-circuit the handler, or null to continue.
 export async function requireSession(request: Request): Promise<Response | null> {
