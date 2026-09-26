@@ -96,6 +96,20 @@ test('the registry both surfaces serve: remote_exec and remote_script offer the 
   assert.equal('background' in properties(read.inputSchema), false)
 })
 
+test('group_chat_compact is async and says so; group_chat_compact_status stays sync', () => {
+  const compact = toolDefinitions.find((t) => t.name === 'group_chat_compact')
+  assert.ok(compact, 'group_chat_compact is listed')
+  assert.ok(compact.description.endsWith(ASYNC_SENTENCE), 'its description gains the async sentence')
+  assert.equal('background' in properties(compact.inputSchema), false, 'async asks nothing new of the caller')
+  assert.match(compact.description, /background-task notification/)
+  assert.match(compact.description, /Send nothing into the thread before/)
+
+  const status = toolDefinitions.find((t) => t.name === 'group_chat_compact_status')
+  assert.ok(status, 'group_chat_compact_status is listed')
+  assert.equal(status.description.endsWith(ASYNC_SENTENCE), false)
+  assert.equal('background' in properties(status.inputSchema), false)
+})
+
 test('a runner adapter is registered only for a tool that can run in the background', () => {
   // One on a sync tool would never be reached: the registry consults it only
   // for a call it has already decided to background.

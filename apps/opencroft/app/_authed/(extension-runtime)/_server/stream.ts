@@ -1001,6 +1001,10 @@ interface CompactJob {
   finishedAt: number | null
   result: CompactResult | null
   error: string | null
+  // Resolves once this job reaches `done` or `error` — the run itself, which
+  // never rejects (runCompactJob owns its errors). What a caller that waits
+  // holds on to, rather than the key: see watchCompact.
+  settled: Promise<void>
 }
 
 export interface CompactAck {
@@ -1152,6 +1156,34 @@ async function runCompactJob(
 // what makes "queue behind the turn" true here rather than just "queue the
 // timeout".
 export async function requestCompact(sessionKey: string): Promise<CompactAck> {
+  return (await watchCompact(sessionKey)).ack
+}
+
+// A compact request together with the job it started or joined, for a caller
+// that does want to wait — the async group_chat_compact tool.
+//
+// It holds the JOB, not the key. A coalesced request waits for the job it
+// actually joined, and renameCompactJobKey moving the key mid-wait cannot make
+// the waiter lose it — a poll by key would answer 'never-requested' then.
+export interface CompactWatch {
+  ack: CompactAck
+  /** The job's state right now — what a waiter that gives up reports. */
+  status: () => CompactStatus
+  /** Resolves with the job's final status once it is `done` or `error`. Never rejects. */
+  settled: Promise<CompactStatus>
+}
+
+function watchOf(sessionKey: string, job: CompactJob, coalesced: boolean): CompactWatch {
+  const state = job.state === 'running' ? 'running' : 'pending'
+  return {
+    ack: { sessionKey, accepted: true, coalesced, state },
+    status: () => statusOf(sessionKey, job),
+    settled: job.settled.then(() => statusOf(sessionKey, job)),
+  }
+}
+
+// requestCompact's work, answering with the watch instead of only the ack.
+export async function watchCompact(sessionKey: string): Promise<CompactWatch> {
   const ctx = await resolveStandingContext(sessionKey)
   if (!ctx) {
     throw new Error(`No agent resolved for session: ${sessionKey}`)
@@ -1172,7 +1204,7 @@ export async function requestCompact(sessionKey: string): Promise<CompactAck> {
 
   const current = compactJobs.get(sessionKey)
   if (current && (current.state === 'pending' || current.state === 'running')) {
-    return { sessionKey, accepted: true, coalesced: true, state: current.state }
+    return watchOf(sessionKey, current, true)
   }
 
   const job: CompactJob = {
@@ -1182,13 +1214,14 @@ export async function requestCompact(sessionKey: string): Promise<CompactAck> {
     finishedAt: null,
     result: null,
     error: null,
+    settled: Promise.resolve(),
   }
   compactJobs.set(sessionKey, job)
-  // Deliberately not awaited — the whole point is that the caller does not
-  // wait for this. runCompactJob owns its own errors (see its try/catch), so
-  // this can never surface as an unhandled rejection.
-  void runCompactJob(existing.sessionId, sessionKey, () => resolveStandingContext(sessionKey), job)
-  return { sessionKey, accepted: true, coalesced: false, state: 'pending' }
+  // Deliberately not awaited here — the whole point is that the caller does
+  // not wait for this. runCompactJob owns its own errors (see its try/catch),
+  // so this can never surface as an unhandled rejection.
+  job.settled = runCompactJob(existing.sessionId, sessionKey, () => resolveStandingContext(sessionKey), job)
+  return watchOf(sessionKey, job, false)
 }
 
 // Entry point for the `compactStatus` action — the queryable signal that a
@@ -1199,6 +1232,10 @@ export function getCompactStatus(sessionKey: string): CompactStatus {
   if (!job) {
     return { sessionKey, state: 'never-requested' }
   }
+  return statusOf(sessionKey, job)
+}
+
+function statusOf(sessionKey: string, job: CompactJob): CompactStatus {
   return {
     sessionKey,
     state: job.state,

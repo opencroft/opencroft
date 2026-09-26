@@ -17,6 +17,7 @@ import {
   threadCompactStatusAsAgent,
   threadRefFromSessionKey,
 } from '@/app/_authed/(group-chats)/_server/model'
+import { COMPACT_WAIT_MS, compactOutcome, waitForCompact } from '@/app/_authed/(mcp)/_server/compact-outcome'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, requireCallingAgent, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
@@ -245,6 +246,10 @@ export const definitions = [
   },
   {
     name: 'group_chat_compact',
+    // Async: a compaction takes minutes, and the caller must not send into the
+    // thread until it ends — so the host waits for the job and delivers how it
+    // ended, instead of every caller polling group_chat_compact_status.
+    execution: 'async' as const,
     description:
       "Compact a thread's session: shrinks its context window and, on success, re-delivers the " +
       "thread's CURRENT standing context (topic + pins). Works on an offline thread too — it is woken " +
@@ -252,8 +257,10 @@ export const definitions = [
       'Use this at a task boundary before the next dispatch — prefer it over sending a bare "/compact" ' +
       'message: this one re-delivers standing context on every harness and reports progress, while a bare ' +
       '/compact only triggers the re-delivery on harnesses that report compaction over ACP, and reports ' +
-      'nothing back. Returns immediately once the job is ' +
-      'accepted; call group_chat_compact_status to see when it actually finishes.',
+      'nothing back. The outcome arrives as a background-task notification when the compaction ends: whether ' +
+      'the context actually shrank (a finished job can still report NOT compacted — retry then), whether the ' +
+      'standing context was re-delivered, the usage before and after, or the error. Send nothing into the ' +
+      'thread before that notification arrives.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -269,8 +276,9 @@ export const definitions = [
     name: 'group_chat_compact_status',
     description:
       "Check a thread's compaction job status (never-requested / pending / running / done / error), " +
-      'including the before/after token counts once done. Poll this after group_chat_compact before ' +
-      'dispatching the next task into the thread.',
+      'including the before/after token counts once done. group_chat_compact reports its outcome as a ' +
+      'background-task notification; poll this instead only where those notifications cannot reach you, ' +
+      'before dispatching the next task into the thread.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -545,14 +553,21 @@ export const handlers: Record<string, ToolHandler> = {
   // No approval wrapper, same reasoning as group_chat_send: this acts on a
   // thread somebody already put this agent into, and the membership gate
   // (compactThreadAsAgent's own) is the control.
+  //
+  // Declared async, so this runs as a background task and its answer is the
+  // task's result: it waits for the job it started or joined, bounded, and
+  // reports how it ended (compact-outcome.ts). A failed job or a wait that
+  // gave up answers isError, which fails the task.
   group_chat_compact: async (args, caller) => {
     const agent = requireCallingAgent(caller)
     const thread = args.thread as string | undefined
     if (!thread) {
       fail(-32602, 'Missing required param: thread')
     }
-    const ack = await compactThreadAsAgent(agent, thread)
-    return textResult(JSON.stringify(ack, null, 2))
+    const watch = await compactThreadAsAgent(agent, thread)
+    const wait = await waitForCompact(watch, { timeoutMs: COMPACT_WAIT_MS, signal: caller.signal })
+    const outcome = compactOutcome(watch.ack, wait, { timeoutMs: COMPACT_WAIT_MS })
+    return outcome.failed ? { ...textResult(outcome.text), isError: true } : textResult(outcome.text)
   },
 
   group_chat_compact_status: async (args, caller) => {

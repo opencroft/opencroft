@@ -2625,16 +2625,25 @@ test('compactThreadAsAgent compacts the addressed thread and re-delivers standin
   const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'opening message')
   await waitForPrompts(prompts, 1)
 
-  const ack = await model.compactThreadAsAgent('Agent Solo', started.thread.id)
-  assert.equal(ack.accepted, true)
+  const watch = await model.compactThreadAsAgent('Agent Solo', started.thread.id)
+  assert.equal(watch.ack.accepted, true)
+  assert.equal(watch.ack.thread, model.threadRefFromSessionKey(started.thread.sessionKey))
 
   await waitForPrompts(prompts, 3) // opening, then '/compact', then the restore
   assert.equal(prompts[1], '/compact')
   assert.match(prompts[2] ?? '', /the standing topic/, 'the restore re-delivers the thread standing context')
 
+  // What the async group_chat_compact tool waits on: the job's own end, in
+  // thread form — no raw sessionKey, same as the status tool's answer.
+  const settled = await watch.settled
+  assert.equal(settled.state, 'done')
+  assert.equal(Object.hasOwn(settled, 'sessionKey'), false)
+  assert.equal(Object.hasOwn(settled.result ?? {}, 'sessionKey'), false)
+
   const status = await model.threadCompactStatusAsAgent('Agent Solo', started.thread.id)
   assert.equal(status.state, 'done')
   assert.equal(status.result?.instructionsRestored, true)
+  assert.deepEqual(settled, status)
 })
 
 test('compactThreadAsAgent wakes an offline session from stored state, compacts it, and leaves it running', async () => {
@@ -2662,8 +2671,8 @@ test('compactThreadAsAgent wakes an offline session from stored state, compacts 
     'sanity: the session must actually be offline before compacting it',
   )
 
-  const ack = await model.compactThreadAsAgent('Agent Session', started.thread.id)
-  assert.equal(ack.accepted, true)
+  const watch = await model.compactThreadAsAgent('Agent Session', started.thread.id)
+  assert.equal(watch.ack.accepted, true)
 
   // opening, then '/compact' (only reachable once the wake resumed the
   // session), then the restore re-delivering the standing topic.
@@ -2671,7 +2680,7 @@ test('compactThreadAsAgent wakes an offline session from stored state, compacts 
   assert.equal(prompts[1], '/compact')
   assert.match(prompts[2] ?? '', /the standing topic/, 'the restore re-delivers the thread standing context')
 
-  const status = await model.threadCompactStatusAsAgent('Agent Session', started.thread.id)
+  const status = await watch.settled
   assert.equal(status.state, 'done')
   assert.equal(status.result?.instructionsRestored, true)
 

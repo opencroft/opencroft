@@ -59,6 +59,7 @@ import {
   getCompactStatus,
   requestCompact,
   resolveOrCreateSession,
+  watchCompact,
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { storedGroupChatKeys } from '@/app/_authed/(group-chats)/_server/orphaned-session-keys'
@@ -1732,6 +1733,13 @@ function toThreadCompactAck(ack: CompactAck): ThreadCompactAck {
   return { ...rest, thread: threadRefFromSessionKey(sessionKey) }
 }
 
+/** `CompactWatch` with the key replaced by the thread ref, as everything else here. */
+export interface ThreadCompactWatch {
+  ack: ThreadCompactAck
+  status: () => ThreadCompactStatus
+  settled: Promise<ThreadCompactStatus>
+}
+
 function toThreadCompactStatus(status: CompactStatus): ThreadCompactStatus {
   const { sessionKey, result, ...rest } = status
   const view: ThreadCompactStatus = { ...rest, thread: threadRefFromSessionKey(sessionKey) }
@@ -3283,16 +3291,24 @@ export async function renameThreadAsAgent(
  * The thread's OWN agent must also still be a member — `resolveThreadForAgent`
  * only checks the CALLER, so this repeats the check `compactThread` makes
  * inline rather than through `deliverIntoThread`, since compaction never goes
- * through that shared delivery path (it talks to `requestCompact`
+ * through that shared delivery path (it talks to the compaction machinery
  * directly, same as `compactThread` does).
+ *
+ * Answers with the job to wait on rather than only its ack: the tool that
+ * calls this runs as a background task and reports how the compaction ended.
  */
-export async function compactThreadAsAgent(agent: AgentRef, threadRef: string): Promise<ThreadCompactAck> {
+export async function compactThreadAsAgent(agent: AgentRef, threadRef: string): Promise<ThreadCompactWatch> {
   const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
-  return toThreadCompactAck(await requestCompact(row.sessionKey))
+  const watch = await watchCompact(row.sessionKey)
+  return {
+    ack: toThreadCompactAck(watch.ack),
+    status: () => toThreadCompactStatus(watch.status()),
+    settled: watch.settled.then(toThreadCompactStatus),
+  }
 }
 
 /**

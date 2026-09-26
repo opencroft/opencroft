@@ -15,7 +15,14 @@ import type { AgentSelection } from 'agent-client/types'
 
 import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { getCompactStatus, registerStandingContextResolver, requestCompact, restoreAfterCompaction } from './stream'
+import {
+  getCompactStatus,
+  registerStandingContextResolver,
+  renameCompactJobKey,
+  requestCompact,
+  restoreAfterCompaction,
+  watchCompact,
+} from './stream'
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
@@ -239,6 +246,45 @@ test('a second compact request while one is pending coalesces instead of double-
 
   // Exactly one /compact dispatch across both requests, not two.
   assert.equal(h.promptCalls.filter((p) => p === '/compact').length, 1)
+})
+
+// The async group_chat_compact tool waits on this rather than polling by key.
+test('a watch settles with the final status of the job it started, and a coalesced one with the same job', async () => {
+  const h = await setupCompactableSession()
+
+  await agentClient.prompt(h.sessionId, 'ongoing work', {
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await waitFor(() => h.promptCalls.length > 0)
+
+  const first = await watchCompact(h.sessionKey)
+  const joined = await watchCompact(h.sessionKey)
+  assert.equal(first.ack.coalesced, false)
+  assert.equal(joined.ack.coalesced, true)
+  assert.equal(first.status().state, 'pending', 'queued behind the running turn')
+
+  let settled = false
+  void first.settled.then(() => {
+    settled = true
+  })
+
+  h.endTurn() // ongoing work
+  await waitFor(() => h.promptCalls.length > 1)
+  assert.equal(first.status().state, 'running')
+  assert.equal(settled, false, 'a running job has not settled')
+  // A key moved mid-wait must not lose the waiter: it holds the job, not the key.
+  const movedKey = `${h.sessionKey}-moved`
+  renameCompactJobKey(h.sessionKey, movedKey)
+  h.endTurn() // /compact
+  await waitFor(() => h.promptCalls.length > 2)
+  h.endTurn() // restore
+
+  const [final, joinedFinal] = await Promise.all([first.settled, joined.settled])
+  assert.equal(final.state, 'done')
+  assert.equal(final.result?.instructionsRestored, true)
+  assert.equal(joinedFinal.finishedAt, final.finishedAt, 'the coalesced watch waited for the same job')
+  assert.equal(getCompactStatus(movedKey).state, 'done')
 })
 
 test('compact refuses a key no standing-context resolver claims', async () => {
