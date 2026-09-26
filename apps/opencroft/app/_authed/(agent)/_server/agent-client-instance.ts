@@ -41,7 +41,7 @@ import { approvalStore } from '@/lib/approval-store'
 //   Default      → decide on the tool itself (see tool-permission.ts), which
 //                  is this app's own classification rather than the kind the
 //                  request happened to arrive with.
-function resolvePermission(context: PermissionContext): PermissionOutcome {
+function resolvePermission(context: PermissionContext): PermissionOutcome | Promise<PermissionOutcome> {
   if (isYoloMode() || approvalStore.getAutoApprove()) {
     return 'allow'
   }

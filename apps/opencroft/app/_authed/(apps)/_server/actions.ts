@@ -1,10 +1,10 @@
 import { getSessionUser } from '@opencroft/auth/server'
-import type { AppEntry } from '@opencroft/core'
 import { db, spaceApp } from '@opencroft/db'
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { and, asc, eq } from 'drizzle-orm'
 
+import { providedApps } from '@/app/_authed/(apps)/_server/host-apps'
 import {
   addSpaceAppImpl,
   appUpdatesInPlace,
@@ -14,7 +14,6 @@ import {
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
-import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 
 // The page gate guards navigation, not these RPC endpoints, which are
@@ -38,7 +37,7 @@ async function resolveSpaceId(spaceSlug: string): Promise<string> {
 }
 
 async function findApp(extensionId: string, appSlug: string): Promise<AppMeta | undefined> {
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   const match = provided.find((p) => p.extensionId === extensionId && p.value.slug === appSlug)
   return match ? { ...match.value, extensionId: match.extensionId } : undefined
 }
@@ -77,7 +76,7 @@ function toInstance(row: typeof spaceApp.$inferSelect): SpaceAppInstance {
 /** Every App any extension provides, from the manifests — available to add to a space. */
 export const listApps = createServerFn({ strict: { output: false } }).handler(async (): Promise<AppMeta[]> => {
   await requireSession()
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   return Promise.all(
     provided.map(async ({ extensionId, value }) => ({
       ...value,

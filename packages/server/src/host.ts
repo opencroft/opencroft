@@ -27,7 +27,12 @@ export interface HostGraphApi {
   listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<unknown[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
+  /**
+   * Create a node on the graph at `address` — a space slug (its default graph)
+   * or `<space>.<graph>`. Required: there is no default graph to fall back to.
+   */
   createNode(
+    address: string,
     typeId: string,
     data: Record<string, unknown>,
     position: { x: number; y: number },

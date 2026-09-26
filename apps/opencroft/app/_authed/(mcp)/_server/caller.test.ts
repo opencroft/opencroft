@@ -264,11 +264,11 @@ test('tool name is part of the caller identity, so per-tool usage is visible', a
   const request = req({ 'user-agent': 'tooler/1' })
 
   await recordCaller({ caller, method: 'tools/call', tool: 'remote_exec', request })
-  await recordCaller({ caller, method: 'tools/call', tool: 'list_nodes', request })
+  await recordCaller({ caller, method: 'tools/call', tool: 'app_call', request })
 
   const rows = await db.select().from(mcpCaller).where(eq(mcpCaller.method, 'tools/call'))
   assert.equal(rows.length, 2)
-  assert.deepEqual(rows.map((r) => r.tool).sort(), ['list_nodes', 'remote_exec'])
+  assert.deepEqual(rows.map((r) => r.tool).sort(), ['app_call', 'remote_exec'])
 })
 
 test('a resolved caller is recorded by its node, and its token’s lastUsedAt is stamped', async () => {

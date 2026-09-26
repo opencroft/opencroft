@@ -1,12 +1,13 @@
 /**
  * Helpers shared by more than one tool-family module: the space parameter every
- * graph-addressed tool takes, the result and refusal shapes, the calling agent,
+ * space-addressed tool takes, the result and refusal shapes, the calling agent,
  * space and endpoint resolution, and the local-extension identity a write claim
  * is taken on.
  */
 
 import { claimExtensionLease, leaseRefusalMessage } from '@/app/_authed/(extension-runtime)/_server/extension-lease'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
+import { fail } from '@/app/_authed/(mcp)/_server/tool-refusal'
 // MCP tool calls carry no session cookie by design (a bearer-token surface),
 // so every space operation reached from here must be the
 // plain `*Impl`, never the createServerFn wrapper in actions.ts. The wrappers
@@ -15,15 +16,21 @@ import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 // what happened when the session gate first landed in the shared
 // implementations — it broke the read tools directly, and every graph-write
 // tool indirectly through withGraphConflictRetry's default load/save.
-import { getActiveSpaceSlugImpl, resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
+import { resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import type { AgentRef } from '@/app/_authed/(space)/_server/agents-impl'
 import { parseGraphAddress } from '@/app/_authed/(space)/_server/types'
 
+// Import-free primitives, homed on their own so code reached through a tool
+// without being a tool module can use them without loading this one.
+export { type ParsedEndpoint, parseEndpoint } from '@/app/_authed/(mcp)/_server/endpoint'
+export { replaceExact } from '@/app/_authed/(mcp)/_server/exact-replace'
+export { fail }
+
+/** The `space` a space-addressed tool takes — required wherever it is spread, since nothing is defaulted. */
 export const SPACE_PARAM = {
   space: {
     type: 'string',
-    description:
-      'Graph address: a space slug (its default graph) or "<space>.<graph>" for a named graph — see list_spaces for both. Omit to target the default graph of the active space.',
+    description: 'The space this is for: its slug, or a graph address "<space>.<graph>" — see list_spaces for both.',
   },
 }
 
@@ -35,11 +42,6 @@ export interface GraphNode {
   type?: string
   position?: { x: number; y: number }
   data?: Record<string, unknown>
-}
-
-export interface ParsedEndpoint {
-  nodeId: string
-  handle?: string
 }
 
 /**
@@ -82,20 +84,20 @@ export function textResult(text: string): Record<string, unknown> {
   return { content: [{ type: 'text' as const, text }] }
 }
 
-export function fail(code: number, message: string): never {
-  throw { code, message }
-}
-
 // Every space-addressed tool comes through here, so this is the one place an
 // agent's slug is turned into a space -- and it asks the registry rather than
 // matching slugs against a list, which is the difference between resolving an
 // address and comparing two strings. A slug a rename freed still resolves, the
 // same way it does for the web routes; matching by hand saw live spaces only,
 // so a renamed space vanished from all agent tooling while the UI was fine.
+//
+// An omitted space is REFUSED, never defaulted. There is no "current space"
+// on the server: any default is somebody else's choice, and a call without an
+// address used to land wherever a person or a test tab last navigated.
 export async function resolveSpace(args: Record<string, unknown>): Promise<string> {
-  const input = args.space as string | undefined
-  if (!input) {
-    return getActiveSpaceSlugImpl()
+  const input = args.space
+  if (typeof input !== 'string' || !input) {
+    fail(-32602, 'Missing required param: space — a space slug, or "<space>.<graph>" (see list_spaces)')
   }
   // A graph address rides on the space part: the space resolves through the
   // same alias fallback as ever, the graph suffix is carried along canonically
@@ -108,12 +110,14 @@ export async function resolveSpace(args: Record<string, unknown>): Promise<strin
   fail(-32602, `Space not found: ${input} (use a slug or "<space>.<graph>" — see list_spaces)`)
 }
 
-export function parseEndpoint(raw: string): ParsedEndpoint {
-  const i = raw.indexOf('/')
-  if (i === -1) {
-    return { nodeId: raw }
-  }
-  return { nodeId: raw.slice(0, i), handle: raw.slice(i + 1) }
+/**
+ * The SPACE a call is for, when it addresses a whole space rather than one of
+ * its graphs: a graph address is accepted and its graph part dropped. What
+ * everything scoped to a space's screens uses — a toast, a question, an
+ * approval — since a browser subscribes by the space it shows.
+ */
+export async function resolveSpaceSlug(args: Record<string, unknown>): Promise<string> {
+  return parseGraphAddress(await resolveSpace(args)).spaceSlug
 }
 
 // The node-id sentinel used by the static per-extension terminal-context handle
@@ -161,27 +165,4 @@ export async function claimSlugForWrite(slug: string, caller: ToolCallerContext)
   if (decision.outcome === 'refused') {
     fail(-32000, leaseRefusalMessage(slug, decision.lease, Date.now(), `call ${LEASE_TOOL_NAME} with takeover: true`))
   }
-}
-
-/**
- * Exact-string replacement shared by remote_edit and edit_node_property: enforces the
- * found/unique contract, and uses a function replacer so dollar-prefixed substitution patterns
- * in newString are inserted literally instead of being expanded.
- */
-export function replaceExact(
-  content: string,
-  edit: { oldString: string; newString: string; replaceAll: boolean },
-  subject: string,
-): string {
-  const occurrences = content.split(edit.oldString).length - 1
-  if (occurrences === 0) {
-    fail(-32602, `oldString not found in ${subject}`)
-  }
-  if (occurrences > 1 && !edit.replaceAll) {
-    fail(-32602, `oldString is not unique (${occurrences} matches). Set replaceAll=true or provide more context.`)
-  }
-  if (edit.replaceAll) {
-    return content.split(edit.oldString).join(edit.newString)
-  }
-  return content.replace(edit.oldString, () => edit.newString)
 }

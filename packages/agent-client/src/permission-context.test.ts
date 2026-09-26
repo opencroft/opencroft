@@ -43,6 +43,22 @@ test("a tool that is not the host's leaves no name behind, and its kind is passe
   assert.equal(context.toolKind, 'read')
 })
 
+test('the arguments the call was made with reach the host, and their absence stays absent', () => {
+  // A host that dispatches many operations through one tool can only classify
+  // the call by what it was asked to do; losing the input here would make every
+  // such call look alike to the host's policy.
+  const input = { app: 'my-space.my-graph', action: 'listNodes' }
+  assert.deepEqual(
+    permissionContext(request({ title: 'mcp__local__app_call', rawInput: input }), 'local').toolInput,
+    input,
+  )
+  assert.equal(permissionContext(request({ title: 'mcp__local__app_call' }), 'local').toolInput, undefined)
+  assert.equal(
+    permissionContext(request({ title: 'mcp__local__app_call', rawInput: null }), 'local').toolInput,
+    undefined,
+  )
+})
+
 test('a request with no title and no kind yields neither', () => {
   // Both fields are optional in the protocol, and `null` is a value an agent may
   // actually send. Either arriving as a string would make the host decide about

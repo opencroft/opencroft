@@ -32,7 +32,11 @@ test('the incident path is refused by name, and nothing is created', () => {
     assert.match(target.reason, /"schedules\[0\]\.enabled"/, 'the refusal names the whole path')
     assert.match(target.reason, /schedules\.0\.enabled/, 'and teaches the spelling that works')
   }
-  assert.equal(JSON.stringify(data), before, 'a refused path must leave the data untouched — the junk key was the defect')
+  assert.equal(
+    JSON.stringify(data),
+    before,
+    'a refused path must leave the data untouched — the junk key was the defect',
+  )
 })
 
 test('the dot spelling resolves to the array element, and a boolean lands as one', () => {
@@ -78,7 +82,11 @@ test('walking through an array uses canonical indexes only', () => {
     assert.match(alpha.reason, /is an array and "first" is not an index/)
   }
   const padded = resolveForWrite(data, 'schedules.01.enabled')
-  assert.equal(padded.ok, false, '"01" is a key spelling, not index 1 — accepting both would make two paths name one slot')
+  assert.equal(
+    padded.ok,
+    false,
+    '"01" is a key spelling, not index 1 — accepting both would make two paths name one slot',
+  )
 })
 
 test('an out-of-range index is refused rather than appending or punching a hole', () => {
@@ -131,7 +139,13 @@ test('unset refuses an array element, which would renumber its neighbours', () =
 
 test('the object model’s own names are refused as segments, first, middle and last alike', () => {
   const data = eventNode()
-  for (const path of ['__proto__.polluted', 'schedules.0.__proto__', '__proto__', 'constructor.prototype.polluted', 'prototype']) {
+  for (const path of [
+    '__proto__.polluted',
+    'schedules.0.__proto__',
+    '__proto__',
+    'constructor.prototype.polluted',
+    'prototype',
+  ]) {
     const target = resolveForWrite(data, path)
     assert.equal(target.ok, false, `"${path}" must refuse`)
     if (!target.ok) {

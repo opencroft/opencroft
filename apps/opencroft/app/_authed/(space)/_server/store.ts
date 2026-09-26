@@ -3,7 +3,6 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import { slugify } from '@/app/_authed/(space)/_server/slug'
 import {
-  ACTIVE_SPACE_SETTING_ID,
   DEFAULT_GRAPH_NAME,
   DEFAULT_GRAPH_SLUG,
   DEFAULT_SPACE_NAME,
@@ -15,7 +14,7 @@ import {
   parseGraphAddress,
   type SpaceSummary,
 } from '@/app/_authed/(space)/_server/types'
-import { getSetting, upsertSetting } from '@/server/data'
+import { getSetting } from '@/server/data'
 
 /**
  * One graph of a space: what one canvas draws. Owned by exactly one Graph App
@@ -335,7 +334,7 @@ class SpacesRegistry {
    * A space by slug, live first and then by a slug a rename freed.
    *
    * Every caller gets the alias fallback, which is the point: a bookmarked
-   * canvas URL, the stored active-space slug and an extension configured with a
+   * canvas URL, an agent's instructions and an extension configured with a
    * space name are all addresses written down outside this process, and nothing
    * rewrites them when someone renames a space.
    *
@@ -691,10 +690,10 @@ class SpacesRegistry {
    * by. Resolves through an alias like every other lookup, so renaming twice in
    * a row works from either address.
    *
-   * THE SLUG MOVES BECAUSE IT IS AN ADDRESS. It is in canvas URLs, in the
-   * stored active-space setting, and in whatever an extension was configured
-   * with -- a space still answering to a name it no longer has is the same
-   * defect a renamed group chat had.
+   * THE SLUG MOVES BECAUSE IT IS AN ADDRESS. It is in canvas URLs, in agents'
+   * tool calls, and in whatever an extension was configured with -- a space
+   * still answering to a name it no longer has is the same defect a renamed
+   * group chat had.
    *
    * A CLASH IS REFUSED and nothing changes -- not even the display name. See
    * `SpaceSlugTakenError` for why a rename is not a creation. A name with
@@ -705,10 +704,7 @@ class SpacesRegistry {
    * address handed over between two spaces possible at all: the first rename
    * frees it, the second claims it and drops the alias.
    *
-   * The old slug keeps resolving, and the active-space setting is moved with
-   * it: that setting is read back through a plain equality check, so a rename
-   * that left it pointing at the old slug would silently drop the reader onto a
-   * different space on their next load.
+   * The old slug keeps resolving, through the alias this records.
    *
    * Graph addresses ride on the space part and move with it -- the graphs
    * themselves are keyed by space id and their own slug, which a space rename
@@ -760,9 +756,6 @@ class SpacesRegistry {
     this.bySlug.set(row.slug, id)
     this.aliasBySlug.delete(nextSlug)
     this.aliasBySlug.set(previousSlug, id)
-    if ((await this.readActiveSlug()) === previousSlug) {
-      await this.setActiveSlug(row.slug)
-    }
     return runtime
   }
 
@@ -820,29 +813,6 @@ class SpacesRegistry {
     ref.graph.graph = graph
     ref.graph.updatedAt = row.updatedAt
     return ref
-  }
-
-  async setActiveSlug(slug: string): Promise<void> {
-    await upsertSetting(ACTIVE_SPACE_SETTING_ID, JSON.stringify({ slug }))
-  }
-
-  /** The stored value, whether or not it still names a live space. */
-  private async readActiveSlug(): Promise<string | null> {
-    const row = await getSetting(ACTIVE_SPACE_SETTING_ID)
-    if (!row) {
-      return null
-    }
-    const { slug } = JSON.parse(row.data) as { slug?: string }
-    return slug ?? null
-  }
-
-  // Answers with the space's CURRENT slug, resolving a stored value through an
-  // alias first: the setting is written once and read on every load, so a value
-  // left over from before a rename must land on the space it named rather than
-  // silently falling back to whichever space happens to be first.
-  async getActiveSlug(): Promise<string | null> {
-    const slug = await this.readActiveSlug()
-    return slug ? (this.getBySlug(slug)?.slug ?? null) : null
   }
 }
 

@@ -15,14 +15,12 @@ import type { AppInstanceContext, AppServerHooks } from '@opencroft/server'
 import { asc, eq } from 'drizzle-orm'
 
 import { appAddressOf, isAppAddress, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
-import { graphAppHooks } from '@/app/_authed/(apps)/_server/graph-app'
+import { hostAppHooks, providedApps } from '@/app/_authed/(apps)/_server/host-apps'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
-import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
-import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
 import { registerShutdownStep } from '@/server/shutdown'
 
 type SpaceAppRow = typeof spaceApp.$inferSelect
@@ -42,16 +40,10 @@ function loadedInstances(): Map<string, LoadedInstance> {
   return (globalForApps.__spaceAppsLoaded ??= new Map())
 }
 
-// Host-implemented apps first: their hooks are app code (they reach host
-// internals an extension server bundle cannot see), while their metadata and
-// client component still ship through the providing extension like any other
-// App's. Everything else resolves through the extension's server module.
-const hostAppHooks: Record<string, Record<string, AppServerHooks>> = {
-  [GRAPH_APP_EXTENSION_ID]: { [GRAPH_APP_SLUG]: graphAppHooks },
-}
-
+// Host-implemented apps first (see host-apps.ts); everything else resolves
+// through the extension's server module.
 async function hooksFor(extensionId: string, appSlug: string): Promise<AppServerHooks | undefined> {
-  const hostHooks = hostAppHooks[extensionId]?.[appSlug]
+  const hostHooks = hostAppHooks(extensionId, appSlug)
   if (hostHooks) {
     return hostHooks
   }
@@ -303,7 +295,7 @@ function parameterSpecs(entry: AppEntry | undefined): AppParameterSpec[] {
 
 /** Every App any extension provides — what an `app_add` can instantiate. */
 export async function listAppCatalog(): Promise<AppCatalogEntry[]> {
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   return provided.map(({ extensionId, value }) => ({
     extensionId,
     appSlug: value.slug,
@@ -348,7 +340,7 @@ export async function addSpaceAppImpl(
   if (!space) {
     throw new Error(`Unknown space: ${spaceSlug}`)
   }
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   const entry = provided.find((p) => p.extensionId === extensionId && p.value.slug === appSlug)?.value
   if (!entry) {
     throw new Error(`No extension provides app: ${extensionId}/${appSlug}`)
@@ -515,7 +507,7 @@ export async function listSpaceApps(spaceSlug?: string): Promise<SpaceAppListing
   const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
   const r = await registry()
   const slugById = new Map(r.list().map((s) => [s.id, s.slug]))
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   const apps: Record<string, SpaceAppInfo> = {}
   const actions: Record<string, string[]> = {}
   for (const row of rows) {
@@ -565,7 +557,7 @@ export async function appDetail(ref: string): Promise<SpaceAppDetail> {
   if (!address) {
     throw new Error(`App "${ref}" belongs to no registered space.`)
   }
-  const entry = appEntryFor(await getProvided<AppEntry>('apps'), row)
+  const entry = appEntryFor(await providedApps(), row)
   const detail: SpaceAppDetail = {
     address,
     type: row.appSlug,
@@ -614,7 +606,7 @@ function soleAppOfType(provided: Provided<AppEntry>[], type: string): AppEntry {
  * app.
  */
 export async function listAppActions(app: string, ids?: string[]): Promise<AppActionMeta[]> {
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   let entry: AppEntry
   if (isAppAddress(app)) {
     const row = await requireAppRow(app)
@@ -704,7 +696,7 @@ export async function listAppHandles(contextType?: string): Promise<AppHandleInf
   }
   const r = await registry()
   const slugById = new Map(r.list().map((s) => [s.id, s.slug]))
-  const provided = await getProvided<AppEntry>('apps')
+  const provided = await providedApps()
   const results: AppHandleInfo[] = []
   for (const row of rows) {
     const entry = appEntryFor(provided, row)
@@ -775,7 +767,7 @@ export async function appActionDeclaration(
   if (!row) {
     return undefined
   }
-  const entry = appEntryFor(await getProvided<AppEntry>('apps'), row)
+  const entry = appEntryFor(await providedApps(), row)
   return {
     address: (await appAddressOf(row)) ?? ref,
     action: entry?.actions?.find((action) => action.id === actionId),
@@ -795,10 +787,7 @@ export async function callAppAction(
   callerAgent?: string,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  const row = await resolveAppAddress(ref)
-  if (!row) {
-    throw new Error(`Unknown app instance: ${ref}`)
-  }
+  const row = await requireAppRow(ref)
   const hooks = await hooksFor(row.extensionId, row.appSlug)
   const handler = hooks?.actions?.[actionId]
   if (!handler) {

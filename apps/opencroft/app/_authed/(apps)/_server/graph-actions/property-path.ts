@@ -29,9 +29,7 @@
 type Refusal = { ok: false; reason: string }
 
 /** Where a path landed: the container to mutate and the key within it. */
-export type PathTarget =
-  | { ok: true; parent: Record<string, unknown> | unknown[]; key: string | number }
-  | Refusal
+export type PathTarget = { ok: true; parent: Record<string, unknown> | unknown[]; key: string | number } | Refusal
 
 /** Canonical array index: no signs, no leading zeros, so "01" is a key, not index 1. */
 const INDEX_RE = /^(0|[1-9][0-9]*)$/
@@ -86,7 +84,10 @@ function walkToParent(data: Record<string, unknown>, path: string): Walked | Ref
   }
   const reserved = segments.find((s) => RESERVED_SEGMENTS.has(s))
   if (reserved !== undefined) {
-    return refuse(path, `"${reserved}" is a name of the object model itself, not of data, and cannot be read or written here`)
+    return refuse(
+      path,
+      `"${reserved}" is a name of the object model itself, not of data, and cannot be read or written here`,
+    )
   }
   let cur: unknown = data
   for (let i = 0; i < segments.length - 1; i++) {
@@ -138,7 +139,10 @@ export function resolveForWrite(data: Record<string, unknown>, path: string): Pa
     }
     const index = Number(last)
     if (index >= parent.length) {
-      return refuse(path, `${at} has ${parent.length} element(s), so index ${index} does not exist — this tool does not append`)
+      return refuse(
+        path,
+        `${at} has ${parent.length} element(s), so index ${index} does not exist — this tool does not append`,
+      )
     }
     return { ok: true, parent, key: index }
   }
@@ -172,7 +176,10 @@ export function resolveForUnset(data: Record<string, unknown>, path: string): Pa
     return target
   }
   if (Array.isArray(target.parent)) {
-    return refuse(path, 'it names an array element — removing one would renumber its neighbours, which this tool does not do')
+    return refuse(
+      path,
+      'it names an array element — removing one would renumber its neighbours, which this tool does not do',
+    )
   }
   return target
 }

@@ -73,8 +73,8 @@ test('saveGraph rejects a writer whose version predates a real concurrent write,
 })
 
 // ---------------------------------------------------------------------------
-// RENAMING MOVES A SPACE'S ADDRESS. The slug is in canvas URLs, in the stored
-// active-space setting, and in whatever an extension was configured with -- so
+// RENAMING MOVES A SPACE'S ADDRESS. The slug is in canvas URLs, in agents'
+// tool calls, and in whatever an extension was configured with -- so
 // a rename that left it behind is the same defect a renamed group chat had, and
 // the freed address has to keep resolving.
 // ---------------------------------------------------------------------------
@@ -136,21 +136,6 @@ test('a live space outranks a freed address, and taking one drops the alias', as
   // And the alias is gone rather than merely outranked at read time.
   await registry.remove(second.slug)
   assert.equal(registry.getBySlug(original), null)
-})
-
-test('renaming the active space moves the stored active slug with it', async () => {
-  const registry = getSpacesRegistry()
-  const original = `store-rename-active-${crypto.randomUUID()}`
-  await freshSpace(original)
-  await registry.setActiveSlug(original)
-
-  const renamed = await registry.rename(original, `Active ${crypto.randomUUID()}`)
-  assert.ok(renamed)
-  assert.equal(
-    await registry.getActiveSlug(),
-    renamed.slug,
-    'left pointing at the freed slug, the next load would silently open a different space',
-  )
 })
 
 test('renaming onto an address another space holds is refused, and changes nothing', async () => {

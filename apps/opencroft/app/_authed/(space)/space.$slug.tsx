@@ -3,7 +3,7 @@ import { ReactFlowProvider } from '@xyflow/react'
 
 import { CanvasNodesProvider } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
 import { SpaceCanvas } from '@/app/_authed/(space)/_components/space-canvas'
-import { listSpaces, setActiveSpaceSlug } from '@/app/_authed/(space)/_server/actions'
+import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
 
 export const Route = createFileRoute('/_authed/(space)/space/$slug')({
@@ -16,7 +16,6 @@ export const Route = createFileRoute('/_authed/(space)/space/$slug')({
     if (!space) {
       throw notFound()
     }
-    await setActiveSpaceSlug({ data: params.slug })
     return { space, spaces }
   },
   // The slug is the fallback because `head` also runs before the loader has

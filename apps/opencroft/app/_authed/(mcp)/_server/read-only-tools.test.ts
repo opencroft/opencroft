@@ -10,7 +10,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isApprovalGated, READ_ONLY_TOOLS, toolDefinitions } from './tools'
+import { graphActions } from '@/app/_authed/(apps)/_server/graph-actions'
+import { isApprovalGated, READ_ONLY_APP_ACTIONS, READ_ONLY_TOOLS, toolDefinitions } from './tools'
 
 const names = new Set(toolDefinitions.map((t) => t.name))
 
@@ -45,7 +46,27 @@ test('the tools deliberately excluded from the set are still excluded', () => {
   // tool somebody later adds because it "only reads" or "only sends a toast".
   // If one is admitted, that should be a decision with this test in the diff,
   // not a line that slipped in.
-  for (const name of ['db_read', 'send_toast', 'focus_node', 'comment_nodes', 'uncomment_nodes', 'mcp_test']) {
+  for (const name of ['db_read', 'send_toast', 'mcp_test', 'app_call']) {
     assert.equal(READ_ONLY_TOOLS.has(name), false, `${name} is excluded deliberately — see READ_ONLY_TOOLS' comment`)
+  }
+  for (const key of ['graph.focusNode', 'graph.commentNodes', 'graph.uncommentNodes']) {
+    assert.equal(
+      READ_ONLY_APP_ACTIONS.has(key),
+      false,
+      `${key} is excluded deliberately — see READ_ONLY_TOOLS' comment`,
+    )
+  }
+})
+
+// The same two guards for the app-action set, against the declarations it
+// classifies: every key names an action the host App really declares, and
+// none of them is one that asks for approval.
+test('every read-only app action is a declared, ungated action of a host App', () => {
+  const declared = new Map(graphActions.map((action) => [`graph.${action.id}`, action]))
+  assert.ok(READ_ONLY_APP_ACTIONS.size > 0 && READ_ONLY_APP_ACTIONS.size < declared.size)
+  for (const key of READ_ONLY_APP_ACTIONS) {
+    const action = declared.get(key)
+    assert.ok(action, `${key} is in READ_ONLY_APP_ACTIONS but no host App declares it`)
+    assert.notEqual(action.requireApproval, true, `${key} is read-only and also asks for approval`)
   }
 })

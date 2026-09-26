@@ -863,6 +863,85 @@ const DEFAULT_SPEC: ToolViewSpec = { body: DefaultToolView }
 const targetNodeId = (args: Record<string, unknown>) => (args.target as string | undefined)?.split('/')[0]
 const argNodeId = (args: Record<string, unknown>) => args.nodeId as string | undefined
 
+// ── app_call ────────────────────────────────────────────────────────────
+//
+// The three graph writes above (updateNodes, writeNodeProperty,
+// editNodeProperty) run through app_call, so the transcript's programmatic
+// name for all of them is 'app_call' — only `args.action` tells them apart.
+// An approval arrives keyed by the server's own `view` ('graph.updateNodes',
+// …) but with the same app_call args, `{ app, action, params }`, so those
+// keys resolve to the very same spec: one view that peels `params` off for
+// the inner graph view, whichever way a caller arrived. GRAPH_ACTION_VIEWS is
+// the single place a graph action's view and its params shape are declared. Matching checks the
+// params shape, not just the action id, because an extension App can declare
+// an action with the same id as one of the graph's — an id match alone would
+// let an unrelated call borrow the graph's view.
+interface GraphActionSpec {
+  view: ToolViewSpec
+  matches: (params: Record<string, unknown>) => boolean
+}
+
+const GRAPH_ACTION_VIEWS: Readonly<Record<string, GraphActionSpec>> = {
+  updateNodes: {
+    view: { body: UpdateNodesView },
+    matches: (params) => Array.isArray(params.updates),
+  },
+  writeNodeProperty: {
+    view: { body: WriteNodePropertyView, getNodeId: argNodeId },
+    matches: (params) => typeof params.nodeId === 'string' && typeof params.path === 'string',
+  },
+  editNodeProperty: {
+    view: { body: EditNodePropertyView, getNodeId: argNodeId },
+    matches: (params) =>
+      typeof params.nodeId === 'string' &&
+      typeof params.path === 'string' &&
+      typeof params.oldString === 'string' &&
+      typeof params.newString === 'string',
+  },
+}
+
+// Resolves an app_call's own args, `{ app, action, params }`, to the graph
+// view its action names and the params to render that view with — or
+// undefined when the action isn't one of the graph's, or its params don't
+// match that action's shape.
+export function appActionView(
+  args: Record<string, unknown>,
+): { view: ToolViewSpec; params: Record<string, unknown> } | undefined {
+  const action = args.action as string | undefined
+  const params = args.params
+  if (!action || typeof params !== 'object' || params === null || Array.isArray(params)) {
+    return undefined
+  }
+  const graphAction = GRAPH_ACTION_VIEWS[action]
+  if (!graphAction || !graphAction.matches(params as Record<string, unknown>)) {
+    return undefined
+  }
+  return { view: graphAction.view, params: params as Record<string, unknown> }
+}
+
+// The transcript's entry for every app_call, whichever action it carries:
+// render the graph's own view when the action and its params match one,
+// otherwise fall back exactly as an unregistered tool would.
+function AppCallView(props: ToolViewProps) {
+  const resolved = appActionView(props.args)
+  if (!resolved) {
+    return props.mode === 'approval' ? (
+      <DefaultToolView {...props} />
+    ) : (
+      <GenericToolView tool={props.tool} args={props.args} result={props.result} />
+    )
+  }
+  const Inner = resolved.view.body
+  return <Inner {...props} args={resolved.params} />
+}
+
+function appCallNodeId(args: Record<string, unknown>): string | undefined {
+  const resolved = appActionView(args)
+  return resolved && resolved.view.getNodeId?.(resolved.params)
+}
+
+const APP_CALL_SPEC: ToolViewSpec = { body: AppCallView, getNodeId: appCallNodeId }
+
 // Every view, keyed by the tool's programmatic name. The agent's own file tools
 // are keyed the same way, which is what the transcript matches on — their
 // displayed titles embed the file path, so no fixed id could ever equal one.
@@ -879,9 +958,10 @@ export const TOOL_VIEWS: Readonly<Record<string, ToolViewSpec>> = {
   skill_write: { body: SkillWriteView },
   skill_edit: { body: SkillEditView },
   call: { body: CallView, getNodeId: argNodeId },
-  update_nodes: { body: UpdateNodesView },
-  write_node_property: { body: WriteNodePropertyView, getNodeId: argNodeId },
-  edit_node_property: { body: EditNodePropertyView, getNodeId: argNodeId },
+  'graph.updateNodes': APP_CALL_SPEC,
+  'graph.writeNodeProperty': APP_CALL_SPEC,
+  'graph.editNodeProperty': APP_CALL_SPEC,
+  app_call: APP_CALL_SPEC,
 }
 
 // Only a specifically registered view, or undefined — for callers (the chat

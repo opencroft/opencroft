@@ -1,9 +1,8 @@
 /** The family that addresses the person at the screen: send_toast and ask_user. */
 
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, resolveSpace, SPACE_PARAM, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, resolveSpaceSlug, SPACE_PARAM, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import { askUserStore } from '@/lib/ask-user-store'
-import type { SSEEvent } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 
 export const sendToastDefinitions = [
@@ -21,7 +20,7 @@ export const sendToastDefinitions = [
         },
         ...SPACE_PARAM,
       },
-      required: ['message'],
+      required: ['message', 'space'],
     },
   },
 ]
@@ -56,7 +55,7 @@ export const askUserDefinitions = [
         },
         ...SPACE_PARAM,
       },
-      required: ['questions'],
+      required: ['questions', 'space'],
     },
   },
 ]
@@ -69,12 +68,12 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing required param: message')
     }
     const type = (args.type as string) || 'info'
-    const spaceId = args.space as string | undefined
+    const spaceId = await resolveSpaceSlug(args)
     toastStore.broadcast({
       type: 'toast',
       message,
       toastType: type as 'info' | 'success' | 'warning' | 'error',
-      ...(spaceId ? ({ spaceId } satisfies Pick<SSEEvent, 'spaceId'>) : {}),
+      spaceId,
     })
     return textResult(`Toast sent: [${type}] ${message}`)
   },
@@ -100,7 +99,7 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Each question must have title, question, and at least 1 option')
     }
 
-    const spaceId = typeof args.space === 'string' ? await resolveSpace(args) : undefined
+    const spaceId = await resolveSpaceSlug(args)
     const id = `ask-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
     const answers = await askUserStore.add({

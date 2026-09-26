@@ -1,8 +1,9 @@
 /**
  * MCP tool definitions and handlers for the App Dashboard.
  *
- * Graph tools are scoped by `space` (slug).
- * If omitted, the active space is used. Extension tools operate on v2
+ * Every tool that addresses a space takes its address, required: nothing
+ * falls back to a default space. A graph's own operations are actions of its
+ * Graph app, reached through `app_call`. Extension tools operate on v2
  * local extensions (folders under `data/extensions/local/<slug>/`). Source files are read and
  * edited via the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script)
  * against the static handle "extensions/<slug>" — see `resolveLocalExtensionContext` — rather
@@ -13,6 +14,7 @@
 import type { ExecutionMode } from '@opencroft/core'
 
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta } from '@/app/_authed/(approvals)/_server/with-approval'
+import { hostAppCall } from '@/app/_authed/(apps)/_server/host-apps'
 import type { AgentToolData } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-tool-shared'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { definitions as actionDefinitions, handlers as actionHandlers } from '@/app/_authed/(mcp)/_server/action-tools'
@@ -35,7 +37,6 @@ import {
   definitions as mcpServerDefinitions,
   handlers as mcpServerHandlers,
 } from '@/app/_authed/(mcp)/_server/mcp-server-tools'
-import { definitions as nodeDefinitions, handlers as nodeHandlers } from '@/app/_authed/(mcp)/_server/node-tools'
 import {
   definitions as remoteDefinitions,
   handlers as remoteHandlers,
@@ -51,7 +52,7 @@ import {
   handlers as taskHandlers,
 } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, type GraphNode, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, type GraphNode, resolveSpaceSlug, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import {
   askUserDefinitions,
   sendToastDefinitions,
@@ -132,9 +133,9 @@ export { isValidLocalExtensionSlug, replaceExact, requireCallingAgent } from '@/
  *                       re-evaluated -- including whether the settings table
  *                       has to join the deny-list.
  *   send_toast,      -- broadcast-only, so they persist nothing, but they act
- *   focus_node,         on other people's screens. They fail (a) in the sense
- *   comment_nodes,      that matters: a caller has an effect somebody else
- *   uncomment_nodes     sees.
+ *   graph.focusNode,    on other people's screens. They fail (a) in the sense
+ *   graph.commentNodes, that matters: a caller has an effect somebody else
+ *   graph.uncommentNodes sees.
  *   mcp_test         -- composes an arbitrary outbound request, headers
  *                       included.
  *   ask_user         -- interrupts a person.
@@ -145,12 +146,9 @@ export { isValidLocalExtensionSlug, replaceExact, requireCallingAgent } from '@/
  * values is not storing them where a read finds them.
  */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
-  // Graph and space reads: return stored structure, write nothing.
+  // Space and app reads: return stored structure, write nothing. A graph's
+  // own reads are app actions — see READ_ONLY_APP_ACTIONS.
   'list_spaces',
-  'list_nodes',
-  'find_nodes',
-  'get_nodes',
-  'list_edges',
   'list_actions',
   'app_list',
   'app_get',
@@ -180,6 +178,43 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * The `app_call`s that cannot change anything, by policy key: `<type>.<action>`
+ * of an App the HOST implements. Admitted under the same two criteria as
+ * READ_ONLY_TOOLS, and kept beside it so both classifications review as one.
+ *
+ * A key here is only ever matched against one minted from a RESOLVED app
+ * whose App the host implements (see `hostAppCall`). An extension App
+ * declaring an action of the same name — `listNodes` on its own App — never
+ * produces a key at all, so it cannot borrow this classification.
+ */
+export const READ_ONLY_APP_ACTIONS: ReadonlySet<string> = new Set([
+  // A graph's reads: return stored structure, write nothing.
+  'graph.listNodes',
+  'graph.findNodes',
+  'graph.getNodes',
+  'graph.listEdges',
+])
+
+/**
+ * Whether one call — a tool and the input it was made with — is declared
+ * read-only. A plain tool answers by name. An `app_call` answers by the action
+ * it names, resolved on this server: anything missing, malformed, unresolvable
+ * or not a host App's action is NOT read-only, which keeps whatever gate it
+ * already had.
+ */
+export async function isReadOnlyToolCall(toolName: string, input: unknown): Promise<boolean> {
+  if (READ_ONLY_TOOLS.has(toolName)) {
+    return true
+  }
+  if (toolName !== 'app_call' || typeof input !== 'object' || input === null) {
+    return false
+  }
+  const { app, action } = input as Record<string, unknown>
+  const call = await hostAppCall(app, action)
+  return call !== undefined && READ_ONLY_APP_ACTIONS.has(call.key)
+}
+
+/**
  * Every static tool as its family declares it, `execution` included: the
  * listing below turns that field into schema and description, and the registry
  * reads it when a call arrives.
@@ -191,7 +226,7 @@ const declaredTools: DeclaredTool[] = [
   {
     name: 'db_read',
     description:
-      "Run one read-only SQL statement against this instance's database and return the rows. For establishing what a migration or a backfill actually did, rather than inferring it from the fact that the app booted. Read-only is enforced by the transaction, not by inspecting the statement, so a write is refused wherever it would be performed. The tables holding credentials and session tokens are refused — which relations a statement reads is answered by the query planner, so a view or an alias does not get past it. Email addresses are removed from the values by their shape, and `redactions` counts what was removed. Results are capped and a truncated result says so: never read `truncated: false` or `redactions: 0` off a result you did not check. An agent's own account rows live in `user`, which is readable; the graph (spaces, nodes, agents) is NOT in the database — use find_nodes/get_nodes for those.",
+      "Run one read-only SQL statement against this instance's database and return the rows. For establishing what a migration or a backfill actually did, rather than inferring it from the fact that the app booted. Read-only is enforced by the transaction, not by inspecting the statement, so a write is refused wherever it would be performed. The tables holding credentials and session tokens are refused — which relations a statement reads is answered by the query planner, so a view or an alias does not get past it. Email addresses are removed from the values by their shape, and `redactions` counts what was removed. Results are capped and a truncated result says so: never read `truncated: false` or `redactions: 0` off a result you did not check. An agent's own account rows live in `user`, which is readable; the graph (spaces, nodes, agents) is NOT in the database — use the graph app's findNodes/getNodes (app_call on <space>.<graph>) for those.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -207,7 +242,6 @@ const declaredTools: DeclaredTool[] = [
   },
 
   ...spaceDefinitions,
-  ...nodeDefinitions,
   ...extensionManagementDefinitions,
   ...remoteDefinitions,
   ...actionDefinitions,
@@ -462,7 +496,6 @@ const handlers: Record<string, ToolHandler> = {
   },
 
   ...spaceHandlers,
-  ...nodeHandlers,
   ...extensionManagementHandlers,
   ...remoteHandlers,
   ...actionHandlers,
@@ -538,20 +571,22 @@ interface FoundTool {
   /** Queues for approval on a surface that has the queue — before yolo mode and `internal` are weighed. */
   gated: boolean
   view?: string
-  /** The space its approval is shown in, when the tool fixes one; otherwise the call's own `space`. */
+  /** The space its approval is shown in, when the tool or the call fixes one; otherwise the call's own `space`. */
   space?: string
   execution: ExecutionMode | undefined
   run: ToolRun
   runner?: BackgroundRunnerAdapter
 }
 
-async function findTool(name: string, caller: ToolCallerContext): Promise<FoundTool> {
+async function findTool(name: string, caller: ToolCallerContext, args: Record<string, unknown>): Promise<FoundTool> {
   const handler = handlers[name]
   if (handler) {
     const meta = getApprovalMeta(handler)
+    const perCall = await meta?.forCall?.(args)
     return {
-      gated: meta !== undefined,
-      view: meta?.view,
+      gated: perCall ? perCall.gated : meta !== undefined,
+      view: perCall ? perCall.view : meta?.view,
+      space: perCall?.space,
       execution: staticExecution.get(name),
       // The signal is all a handler learns of running in the background;
       // everything else it is handed is what a call in place gets.
@@ -597,11 +632,11 @@ export async function handleToolCall(
   if (opts.callerSessionId) {
     caller.sessionId = opts.callerSessionId
   }
-  const tool = await findTool(name, caller)
+  const tool = await findTool(name, caller, args)
   const approvalRequired = tool.gated && !isYoloMode() && !opts.internal
   try {
     if (approvalRequired) {
-      const spaceId = tool.space ?? (typeof args.space === 'string' ? await resolveSpace(args) : undefined)
+      const spaceId = tool.space ?? (typeof args.space === 'string' ? await resolveSpaceSlug(args) : undefined)
       await awaitApproval({ tool: name, args, view: tool.view, signal: opts.signal, spaceId })
     }
     // Only past the approval, so what runs — in place or detached — is the

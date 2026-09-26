@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 973,
-  "total": 333,
+  "filesScanned": 996,
+  "total": 330,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -375,12 +375,6 @@
     "apps/opencroft/app/_authed/(mcp)/_server/audit.ts": {
       "lint/style/useTemplate": 1
     },
-    "apps/opencroft/app/_authed/(mcp)/_server/property-path.test.ts": {
-      "format": 1
-    },
-    "apps/opencroft/app/_authed/(mcp)/_server/property-path.ts": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(mcp)/_server/sleep-mode.test.ts": {
       "assist/source/organizeImports": 1
     },
@@ -418,9 +412,6 @@
       "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(space)/api/spaces.$slug.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(space)/api/spaces.active.ts": {
       "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(space)/api/spaces.ts": {

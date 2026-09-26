@@ -2,8 +2,23 @@ import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { approvalStore } from '@/lib/approval-store'
 import type { PendingApproval } from '@/lib/sse-events'
 
+/** How one particular call of a tool is asked about. */
+export interface CallApproval {
+  gated: boolean
+  view?: string
+  /** The space the approval is shown in. */
+  space?: string
+}
+
 interface ApprovalMeta {
   view?: string
+  /**
+   * For a tool whose effect depends on what it is asked to do — one tool
+   * dispatching to many operations — the gate of this call, decided from its
+   * arguments. Undefined from it keeps the tool's own gate, so an argument the
+   * resolver cannot classify never lowers one.
+   */
+  forCall?: (args: Record<string, unknown>) => Promise<CallApproval | undefined>
 }
 
 const meta = new WeakMap<ToolHandler, ApprovalMeta>()

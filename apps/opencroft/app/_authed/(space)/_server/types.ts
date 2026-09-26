@@ -24,7 +24,6 @@ export interface SpaceExport {
 export const DEFAULT_SPACE_NAME = 'Default'
 export const DEFAULT_SPACE_SLUG = 'default'
 export const LEGACY_GRAPH_SETTING_ID = 'app-dashboard-mvp-graph'
-export const ACTIVE_SPACE_SETTING_ID = 'active-space-slug'
 
 // The host-registered Graph App: every graph in a space is one instance of
 // it, the migration that turns a space's legacy single graph into rows

@@ -85,7 +85,7 @@ export const space = pgTable(
 //
 // Same contract as the group-chat aliases further down, and for the same
 // reason: a space slug is an address, not a label -- it is in the URL of every
-// canvas someone has open or bookmarked, in the active-space setting, and in
+// canvas someone has open or bookmarked, in agents' tool calls, and in
 // whatever an extension was configured with. A live space outranks an alias,
 // and taking a slug live deletes the alias on it, so one address never has two
 // answers.

@@ -27,7 +27,7 @@ import { AppToolViewHost } from '@/components/tool-views/app-tool-view-host'
 export const CHAT_RENDERERS: ChatTurnRenderers = { Chained, ChainDot, ThinkingBlock }
 
 // A registered tool view (the kit's tool-views) renders in place of the
-// generic block, giving e.g. remote_edit/edit_node_property a real diff instead
+// generic block, giving e.g. remote_edit/editNodeProperty a real diff instead
 // of a raw args dump. Falls back to the same chrome without a target line
 // otherwise (e.g. an external MCP server's tool, with no node/handle to point
 // at). Which views exist is this application's registry, so it is passed to

@@ -22,6 +22,8 @@ import { eq } from 'drizzle-orm'
 import { createTokenForUser } from '@/app/_authed/(settings)/_server/token-actions-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { Route as YoloRoute } from '@/app/api/yolo'
+import { approvalStore } from '@/lib/approval-store'
+import type { PendingApproval } from '@/lib/sse-events'
 import { createMcpToken, deleteMcpToken } from './_server/mcp-tokens'
 import { Route as McpRoute } from './mcp'
 
@@ -138,6 +140,53 @@ test('a valid MCP token is served, as the agent it was issued to', async () => {
   const result = ((await called.json()) as { result: { isError?: boolean; content: { text: string }[] } }).result
   assert.notEqual(result.isError, true, `the agent-acting tool refused the token's agent: ${result.content[0]?.text}`)
   assert.deepEqual(JSON.parse(result.content[0]?.text ?? 'null'), [], 'a fresh agent is in no group chats')
+})
+
+// A graph's reads and writes are `app_call`s on its address, so they sit behind
+// the same refusal as every other tool. One read and one write, refused without
+// a token; the control — the same two with a token — is served, the write once
+// its approval is granted, which is also what shows the refusal was the token's
+// doing and not the call's.
+test('a graph read and a graph write through app_call are refused without a token, served with one', async () => {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  const slug = `mcp-auth-graph-${crypto.randomUUID()}`
+  await registry.create(slug, slug, { nodes: [], edges: [] })
+  const [graph] = registry.graphsOf(slug)
+  assert.ok(graph, 'the space has its default graph')
+  const address = `${slug}.${graph.slug}`
+  const read = { name: 'app_call', arguments: { app: address, action: 'listNodes' } }
+  const write = {
+    name: 'app_call',
+    arguments: { app: address, action: 'createNodes', params: { nodes: [{ type: 'note' }] } },
+  }
+
+  await assertRefused(await call('tools/call', undefined, read), 'a graph read without a token')
+  await assertRefused(await call('tools/call', undefined, write), 'a graph write without a token')
+  assert.deepEqual((await registry.resolveGraph(address))?.graph.graph.nodes, [], 'the refused write wrote nothing')
+
+  const nodeId = await agentNode('MCP Auth Graph')
+  const { token } = await createMcpToken(nodeId, { name: 'client', expiresAt: null })
+
+  const served = await call('tools/call', `Bearer ${token}`, read)
+  assert.equal(served.status, 200)
+  const readResult = ((await served.json()) as { result: { isError?: boolean; content: { text: string }[] } }).result
+  assert.notEqual(readResult.isError, true, readResult.content[0]?.text)
+  assert.deepEqual(JSON.parse(readResult.content[0]?.text ?? 'null'), [], 'the empty graph, listed')
+
+  const pendingWrite = call('tools/call', `Bearer ${token}`, write)
+  let request: PendingApproval | undefined
+  for (let i = 0; i < 400 && !request; i++) {
+    request = approvalStore.list().find((r) => r.tool === 'app_call' && r.spaceId === slug)
+    if (!request) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+  assert.ok(request, 'the write queued for approval in its graph’s space')
+  approvalStore.approve(request.id)
+  const written = await pendingWrite
+  assert.equal(written.status, 200)
+  assert.equal((await registry.resolveGraph(address))?.graph.graph.nodes.length, 1, 'the served write landed')
 })
 
 // Names are free text two nodes can share. A lookup by name gives one answer

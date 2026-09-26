@@ -35,6 +35,12 @@ export interface PermissionContext {
   // which do not say whether a call writes. So it is a hint from outside, and a
   // host that has its own answer for this tool should prefer that answer.
   toolKind?: string
+  // The arguments the call was made with (ACP `rawInput`), when the request
+  // carries them. For a tool whose effect depends on what it is asked to do —
+  // one tool dispatching to many operations — the name alone cannot say
+  // whether the call writes; the host reads the operation from here. Untrusted
+  // input: a host classifies from it, never grants on its mere presence.
+  toolInput?: unknown
 }
 
 export type PermissionHandler = (context: PermissionContext) => PermissionOutcome | Promise<PermissionOutcome>
@@ -56,5 +62,6 @@ export function permissionContext(request: RequestPermissionRequest, mcpServerNa
     toolName: title,
     localToolName: localToolRef(request.toolCall.name, mcpServerName) ?? localToolRef(title, mcpServerName),
     toolKind: request.toolCall.kind ?? undefined,
+    toolInput: request.toolCall.rawInput ?? undefined,
   }
 }

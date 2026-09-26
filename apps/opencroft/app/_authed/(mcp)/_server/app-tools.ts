@@ -1,7 +1,8 @@
 /** The App family: listing, calling, transferring, finding and adding App instances. */
 
-import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
+import { type CallApproval, withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import { appAddressOf, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
+import { hostAppCall } from '@/app/_authed/(apps)/_server/host-apps'
 import {
   addSpaceAppImpl,
   appActionDeclaration,
@@ -16,10 +17,9 @@ import {
 import { presentAction } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { callAction } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, resolveSpaceSlug, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import { resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { parseGraphAddress } from '@/app/_authed/(space)/_server/types'
 
 export const definitions = [
   {
@@ -31,9 +31,10 @@ export const definitions = [
       properties: {
         space: {
           type: 'string',
-          description: 'Space slug. Omit to target the currently active space. Pass "*" to list every space.',
+          description: 'Space slug, or "*" to list every space.',
         },
       },
+      required: ['space'],
     },
   },
   {
@@ -68,7 +69,7 @@ export const definitions = [
   {
     name: 'app_call',
     description:
-      'Invoke an action on one app. The action runs server-side in the providing extension, scoped to that app (its parameters and private data). Use app_list to find the app and its action ids, and app_actions for what an action takes.',
+      'Invoke an action on one app. The action runs server-side in the providing extension, scoped to that app (its parameters and private data). Use app_list to find the app and its action ids, and app_actions for what an action takes. A graph is an app too: its nodes and edges are read and changed through the `graph` actions (listNodes, findNodes, getNodes, createNodes, writeNodeProperty, connectNodes, …) on its address `<space>.<graph>` — list_spaces gives every graph’s address.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -114,7 +115,7 @@ export const definitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        space: { type: 'string', description: 'Space slug. Omit to target the currently active space.' },
+        space: { type: 'string', description: 'Slug of the space to add the app to.' },
         extensionId: { type: 'string', description: 'The providing extension — see app_find.' },
         appSlug: { type: 'string', description: 'The App within that extension — see app_find.' },
         name: { type: 'string', description: 'The instance name; its slug (and so its address) derives from it.' },
@@ -123,7 +124,7 @@ export const definitions = [
           description: 'Parameter values by parameter id, as declared in the catalog entry.',
         },
       },
-      required: ['extensionId', 'appSlug', 'name'],
+      required: ['space', 'extensionId', 'appSlug', 'name'],
     },
   },
   {
@@ -140,10 +141,28 @@ export const definitions = [
   },
 ]
 
+/**
+ * The gate of one `app_call`: a host App's action is asked about exactly as
+ * it declares — a graph read not at all, a graph write in the graph's space
+ * with its own view. Anything else (an extension App's action, a reference
+ * that resolves to nothing) keeps app_call's own gate.
+ */
+async function appCallApproval(args: Record<string, unknown>): Promise<CallApproval | undefined> {
+  const call = await hostAppCall(args.app, args.action)
+  if (!call) {
+    return undefined
+  }
+  return {
+    gated: Boolean(call.action.requireApproval),
+    view: call.action.view,
+    space: await call.action.approvalSpace?.({ instanceId: call.instanceId }),
+  }
+}
+
 export const handlers: Record<string, ToolHandler> = {
   // ── app_list ─────────────────────────────────────────────────────
   app_list: async (args) => {
-    const space = args.space === '*' ? undefined : await resolveSpace(args)
+    const space = args.space === '*' ? undefined : await resolveSpaceSlug(args)
     const listing = await listSpaceApps(space)
     return textResult(JSON.stringify(listing, null, 2))
   },
@@ -204,7 +223,7 @@ export const handlers: Record<string, ToolHandler> = {
             : JSON.stringify(result, null, 2)
       return textResult(text)
     },
-    { view: 'app_call' },
+    { view: 'app_call', forCall: appCallApproval },
   ),
 
   // ── app_transfer ─────────────────────────────────────────────────
@@ -259,7 +278,7 @@ export const handlers: Record<string, ToolHandler> = {
     }
     // A graph address is accepted on the space part, like everywhere else,
     // but an instance is added to the SPACE — the graph suffix is dropped.
-    const { spaceSlug } = parseGraphAddress(await resolveSpace(args))
+    const spaceSlug = await resolveSpaceSlug(args)
     const params = (args.params as Record<string, string> | undefined) ?? {}
     const row = await addSpaceAppImpl(spaceSlug, extensionId, appSlug, name, params)
     return textResult(

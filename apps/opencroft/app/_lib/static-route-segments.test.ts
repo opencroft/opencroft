@@ -70,19 +70,7 @@ const KNOWN_SIBLING = '/space/$slug/settings/app/~add'
  * whose defect gets fixed makes this file red until the entry is struck off. An
  * exemption that can outlive its cause is just a hole.
  */
-const EXPECTED_COLLISIONS = [
-  {
-    segment: '/api/spaces/active',
-    shadows: '/api/spaces/$slug',
-    // PUT /api/spaces/active switches which space is active; PUT on the dynamic
-    // sibling saves that space's graph. A space named "Active" mints the slug
-    // `active`, so its graph-save is silently rerouted into an active-space
-    // switch. Predates slug addresses for apps -- space slugs have been mintable and in
-    // URLs all along -- and repairing it needs its own diff and its own control
-    // (a space named "Active": GET returns its graph, PUT saves its graph).
-    tracked: 'a separate fix',
-  },
-]
+const EXPECTED_COLLISIONS: { segment: string; shadows: string; tracked: string }[] = []
 
 function generatedUrlPaths(): string[] {
   const source = readFileSync(GENERATED_ROUTE_TREE, 'utf8')

@@ -123,11 +123,14 @@ test('remote_edit: the approval diff is published once the file is read, and cle
 const NODE_UPDATE = { nodeId: 'node-1', data: { name: 'Renamed' } }
 
 function updateNodes(mode: 'approval' | 'history') {
-  return createElement(TOOL_VIEWS.update_nodes.body, {
-    tool: 'update_nodes',
+  // The 'graph.updateNodes' key is the approval queue's own path: the server
+  // sets `view: 'graph.updateNodes'` on a graph write's approval and hands
+  // over app_call's own args, which the view unwraps (see app-call-view.test.ts).
+  return createElement(TOOL_VIEWS['graph.updateNodes'].body, {
+    tool: 'app_call',
     requestId: 'request-2',
     mode,
-    args: { updates: [NODE_UPDATE] },
+    args: { app: 'my-space.default', action: 'updateNodes', params: { updates: [NODE_UPDATE] } },
   })
 }
 
@@ -139,7 +142,7 @@ async function toggleFirstNode() {
   })
 }
 
-test('update_nodes: the overlay follows the open node, and is cleared on unmount', async () => {
+test('graph.updateNodes: the overlay follows the open node, and is cleared on unmount', async () => {
   const mounted = await mount()
   try {
     await mounted.render(updateNodes('approval'))

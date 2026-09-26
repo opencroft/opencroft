@@ -260,6 +260,13 @@
       "when": 1790208409021,
       "tag": "0036_add_mcp_token",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790379473946,
+      "tag": "0037_drop_active_space_setting",
+      "breakpoints": true
     }
   ]
 }

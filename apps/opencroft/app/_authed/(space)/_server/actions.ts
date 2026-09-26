@@ -7,16 +7,13 @@ import {
   createSpaceImpl,
   deleteSpaceImpl,
   exportSpaceImpl,
-  findSpaceByNodeImpl,
   findTakenGraphIdsImpl,
-  getActiveSpaceSlugImpl,
   getGraphViewForInstanceImpl,
   importSpaceImpl,
   listSpacesImpl,
   loadSpaceGraphImpl,
   renameSpaceImpl,
   saveSpaceGraphImpl,
-  setActiveSpaceSlugImpl,
   setSpaceIconImpl,
   setSpacePinnedImpl,
 } from '@/app/_authed/(space)/_server/actions-impl'
@@ -141,25 +138,6 @@ export const importSpace = createServerFn({ method: 'POST', strict: { output: fa
   .handler(async ({ data: payload }): Promise<SpaceSummary> => {
     await requireSession()
     return importSpaceImpl(payload)
-  })
-
-export const getActiveSpaceSlug = createServerFn({ strict: { output: false } }).handler(async (): Promise<string> => {
-  await requireSession()
-  return getActiveSpaceSlugImpl()
-})
-
-export const setActiveSpaceSlug = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((slug: string) => slug)
-  .handler(async ({ data: slug }): Promise<void> => {
-    await requireSession()
-    return setActiveSpaceSlugImpl(slug)
-  })
-
-export const findSpaceByNode = createServerFn({ strict: { output: false } })
-  .inputValidator((nodeId: string) => nodeId)
-  .handler(async ({ data: nodeId }): Promise<SpaceSummary | null> => {
-    await requireSession()
-    return findSpaceByNodeImpl(nodeId)
   })
 
 export const getGraphViewForInstance = createServerFn({ strict: { output: false } })

@@ -15,10 +15,10 @@
 //
 // The default pair calls the *Impl functions directly, NOT the createServerFn
 // wrappers in actions.ts. Those wrappers check the session, and the dominant
-// caller here is (mcp)/_server/tools.ts serving MCP tool calls, which carry no
-// session cookie by design (bearer-token surface). Routing
-// through the wrappers made every graph-write tool fail with "Not signed in"
-// — create_nodes, update_nodes, connect_nodes and the rest, all seven of them,
+// caller here is the graph App's write actions, reached from MCP tool calls,
+// which carry no session cookie by design (bearer-token surface).
+// Routing through the wrappers made every graph write fail with "Not signed in"
+// — createNodes, updateNodes, connectNodes and the rest, all seven of them,
 // because they all reach the graph through this helper. See actions-impl.ts.
 
 import { loadSpaceGraphImpl, saveSpaceGraphImpl } from '@/app/_authed/(space)/_server/actions-impl'

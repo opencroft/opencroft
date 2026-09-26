@@ -24,7 +24,6 @@ import { Wordmark } from 'ui/wordmark'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { getActiveSpaceSlug } from '@/app/_authed/(space)/_server/actions'
 import {
   DEFAULT_GRAPH_SLUG,
   GRAPH_APP_EXTENSION_ID,
@@ -34,23 +33,14 @@ import {
 import { useBuildLabel } from '@/app/_components/dev-build-badge'
 import { useSignOut } from '@/app/(auth)/_components/sign-out-item'
 
+/**
+ * The space the reader is in: the one in the address, and only that. Off a
+ * space's own pages there is none — the title bar shows no current space
+ * rather than one somebody else last opened.
+ */
 function slugFromPath(pathname: string): string | null {
   const match = pathname.match(/^\/space\/([^/]+)/)
   return match ? decodeURIComponent(match[1]) : null
-}
-
-/** The space the reader is in: the one in the address, else the active one. */
-function useCurrentSpaceSlug(pathname: string): string | null {
-  const pathSlug = slugFromPath(pathname)
-  const [activeSlug, setActiveSlug] = useState<string | null>(null)
-  useEffect(() => {
-    if (!pathSlug) {
-      getActiveSpaceSlug()
-        .then(setActiveSlug)
-        .catch(() => {})
-    }
-  }, [pathSlug])
-  return pathSlug ?? activeSlug
 }
 
 function isDefaultGraph(instance: SpaceAppInstance) {
@@ -178,7 +168,7 @@ export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; ha
   const pathname = useLocation({ select: (l) => l.pathname })
   const router = useRouter()
   const { toggleSidebar } = useSidebar()
-  const slug = useCurrentSpaceSlug(pathname)
+  const slug = slugFromPath(pathname)
   const apps = useSpaceApps(slug, pathname)
 
   const navigate = (href: string) => router.history.push(href)

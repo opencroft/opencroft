@@ -1,10 +1,9 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import { getActiveSpaceSlug } from '@/app/_authed/(space)/_server/actions'
-
+// There is no "current space" to return to: which space someone last opened is
+// not the server's to remember on everyone's behalf, so the root is the list.
 export const Route = createFileRoute('/_authed/(dashboard)/')({
-  beforeLoad: async () => {
-    const slug = await getActiveSpaceSlug()
-    throw redirect({ to: '/space/$slug', params: { slug } })
+  beforeLoad: () => {
+    throw redirect({ to: '/spaces' })
   },
 })

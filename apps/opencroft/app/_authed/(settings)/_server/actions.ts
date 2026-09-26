@@ -19,7 +19,7 @@ import * as db from '@/server/data'
 // exposes is instance configuration, not a person's own data. The per-user and
 // system reads of the same rows do NOT come through here -- they call the raw
 // `@/server/data` layer directly and run their own appropriate check (a group
-// chat member's thread layout, the agent runtime's stores, the active space),
+// chat member's thread layout, the agent runtime's stores),
 // so gating the endpoint does not touch them.
 
 // `requireAdminUser` RETURNS the admin or null -- it does not throw -- so the

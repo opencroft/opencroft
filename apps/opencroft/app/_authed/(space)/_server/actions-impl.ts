@@ -32,12 +32,7 @@ import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import { slugify, uniqueSlug } from '@/app/_authed/(space)/_server/slug'
 import { getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from '@/app/_authed/(space)/_server/store'
-import {
-  DEFAULT_SPACE_SLUG,
-  type GraphData,
-  type SpaceExport,
-  type SpaceSummary,
-} from '@/app/_authed/(space)/_server/types'
+import type { GraphData, SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
 
 export async function registry() {
@@ -268,28 +263,6 @@ export async function importSpaceImpl(payload: SpaceExport): Promise<SpaceSummar
   return toSummary(runtime)
 }
 
-export async function getActiveSpaceSlugImpl(): Promise<string> {
-  const r = await registry()
-  const active = await r.getActiveSlug()
-  if (active) {
-    return active
-  }
-  const list = r.list()
-  return list[0]?.slug ?? DEFAULT_SPACE_SLUG
-}
-
-export async function setActiveSpaceSlugImpl(slug: string): Promise<void> {
-  const r = await registry()
-  // Resolved rather than merely existence-checked, and stored canonically: a
-  // caller may hand over a slug a rename freed (an old URL, a stale tab), and
-  // the setting is compared by equality when it is read back.
-  const space = r.getBySlug(slug)
-  if (!space) {
-    return
-  }
-  await r.setActiveSlug(space.slug)
-}
-
 /** What a Graph App instance's view needs to draw its canvas. */
 export interface GraphInstanceView {
   /** The graph's address: what the canvas loads and saves by. */
@@ -315,13 +288,4 @@ export async function getGraphViewForInstanceImpl(instanceId: string): Promise<G
     spaceSlug: space.slug,
     spaceName: space.name,
   }
-}
-
-export async function findSpaceByNodeImpl(nodeId: string): Promise<SpaceSummary | null> {
-  const r = await registry()
-  const ref = r.findByNode(nodeId)
-  if (!ref) {
-    return null
-  }
-  return toSummary(ref.space)
 }

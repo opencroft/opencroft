@@ -170,12 +170,19 @@ function parseAskUserQuestions(raw: unknown): AskUserQuestionSpec[] | null {
  * form appears changes. Callers without a session (external MCP clients) keep
  * the base handler's global path.
  *
+ * No `space`: the form lands in the session's own chat, so there is no space
+ * to name, and asking for one would make every in-chat question carry an
+ * argument nothing reads. The base tool requires it because its queue is
+ * shown per space.
+ *
  * The agent-client import is deferred to the call because this module is on
  * the tools.ts <-> agent-client-instance import cycle (see getStaticTools).
  */
 function sessionAskUserTool(base: LocalTool, sessionId: string): LocalTool {
+  const { space: _space, ...inputSchema } = base.inputSchema
   return {
     ...base,
+    inputSchema,
     handler: async (args) => {
       const questions = parseAskUserQuestions(args.questions)
       if (!questions) {

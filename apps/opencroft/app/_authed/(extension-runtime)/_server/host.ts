@@ -165,7 +165,9 @@ export interface HostGraphApi {
   // the result is only true at the moment it is produced.
   listHandles(filter?: ListHandlesFilter): Promise<HandleInfo[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
+  /** On the graph at `address` — a space slug (its default graph) or `<space>.<graph>`. */
   createNode(
+    address: string,
     typeId: string,
     data: Record<string, unknown>,
     position: { x: number; y: number },
@@ -299,15 +301,12 @@ const graphApi: HostGraphApi = {
     })
     return updated
   },
-  async createNode(typeId, data, position) {
+  async createNode(address, typeId, data, position) {
     const r = getSpacesRegistry()
     await r.ensureLoaded()
-    const summaries = r.list()
-    // The active space's DEFAULT graph: a bare space slug resolves there.
-    const target = (await r.getActiveSlug()) || summaries[0]?.slug
-    const ref = target ? r.resolveGraph(target) : null
+    const ref = r.resolveGraph(address)
     if (!ref) {
-      throw new Error('No space available')
+      throw new Error(`Graph not found: ${address}`)
     }
     const id = newGraphId()
     const node: GraphNodeRecord = { id, type: typeId, data, position }
