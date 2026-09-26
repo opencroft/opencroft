@@ -112,14 +112,9 @@ Object.defineProperty(win.HTMLElement.prototype, 'offsetLeft', {
 
 const { act, useEffect } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const {
-  ARTIFACT_MIN_WIDTH,
-  ARTIFACT_SPLIT_MIN_WIDTH,
-  ArtifactSplit,
-  CONVERSATION_MIN_WIDTH,
-  SPLIT_DIVIDER_WIDTH,
-  splitFits,
-} = await import('ui/components/ui/group-chat/artifact-split')
+const { ARTIFACT_SPLIT_MIN_WIDTH, ArtifactSplit, SPLIT_DIVIDER_WIDTH, SPLIT_PANE_MIN_WIDTH, splitFits } = await import(
+  'ui/components/ui/group-chat/artifact-split'
+)
 
 after(() => dom.cleanup())
 
@@ -249,15 +244,18 @@ async function press(element: HTMLElement, key: string) {
 // from them can sit a hair either side of the exact figure.
 const TOLERANCE = 0.05
 
-test('the split threshold is the two minimums and the divider, and 601 px is the first width that splits', () => {
-  assert.equal(ARTIFACT_SPLIT_MIN_WIDTH, CONVERSATION_MIN_WIDTH + SPLIT_DIVIDER_WIDTH + ARTIFACT_MIN_WIDTH)
-  assert.equal(ARTIFACT_SPLIT_MIN_WIDTH, 601)
-  assert.equal(splitFits(600), false, '600 px does not hold both sides at their minimums')
-  assert.equal(splitFits(601), true, '601 px does')
+test('the split threshold is the first container step holding two phone-width panes and the divider, and 768 px is the first width that splits', () => {
+  assert.equal(SPLIT_PANE_MIN_WIDTH, 375)
+  assert.equal(ARTIFACT_SPLIT_MIN_WIDTH, 48 * 16, '48rem, the @3xl container step')
+  const needed = 2 * SPLIT_PANE_MIN_WIDTH + SPLIT_DIVIDER_WIDTH
+  assert.ok(ARTIFACT_SPLIT_MIN_WIDTH >= needed, 'room for both panes at a phone’s width and the divider')
+  assert.ok(42 * 16 < needed, 'the step below, @2xl, would not hold them')
+  assert.equal(splitFits(767), false, '767 px covers')
+  assert.equal(splitFits(768), true, '768 px splits')
   assert.equal(splitFits(0), false, 'an unmeasured container is narrow')
 })
 
-test('at 601 px the note opens beside the conversation, both at or above their pixel minimums', async () => {
+test('at 768 px the note opens beside the conversation, each a phone’s width or more', async () => {
   const { render, unmount } = await mount()
   try {
     await render(
@@ -265,7 +263,7 @@ test('at 601 px the note opens beside the conversation, both at or above their p
         <Conversation />
       </Split>,
     )
-    await resizeContainer(601)
+    await resizeContainer(768)
 
     const conversation = panel('conversation')
     const artifact = panel('artifact')
@@ -275,10 +273,10 @@ test('at 601 px the note opens beside the conversation, both at or above their p
     assert.equal(divider.hidden, false, 'the divider is shown')
     assert.notEqual(divider.getAttribute('aria-disabled'), 'true', 'and it can be moved')
     assert.ok(
-      conversation.offsetWidth >= CONVERSATION_MIN_WIDTH - TOLERANCE,
+      conversation.offsetWidth >= SPLIT_PANE_MIN_WIDTH - TOLERANCE,
       `conversation ${conversation.offsetWidth}px`,
     )
-    assert.ok(artifact.offsetWidth >= ARTIFACT_MIN_WIDTH - TOLERANCE, `artifact ${artifact.offsetWidth}px`)
+    assert.ok(artifact.offsetWidth >= SPLIT_PANE_MIN_WIDTH - TOLERANCE, `artifact ${artifact.offsetWidth}px`)
     assert.ok(button('Close'), 'the note closes from its own header')
     same(button('Back'), null, 'and has no Back: the conversation is right beside it')
 
@@ -360,7 +358,7 @@ test('the surface’s controls move to the note’s header when it opens, and ba
   }
 })
 
-test('below 601 px the note takes the conversation’s place, with Back, the conversation hidden but mounted', async () => {
+test('below 768 px the note takes the conversation’s place, with Back, the conversation hidden but mounted', async () => {
   const closed: string[] = []
   const { render, unmount } = await mount()
   try {
@@ -369,7 +367,7 @@ test('below 601 px the note takes the conversation’s place, with Back, the con
         <Conversation />
       </Split>,
     )
-    await resizeContainer(600)
+    await resizeContainer(767)
 
     const conversation = panel('conversation')
     const artifact = panel('artifact')
@@ -378,7 +376,7 @@ test('below 601 px the note takes the conversation’s place, with Back, the con
     assert.ok(conversation.querySelector('input[aria-label="Draft"]'), 'with its content')
     assert.equal(conversation.hidden, true, 'but hidden')
     assert.ok(artifact, 'the note rendered')
-    assert.equal(artifact.offsetWidth, 600, 'and fills the container alone')
+    assert.equal(artifact.offsetWidth, 767, 'and fills the container alone')
     assert.ok(divider, 'the divider stays in the tree')
     assert.equal(divider.hidden, true, 'hidden')
     assert.equal(divider.getAttribute('aria-disabled'), 'true', 'and disabled, so nothing can resize a hidden panel')
@@ -428,15 +426,15 @@ test('neither side can be resized below its pixel minimum', async () => {
     await press(divider, 'Home')
     await press(divider, 'ArrowLeft')
     assert.ok(
-      Math.abs(conversation.offsetWidth - CONVERSATION_MIN_WIDTH) <= TOLERANCE,
-      `the conversation stops at ${CONVERSATION_MIN_WIDTH}px, measured ${conversation.offsetWidth}px`,
+      Math.abs(conversation.offsetWidth - SPLIT_PANE_MIN_WIDTH) <= TOLERANCE,
+      `the conversation stops at ${SPLIT_PANE_MIN_WIDTH}px, measured ${conversation.offsetWidth}px`,
     )
 
     await press(divider, 'End')
     await press(divider, 'ArrowRight')
     assert.ok(
-      Math.abs(artifact.offsetWidth - ARTIFACT_MIN_WIDTH) <= TOLERANCE,
-      `the note stops at ${ARTIFACT_MIN_WIDTH}px, measured ${artifact.offsetWidth}px`,
+      Math.abs(artifact.offsetWidth - SPLIT_PANE_MIN_WIDTH) <= TOLERANCE,
+      `the note stops at ${SPLIT_PANE_MIN_WIDTH}px, measured ${artifact.offsetWidth}px`,
     )
   } finally {
     await unmount()
@@ -453,7 +451,7 @@ test('crossing the threshold either way keeps the same conversation mounted, dra
       </Split>
     )
     await render(tree)
-    await resizeContainer(700)
+    await resizeContainer(900)
 
     const input = dom.container.querySelector('input[aria-label="Draft"]') as HTMLInputElement | null
     assert.ok(input)
@@ -461,7 +459,7 @@ test('crossing the threshold either way keeps the same conversation mounted, dra
 
     await resizeContainer(500)
     assert.equal(panel('conversation')?.hidden, true, 'narrow: the note covers the conversation')
-    await resizeContainer(700)
+    await resizeContainer(900)
     assert.equal(panel('conversation')?.hidden, false, 'wide again: side by side')
     await resizeContainer(500)
 

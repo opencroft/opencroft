@@ -81,10 +81,13 @@ export function ArtifactMenu({ artifacts, openId, onOpen, size = 'icon', classNa
       <DropdownMenuContent align='end' className='w-64'>
         {/* A radio group because exactly one note is open at a time, and the
             check is how the list says which. Choosing the one already open
-            changes nothing, which is what a reader pressing it expects. */}
+            changes nothing, which is what a reader pressing it expects.
+            `closeOnClick` because choosing one opens it: a radio item stays
+            open on a press by default, the way a setting toggled in place
+            does, and this menu is left the moment a note is picked. */}
         <DropdownMenuRadioGroup value={openId ?? ''} onValueChange={(value) => onOpen(value as string)}>
           {artifacts.map((artifact) => (
-            <DropdownMenuRadioItem key={artifact.id} value={artifact.id}>
+            <DropdownMenuRadioItem key={artifact.id} value={artifact.id} closeOnClick>
               <div className='flex min-w-0 flex-col'>
                 <span className='truncate'>{artifact.title}</span>
                 {artifact.updatedLabel ? (

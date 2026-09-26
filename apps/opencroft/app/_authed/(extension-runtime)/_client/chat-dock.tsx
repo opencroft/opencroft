@@ -12,7 +12,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
-import { ArtifactSplit, CONVERSATION_MIN_WIDTH } from 'ui/group-chat/artifact-split'
+import { ArtifactSplit } from 'ui/group-chat/artifact-split'
 import { ChatLauncher } from 'ui/group-chat/chat-launcher'
 import { ThreadAgentCluster } from 'ui/group-chat/thread-agent-cluster'
 import { ArtifactMenu } from 'ui/group-chat/thread-artifacts'
@@ -101,10 +101,7 @@ interface FloatRect {
 const FLOAT_DEFAULT: FloatRect = { right: 16, width: 400, height: 520 }
 /** The gap the window keeps from the viewport's edges, px. */
 const FLOAT_MARGIN = 16
-// The window holds a conversation, so it is never made narrower than one stays
-// readable at -- the kit's figure, the same one that decides when a note fits
-// beside the conversation rather than over it.
-const FLOAT_MIN_WIDTH = CONVERSATION_MIN_WIDTH
+const FLOAT_MIN_WIDTH = 320
 const FLOAT_MIN_HEIGHT = 280
 
 function clamp(value: number, min: number, max: number) {
@@ -153,11 +150,13 @@ function ModeMenu({ mode, onModeChange }: { mode: ChatDockMode; onModeChange: (m
         <Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-auto'>
+        {/* `closeOnClick`: a radio item stays open on a press by default, and
+            choosing a position moves the window out from under the menu. */}
         <DropdownMenuRadioGroup value={mode} onValueChange={(value) => onModeChange(value as ChatDockMode)}>
           {MODES.map((option) => {
             const OptionIcon = MODE_ICONS[option]
             return (
-              <DropdownMenuRadioItem key={option} value={option}>
+              <DropdownMenuRadioItem key={option} value={option} closeOnClick>
                 <OptionIcon className='size-4 text-muted-foreground' />
                 {MODE_LABELS[option]}
               </DropdownMenuRadioItem>

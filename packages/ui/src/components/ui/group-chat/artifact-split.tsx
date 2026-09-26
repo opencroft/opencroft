@@ -11,16 +11,18 @@ import { cn } from 'ui/lib/utils'
 import { BackButton } from '../utils/back-button'
 import { type Artifact, ArtifactBody, ArtifactTitle } from './thread-artifacts'
 
-// The narrowest each side stays readable at, px. The conversation's is also the
-// narrowest a window holding one may be made -- a host sizing such a window
-// reads it from here, so the two cannot disagree.
-export const CONVERSATION_MIN_WIDTH = 320
-export const ARTIFACT_MIN_WIDTH = 280
+// Side by side, each pane is at least a phone's width, px: two columns are only
+// worth drawing when each could stand on its own as a screen. Also the
+// narrowest either side can be dragged to while split.
+export const SPLIT_PANE_MIN_WIDTH = 375
 // The divider between them: the resizable handle is a one-pixel rule.
 export const SPLIT_DIVIDER_WIDTH = 1
-// Derived, never chosen: a split below this width would push one side under its
-// minimum, so below it the note takes the conversation's place instead.
-export const ARTIFACT_SPLIT_MIN_WIDTH = CONVERSATION_MIN_WIDTH + SPLIT_DIVIDER_WIDTH + ARTIFACT_MIN_WIDTH
+// 48rem -- Tailwind's `@3xl` container step, the first one that holds two
+// phone-width panes and the divider (751 px); the step below, `@2xl` at 42rem,
+// does not. On a step rather than at 751 so the line falls where a container
+// query written against the same scale would. Below it the note takes the
+// conversation's place instead.
+export const ARTIFACT_SPLIT_MIN_WIDTH = 768
 
 /** Whether a container this wide holds the conversation and a note side by side. */
 export function splitFits(width: number): boolean {
@@ -62,7 +64,7 @@ export interface ArtifactSplitProps {
 }
 
 // A conversation pane and the thread's open note, each with its own header.
-// Where the container holds both sides at their minimums, the note opens to the
+// Where the container holds two phone-width panes, the note opens to the
 // right of a divider the reader can drag -- the same kit handle the dock
 // window's panel uses -- and its header continues the conversation's across
 // it. Where it does not, the note REPLACES the conversation pane, header and
@@ -121,8 +123,8 @@ export function ArtifactSplit({
   // take them as `px` strings; a bare string would be read as a percentage.
   // Narrow, one side is hidden and the other fills the group, and a pixel
   // minimum measured against a group narrower than both would only fight that.
-  const conversationMin = wide ? `${CONVERSATION_MIN_WIDTH}px` : undefined
-  const artifactMin = wide ? `${ARTIFACT_MIN_WIDTH}px` : undefined
+  const conversationMin = wide ? `${SPLIT_PANE_MIN_WIDTH}px` : undefined
+  const artifactMin = wide ? `${SPLIT_PANE_MIN_WIDTH}px` : undefined
   const rowClass = cn(HEADER_ROW_CLASS, headerClassName)
 
   return (
