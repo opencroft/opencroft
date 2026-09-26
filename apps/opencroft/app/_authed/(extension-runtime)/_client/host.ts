@@ -21,7 +21,9 @@ import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import * as uiKit from 'ui/ext'
 import { useIsMobile } from 'ui/hooks/use-mobile'
+import { TitleBarPortal, TitleBarTitle, TitleBarToolbar } from 'ui/layouts/title-bar'
 
+import { AppLink, useAppHref, useAppLocation, useAppNavigate } from '@/app/_authed/(apps)/_components/app-router'
 import { callAppActionFromUi } from '@/app/_authed/(apps)/_server/actions'
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
@@ -58,6 +60,7 @@ import {
   useSeedDockerContainers,
 } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useUrlParam } from '@/app/_lib/use-url-param'
+import { AppSidebar } from '@/app/_shell/app-sidebar'
 import { CodeEditor } from '@/components/code-editor'
 import { MarkdownEditor } from '@/components/markdown-editor'
 import { ControlledInput } from '@/components/ui/input/controlled-input'
@@ -422,6 +425,20 @@ export const extensionUiApi = {
   CommandBar,
   CommandBarMenu,
   CommandBarMenuItem,
+  // An App's own pages as real paths under its instance's address — see
+  // app-router. Host-owned because they read the host's router.
+  AppLink,
+  useAppHref,
+  useAppLocation,
+  useAppNavigate,
+  // An App's heading, actions and tools in the shell's title bar, and its
+  // panels in the shell's sidebar, sent there by portal from where the App
+  // renders them. They must be the shell's own components: a copy would hold
+  // its own context and reach no bar.
+  AppTitle: TitleBarTitle,
+  AppActions: TitleBarPortal,
+  AppToolbar: TitleBarToolbar,
+  AppSidebar,
 }
 
 export const extensionHostApi = {

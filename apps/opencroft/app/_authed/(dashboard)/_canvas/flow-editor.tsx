@@ -1186,7 +1186,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
             />
             <McpRequestNotifications onOpen={openMcpRequests} />
           </ResizablePanel>
-          <AppSidebar>
+          {/* Over the canvas rather than beside it: the canvas has no edge to push. */}
+          <AppSidebar mode='overlay'>
             <NodeBrowser
               tab={browserTab}
               extensions={allNodes}

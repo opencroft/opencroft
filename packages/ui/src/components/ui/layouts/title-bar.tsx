@@ -111,7 +111,7 @@ export function TitleBarAction({ children, icon: Icon, onSelect, disabled }: Tit
 // lifting its actions and tools into shared state, the page renders them
 // where it is and they are portalled into the bar: they stay the page's own
 // elements, so they re-render with the page's state and unmount with the page.
-type Slot = 'actions' | 'toolbar'
+type Slot = 'title' | 'actions' | 'toolbar'
 
 interface TitleBarSlots {
   targets: Record<Slot, HTMLElement | null>
@@ -121,7 +121,7 @@ interface TitleBarSlots {
 const TitleBarSlotsContext = createContext<TitleBarSlots | null>(null)
 
 export function TitleBarProvider({ children }: { children: ReactNode }) {
-  const [targets, setTargets] = useState<TitleBarSlots['targets']>({ actions: null, toolbar: null })
+  const [targets, setTargets] = useState<TitleBarSlots['targets']>({ title: null, actions: null, toolbar: null })
   const register = useCallback((slot: Slot, node: HTMLElement | null) => {
     setTargets((current) => (current[slot] === node ? current : { ...current, [slot]: node }))
   }, [])
@@ -132,6 +132,19 @@ export function TitleBarProvider({ children }: { children: ReactNode }) {
 function SlotPortal({ slot, children }: { slot: Slot; children: ReactNode }) {
   const node = useContext(TitleBarSlotsContext)?.targets[slot]
   return node ? createPortal(children, node) : null
+}
+
+/**
+ * Names the page after where it is, in the TitleBar under the same
+ * TitleBarProvider: a slash, then its children as the heading.
+ */
+export function TitleBarTitle({ children }: { children: ReactNode }) {
+  return (
+    <SlotPortal slot='title'>
+      <TitleBarSeparator />
+      <h1 className='min-w-0 truncate px-1 text-sm font-medium'>{children}</h1>
+    </SlotPortal>
+  )
 }
 
 /** Sends its children into the actions area of the TitleBar under the same TitleBarProvider. */
@@ -166,6 +179,7 @@ export function TitleBar({
   ...props
 }: TitleBarProps) {
   const register = useContext(TitleBarSlotsContext)?.register
+  const titleRef = useCallback((node: HTMLElement | null) => register?.('title', node), [register])
   const actionsRef = useCallback((node: HTMLElement | null) => register?.('actions', node), [register])
 
   // Everything in the toolbar row arrives by portal, the prop included, so
@@ -200,6 +214,7 @@ export function TitleBar({
         <div className='flex min-w-0 flex-1 items-center gap-1'>
           {context}
           {title && <h1 className='min-w-0 truncate px-1 text-sm font-medium'>{title}</h1>}
+          {register && <div ref={titleRef} className='contents' />}
         </div>
 
         {actions}

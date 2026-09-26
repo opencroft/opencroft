@@ -33,7 +33,7 @@ function useMeasuredHeight() {
 }
 
 function Shell({ spaces, children }: Props) {
-  const { hasContent, setNode } = useAppSidebarSlot()
+  const { hasContent, setNode, mode } = useAppSidebarSlot()
   const [barRef, barHeight] = useMeasuredHeight()
 
   return (
@@ -48,7 +48,10 @@ function Shell({ spaces, children }: Props) {
       </div>
       <div className='flex min-h-0 w-full flex-1'>
         {hasContent && (
-          <Sidebar className='top-(--title-bar-height) h-[calc(100svh-var(--title-bar-height))]'>
+          <Sidebar
+            overlay={mode === 'overlay'}
+            className='top-(--title-bar-height) h-[calc(100svh-var(--title-bar-height))]'
+          >
             <SidebarContent ref={setNode} />
           </Sidebar>
         )}

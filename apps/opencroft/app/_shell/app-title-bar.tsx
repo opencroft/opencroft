@@ -21,6 +21,7 @@ import { Logo } from 'ui/logo'
 import { useSidebar } from 'ui/sidebar'
 import { Wordmark } from 'ui/wordmark'
 
+import { appBasePath } from '@/app/_authed/(apps)/_lib/app-routes'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -57,12 +58,15 @@ function isDefaultGraph(instance: SpaceAppInstance) {
  * addressed by the space itself, which is where the space's own link goes.
  * Refetched on every navigation, not only when the space changes, so an
  * instance added in the settings shows up as soon as the reader goes anywhere.
+ * Moving between one App's own pages is not going anywhere: the App is the
+ * page, so those moves share one trigger and fetch nothing.
  */
 function useSpaceApps(slug: string | null, pathname: string): SwitcherApp[] {
   const [instances, setInstances] = useState<SpaceAppInstance[]>([])
   const [apps, setApps] = useState<AppMeta[]>([])
+  const page = appBasePath(pathname) ?? pathname
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the refetch trigger, see above
+  // biome-ignore lint/correctness/useExhaustiveDependencies: page is the refetch trigger, see above
   useEffect(() => {
     if (!slug) {
       return
@@ -83,7 +87,7 @@ function useSpaceApps(slug: string | null, pathname: string): SwitcherApp[] {
     return () => {
       cancelled = true
     }
-  }, [slug, pathname])
+  }, [slug, page])
 
   if (!slug) {
     return []

@@ -7,7 +7,7 @@
  */
 import type { AppEntry } from '@opencroft/core'
 import type { TerminalProps } from '@opencroft/terminal/client'
-import type { ComponentType, FC, ReactNode } from 'react'
+import type { ComponentProps, ComponentType, FC, ReactNode } from 'react'
 
 export * from '@opencroft/core'
 export type { TerminalConfig, TerminalProps, TerminalStatus } from '@opencroft/terminal/client'
@@ -276,6 +276,84 @@ export declare const callAppAction: <T = unknown>(
   action: string,
   params?: Record<string, unknown>,
 ) => Promise<T>
+
+/**
+ * Where an App is. An App's pages are real paths under its instance's address
+ * (`/space/<space>/app/<app>/item/K-1`), and the App matches them itself;
+ * everything here is App-relative, so an App never sees which space or slug it
+ * was added under.
+ */
+export interface AppLocation {
+  /** The App-relative path, e.g. `/item/K-1`; `/` at the instance's bare address. */
+  path: string
+  search: URLSearchParams
+}
+
+export interface AppNavigateOptions {
+  /** Rewrite the current history entry instead of adding one. */
+  replace?: boolean
+}
+
+/** The App's location; the caller re-renders on every move within the App. */
+export declare const useAppLocation: () => AppLocation
+
+/**
+ * Resolves a `to` to the address it names, for an `href` or a copied link. A
+ * `to` is an App path (`/item/K-1`, optionally with `?query`) or a bare query
+ * (`?tab=activity`) for the page the App is on. Anything else throws: an App
+ * addresses only its own pages.
+ */
+export declare const useAppHref: () => (to: string) => string
+
+/**
+ * Moves the App to `to` (see `useAppHref`) with a history entry, so back and
+ * forward walk the App's pages. The App stays mounted and nothing scrolls.
+ */
+export declare const useAppNavigate: () => (to: string, options?: AppNavigateOptions) => void
+
+export interface AppLinkProps extends Omit<ComponentProps<'a'>, 'href'> {
+  to: string
+  replace?: boolean
+}
+
+/**
+ * A link to one of the App's pages: a real `<a href>`, so a new tab, a new
+ * window and copy link work on it, while a plain click moves the App in place.
+ */
+export declare const AppLink: FC<AppLinkProps>
+
+/**
+ * The App's heading in the title bar, after the space and App switchers: a
+ * slash, then `children`. Rendered where the App already is and sent into the
+ * bar, so it follows the App's state and leaves with it.
+ */
+export declare const AppTitle: FC<{ children: ReactNode }>
+
+/**
+ * The App's actions, in the title bar's actions area. The bar folds on a
+ * narrow screen, so keep them compact; a menu is a good fit for several.
+ */
+export declare const AppActions: FC<{ children: ReactNode }>
+
+/** The App's tools, in a second row under the title bar that shows only while it has content. */
+export declare const AppToolbar: FC<{ children: ReactNode }>
+
+export interface AppSidebarProps {
+  /**
+   * How the sidebar sits beside the App on a wide screen. `push` (the default)
+   * moves the App aside; `overlay` floats above the App and leaves it its full
+   * width, for content with no edge to push, such as a canvas. On a phone the
+   * sidebar is a sheet either way.
+   */
+  mode?: 'push' | 'overlay'
+  children: ReactNode
+}
+
+/**
+ * The App's panels, in the shell's left sidebar. While one is mounted the
+ * title bar shows the button that opens and closes it.
+ */
+export declare const AppSidebar: FC<AppSidebarProps>
 
 /** Props the host passes to an App's component when rendering it in a space. */
 export interface AppComponentProps {

@@ -101,7 +101,8 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const CLIENT_ENTRY = path.resolve(here, '../../../../../..', 'packages/client/src/index.ts')
 
 /**
- * The components `@opencroft/client` declares at its root.
+ * The values `@opencroft/client` declares at its root: components, hooks and
+ * functions alike, since each one needs a forwarding line in the shim.
  *
  * Read with a pattern rather than through the type checker, unlike the sibling
  * declarations suite: the names wanted here are the ones that file declares
@@ -109,24 +110,26 @@ const CLIENT_ENTRY = path.resolve(here, '../../../../../..', 'packages/client/sr
  * hop to follow, because a name re-exported from elsewhere is not something
  * the modern shim forwards.
  */
-async function declaredComponentNames(): Promise<string[]> {
+async function declaredValueNames(): Promise<string[]> {
   const source = await fs.readFile(CLIENT_ENTRY, 'utf-8')
-  return [...source.matchAll(/^export declare const (\w+): FC</gm)].map((match) => match[1])
+  return [...source.matchAll(/^export declare const (\w+):/gm)].map((match) => match[1])
 }
 
-test('every component the client package declares is importable by name from @opencroft/client', async () => {
+test('every value the client package declares is importable by name from @opencroft/client', async () => {
   // The two enumerations this suite exists for, in the one place they are
   // still two: the modern shim forwards a hand-written list, because the root
   // of `@opencroft/client` is a curated subset of the UI object rather than
-  // the whole of it. A component declared for extension authors and never
+  // the whole of it. A value declared for extension authors and never
   // forwarded typechecks everywhere and fails to build for the first
   // extension that imports it.
-  const names = await declaredComponentNames()
+  const names = await declaredValueNames()
 
   // Without this, a pattern that matched nothing would build an empty import
-  // and pass while checking no name at all.
-  assert.ok(names.length >= 3, `expected the declared components to be read; found ${names.length}`)
+  // and pass while checking no name at all. A component and a hook are named
+  // so a pattern narrowed back to one kind of declaration fails here.
+  assert.ok(names.length >= 3, `expected the declared values to be read; found ${names.length}`)
   assert.ok(names.includes('Terminal'), 'Terminal is declared at the client package root and must be found')
+  assert.ok(names.includes('useAppNavigate'), 'useAppNavigate is declared at the client package root and must be found')
 
   await buildImportingEveryName('client-surface', '@opencroft/client', names)
 })

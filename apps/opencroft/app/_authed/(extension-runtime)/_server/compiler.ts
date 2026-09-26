@@ -477,6 +477,14 @@ export const markdownDirectiveBlocks = __ui.markdownDirectiveBlocks;
 export const MarkdownEditor = __ui.MarkdownEditor;
 export const MermaidDiagram = __ui.MermaidDiagram;
 export const callAppAction = __host.callAppAction;
+export const AppLink = __ui.AppLink;
+export const useAppHref = __ui.useAppHref;
+export const useAppLocation = __ui.useAppLocation;
+export const useAppNavigate = __ui.useAppNavigate;
+export const AppTitle = __ui.AppTitle;
+export const AppActions = __ui.AppActions;
+export const AppToolbar = __ui.AppToolbar;
+export const AppSidebar = __ui.AppSidebar;
 export const legacy = {
   ...__host,
   ...__ui,

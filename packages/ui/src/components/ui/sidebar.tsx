@@ -153,6 +153,7 @@ function Sidebar({
   side = "left",
   variant = "sidebar",
   collapsible = "offcanvas",
+  overlay = false,
   className,
   children,
   dir,
@@ -161,6 +162,12 @@ function Sidebar({
   side?: "left" | "right"
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
+  /**
+   * Float above the content instead of pushing it aside: on a desktop the
+   * sidebar reserves no space, so the content keeps its full width whether
+   * the sidebar is open or not. On a phone it is the same sheet either way.
+   */
+  overlay?: boolean
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
 
@@ -223,7 +230,8 @@ function Sidebar({
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
             ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
-            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
+            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
+          overlay && "w-0!"
         )}
       />
       <div
@@ -235,6 +243,8 @@ function Sidebar({
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+          // Above the content it covers, and lifted off it.
+          overlay && "z-30 shadow-lg",
           className
         )}
         {...props}

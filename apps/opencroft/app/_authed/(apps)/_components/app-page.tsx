@@ -5,6 +5,7 @@ import { Suspense } from 'react'
 import { Flex } from 'ui/layout/flex'
 import { Spinner } from 'ui/utils/spinner'
 
+import { AppRouterProvider } from '@/app/_authed/(apps)/_components/app-router'
 import type { SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
@@ -29,7 +30,9 @@ export function AppPage({ spaceSlug, instance }: { spaceSlug: string; instance: 
             </Flex>
           }
         >
-          <Body instanceId={instance.id} spaceSlug={spaceSlug} params={instance.params} />
+          <AppRouterProvider base={`/space/${spaceSlug}/app/${instance.slug}`}>
+            <Body instanceId={instance.id} spaceSlug={spaceSlug} params={instance.params} />
+          </AppRouterProvider>
         </Suspense>
       ) : (
         loaded && (
