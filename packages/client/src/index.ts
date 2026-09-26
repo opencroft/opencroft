@@ -311,6 +311,22 @@ export declare const useAppHref: () => (to: string) => string
  */
 export declare const useAppNavigate: () => (to: string, options?: AppNavigateOptions) => void
 
+/**
+ * The address of a page of ANOTHER App instance, for an `href`: `address` is
+ * its `<space>.<app>` (the address `app_call` takes), `to` an App path in it
+ * (`/item/K-1`). For an App that lists things from other instances and links
+ * to where each lives; the host owns what the page address looks like. Throws
+ * on anything that is not such an address or path.
+ */
+export declare const useAppAddressHref: () => (address: string, to: string) => string
+
+/**
+ * Moves the host to a page of another App instance (see `useAppAddressHref`)
+ * with a history entry, so Back returns here. Does nothing once the host is
+ * already leaving the App.
+ */
+export declare const useOpenApp: () => (address: string, to: string, options?: AppNavigateOptions) => void
+
 export interface AppLinkProps extends Omit<ComponentProps<'a'>, 'href'> {
   to: string
   replace?: boolean

@@ -23,7 +23,14 @@ import * as uiKit from 'ui/ext'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { TitleBarPortal, TitleBarTitle, TitleBarToolbar } from 'ui/layouts/title-bar'
 
-import { AppLink, useAppHref, useAppLocation, useAppNavigate } from '@/app/_authed/(apps)/_components/app-router'
+import {
+  AppLink,
+  useAppAddressHref,
+  useAppHref,
+  useAppLocation,
+  useAppNavigate,
+  useOpenApp,
+} from '@/app/_authed/(apps)/_components/app-router'
 import { callAppActionFromUi } from '@/app/_authed/(apps)/_server/actions'
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
@@ -431,6 +438,8 @@ export const extensionUiApi = {
   useAppHref,
   useAppLocation,
   useAppNavigate,
+  useAppAddressHref,
+  useOpenApp,
   // An App's heading, actions and tools in the shell's title bar, and its
   // panels in the shell's sidebar, sent there by portal from where the App
   // renders them. They must be the shell's own components: a copy would hold

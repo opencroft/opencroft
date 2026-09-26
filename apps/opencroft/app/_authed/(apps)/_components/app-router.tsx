@@ -12,7 +12,7 @@ import {
   useRef,
 } from 'react'
 
-import { appPathOf, resolveAppHref } from '@/app/_authed/(apps)/_lib/app-routes'
+import { appInstanceBase, appPathOf, resolveAppHref } from '@/app/_authed/(apps)/_lib/app-routes'
 
 /**
  * An App's pages live under its instance's address, as real paths: the host
@@ -98,6 +98,37 @@ export function useAppNavigate(): (to: string, options?: AppNavigateOptions) => 
         return
       }
       router.navigate({ href: href(to), replace: options?.replace, resetScroll: false })
+    },
+    [router, base, href],
+  )
+}
+
+/**
+ * The address of a page of ANOTHER instance, named by its App address
+ * `<space>.<app>` — the one `app_call` takes — and an App path in it. For an
+ * App that lists things from other instances and links to where each lives.
+ * `useAppHref` stays for the App's own pages: the host owns what an instance's
+ * page address looks like, so an App never builds one itself.
+ */
+export function useAppAddressHref(): (address: string, to: string) => string {
+  return useCallback((address: string, to: string) => resolveAppHref(appInstanceBase(address), '/', to), [])
+}
+
+/**
+ * Moves the host to a page of another instance (see `useAppAddressHref`) with
+ * a history entry, so Back returns to where the App was. Does nothing once the
+ * host is already leaving the App, as `useAppNavigate`.
+ */
+export function useOpenApp(): (address: string, to: string, options?: AppNavigateOptions) => void {
+  const router = useRouter()
+  const base = useAppBase('useOpenApp')
+  const href = useAppAddressHref()
+  return useCallback(
+    (address: string, to: string, options?: AppNavigateOptions) => {
+      if (appPathOf(router.latestLocation.pathname, base) === null) {
+        return
+      }
+      router.navigate({ href: href(address, to), replace: options?.replace })
     },
     [router, base, href],
   )

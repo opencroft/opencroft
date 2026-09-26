@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { appBasePath, appPathOf, resolveAppHref } from './app-routes'
+import { appBasePath, appInstanceBase, appPathOf, resolveAppHref } from './app-routes'
+
+test('an App address names its instance page, and nothing else is taken for one', () => {
+  assert.equal(appInstanceBase('my-space.my-app'), '/space/my-space/app/my-app')
+  assert.equal(appBasePath(`${appInstanceBase('s.a')}/item/K-1`), '/space/s/app/a')
+  for (const bad of ['my-app', '.my-app', 'my-space.', 's.a.b', 's.a/../b', 's.a?x', 's/x.a']) {
+    assert.throws(() => appInstanceBase(bad), /An App address is "<space>.<app>"/, bad)
+  }
+})
 
 test('the base path is the instance address and nothing past it', () => {
   assert.equal(appBasePath('/space/my-space/app/my-app/item/K-1'), '/space/my-space/app/my-app')

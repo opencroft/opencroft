@@ -3,6 +3,22 @@
 
 const APP_BASE = /^\/space\/[^/]+\/app\/[^/]+/
 
+/**
+ * The page address of the instance at `<space>.<app>`, the address `app_call`
+ * takes. Split at the first dot, as the server resolves one; an address that
+ * is not of that form is refused rather than turned into a page that cannot
+ * exist.
+ */
+export function appInstanceBase(address: string): string {
+  const dot = address.indexOf('.')
+  const space = address.slice(0, dot)
+  const app = address.slice(dot + 1)
+  if (dot <= 0 || !app || app.includes('.') || /[/?#]/.test(address)) {
+    throw new Error(`An App address is "<space>.<app>"; got "${address}"`)
+  }
+  return `/space/${space}/app/${app}`
+}
+
 /** The instance's own address inside `pathname`, or null off an App page. */
 export function appBasePath(pathname: string): string | null {
   return pathname.match(APP_BASE)?.[0] ?? null
