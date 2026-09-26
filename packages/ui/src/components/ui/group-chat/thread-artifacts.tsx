@@ -1,9 +1,18 @@
 'use client'
 
-import { FileText, X } from 'lucide-react'
+import { FileText } from 'lucide-react'
 import { Markdown } from 'agent-chat/components/markdown'
 import { Button } from 'ui/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from 'ui/components/ui/dropdown-menu'
 import { cn } from 'ui/lib/utils'
+
+import { LIST_ROW_SECONDARY_CLASS, LIST_ROW_TITLE_CLASS } from '../utils/list-row'
 
 /**
  * A note an agent left on a thread.
@@ -17,97 +26,114 @@ export interface Artifact {
   title: string
   /** Markdown. */
   content: string
-  /** Shown beside the title when present. Already formatted by the host. */
+  /** Shown under the title when present. Already formatted by the host. */
   updatedLabel?: string
 }
 
-export interface ArtifactStripProps {
+export interface ArtifactMenuProps {
   artifacts: Artifact[]
-  /** The artifact currently open, if any. */
+  /** The artifact currently open, if any; marked in the list. */
   openId?: string
   onOpen: (id: string) => void
+  /** The button's size, matching the header's other icon controls: `icon` in
+   * a pointer header, `icon-sm` on a touch cover. */
+  size?: 'icon' | 'icon-sm'
   className?: string
 }
 
 /**
- * The artifacts on a thread, as a strip for its header.
+ * The artifacts on a thread, as one icon control in the thread's header -- the
+ * only way into them, so they cost the header one button rather than a row.
  *
- * Titles rather than a single count: a thread's artifacts are few and named, so
- * showing what they ARE costs the same row as saying how many there are, and
- * saves a press to find out. A press opens one; the host decides where it lands.
- *
- * Renders nothing at all when there are none — a thread earns artifacts by
- * having work done in it, and an empty affordance would advertise a feature to
- * every thread that has never used one.
- *
- * Scrolls rather than wraps, so a header stays one row however many there are.
+ * The count sits on the button's corner, so it keeps the footprint of the icon
+ * buttons beside it whatever the count; the titles are one press away, in the
+ * order the host lists them, with the open one checked. Renders nothing at all
+ * when there are none -- a thread earns artifacts by having work done in it,
+ * and an empty affordance would advertise a feature to every thread that has
+ * never used one.
  */
-export function ArtifactStrip({ artifacts, openId, onOpen, className }: ArtifactStripProps) {
+export function ArtifactMenu({ artifacts, openId, onOpen, size = 'icon', className }: ArtifactMenuProps) {
   if (artifacts.length === 0) {
     return null
   }
   return (
-    <div className={cn('flex min-w-0 items-center gap-1 overflow-x-auto', className)}>
-      {artifacts.map((artifact) => {
-        const open = artifact.id === openId
-        return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
           <Button
-            key={artifact.id}
             type='button'
-            size='sm'
-            variant={open ? 'secondary' : 'ghost'}
-            className='h-7 shrink-0 gap-1.5 px-2'
-            onClick={() => onOpen(artifact.id)}
-            title={artifact.title}
-          >
-            <FileText className='size-3.5 text-muted-foreground' />
-            <span className='max-w-40 truncate text-xs'>{artifact.title}</span>
-          </Button>
-        )
-      })}
-    </div>
+            variant='ghost'
+            size={size}
+            aria-label='Artifacts'
+            title='Artifacts'
+            className={cn('relative', className)}
+          />
+        }
+      >
+        <FileText />
+        <span
+          aria-hidden
+          className='absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1 text-[10px] font-medium leading-none text-muted-foreground ring-1 ring-border'
+        >
+          {artifacts.length}
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end' className='w-64'>
+        {/* A radio group because exactly one note is open at a time, and the
+            check is how the list says which. Choosing the one already open
+            changes nothing, which is what a reader pressing it expects. */}
+        <DropdownMenuRadioGroup value={openId ?? ''} onValueChange={(value) => onOpen(value as string)}>
+          {artifacts.map((artifact) => (
+            <DropdownMenuRadioItem key={artifact.id} value={artifact.id}>
+              <div className='flex min-w-0 flex-col'>
+                <span className='truncate'>{artifact.title}</span>
+                {artifact.updatedLabel ? (
+                  <span className='truncate text-xs text-muted-foreground'>{artifact.updatedLabel}</span>
+                ) : null}
+              </div>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-export interface ArtifactPanelProps {
+export interface ArtifactPartProps {
   artifact: Artifact
-  /** Omit to render without a close affordance, e.g. in a pinned column. */
-  onClose?: () => void
   className?: string
 }
 
 /**
- * One artifact, opened.
+ * An open artifact's name, as content for a header row the host owns.
+ *
+ * One line that truncates, with the whole name on hover: the row has a fixed
+ * height shared with the conversation's header beside it, so a name that
+ * wrapped would push the two out of line. `updatedLabel`, when the host gives
+ * one, is the second line of the same two-line stack the thread's agent
+ * cluster draws, in the same list-row styles -- so the two headers read as one.
+ */
+export function ArtifactTitle({ artifact, className }: ArtifactPartProps) {
+  return (
+    <span className={cn('flex min-w-0 flex-col overflow-hidden leading-tight', className)} title={artifact.title}>
+      <span className={LIST_ROW_TITLE_CLASS}>{artifact.title}</span>
+      {artifact.updatedLabel ? <span className={LIST_ROW_SECONDARY_CLASS}>{artifact.updatedLabel}</span> : null}
+    </span>
+  )
+}
+
+/**
+ * An open artifact's content: fills the height it is given and scrolls itself,
+ * so a long note costs its pane no more room than a short one.
  *
  * Read-only on purpose. An agent revises these on its next iteration, so an
  * edit offered here would be a change waiting to be overwritten without warning
  * — and a note the reader half-owns is worse than one they plainly do not.
- *
- * Fills the height it is given and scrolls its own body, so a long note costs
- * the column no more room than a short one. WHERE it sits — a right sidebar, a
- * drawer on a narrow screen — is the host's layout decision, not this
- * component's: it renders the panel and nothing around it.
  */
-export function ArtifactPanel({ artifact, onClose, className }: ArtifactPanelProps) {
+export function ArtifactBody({ artifact, className }: ArtifactPartProps) {
   return (
-    <div className={cn('flex h-full min-h-0 flex-col', className)}>
-      <div className='flex items-start gap-2 border-b px-3 py-2'>
-        <FileText className='mt-0.5 size-4 shrink-0 text-muted-foreground' />
-        <div className='min-w-0 flex-1'>
-          {/* Wraps rather than truncates: this is the note's name and the only
-              thing identifying which one is open. */}
-          <div className='text-sm font-medium'>{artifact.title}</div>
-          {artifact.updatedLabel ? <div className='text-xs text-muted-foreground'>{artifact.updatedLabel}</div> : null}
-        </div>
-        {onClose ? (
-          <Button type='button' size='icon' variant='ghost' className='size-7 shrink-0' onClick={onClose} title='Close'>
-            <X className='size-4' />
-          </Button>
-        ) : null}
-      </div>
-      <div className='min-h-0 flex-1 overflow-y-auto px-3 py-3'>
-        <Markdown text={artifact.content} />
-      </div>
+    <div className={cn('min-h-0 flex-1 overflow-y-auto px-3 py-3', className)}>
+      <Markdown text={artifact.content} />
     </div>
   )
 }

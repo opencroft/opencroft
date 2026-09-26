@@ -1,21 +1,19 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { useEffect, useState } from 'react'
 
 import { BackButton } from '../utils/back-button'
 import { LIST_ROW_SECONDARY_CLASS, LIST_ROW_TITLE_CLASS } from '../utils/list-row'
-import { cn } from 'ui/lib/utils'
 
 import { CommandBarFrame } from '../agent-chat/command-bar-frame'
 import { Flex } from 'ui/components/ui/layout/flex'
 // The scroll area is the kit's own rather than the plain primitive -- the
 // declared registry dependency is what selects it, and where it lands in a
 // consumer is composed from that component's category, not written here.
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../resizable'
 import { ScrollArea } from '../layout/scroll-area'
 import { StickySection } from '../layouts/sticky-section'
-import { type Artifact, ArtifactPanel, ArtifactStrip } from './thread-artifacts'
+import { ArtifactSplit } from './artifact-split'
+import { type Artifact, ArtifactMenu } from './thread-artifacts'
 import { type ChatStatus, ThreadAgentCluster } from './thread-agent-cluster'
 import { type ThreadWork, type ThreadWorkItem, ThreadWorkControl } from './thread-work-control'
 
@@ -60,8 +58,9 @@ export interface GroupChatThreadFramingProps {
    * CommandBarFrame. That the composer was already shared and the FRAME was not
    * is exactly how this footer came to look unlike the 1:1 one. */
   composer?: ReactNode
-  /** The notes the thread's agent has left. Absent or empty renders nothing --
-   * a thread earns artifacts by having work done in it. */
+  /** The notes the thread's agent has left, listed by a button in the header.
+   * Absent or empty draws no button -- a thread earns artifacts by having work
+   * done in it. */
   artifacts?: Artifact[]
   /** Which artifact is open, if any. Controlled: this screen owns the
    * arrangement, the host owns the selection. */
@@ -107,24 +106,6 @@ export function GroupChatThreadFraming({
   className,
 }: GroupChatThreadFramingProps) {
   const openArtifact = artifacts?.find((artifact) => artifact.id === openArtifactId)
-  // Two arrangements, not one that stretches. On a wide screen the note opens
-  // beside the conversation and the reader can drag the divide. On a phone it
-  // REPLACES the conversation and closing brings it back -- a split there
-  // leaves neither side readable, and dragging a divider on a touch screen is
-  // an accelerator nobody asked for.
-  //
-  // Read live rather than once, because the arrangement has to be right after a
-  // rotation, not just at mount. Starts narrow so the server and the first
-  // client paint agree; a wide client corrects on its first effect, before
-  // anyone has scrolled.
-  const [wide, setWide] = useState(false)
-  useEffect(() => {
-    const query = window.matchMedia('(min-width: 768px)')
-    const sync = () => setWide(query.matches)
-    sync()
-    query.addEventListener('change', sync)
-    return () => query.removeEventListener('change', sync)
-  }, [])
   const conversation = (
     <>
       {/* The wrapper between the scroll viewport and this file's JSX has to
@@ -172,93 +153,58 @@ export function GroupChatThreadFraming({
     </>
   )
 
+  // The header is the conversation pane's, and the split draws its row: an open
+  // note replaces the pane header and all, or continues it to the right, and a
+  // row of its own under this one would stack a second header on the first.
+  //
+  // px-4, the same horizontal rhythm as the group-chat detail screen and the
+  // 1:1 conversation beneath -- the back arrow, the chat name and the first
+  // message all start on one left edge. The scroll area itself gets no padding:
+  // the conversation inside it carries its own px-4 py-4, and adding more here
+  // would double it. The height is FIXED so the note's header beside it lines
+  // up: py-2 around the tallest control this row can hold (a 36px icon button,
+  // taller than the 32px avatar) plus the 1px border is 53px -- the height this
+  // row already had whenever the work control was showing.
   return (
-    <div className={cn('flex h-full min-h-0 flex-col', className)}>
-      {/* px-4, the same horizontal rhythm as the group-chat detail screen and
-          the 1:1 conversation beneath -- the back arrow, the chat name and the
-          first message all start on one left edge. The scroll area itself gets
-          no padding: the conversation inside it carries its own px-4 py-4, and
-          adding more here would double it. */}
-      <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
-        {onBack ? <BackButton onClick={onBack} /> : null}
-        {agent ? (
-          // The agent leads, in a chat list row's own terms -- the cluster is
-          // the row's avatar, dot, breadcrumb and "Name · Status" line, so a
-          // row and the header a press on it opens say one thing in one type.
-          <ThreadAgentCluster
-            agent={agent}
-            status={status}
-            groupChatName={groupChatName}
-            threadTitle={threadTitle}
-            className='flex-1'
-          />
-        ) : (
-          // No agent to attribute the thread to: the same two row styles,
-          // with the title taking the prominent line so the header never
-          // collapses to one muted breadcrumb.
-          <div className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-            <span className={LIST_ROW_SECONDARY_CLASS}>{groupChatName}</span>
-            <span className={LIST_ROW_TITLE_CLASS}>{threadTitle || 'Thread'}</span>
-          </div>
-        )}
-        {/* The trailing side belongs to the session's background tasks. The
-            control draws nothing of its own until there is something to list,
-            so a thread with no background tasks is framed exactly as before. */}
-        {work ? <ThreadWorkControl work={work} /> : null}
-      </header>
-      {/* Artifacts get their own row rather than a place in the line above.
-          That line is already carrying a breadcrumb, a title and an agent, and
-          on a phone there is nothing left to give -- while the strip is the one
-          part that grows with use. It exists only when there is something in
-          it, so a thread that has never produced a note is framed exactly as
-          before. */}
-      {artifacts && artifacts.length > 0 ? (
-        <div className='shrink-0 border-b border-border px-4 py-1'>
-          <ArtifactStrip artifacts={artifacts} openId={openArtifactId} onOpen={(id) => onOpenArtifact?.(id)} />
-        </div>
-      ) : null}
-      {/* No direction prop on the panel group below: it is a flex row by
-          default and turns vertical from its aria-orientation, so horizontal is
-          simply the default rather than an omission. */}
-      {wide ? (
-        <ResizablePanelGroup className='min-h-0 flex-1'>
-          {/* `id` on both, because the artifact panel comes and goes: without
-              stable identities the group cannot tell an added panel from a
-              rearranged one, and re-lays-out from scratch each time. */}
-          <ResizablePanel
-            id='conversation'
-            defaultSize={openArtifact ? '68%' : '100%'}
-            minSize='20%'
-            className='flex min-w-0 flex-col'
-          >
-            {conversation}
-          </ResizablePanel>
-          {openArtifact ? (
-            <>
-              {/* `withHandle` so the grip is drawn rather than left as a hit
-                  area to discover. Dragging is the only way to resize, which is
-                  acceptable for a width: it adjusts a layout that already
-                  works, it is not a route to something otherwise unreachable. */}
-              <ResizableHandle withHandle />
-              <ResizablePanel id='artifact' defaultSize='32%' minSize='20%' className='flex min-w-0 flex-col'>
-                <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
-              </ResizablePanel>
-            </>
-          ) : null}
-        </ResizablePanelGroup>
-      ) : (
-        <div className='flex min-h-0 flex-1'>
-          {/* Hidden, not unmounted: the reader comes back to this the moment
-              they close the note, and rebuilding the transcript would drop
-              their place in it. */}
-          <div className={openArtifact ? 'hidden' : 'flex min-w-0 flex-1 flex-col'}>{conversation}</div>
-          {openArtifact ? (
-            <div className='flex min-w-0 flex-1 flex-col'>
-              <ArtifactPanel artifact={openArtifact} onClose={onCloseArtifact} />
+    <ArtifactSplit
+      artifact={openArtifact}
+      onClose={() => onCloseArtifact?.()}
+      headerClassName='h-[53px] px-4 py-2'
+      className={className}
+      header={
+        <>
+          {onBack ? <BackButton onClick={onBack} /> : null}
+          {agent ? (
+            // The agent leads, in a chat list row's own terms -- the cluster is
+            // the row's avatar, dot, breadcrumb and "Name · Status" line, so a
+            // row and the header a press on it opens say one thing in one type.
+            <ThreadAgentCluster
+              agent={agent}
+              status={status}
+              groupChatName={groupChatName}
+              threadTitle={threadTitle}
+              className='flex-1'
+            />
+          ) : (
+            // No agent to attribute the thread to: the same two row styles,
+            // with the title taking the prominent line so the header never
+            // collapses to one muted breadcrumb.
+            <div className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
+              <span className={LIST_ROW_SECONDARY_CLASS}>{groupChatName}</span>
+              <span className={LIST_ROW_TITLE_CLASS}>{threadTitle || 'Thread'}</span>
             </div>
+          )}
+          {/* The trailing side: the thread's notes, then its background tasks.
+              Each control draws nothing of its own until there is something
+              to list, so a thread with neither is framed exactly as before. */}
+          {artifacts ? (
+            <ArtifactMenu artifacts={artifacts} openId={openArtifact?.id} onOpen={(id) => onOpenArtifact?.(id)} />
           ) : null}
-        </div>
-      )}
-    </div>
+          {work ? <ThreadWorkControl work={work} /> : null}
+        </>
+      }
+    >
+      {conversation}
+    </ArtifactSplit>
   )
 }

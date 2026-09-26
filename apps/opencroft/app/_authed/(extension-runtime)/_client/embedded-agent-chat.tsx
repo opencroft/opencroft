@@ -60,6 +60,10 @@ import { LogoLoader } from 'ui/logo-loader'
 import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
+  type ThreadArtifacts,
+  useThreadArtifacts,
+} from '@/app/_authed/(extension-runtime)/_client/use-thread-artifacts'
+import {
   type GroupChatDetailData,
   type GroupChatDetailHeader,
   GroupChatDetailScreen,
@@ -122,6 +126,10 @@ export interface EmbeddedThreadContext {
   threadTitle: string
   status: SessionStatus
   work: ThreadWork
+  /** The thread's notes: for the host's header to list, and the open one for
+   *  the host to show. Both are the host's because an open note replaces or
+   *  continues the header the host draws -- this surface has none to offer. */
+  artifacts: ThreadArtifacts
 }
 
 export interface EmbeddedAgentChatProps {
@@ -434,6 +442,7 @@ function EmbeddedThread({
   // until the assembly has folded once; the header facts below wait for it so
   // a host never sees a context with nothing to count.
   const [work, setWork] = useState<ThreadWork | null>(null)
+  const { artifacts, refresh: refreshArtifacts } = useThreadArtifacts(thread?.id)
   // The header facts the host draws, memoized so a host holding them in state
   // is told once per real change. The chat's NAME leads the breadcrumb: the
   // host's own name for it where it passed one (the dock passes the space's
@@ -448,9 +457,10 @@ function EmbeddedThread({
             threadTitle: thread.title || id,
             status,
             work,
+            artifacts,
           }
         : null,
-    [thread, status, work, title, chat.name, id],
+    [thread, status, work, artifacts, title, chat.name, id],
   )
   // Reported through a ref so an inline callback never re-arms this, and
   // cleared on the way out: a host that heard about a thread must hear that it
@@ -475,8 +485,9 @@ function EmbeddedThread({
         {/* The default, chrome-less frame. Where the reader is and who is
             working are the HOST's header's to say -- the dock window draws
             them from `onThreadContext` -- because a header inside a window
-            that already has one read as two headers. */}
-        <GroupChatThreadChat thread={thread} onWorkChange={setWork} />
+            that already has one read as two headers. The open note goes
+            there too: it replaces or continues that header. */}
+        <GroupChatThreadChat thread={thread} onWorkChange={setWork} onTurnSettled={refreshArtifacts} />
       </div>
     )
   }

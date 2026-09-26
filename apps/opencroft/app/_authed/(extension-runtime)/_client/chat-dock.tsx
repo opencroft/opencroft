@@ -12,8 +12,10 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
+import { ArtifactSplit, CONVERSATION_MIN_WIDTH } from 'ui/group-chat/artifact-split'
 import { ChatLauncher } from 'ui/group-chat/chat-launcher'
 import { ThreadAgentCluster } from 'ui/group-chat/thread-agent-cluster'
+import { ArtifactMenu } from 'ui/group-chat/thread-artifacts'
 import { ThreadWorkControl } from 'ui/group-chat/thread-work-control'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
@@ -99,11 +101,41 @@ interface FloatRect {
 const FLOAT_DEFAULT: FloatRect = { right: 16, width: 400, height: 520 }
 /** The gap the window keeps from the viewport's edges, px. */
 const FLOAT_MARGIN = 16
-const FLOAT_MIN_WIDTH = 320
+// The window holds a conversation, so it is never made narrower than one stays
+// readable at -- the kit's figure, the same one that decides when a note fits
+// beside the conversation rather than over it.
+const FLOAT_MIN_WIDTH = CONVERSATION_MIN_WIDTH
 const FLOAT_MIN_HEIGHT = 280
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
+}
+
+// What a press on a header row must be left to: its controls, and anything a
+// menu opened from one renders, which reaches the row's handler through the
+// React tree even from a portal. Everything else in a floating window's header
+// starts a slide. Checked at the source rather than by each control stopping
+// the pointer, because the header's contents come from three places -- the
+// thread, the chat home, the note -- and a control that forgot to stop it
+// would slide the window instead of being pressed.
+const HEADER_CONTROL = 'button, input, textarea, select, a, [role^="menuitem"], [role="menu"], [contenteditable]'
+
+function startsOnControl(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(HEADER_CONTROL) !== null
+}
+
+/** How one arrangement of the window draws the chat pane's header. */
+interface PaneArrangement {
+  /** Height, padding and gap of every header row -- see where it is used. */
+  headerClassName: string
+  /** The title area's wrapper in the chat pane's header. */
+  titleClassName: string
+  buttonSize: 'icon' | 'icon-sm'
+  /** Set where the header is the window's drag handle. */
+  onHeaderPointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void
+  withModeMenu: boolean
+  /** What the header says before the surface has reported anything. */
+  fallbackTitle: ReactNode
 }
 
 /**
@@ -288,7 +320,10 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
     window.addEventListener('pointerup', onUp)
   }
 
-  const dragFloat = (event: React.PointerEvent) =>
+  const dragFloat = (event: React.PointerEvent) => {
+    if (startsOnControl(event.target)) {
+      return
+    }
     beginFloatGesture(event, (dx, _dy, start) => ({
       ...start,
       right: clamp(
@@ -297,6 +332,7 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
         Math.max(FLOAT_MARGIN, window.innerWidth - start.width - FLOAT_MARGIN),
       ),
     }))
+  }
 
   const resizeFloat = (event: React.PointerEvent, edge: { top?: boolean; left?: boolean; right?: boolean }) =>
     beginFloatGesture(event, (dx, dy, start) => {
@@ -346,15 +382,8 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   // The home screen's header parts, placed in the window's header exactly as
   // an open thread's cluster and work button are: its title area (the chat's
   // name, or the search field while a search is open) where the cluster
-  // goes, its controls ahead of the window's own. The title area stops the
-  // pointer too -- in the floating window the header is the drag handle, and
-  // typing into a search field must not slide the window.
-  const stopPointer = (e: React.PointerEvent) => e.stopPropagation()
-  const homeTitle = homeHeader?.title ? (
-    <div onPointerDown={stopPointer} className='min-w-0 flex-1'>
-      {homeHeader.title}
-    </div>
-  ) : null
+  // goes, its controls ahead of the window's own.
+  const homeTitle = homeHeader?.title ?? null
   const homeActions = homeHeader?.actions ?? null
 
   // The header names the open conversation the way a chat list row does --
@@ -367,15 +396,10 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   // Back leads it: an open thread is the second of the panel's two windows,
   // and the arrow returns to the first -- the chat's home, where the threads
   // are listed, searched and started. That home is what replaced the "Choose
-  // a chat" menu this header used to carry. The buttons stop the pointer so
-  // the floating window's drag handle does not read a press as a slide.
+  // a chat" menu this header used to carry.
   const cluster = threadContext ? (
     <div className='flex min-w-0 flex-1 items-center gap-1'>
-      <BackButton
-        label='Back to the chat'
-        onClick={() => setChatSelection({ home: true })}
-        onPointerDown={(e) => e.stopPropagation()}
-      />
+      <BackButton label='Back to the chat' onClick={() => setChatSelection({ home: true })} />
       <ThreadAgentCluster
         agent={threadContext.agent}
         status={threadContext.status}
@@ -390,6 +414,17 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   // thread has delegated something to list.
   const workButton = (buttonSize: 'icon' | 'icon-sm') =>
     threadContext ? <ThreadWorkControl work={threadContext.work} size={buttonSize} /> : null
+  // The thread's notes, just ahead of the work control and in its size. Like
+  // it, drawn only for an open thread and only once there is a note to list.
+  const artifactButton = (buttonSize: 'icon' | 'icon-sm') =>
+    threadContext ? (
+      <ArtifactMenu
+        artifacts={threadContext.artifacts.items}
+        openId={threadContext.artifacts.openId}
+        onOpen={threadContext.artifacts.onOpen}
+        size={buttonSize}
+      />
+    ) : null
 
   const surface = <div className='flex min-h-0 min-w-0 flex-1'>{children}</div>
 
@@ -399,6 +434,47 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
     </Button>
   )
 
+  // The window's content: the chat pane with its header, and the thread's open
+  // note replacing it or continuing it to the right. The header is the SPLIT's
+  // to draw, because it is the chat pane's header -- a note that covers the
+  // chat covers it too, and a note beside the chat gets a header of its own on
+  // the same line. The window's own controls (position, close) are `trailing`:
+  // they stay in the window's corner, on whichever header is rightmost.
+  //
+  // The rows keep the exact geometry the window's header had before it moved
+  // in here, measured from its classes: py-1 around the 36px icon buttons
+  // plus the 1px border is 45px for the docked panel and the floating window;
+  // py-2 around the 32px touch buttons plus the border is 49px on the phone
+  // cover. The row gap is the old actions group's (gap-0.5, or gap-1 on the
+  // cover), and the title's margin makes up the old 8px between title and
+  // actions.
+  const pane = (arrangement: PaneArrangement) => (
+    <ArtifactSplit
+      artifact={threadContext?.artifacts.open}
+      onClose={() => threadContext?.artifacts.close()}
+      headerClassName={arrangement.headerClassName}
+      onHeaderPointerDown={arrangement.onHeaderPointerDown}
+      controlSize={arrangement.buttonSize}
+      className='min-h-0 flex-1'
+      header={
+        <>
+          <div className={arrangement.titleClassName}>{cluster ?? homeTitle ?? arrangement.fallbackTitle}</div>
+          {homeActions}
+          {artifactButton(arrangement.buttonSize)}
+          {workButton(arrangement.buttonSize)}
+        </>
+      }
+      trailing={
+        <>
+          {arrangement.withModeMenu ? <ModeMenu mode={mode} onModeChange={setMode} /> : null}
+          {closeButton(arrangement.buttonSize)}
+        </>
+      }
+    >
+      {chat}
+    </ArtifactSplit>
+  )
+
   if (open && !isMobile && mode !== 'float') {
     return (
       <ChatDockContext.Provider value={control}>
@@ -406,16 +482,14 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
           dock={mode}
           size={size}
           onSizeChange={setSize}
-          title={cluster ?? homeTitle ?? title}
-          actions={
-            <>
-              {homeActions}
-              {workButton('icon')}
-              <ModeMenu mode={mode} onModeChange={setMode} />
-              {closeButton('icon')}
-            </>
-          }
-          panel={chat}
+          showHeader={false}
+          panel={pane({
+            headerClassName: 'h-[45px] gap-0.5 px-2 py-1',
+            titleClassName: 'mr-1.5 flex min-w-0 flex-1 items-center',
+            buttonSize: 'icon',
+            withModeMenu: true,
+            fallbackTitle: <span className='truncate text-xs text-muted-foreground'>{title}</span>,
+          })}
           className='h-full w-full'
         >
           {surface}
@@ -434,15 +508,13 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   ) : isMobile ? (
     <div className='fixed inset-0 z-50 flex min-h-0 flex-col bg-background'>
       {/* Touch targets, not pointer targets, on the full-screen cover. */}
-      <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
-        {cluster ?? homeTitle ?? <span className='truncate text-sm font-medium text-foreground'>{title}</span>}
-        <div className='flex shrink-0 items-center gap-1'>
-          {homeActions}
-          {workButton('icon-sm')}
-          {closeButton('icon-sm')}
-        </div>
-      </div>
-      {chat}
+      {pane({
+        headerClassName: 'h-[49px] gap-1 px-3 py-2',
+        titleClassName: 'mr-1 flex min-w-0 flex-1 items-center',
+        buttonSize: 'icon-sm',
+        withModeMenu: false,
+        fallbackTitle: <span className='truncate text-sm font-medium text-foreground'>{title}</span>,
+      })}
     </div>
   ) : (
     <div
@@ -456,21 +528,16 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
         maxHeight: `calc(100vh - ${2 * FLOAT_MARGIN}px)`,
       }}
     >
-      {/* The header is the drag handle; its buttons stop the pointer so a
-          click on them is a click, not the start of a slide. */}
-      <div
-        onPointerDown={dragFloat}
-        className='flex shrink-0 cursor-grab touch-none select-none items-center justify-between gap-2 border-b border-border px-2 py-1'
-      >
-        {cluster ?? homeTitle ?? <span className='truncate text-xs text-muted-foreground'>{title}</span>}
-        <div onPointerDown={stopPointer} className='flex shrink-0 items-center gap-0.5'>
-          {homeActions}
-          {workButton('icon')}
-          <ModeMenu mode={mode} onModeChange={setMode} />
-          {closeButton('icon')}
-        </div>
-      </div>
-      {chat}
+      {/* Every header row is the drag handle -- the chat's, and the note's
+          beside or over it. */}
+      {pane({
+        headerClassName: 'h-[45px] cursor-grab touch-none select-none gap-0.5 px-2 py-1',
+        titleClassName: 'mr-1.5 flex min-w-0 flex-1 items-center',
+        buttonSize: 'icon',
+        onHeaderPointerDown: dragFloat,
+        withModeMenu: true,
+        fallbackTitle: <span className='truncate text-xs text-muted-foreground'>{title}</span>,
+      })}
       {/* Grow-from handles on the top and both sides -- the bottom is the
           anchor. Sizing the left edge moves that edge; sizing the right one
           keeps the left edge put and slides the window's offset instead. */}

@@ -97,6 +97,41 @@ test('the position switch offers every edge, marks the current one and reports a
   }
 })
 
+test('without its header the panel draws no title, no actions and no position switch, only its content', async () => {
+  const { unmount } = await mount(
+    <DockPanel
+      dock='right'
+      onDockChange={() => {}}
+      showHeader={false}
+      actions={<button type='button'>An action</button>}
+      panel={<p>The chat, with a header of its own</p>}
+    >
+      <p>The canvas</p>
+    </DockPanel>,
+  )
+
+  try {
+    const panel = dom.container.querySelector('[data-panel][id="dock-panel"]')
+    assert.ok(panel, 'the panel rendered')
+    // A boolean, not the node: a failing assert.equal formats a jsdom node by
+    // walking its document, and the run stalls to a timeout instead of failing.
+    assert.equal(
+      dom.container.querySelector('[role="group"][aria-label="Panel position"]') === null,
+      true,
+      'no position switch, though a handler was given',
+    )
+    assert.doesNotMatch(dom.container.textContent ?? '', /An action/, 'no actions')
+    // The panel's inner element holds exactly one child -- the content's
+    // column -- where a header would have been a second, before it.
+    const inner = panel.firstElementChild
+    assert.equal(inner?.children.length, 1, 'nothing but the content')
+    assert.match(inner?.textContent ?? '', /The chat, with a header of its own/)
+    assert.match(dom.container.textContent ?? '', /The canvas/, 'and the surface beside it')
+  } finally {
+    await unmount()
+  }
+})
+
 test('the panel is titled, and both it and the surface are on screen', async () => {
   const { unmount } = await mount(
     <DockPanel dock='left' onDockChange={() => {}} title='A space' panel={<p>The chat</p>}>

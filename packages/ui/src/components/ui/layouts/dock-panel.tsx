@@ -83,10 +83,15 @@ export interface DockPanelProps {
   /** The panel's share of the surface, reported when a drag ENDS rather than
    *  on every pointer move, so writing it straight to a store is safe. */
   onSizeChange?: (size: number) => void
+  /** Whether the panel draws its header row. On by default; a caller whose
+   *  panel content draws its own header -- one that has to change with what
+   *  the panel shows -- turns it off, and `title`, `actions` and the position
+   *  switch go with it. */
+  showHeader?: boolean
   /** Shown at the start of the panel's header. A string is drawn as a muted
    *  caption; any other node is placed as given, so a caller that draws the
    *  same header content in other arrangements can hand the SAME node here. */
-  title: ReactNode
+  title?: ReactNode
   /** Extra controls in the panel's header, ahead of the position switch. */
   actions?: ReactNode
   /** What the panel holds. */
@@ -110,6 +115,7 @@ export function DockPanel({
   onDockChange,
   size,
   onSizeChange,
+  showHeader = true,
   title,
   actions,
   panel,
@@ -162,17 +168,19 @@ export function DockPanel({
       minSize={PANEL_MIN_SIZE}
       className='flex min-h-0 min-w-0 flex-col'
     >
-      <div className='flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1'>
-        {/* A string is dressed as the panel's own caption; a node is placed as
-            it came. Wrapping a node too put a flex block inside an inline,
-            truncating span, whose overflow clip cut off whatever the node let
-            hang past its line box -- an avatar's status dot, for one. */}
-        {typeof title === 'string' ? <span className='truncate text-xs text-muted-foreground'>{title}</span> : title}
-        <div className='flex shrink-0 items-center gap-0.5'>
-          {actions}
-          {onDockChange ? <DockSideSwitch dock={dock} onDockChange={onDockChange} /> : null}
+      {showHeader ? (
+        <div className='flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1'>
+          {/* A string is dressed as the panel's own caption; a node is placed as
+              it came. Wrapping a node too put a flex block inside an inline,
+              truncating span, whose overflow clip cut off whatever the node let
+              hang past its line box -- an avatar's status dot, for one. */}
+          {typeof title === 'string' ? <span className='truncate text-xs text-muted-foreground'>{title}</span> : title}
+          <div className='flex shrink-0 items-center gap-0.5'>
+            {actions}
+            {onDockChange ? <DockSideSwitch dock={dock} onDockChange={onDockChange} /> : null}
+          </div>
         </div>
-      </div>
+      ) : null}
       <div className='flex min-h-0 flex-1 flex-col'>{panel}</div>
     </ResizablePanel>
   )
