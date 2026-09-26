@@ -22,8 +22,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
  *
  * A session cookie is sent with requests from other sites under the same
  * domain too, so a request that could change something is refused when the
- * browser says it came from another origin (`Sec-Fetch-Site`). A client that
- * sends no such header is not a browser riding someone's cookie.
+ * browser says it came from another origin (see fromThisOrigin).
  *
  * Anything else declared under a route name fails closed with 500: a typo in
  * `session`, or a kind this host doesn't know, must not be served as public.
@@ -42,11 +41,24 @@ export async function dispatchExtensionRoute(route: ExtensionRoute | undefined, 
   if (!user) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  if (!SAFE_METHODS.has(request.method.toUpperCase())) {
-    const site = request.headers.get('sec-fetch-site')
-    if (site && site !== 'same-origin' && site !== 'none') {
-      return Response.json({ error: 'Cross-site request refused' }, { status: 403 })
-    }
+  if (!SAFE_METHODS.has(request.method.toUpperCase()) && !fromThisOrigin(request)) {
+    return Response.json({ error: 'Cross-site request refused' }, { status: 403 })
   }
   return route.handler(request, { person: directoryUserOf(user) })
+}
+
+/**
+ * Whether a browser sent this request from a page of this origin, or no
+ * browser page sent it at all. `Sec-Fetch-Site` decides when present. A
+ * browser too old to send it still sends `Origin` on a write, so then that
+ * must be this request's own origin; the literal "null" of an opaque origin
+ * is not. A request with neither header did not come from a page.
+ */
+function fromThisOrigin(request: Request): boolean {
+  const site = request.headers.get('sec-fetch-site')
+  if (site) {
+    return site === 'same-origin' || site === 'none'
+  }
+  const origin = request.headers.get('origin')
+  return origin === null || origin === new URL(request.url).origin
 }

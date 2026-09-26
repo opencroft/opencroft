@@ -64,10 +64,11 @@ async function signUp(email: string): Promise<{ id: string; cookie: string }> {
 
 const member = await signUp('member@example.test')
 
-function request(options: { cookie?: string; method?: string; site?: string } = {}): Request {
+function request(options: { cookie?: string; method?: string; site?: string; origin?: string } = {}): Request {
   const headers = new Headers()
   if (options.cookie) headers.set('cookie', options.cookie)
   if (options.site) headers.set('sec-fetch-site', options.site)
+  if (options.origin) headers.set('origin', options.origin)
   return new Request(URL_BASE, { method: options.method ?? 'GET', headers })
 }
 
@@ -149,6 +150,23 @@ test('a change from the same origin, or from a client that is not a browser, rea
     assert.equal(response.status, 200, String(site))
     assert.equal(calls.length, 1, String(site))
   }
+})
+
+test('without Fetch Metadata, a change is refused when its Origin is another one, and served when it is this one', async () => {
+  // What a browser too old to send Sec-Fetch-Site sends: Origin alone.
+  for (const origin of ['https://evil.example.test', 'http://localhost:1', 'https://localhost:9999', 'null']) {
+    const { route, calls } = plantedSessionRoute()
+    const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie, method: 'POST', origin }))
+    assert.equal(response.status, 403, origin)
+    assert.equal(calls.length, 0, origin)
+  }
+  const { route, calls } = plantedSessionRoute()
+  const own = await dispatchExtensionRoute(
+    route,
+    request({ cookie: member.cookie, method: 'POST', origin: new URL(URL_BASE).origin }),
+  )
+  assert.equal(own.status, 200)
+  assert.equal(calls.length, 1)
 })
 
 test('a read from another origin reaches the handler: GET is answered whoever links to it', async () => {
