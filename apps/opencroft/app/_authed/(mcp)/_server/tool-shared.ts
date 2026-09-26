@@ -84,6 +84,13 @@ export function textResult(text: string): Record<string, unknown> {
   return { content: [{ type: 'text' as const, text }] }
 }
 
+// Compact on purpose: a tool result is read by a model, which pays for every
+// byte and gains nothing from indentation. Measured 26.09.2026, 2-space
+// indentation made a 200-row list about half as large again.
+export function jsonResult(value: unknown): Record<string, unknown> {
+  return textResult(JSON.stringify(value))
+}
+
 // Every space-addressed tool comes through here, so this is the one place an
 // agent's slug is turned into a space -- and it asks the registry rather than
 // matching slugs against a list, which is the difference between resolving an

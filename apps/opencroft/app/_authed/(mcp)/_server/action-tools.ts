@@ -9,7 +9,7 @@ import {
 import { presentAction } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { callAction } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, jsonResult, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
 export const definitions = [
   {
@@ -52,7 +52,7 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing required param: nodeId')
     }
     const actions = await listNodeActionsImpl(nodeId)
-    return textResult(JSON.stringify(actions.map(presentAction), null, 2))
+    return jsonResult(actions.map(presentAction))
   },
 
   // ── call ─────────────────────────────────────────────────────────
@@ -89,9 +89,7 @@ export const handlers: Record<string, ToolHandler> = {
       if ('started' in outcome) {
         return textResult(outcome.started)
       }
-      const text =
-        outcome.result === undefined ? `Action ${action} completed.` : JSON.stringify(outcome.result, null, 2)
-      return textResult(text)
+      return outcome.result === undefined ? textResult(`Action ${action} completed.`) : jsonResult(outcome.result)
     },
     { view: 'call' },
   ),

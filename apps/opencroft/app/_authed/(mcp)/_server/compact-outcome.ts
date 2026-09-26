@@ -177,5 +177,5 @@ export function compactOutcome(ack: ThreadCompactAck, wait: CompactWait, opts: {
     }
   }
   const joined = ack.coalesced ? ' This call joined a compaction of the thread that was already in progress.' : ''
-  return { failed: outcome.failed, text: `${outcome.text}${joined}\n\n${JSON.stringify(status, null, 2)}` }
+  return { failed: outcome.failed, text: `${outcome.text}${joined}\n\n${JSON.stringify(status)}` }
 }

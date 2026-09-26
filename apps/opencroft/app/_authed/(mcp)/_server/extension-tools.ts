@@ -15,6 +15,7 @@ import type { McpToolMeta } from '@opencroft/server'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { readExecutionMode } from '@/app/_authed/(mcp)/_server/execution-mode'
+import { jsonResult, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
 export interface ExtensionToolDefinition {
   name: string
@@ -88,6 +89,5 @@ export async function executeExtensionTool(
   }
 
   const result = await handler(args)
-  const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
-  return { content: [{ type: 'text' as const, text }] }
+  return typeof result === 'string' ? textResult(result) : jsonResult(result)
 }

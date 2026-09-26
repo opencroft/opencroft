@@ -208,6 +208,15 @@ test('app_list without a space is refused; "*" still lists every space', async (
   assert.ok(x.address in all.apps && y.address in all.apps, 'both graphs are listed under "*"')
 })
 
+// ── result format ────────────────────────────────────────────────────
+
+test('JSON results reach the agent unindented, whether the action or the host serialised them', async () => {
+  const compact = (raw: string) => assert.equal(raw, JSON.stringify(JSON.parse(raw)))
+  // A graph action returns its own string; app_list is an object the host serialises.
+  compact(text(await handleToolCall('app_call', { app: x.address, action: 'listNodes' }, { internal: true })))
+  compact(text(await handleToolCall('app_list', { space: '*' }, { internal: true })))
+})
+
 // ── read-only classification ─────────────────────────────────────────
 
 test('the graph’s reads are read-only; its writes and overlays are not', async () => {

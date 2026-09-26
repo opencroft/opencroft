@@ -85,7 +85,7 @@ export const overlayActions: HostAppAction[] = [
       for (const entry of entries) {
         toastStore.broadcast({ type: 'comment', message: entry.message, nodeId: entry.nodeId, spaceId: spaceSlug })
       }
-      return JSON.stringify(entries, null, 2)
+      return JSON.stringify(entries)
     },
   },
   {
@@ -109,7 +109,7 @@ export const overlayActions: HostAppAction[] = [
       for (const nodeId of nodeIds) {
         toastStore.broadcast({ type: 'clear_comment', nodeId, spaceId: spaceSlug })
       }
-      return JSON.stringify({ cleared: nodeIds }, null, 2)
+      return JSON.stringify({ cleared: nodeIds })
     },
   },
 ]

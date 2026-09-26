@@ -198,7 +198,7 @@ test('an in-process task reads working while it runs, then completes with its re
   finish({ url: 'https://staging.example.test' })
   const done = await told(svc, started.taskId)
   assert.equal(done.state, 'completed')
-  assert.equal(done.outputTail, '{\n  "url": "https://staging.example.test"\n}')
+  assert.equal(done.outputTail, '{"url":"https://staging.example.test"}')
   assert.deepEqual([...svc.runningSessionKeys()], [])
   // The final record went into the session before the notification did.
   assert.deepEqual(
@@ -409,9 +409,9 @@ test('a string result is kept as written, anything else as JSON, and either is b
     `${'x'.repeat(TAIL_MAX_BYTES)}\n… (truncated — the whole result is ${TAIL_MAX_BYTES + 100} bytes)`,
   )
 
-  // The same words in something that is not a string are its JSON.
+  // The same words in something that is not a string are its JSON, unindented.
   const asJson = await toolTask(svc, async () => [text])
-  assert.equal((await told(svc, asJson.taskId)).outputTail, JSON.stringify([text], null, 2))
+  assert.equal((await told(svc, asJson.taskId)).outputTail, JSON.stringify([text]))
 })
 
 // ── runner tasks ─────────────────────────────────────────────────────────

@@ -105,11 +105,10 @@ test('a compaction that shrank the context says so, with both readings and the r
   assert.match(headline ?? '', /re-delivered and read/)
 })
 
-test('the result carries the status fields as JSON: compacted, instructionsRestored, usage, error', () => {
+test('the result carries the status fields as unindented JSON: compacted, instructionsRestored, usage, error', () => {
   const status = done({})
   const outcome = outcomeOf({ ended: 'settled', status })
-  const json = JSON.parse(outcome.text.slice(outcome.text.indexOf('\n\n') + 2))
-  assert.deepEqual(json, status)
+  assert.equal(outcome.text.slice(outcome.text.indexOf('\n\n') + 2), JSON.stringify(status))
 })
 
 test('done with compacted: false is stated plainly as NOT compacted, with a retry', () => {

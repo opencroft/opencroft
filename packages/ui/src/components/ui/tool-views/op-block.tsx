@@ -115,6 +115,65 @@ export function exceedsClamp(text: string | undefined): boolean {
   return (text ?? '').split('\n').length > CLAMP_LINES
 }
 
+// A tool's structured answer can arrive as JSON on one line. Shown to a person,
+// a JSON object or array is laid out the way JSON.stringify(value, null, 2)
+// would lay it out; any other text is returned as it came. Only the whitespace
+// between tokens changes: every value is copied as written rather than parsed
+// and printed again, so a number too long for a double keeps all its digits and
+// an escape in a string stays the escape it was.
+export function readableJson(text: string): string {
+  const first = text.trimStart()[0]
+  if (first !== '{' && first !== '[') {
+    return text
+  }
+  try {
+    JSON.parse(text)
+  } catch {
+    return text
+  }
+  let out = ''
+  let depth = 0
+  let inString = false
+  const newline = () => `\n${'  '.repeat(depth)}`
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      out += ch
+      if (ch === '\\') {
+        i++
+        out += text[i]
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '{' || ch === '[') {
+      let next = i + 1
+      while (' \t\n\r'.includes(text[next])) next++
+      if (text[next] === (ch === '{' ? '}' : ']')) {
+        out += ch + text[next]
+        i = next
+      } else {
+        depth++
+        out += ch + newline()
+      }
+    } else if (ch === '}' || ch === ']') {
+      depth--
+      out += newline() + ch
+    } else if (ch === ',') {
+      out += `,${newline()}`
+    } else if (ch === ':') {
+      out += ': '
+    } else if (!' \t\n\r'.includes(ch)) {
+      if (ch === '"') {
+        inString = true
+      }
+      out += ch
+    }
+  }
+  return out
+}
+
 // The call's target ("<node-id>/<handle-id>"), shown as a small line under the
 // header rather than hidden behind a hover tooltip. Where the host has a canvas
 // it resolves the node's name and clicking focuses it (the same affordance the

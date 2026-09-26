@@ -30,6 +30,7 @@ import {
   claimSlugForWrite,
   fail,
   isValidLocalExtensionSlug,
+  jsonResult,
   LEASE_TOOL_NAME,
   LOCAL_EXTENSION_HANDLE_NODE_ID,
   requireCallingAgent,
@@ -263,7 +264,7 @@ export const handlers: Record<string, ToolHandler> = {
       sourceDirty: record.sourceDirty,
       target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}`,
     }))
-    return textResult(JSON.stringify(summaries, null, 2))
+    return jsonResult(summaries)
   },
 
   // ── get_extension ───────────────────────────────────────────────
@@ -278,13 +279,11 @@ export const handlers: Record<string, ToolHandler> = {
     }
     // Manifest + file paths only. Read/edit file contents via the remote_* tools against `target`.
     const { files, ...rest } = record
-    return textResult(
-      JSON.stringify(
-        { ...rest, files: Object.keys(files), target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}` },
-        null,
-        2,
-      ),
-    )
+    return jsonResult({
+      ...rest,
+      files: Object.keys(files),
+      target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}`,
+    })
   },
 
   // ── create_extension ────────────────────────────────────────────

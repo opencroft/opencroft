@@ -7,7 +7,7 @@ import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance
 import { isConnectionNodeName, readMcpServers, writeMcpServers } from '@/app/_authed/(agent)/_server/mcp-store'
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, jsonResult, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
 export const definitions = [
   {
@@ -177,7 +177,7 @@ export const handlers: Record<string, ToolHandler> = {
   // ── MCP servers ───────────────────────────────────────────────────────
   mcp_list: async () => {
     const servers = await readMcpServers()
-    return textResult(JSON.stringify(servers.map(redactMcpServer), null, 2))
+    return jsonResult(servers.map(redactMcpServer))
   },
 
   mcp_set: withApprovalRequired(async (args) => {
@@ -236,6 +236,6 @@ export const handlers: Record<string, ToolHandler> = {
       }
       config = existing
     }
-    return textResult(JSON.stringify(await checkMcpServer(config), null, 2))
+    return jsonResult(await checkMcpServer(config))
   },
 }

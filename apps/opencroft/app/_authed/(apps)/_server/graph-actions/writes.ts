@@ -115,7 +115,7 @@ export const writeActions: HostAppAction[] = [
         }
         return createdNodes
       })
-      return JSON.stringify(created, null, 2)
+      return JSON.stringify(created)
     },
   },
   {
@@ -188,7 +188,7 @@ export const writeActions: HostAppAction[] = [
         }
         return updatedNodes
       })
-      return JSON.stringify(updated, null, 2)
+      return JSON.stringify(updated)
     },
   },
   {
@@ -346,7 +346,7 @@ export const writeActions: HostAppAction[] = [
         })
         return beforeEdges - graph.edges.length
       })
-      return JSON.stringify({ deleted: nodeIds, removedEdges }, null, 2)
+      return JSON.stringify({ deleted: nodeIds, removedEdges })
     },
   },
   {
@@ -397,7 +397,7 @@ export const writeActions: HostAppAction[] = [
         }
         return createdEdges
       })
-      return JSON.stringify(created, null, 2)
+      return JSON.stringify(created)
     },
   },
   {
@@ -433,7 +433,7 @@ export const writeActions: HostAppAction[] = [
         }
         return removedIds
       })
-      return JSON.stringify({ removed }, null, 2)
+      return JSON.stringify({ removed })
     },
   },
 ]

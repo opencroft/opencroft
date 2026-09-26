@@ -441,7 +441,7 @@ test('an extension tool whose manifest entry says async detaches, and what its h
   )
   const [start] = inProcess
   assert.deepEqual([start?.kind, start?.name, start?.target, start?.timeoutMs], ['tool', EXT.async, '', 3_600_000])
-  assert.equal(await start?.run(signal()), JSON.stringify({ indexed: { region: 'eu' } }, null, 2))
+  assert.equal(await start?.run(signal()), '{"indexed":{"region":"eu"}}')
 })
 
 test('an awaitable extension tool detaches with background: true and runs in place without; its handler never sees the two', async () => {

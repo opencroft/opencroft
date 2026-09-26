@@ -149,7 +149,7 @@ export const readActions: HostAppAction[] = [
         const node = n as unknown as GraphNode
         return { id: node.id, name: nodeName(node, typeNames) }
       })
-      return JSON.stringify(entries, null, 2)
+      return JSON.stringify(entries)
     },
   },
   {
@@ -214,7 +214,7 @@ export const readActions: HostAppAction[] = [
         entry.matches = matches
         results.push(entry)
       }
-      return JSON.stringify(results, null, 2)
+      return JSON.stringify(results)
     },
   },
   {
@@ -253,7 +253,7 @@ export const readActions: HostAppAction[] = [
         }
         missing.push(id)
       }
-      return JSON.stringify({ found, missing }, null, 2)
+      return JSON.stringify({ found, missing })
     },
   },
   {
@@ -264,7 +264,7 @@ export const readActions: HostAppAction[] = [
       const { address } = await graphTarget(ctx)
       const { graph } = await loadOrFail(address)
       const edges = graph.edges.map((e) => edgeToApi(e as StoredEdge))
-      return JSON.stringify(edges, null, 2)
+      return JSON.stringify(edges)
     },
   },
 ]

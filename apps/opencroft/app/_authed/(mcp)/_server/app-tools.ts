@@ -17,7 +17,7 @@ import {
 import { presentAction } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { callAction } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, resolveSpaceSlug, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, jsonResult, resolveSpaceSlug, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import { resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
@@ -164,7 +164,7 @@ export const handlers: Record<string, ToolHandler> = {
   app_list: async (args) => {
     const space = args.space === '*' ? undefined : await resolveSpaceSlug(args)
     const listing = await listSpaceApps(space)
-    return textResult(JSON.stringify(listing, null, 2))
+    return jsonResult(listing)
   },
 
   // ── app_get ──────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ export const handlers: Record<string, ToolHandler> = {
     if (!app) {
       fail(-32602, 'Missing required param: app')
     }
-    return textResult(JSON.stringify(await appDetail(app), null, 2))
+    return jsonResult(await appDetail(app))
   },
 
   // ── app_actions ──────────────────────────────────────────────────
@@ -184,7 +184,7 @@ export const handlers: Record<string, ToolHandler> = {
     }
     const ids = args.actions as string[] | undefined
     const actions = await listAppActions(app, ids)
-    return textResult(JSON.stringify(actions.map(presentAction), null, 2))
+    return jsonResult(actions.map(presentAction))
   },
 
   // ── app_call ─────────────────────────────────────────────────────
@@ -216,13 +216,10 @@ export const handlers: Record<string, ToolHandler> = {
         return textResult(outcome.started)
       }
       const { result } = outcome
-      const text =
-        result === undefined
-          ? `Action ${action} completed.`
-          : typeof result === 'string'
-            ? result
-            : JSON.stringify(result, null, 2)
-      return textResult(text)
+      if (result === undefined) {
+        return textResult(`Action ${action} completed.`)
+      }
+      return typeof result === 'string' ? textResult(result) : jsonResult(result)
     },
     { view: 'app_call', forCall: appCallApproval },
   ),
@@ -250,9 +247,7 @@ export const handlers: Record<string, ToolHandler> = {
     // The instance's address AFTER the move, never the caller's own reference
     // echoed back: an address names an instance through its space, so the one
     // they sent now names nothing. Handing it back would teach the dead form.
-    return textResult(
-      JSON.stringify({ app: `${targetSlug}.${moved.slug}`, space: targetSlug, movedGraphAddress }, null, 2),
-    )
+    return jsonResult({ app: `${targetSlug}.${moved.slug}`, space: targetSlug, movedGraphAddress })
   }),
 
   // ── app_find ─────────────────────────────────────────────────────
@@ -266,7 +261,7 @@ export const handlers: Record<string, ToolHandler> = {
           ),
         )
       : catalog
-    return textResult(JSON.stringify(matches, null, 2))
+    return jsonResult(matches)
   },
 
   // ── app_add ──────────────────────────────────────────────────────
@@ -282,19 +277,13 @@ export const handlers: Record<string, ToolHandler> = {
     const spaceSlug = await resolveSpaceSlug(args)
     const params = (args.params as Record<string, string> | undefined) ?? {}
     const row = await addSpaceAppImpl(spaceSlug, extensionId, appSlug, name, params)
-    return textResult(
-      JSON.stringify(
-        {
-          space: spaceSlug,
-          app: `${extensionId}/${appSlug}`,
-          name: row.name,
-          address: `${spaceSlug}.${row.slug}`,
-          params: JSON.parse(row.params) as Record<string, string>,
-        },
-        null,
-        2,
-      ),
-    )
+    return jsonResult({
+      space: spaceSlug,
+      app: `${extensionId}/${appSlug}`,
+      name: row.name,
+      address: `${spaceSlug}.${row.slug}`,
+      params: JSON.parse(row.params) as Record<string, string>,
+    })
   }),
 
   // ── app_remove ───────────────────────────────────────────────────
@@ -311,6 +300,6 @@ export const handlers: Record<string, ToolHandler> = {
     const row = await resolveAppAddress(ref)
     const app = row ? await appAddressOf(row) : undefined
     const removed = await removeSpaceAppImpl(ref)
-    return textResult(JSON.stringify({ app, removed }, null, 2))
+    return jsonResult({ app, removed })
   }),
 }

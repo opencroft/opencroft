@@ -92,7 +92,7 @@ export function describeResult(value: unknown): string | undefined {
 
 function jsonOf(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2) ?? String(value)
+    return JSON.stringify(value) ?? String(value)
   } catch {
     // Circular, or holding something JSON cannot carry.
     return String(value)

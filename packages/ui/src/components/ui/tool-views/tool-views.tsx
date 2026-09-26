@@ -8,7 +8,7 @@ import { Button } from '../button'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { NodeCard } from '../nodes/node-card'
 import { cn } from 'ui/lib/utils'
-import { exceedsClamp, OpBlock, OpRow } from './op-block'
+import { exceedsClamp, OpBlock, OpRow, readableJson } from './op-block'
 import { useToolViewHost } from './tool-view-host'
 
 // A rich, tool-specific view of a tool call — shared by the approval prompt
@@ -523,14 +523,16 @@ export function GenericToolView({
   result?: ToolViewProps['result']
 }) {
   const argsText = Object.keys(args).length > 0 ? JSON.stringify(args, null, 2) : undefined
+  // Laid out for reading here only; the result itself stays as it arrived.
+  const shown = useMemo(() => result && { ...result, text: readableJson(result.text) }, [result])
   return (
     <OpBlock
       verb={tool}
       isError={result?.isError}
       pending={!result}
-      overflowing={exceedsClamp(argsText) || exceedsClamp(result?.text)}
+      overflowing={exceedsClamp(argsText) || exceedsClamp(shown?.text)}
     >
-      <OpInputOutput input={argsText} result={result} />
+      <OpInputOutput input={argsText} result={shown} />
     </OpBlock>
   )
 }
@@ -687,6 +689,7 @@ function CallView({ args, mode, result }: ToolViewProps) {
   const action = args.action as string | undefined
   const params = args.params as Record<string, unknown> | undefined
   const paramsText = params && Object.keys(params).length > 0 ? JSON.stringify(params, null, 2) : null
+  const output = useMemo(() => result && readableJson(result.text), [result])
 
   if (mode === 'approval') {
     return (
@@ -705,7 +708,7 @@ function CallView({ args, mode, result }: ToolViewProps) {
       target={nodeId}
       isError={result?.isError}
       pending={!result}
-      overflowing={exceedsClamp(paramsText ?? undefined) || exceedsClamp(result?.text)}
+      overflowing={exceedsClamp(paramsText ?? undefined) || exceedsClamp(output)}
     >
       {paramsText && (
         <OpRow label='params'>
@@ -715,7 +718,7 @@ function CallView({ args, mode, result }: ToolViewProps) {
       <div className='border-t' />
       <OpRow label='output'>
         {result ? (
-          <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{result.text}</pre>
+          <pre className='m-0 whitespace-pre-wrap break-all text-[11px] text-muted-foreground'>{output}</pre>
         ) : (
           <span className='text-muted-foreground'>No output</span>
         )}

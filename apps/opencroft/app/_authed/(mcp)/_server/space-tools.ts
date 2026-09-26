@@ -2,7 +2,7 @@
 
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, jsonResult, resolveSpace, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import {
   createSpaceImpl,
   deleteSpaceImpl,
@@ -67,7 +67,7 @@ export const handlers: Record<string, ToolHandler> = {
         default: registry.getBySlug(space.slug)?.defaultGraphSlug === graph.slug,
       })),
     }))
-    return textResult(JSON.stringify(withGraphs, null, 2))
+    return jsonResult(withGraphs)
   },
 
   // ── create_space ────────────────────────────────────────────────
@@ -77,7 +77,7 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing required param: name')
     }
     const space = await createSpaceImpl(name)
-    return textResult(JSON.stringify(space, null, 2))
+    return jsonResult(space)
   }),
 
   // ── rename_space ────────────────────────────────────────────────
@@ -98,7 +98,7 @@ export const handlers: Record<string, ToolHandler> = {
           : `Space not found: ${slug}`,
       )
     }
-    return textResult(JSON.stringify(renamed.space, null, 2))
+    return jsonResult(renamed.space)
   }),
 
   // ── delete_space ────────────────────────────────────────────────

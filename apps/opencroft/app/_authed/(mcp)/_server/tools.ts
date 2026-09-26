@@ -52,7 +52,7 @@ import {
   handlers as taskHandlers,
 } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, type GraphNode, resolveSpaceSlug, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, type GraphNode, jsonResult, resolveSpaceSlug, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 import {
   askUserDefinitions,
   sendToastDefinitions,
@@ -424,7 +424,7 @@ export async function executeAgentTool(
     throw new Error(`Agent tool "${toolName}" error: ${primary.error}`)
   }
   if (typeof primary.body === 'object' && primary.body !== null) {
-    return textResult(JSON.stringify(primary.body))
+    return jsonResult(primary.body)
   }
   return textResult(String(primary.body ?? ''))
 }
@@ -486,7 +486,7 @@ const handlers: Record<string, ToolHandler> = {
           { sql: statement, maxRows: typeof args.maxRows === 'number' ? args.maxRows : undefined },
         ),
       )
-      return textResult(JSON.stringify(result, null, 2))
+      return jsonResult(result)
     } catch (err) {
       if (err instanceof DbReadRefused) {
         fail(-32602, err.message)

@@ -19,7 +19,7 @@ import {
 } from '@/app/_authed/(group-chats)/_server/model'
 import { COMPACT_WAIT_MS, compactOutcome, waitForCompact } from '@/app/_authed/(mcp)/_server/compact-outcome'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
-import { fail, requireCallingAgent, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { fail, jsonResult, requireCallingAgent, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
 export const definitions = [
   // ── Group chats ───────────────────────────────────────────────────
@@ -324,7 +324,7 @@ export const handlers: Record<string, ToolHandler> = {
   // ── group_chat_list ─────────────────────────────────────────────
   group_chat_list: async (_args, caller) => {
     const agent = requireCallingAgent(caller)
-    return textResult(JSON.stringify(await listGroupChatsForAgentView(agent), null, 2))
+    return jsonResult(await listGroupChatsForAgentView(agent))
   },
 
   // ── artifact_list / artifact_write / artifact_delete ────────────
@@ -338,7 +338,7 @@ export const handlers: Record<string, ToolHandler> = {
     if (!thread) {
       fail(-32602, 'Missing required param: thread')
     }
-    return textResult(JSON.stringify(await listArtifactsAsAgent(agent, thread), null, 2))
+    return jsonResult(await listArtifactsAsAgent(agent, thread))
   },
 
   artifact_write: async (args, caller) => {
@@ -360,7 +360,7 @@ export const handlers: Record<string, ToolHandler> = {
       title,
       content,
     })
-    return textResult(JSON.stringify(written, null, 2))
+    return jsonResult(written)
   },
 
   artifact_edit: async (args, caller) => {
@@ -389,7 +389,7 @@ export const handlers: Record<string, ToolHandler> = {
       newString,
       replaceAll: args.replaceAll === true,
     })
-    return textResult(JSON.stringify(edited, null, 2))
+    return jsonResult(edited)
   },
 
   artifact_delete: async (args, caller) => {
@@ -477,19 +477,13 @@ export const handlers: Record<string, ToolHandler> = {
     // same thread -- which is the whole reason it is a function rather than a
     // slice repeated here.
     const ref = threadRefFromSessionKey(thread.sessionKey)
-    return textResult(
-      JSON.stringify(
-        {
-          ref,
-          title: thread.title,
-          folder,
-          sent: true,
-          note: 'The reply lands in the thread, not here.',
-        },
-        null,
-        2,
-      ),
-    )
+    return jsonResult({
+      ref,
+      title: thread.title,
+      folder,
+      sent: true,
+      note: 'The reply lands in the thread, not here.',
+    })
   },
 
   // ── group_chat_rename_thread ────────────────────────────────────
@@ -507,7 +501,7 @@ export const handlers: Record<string, ToolHandler> = {
       title: args.title as string | undefined,
       folder: args.folder as string | undefined,
     })
-    return textResult(JSON.stringify(renamed, null, 2))
+    return jsonResult(renamed)
   },
 
   // ── group_chat_delete_thread ────────────────────────────────────
@@ -577,7 +571,7 @@ export const handlers: Record<string, ToolHandler> = {
       fail(-32602, 'Missing required param: thread')
     }
     const status = await threadCompactStatusAsAgent(agent, thread)
-    return textResult(JSON.stringify(status, null, 2))
+    return jsonResult(status)
   },
 
   // Same gate and reasoning as group_chat_compact_status: a read on a thread
@@ -592,6 +586,6 @@ export const handlers: Record<string, ToolHandler> = {
       turns: typeof args.turns === 'number' ? args.turns : undefined,
       beforeIndex: typeof args.beforeIndex === 'number' ? args.beforeIndex : undefined,
     })
-    return textResult(JSON.stringify(page, null, 2))
+    return jsonResult(page)
   },
 }
