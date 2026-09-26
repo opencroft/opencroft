@@ -6,16 +6,13 @@ import { routeTree } from '@/app/routeTree.gen'
 export function getRouter() {
   const router = createRouter({
     routeTree,
-    scrollRestoration: true,
-    // Restoration is keyed per history entry, except inside an App: all of
-    // one App instance's pages share one key, so moving between them (back
-    // and forward included) never puts the App's scrolled elements back
-    // where an earlier entry left them. The App owns its scroll. The fallback
-    // is the router's own default key, written out because the function that
-    // holds it (defaultGetScrollRestorationKey) lives in @tanstack/router-core,
-    // which react-router does not re-export and this app does not depend on.
-    getScrollRestorationKey: (location) =>
-      appBasePath(location.pathname) ?? (location.state.__TSR_key || location.href),
+    // Restored per history entry everywhere except at an App's addresses: an
+    // App stays mounted while it moves between its pages and owns its scroll,
+    // so the router neither restores nor resets it there. Restoring there
+    // would put back positions the router snapshotted as the move began — the
+    // page being left, not the one being returned to — over whatever the App
+    // restored itself.
+    scrollRestoration: ({ location }) => appBasePath(location.pathname) === null,
     defaultPreload: 'intent',
   })
   return router
