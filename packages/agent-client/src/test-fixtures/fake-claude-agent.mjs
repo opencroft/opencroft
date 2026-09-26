@@ -16,7 +16,13 @@
 //    message in `data.details`, so the cause never reaches the message;
 //  - session/resume builds the session on the model ANTHROPIC_MODEL names,
 //    whatever the transcript last ran on (session-model.js getAvailableModels
-//    re-asserts it on every resumed session).
+//    re-asserts it on every resumed session);
+//  - after answering a resume the bridge keeps talking: on a zero timer it
+//    sends available_commands_update (acp-agent.js resumeSession), and the
+//    SDK's first messages on the new query make it announce its config with a
+//    config_option_update (syncFastModeState). Both carry the state the
+//    session opened on, and both can land after the answer but before the
+//    client's first set_config_option comes back.
 //
 // FAKE_AGENT_LOG: file that receives one JSON line per request.
 // FAKE_AGENT_MODE: '' | 'prompt-leaks-key' (every prompt is refused with the
@@ -83,7 +89,7 @@ function openSession(sessionId) {
 
 const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
 new AgentSideConnection(
-  () => ({
+  (client) => ({
     async initialize(params) {
       log({ method: 'initialize', params })
       return {
@@ -127,6 +133,19 @@ new AgentSideConnection(
       }
       const session = live.get(params.sessionId) ?? { mode: 'default', model: envModel }
       live.set(params.sessionId, session)
+      // Announced once the answer is out, with the state as it stands then —
+      // which is still the opening state, since the client's first
+      // set_config_option has not been read yet.
+      setTimeout(() => {
+        void client.sessionUpdate({
+          sessionId: params.sessionId,
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        })
+        void client.sessionUpdate({
+          sessionId: params.sessionId,
+          update: { sessionUpdate: 'config_option_update', configOptions: stateOf(session).configOptions },
+        })
+      }, 0)
       return stateOf(session)
     },
     async closeSession(params) {
@@ -144,6 +163,9 @@ new AgentSideConnection(
       log({ method: 'session/set_config_option', params })
       const session = openSession(params.sessionId)
       if (params.configId === 'model') {
+        // A model switch is a round trip to the CLI (query.setModel), measured
+        // at 1.2 to 1.8 s in practice; the announcements above go out meanwhile.
+        await new Promise((resolve) => setTimeout(resolve, 50))
         session.model = params.value
       } else if (params.configId === 'mode') {
         session.mode = params.value

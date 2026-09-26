@@ -839,6 +839,21 @@ function dropSession(sessionId: string): void {
   store.sessions.delete(sessionId)
 }
 
+// The modes and config options a session's log last reported, each undefined
+// until the log holds one: the state a reader was last shown.
+function lastSaid(events: ChatEvent[]): { modes?: SessionModes; configOptions?: SessionConfigOption[] } {
+  const said: { modes?: SessionModes; configOptions?: SessionConfigOption[] } = {}
+  for (let i = events.length - 1; i >= 0 && (!said.modes || !said.configOptions); i--) {
+    const event = events[i]
+    if (event.kind === 'modes' && !said.modes) {
+      said.modes = { available: event.available, current: event.current }
+    } else if (event.kind === 'config_options' && !said.configOptions) {
+      said.configOptions = event.options
+    }
+  }
+  return said
+}
+
 function emit(sessionId: string, event: ChatEvent): void {
   const session = store.sessions.get(sessionId)
   if (!session) {
@@ -3097,9 +3112,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // no longer offers stays as reported; one it refuses stays as reported and
   // is said in the chat, not swallowed.
   //
-  // Snapshots are emitted only when the end state differs from the logged one:
-  // a resume that changed nothing — every resume on a harness that keeps its
-  // state — must not append to the host's log each time a chat reopens.
+  // Snapshots are emitted only when the end state differs from what the
+  // session's own log last said: a resume that changed nothing — every resume
+  // on a harness that keeps its state — must not append to the host's log each
+  // time a chat reopens. The log, not `logged`, is the baseline, because the
+  // two can part in between: claude-agent-acp announces the state it opened on
+  // with a config_option_update sent after its resume answer and ahead of this
+  // side's first set_config_option. Measured against `logged` the end state
+  // matched and nothing was said, so the log's last word — what a reader's
+  // badge is drawn from — was the model the agent node pins, while the session
+  // ran the one the reader chose. A log with no snapshot yet falls back to
+  // `logged`.
   //
   // An external fork goes through here too, with the source session's state
   // as `logged` (see forkSession): a fork answer is the same kind of fresh
@@ -3163,10 +3186,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         )
       }
     }
-    if (JSON.stringify(session.modes) !== JSON.stringify(logged.modes)) {
+    const said = lastSaid(session.events)
+    const saidModes = said.modes ?? logged.modes
+    const saidOptions = said.configOptions ?? logged.configOptions
+    if (JSON.stringify(session.modes) !== JSON.stringify(saidModes)) {
       emitSessionModes(sessionId)
     }
-    if (JSON.stringify(session.configOptions) !== JSON.stringify(logged.configOptions)) {
+    if (JSON.stringify(session.configOptions) !== JSON.stringify(saidOptions)) {
       emitConfigOptions(sessionId)
     }
     if (refused.length > 0) {

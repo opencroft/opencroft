@@ -140,6 +140,18 @@ test('an edit on the Claude bridge opens its fork before sending the edited turn
     assert.equal(set.params.sessionId, fork.id)
     assert.deepEqual([set.params.configId, set.params.value], ['model', 'claude-sonnet-5'])
     assert.equal(prompted.params.sessionId, fork.id)
+
+    // And the chat is told so. The fork's own event log is what a reader's
+    // badge is drawn from, so its last word on the model has to be the one the
+    // fork runs, not the one the resume opened it on.
+    const snapshots = h.client.getSessionEvents(fork.id)?.filter((event) => event.kind === 'config_options') ?? []
+    const last = snapshots.at(-1)
+    assert.ok(last, 'the fork has a config snapshot')
+    assert.equal(
+      last.options.find((option) => option.id === 'model')?.currentValue,
+      'claude-sonnet-5',
+      `the last model the fork reported: ${JSON.stringify(snapshots.map((event) => event.options.find((option) => option.id === 'model')?.currentValue))}`,
+    )
   })
 })
 
