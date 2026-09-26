@@ -44,6 +44,7 @@ import { tabSessions } from '@/app/_authed/(agent)/_server/acp-impl'
 import { copyTabKeys, dropTabKeys, type TabKeyMove } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { moveAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
+import { moveChatUsageTurns } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { moveQueueEntries } from '@/app/_authed/(agent)/_server/queue-store'
 import { moveSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
 import { renameCompactJobKey } from '@/app/_authed/(extension-runtime)/_server/stream'
@@ -135,6 +136,14 @@ export async function settleSessionKeyMoves(moves: readonly TabKeyMove[]): Promi
     // 'never-requested' for a job that is plainly running.
     renameCompactJobKey(from, to)
   }
+  // The recorded turns' usage, filed by key so a thread's spend outlives a
+  // reopened session. Moved AFTER the live registry above: a turn that ends
+  // from here on records under the new key, so none lands under the old one
+  // once its rows have gone. Left behind, a thread's usage reads as starting
+  // over at the rename.
+  await moveChatUsageTurns(real).catch((error) => {
+    console.error('[session-key-move] failed to carry the recorded turn usage onto the new keys', error)
+  })
   await dropTabKeys(real).catch((error) => {
     console.error('[session-key-move] failed to drop the old durable entries', error)
   })

@@ -1951,6 +1951,10 @@ async function createThread(
     title?: string
     createdByUserId: string | null
     createdByAgentNodeId: string | null
+    // A system sender that started it — an extension's own identity. Optional:
+    // it grants no permission here, only the extension's read of the usage of
+    // threads it opened (see the column's note in schema.ts).
+    createdBySystemId?: string | null
     sender: string
   },
 ): Promise<StartThreadResult> {
@@ -2005,6 +2009,7 @@ async function createThread(
         title,
         createdByUserId: opts.createdByUserId,
         createdByAgentNodeId: opts.createdByAgentNodeId,
+        createdBySystemId: opts.createdBySystemId ?? null,
       })
       .returning(threadSummaryColumns)
   })
@@ -3530,8 +3535,10 @@ export async function startThreadForSender(
     createdByUserId: null,
     // An agent sender started it and may delete it later, as with
     // `startThreadAsAgent`. A system sender fills neither creator column:
-    // provenance then says "no user, no agent", which is true.
+    // provenance then says "no user, no agent", which is true — and names
+    // itself in its own, so it can later read the usage of what it opened.
     createdByAgentNodeId: sender.principal.kind === 'agent' ? sender.principal.agentNodeId : null,
+    createdBySystemId: sender.principal.kind === 'system' ? sender.principal.systemId : null,
     sender: sender.author,
   })
   if (folder) {
@@ -3575,6 +3582,27 @@ export async function threadTurnsForSender(
 ): Promise<TurnsPage> {
   const row = await resolveThreadForPrincipal(sender.principal, threadRef)
   return turnsPageForSessionKey(row.sessionKey, { turns: params?.turns, beforeIndex: params?.beforeIndex })
+}
+
+/**
+ * The session key of a thread that the system sender `systemId` itself
+ * opened, for reading that thread's usage — its turns' tokens and cost, never
+ * its transcript. Refused like any unreachable thread ("Not available") when
+ * the system sender is no longer a member of the chat, or when someone else
+ * opened the thread: an extension reads the usage of what it started, and of
+ * nothing else in a chat it was granted into.
+ */
+export async function usageSessionKeyForSystem(systemId: string, threadRef: string): Promise<string> {
+  const row = await resolveThreadForPrincipal({ kind: 'system', systemId }, threadRef)
+  const [opened] = await db
+    .select({ createdBySystemId: groupChatThread.createdBySystemId })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, row.id))
+    .limit(1)
+  if (opened?.createdBySystemId !== systemId) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return row.sessionKey
 }
 
 // Ungated: every caller above has already resolved the thread through the sender's membership.

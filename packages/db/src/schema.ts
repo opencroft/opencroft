@@ -193,6 +193,12 @@ export const chatUsageTurn = pgTable(
     // UsageRollupDay uses, so the two tables answer with one vocabulary.
     day: text().notNull(),
     sessionId: text().notNull(),
+    // The session's key, when it has one: what a group-chat thread is bound to.
+    // A reopened session can be a new id, so the id alone cannot gather a
+    // thread's turns; the key outlives it, as it does for the transcript and
+    // the queue. Null for turns recorded before the column existed and for a
+    // session with no key.
+    sessionKey: text(),
     adapterId: text().notNull(),
     model: text(),
     // The group-chat agent this turn ran under, from the session key's
@@ -214,7 +220,11 @@ export const chatUsageTurn = pgTable(
     costCurrency: text(),
     createdAt: createdAt(),
   },
-  (t) => [index('ChatUsageTurn_day_idx').on(t.day), index('ChatUsageTurn_sessionId_idx').on(t.sessionId)],
+  (t) => [
+    index('ChatUsageTurn_day_idx').on(t.day),
+    index('ChatUsageTurn_sessionId_idx').on(t.sessionId),
+    index('ChatUsageTurn_sessionKey_idx').on(t.sessionKey),
+  ],
 )
 
 // The per-model breakdown behind one ChatUsageTurn row, from the harness's
@@ -723,6 +733,12 @@ export const groupChatThread = pgTable(
     // its own thread. A backfill is impossible rather than skipped — nothing
     // anywhere recorded which agent started a thread before this.
     createdByAgentNodeId: text(),
+    // The system sender that started this thread, when one did — an
+    // extension's own identity, `system.ext.<extension id, dotted>`. Provenance
+    // like the two columns above, and what lets an extension read the usage of
+    // the threads it opened and of no others (groupChats.usage). NULL for every
+    // thread a person or an agent started, and for every row before this column.
+    createdBySystemId: text(),
     createdAt: createdAt(),
   },
   (t) => [

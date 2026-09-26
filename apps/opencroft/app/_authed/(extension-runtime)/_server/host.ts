@@ -11,6 +11,7 @@ import type {
   HostMcpTokensApi,
   HostPersonGroupChatsApi,
   HostSecretsApi,
+  HostThreadUsage,
   HostUser,
   HostUsersApi,
 } from '@opencroft/server'
@@ -30,6 +31,7 @@ import type { ChatEvent } from 'agent-client/types'
 import { asc, eq } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { queryChatUsageTurnsBySessionKey } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
@@ -702,8 +704,27 @@ function boundSender(resolve: () => Promise<AttributedSender>, live: () => boole
   }
 }
 
-/** What any sender may do: see its chats, open threads, post, resolve a thread. No reading. */
-function groupChatsForSender(who: () => Promise<AttributedSender>): HostGroupChatsApi {
+/**
+ * The usage of a thread the extension's own system identity `systemId`
+ * opened: numbers from the turn records, and whether a turn is running now.
+ * Gated on who OPENED the thread, not on who is sending, so an extension reads
+ * the same threads whether an agent, a person or nobody invoked the action.
+ */
+async function threadUsage(systemId: string, ref: string, since: string | undefined): Promise<HostThreadUsage> {
+  const sessionKey = await (await groupChatModel()).usageSessionKeyForSystem(systemId, ref)
+  const from = since === undefined ? undefined : new Date(since)
+  if (from && Number.isNaN(from.getTime())) {
+    throw new Error(`"since" must be an ISO date; got "${since}"`)
+  }
+  const turns = await queryChatUsageTurnsBySessionKey(sessionKey, from)
+  return {
+    turns: turns.map((turn) => ({ ...turn, endedAt: turn.endedAt.toISOString() })),
+    busy: agentClient.activeSessionKeys().includes(sessionKey),
+  }
+}
+
+/** What any sender may do: see its chats, open threads, post, resolve a thread, read the usage of its extension's own threads. No transcripts. */
+function groupChatsForSender(who: () => Promise<AttributedSender>, systemId: string): HostGroupChatsApi {
   return {
     list: async () => (await groupChatModel()).listGroupChatsForSender(await who()),
     startThread: async ({ chat, agentNodeId, message, title, folder }) => {
@@ -713,6 +734,10 @@ function groupChatsForSender(who: () => Promise<AttributedSender>): HostGroupCha
     send: async ({ thread, message, queue }) =>
       (await groupChatModel()).sendInThreadForSender(await who(), thread, message, queue ?? 'wait'),
     thread: async (ref) => (await groupChatModel()).threadForSender(await who(), ref),
+    usage: async (ref, options) => {
+      await who()
+      return threadUsage(systemId, ref, options?.since)
+    },
   }
 }
 
@@ -745,7 +770,7 @@ export function groupChatsForCaller(
   }
   const who = boundSender(() => senderForSend({ callerAgent: caller.agent }, [], listAgentNodesImpl), live)
   const api: HostAgentGroupChatsApi = {
-    ...groupChatsForSender(who),
+    ...groupChatsForSender(who, registerExtensionSystemSender(extensionId)),
     turns: async (ref, page) => (await groupChatModel()).threadTurnsForSender(await who(), ref, page),
   }
   return { api, end }
@@ -783,6 +808,7 @@ function extensionGroupChats(extensionId: string): HostGroupChatsApi {
       async () => ({ author: systemId, principal: { kind: 'system', systemId } }),
       () => true,
     ),
+    systemId,
   )
 }
 

@@ -109,6 +109,27 @@ export interface HostThreadTurn {
   finalMessageLength?: number
 }
 
+/** One finished turn of a thread's session, as its usage record has it. */
+export interface HostThreadUsageTurn {
+  /** When the turn ended, ISO. */
+  endedAt: string
+  /** The model the turn ran on, when the harness named it. */
+  model: string | null
+  /** The turn's own token spend — this turn's, not a running total. */
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
+  /** The turn's own cost; null when the harness does not price the session. */
+  cost: { amount: number; currency: string } | null
+}
+
+/**
+ * What a thread has spent: its recorded turns, oldest first, and whether a
+ * turn is running now (its spend then arrives when that turn ends).
+ */
+export interface HostThreadUsage {
+  turns: HostThreadUsageTurn[]
+  busy: boolean
+}
+
 export interface HostThreadTurnsPage {
   turns: HostThreadTurn[]
   hasMore: boolean
@@ -146,6 +167,14 @@ export interface HostGroupChatsApi {
   /** Send into a thread; `queue` defaults to `wait` (after the running turn). */
   send(input: { thread: string; message: string; queue?: 'wait' | 'push' }): Promise<{ status: 'queued' | 'delivered' }>
   thread(ref: string): Promise<HostGroupChatThread>
+  /**
+   * The usage of a thread THIS extension opened (through `startThread`, as its
+   * own system identity): its turns' tokens and cost, optionally only turns
+   * that ended at or after `since` (ISO). Numbers only — never the transcript.
+   * Any other thread, or one in a chat the extension is no longer a member
+   * of, refuses with "Not available", whoever the sender is.
+   */
+  usage(ref: string, options?: { since?: string }): Promise<HostThreadUsage>
 }
 
 /** `groupChats` acting as the agent that invoked an App action: the same calls, plus reading. */

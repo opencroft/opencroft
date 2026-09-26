@@ -71,6 +71,7 @@ export async function recordChatUsageTurn(input: {
       day: usageDay(at),
       createdAt: at,
       sessionId: input.sessionId,
+      sessionKey: input.sessionKey ?? null,
       adapterId: input.adapterId ?? 'unknown',
       model: input.model ?? null,
       agent: input.sessionKey ? (partsOfSessionKey(input.sessionKey)?.agentSlug ?? null) : null,
@@ -131,6 +132,74 @@ export async function queryChatUsageTokensBySession(sessionId: string): Promise<
     output: Number(row.output),
     cacheRead: Number(row.cacheRead),
     cacheWrite: Number(row.cacheWrite),
+  }
+}
+
+/** One recorded turn of a session, as a per-thread usage read answers it. */
+export interface ChatUsageTurnRecord {
+  /** When the turn ended — the row is written at its turn_end. */
+  endedAt: Date
+  model: string | null
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
+  /** This turn's own cost; null when the harness does not price the session. */
+  cost: SessionCost | null
+}
+
+/**
+ * Every recorded turn of the session bound to `sessionKey`, oldest first,
+ * optionally only those that ended at or after `since`. By key rather than id,
+ * so a thread whose session was reopened under a new id keeps its earlier
+ * turns. Turns recorded before `sessionKey` was stored are not found here.
+ */
+export async function queryChatUsageTurnsBySessionKey(
+  sessionKey: string,
+  since?: Date,
+): Promise<ChatUsageTurnRecord[]> {
+  const rows = await db
+    .select({
+      endedAt: chatUsageTurn.createdAt,
+      model: chatUsageTurn.model,
+      input: chatUsageTurn.inputTokens,
+      output: chatUsageTurn.outputTokens,
+      cacheRead: chatUsageTurn.cacheReadTokens,
+      cacheWrite: chatUsageTurn.cacheWriteTokens,
+      total: chatUsageTurn.totalTokens,
+      costAmount: chatUsageTurn.costAmount,
+      costCurrency: chatUsageTurn.costCurrency,
+    })
+    .from(chatUsageTurn)
+    .where(
+      since
+        ? and(eq(chatUsageTurn.sessionKey, sessionKey), gte(chatUsageTurn.createdAt, since))
+        : eq(chatUsageTurn.sessionKey, sessionKey),
+    )
+    .orderBy(chatUsageTurn.createdAt)
+  return rows.map((row) => ({
+    endedAt: row.endedAt,
+    model: row.model,
+    tokens: {
+      input: row.input,
+      output: row.output,
+      cacheRead: row.cacheRead,
+      cacheWrite: row.cacheWrite,
+      total: row.total,
+    },
+    cost: row.costAmount !== null && row.costCurrency ? { amount: row.costAmount, currency: row.costCurrency } : null,
+  }))
+}
+
+/**
+ * Re-key a session's recorded turns when its key moves (a thread or chat
+ * rename — see session-key-move). Left behind, a thread's earlier turns are
+ * filed under a key nothing reads any more, and whatever reads a thread's
+ * usage sees its spend start again from zero.
+ */
+export async function moveChatUsageTurns(moves: readonly { from: string; to: string }[]): Promise<void> {
+  for (const { from, to } of moves) {
+    if (!from || !to || from === to) {
+      continue
+    }
+    await db.update(chatUsageTurn).set({ sessionKey: to }).where(eq(chatUsageTurn.sessionKey, from))
   }
 }
 

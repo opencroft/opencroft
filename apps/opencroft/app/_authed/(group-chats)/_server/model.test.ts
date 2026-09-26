@@ -23,7 +23,7 @@ import type { AgentConnection } from 'agent-client/connection'
 // time a reader would see, rather than on the tag's spelling.
 import { decodeBatch } from 'agent-client/queue-tags'
 import type { AgentSelection } from 'agent-client/types'
-import { and, eq, like } from 'drizzle-orm'
+import { and, eq, inArray, like } from 'drizzle-orm'
 
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { slug } from '@/app/_authed/(server)/_server/types'
@@ -58,6 +58,7 @@ const {
   space,
   spaceSlugAlias,
   agentQueueEntry: agentQueueEntryTable,
+  chatUsageTurn,
   groupChat,
   groupChatMember,
   groupChatPin,
@@ -5136,6 +5137,124 @@ test('a granted extension lists the chat, opens a thread for an agent member, se
   await waitForPrompts(inbox, 2)
   assert.match(inbox[1] ?? '', /address the review/)
   assert.equal('turns' in api, false, 'a system grant opens threads and posts; it never reads transcripts')
+})
+
+test('an extension reads the usage of the threads it opened, and of no other thread', async () => {
+  const { recordChatUsageTurn } = await import('@/app/_authed/(agent)/_server/chat-usage-store')
+  const owner = await makeUser('ext-sender-usage@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender usage')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const other = 'local/usage-other-test'
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  groupChatsForCaller(other, undefined).api
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.ext.local.usage-other-test' })
+  seedMockConnection([])
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+
+  const { thread } = await api.startThread({ chat: chat.slug, agentNodeId: 'agent-session', message: 'TASK-2: go' })
+  const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.threadId))
+  assert.equal(row?.createdBySystemId, 'system.ext.local.sender-test', 'the opener is on record')
+  const sessionKey = row?.sessionKey ?? ''
+  await recordChatUsageTurn({
+    sessionId: 'usage-read-1',
+    sessionKey,
+    model: 'glm-5.3',
+    usage: { totalTokens: 1_200, inputTokens: 1_000, outputTokens: 200 },
+    cost: { amount: 0.02, currency: 'USD' },
+    at: new Date('2026-09-26T12:00:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'usage-read-1',
+    sessionKey,
+    usage: { totalTokens: 80 },
+    at: new Date('2026-09-26T12:03:00.000Z'),
+  })
+
+  const usage = await api.usage(thread.ref)
+  assert.deepEqual(usage.turns, [
+    {
+      endedAt: '2026-09-26T12:00:00.000Z',
+      model: 'glm-5.3',
+      tokens: { input: 1_000, output: 200, cacheRead: 0, cacheWrite: 0, total: 1_200 },
+      cost: { amount: 0.02, currency: 'USD' },
+    },
+    {
+      endedAt: '2026-09-26T12:03:00.000Z',
+      model: null,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 80 },
+      cost: null,
+    },
+  ])
+  assert.equal(usage.busy, false)
+  assert.deepEqual(
+    (await api.usage(thread.ref, { since: '2026-09-26T12:01:00.000Z' })).turns.map((turn) => turn.tokens.total),
+    [80],
+  )
+  await assert.rejects(() => api.usage(thread.ref, { since: 'yesterday' }), /ISO date/)
+
+  // Another extension granted into the same chat: a member, but not the opener.
+  const otherApi = groupChatsForCaller(other, undefined).api
+  const refused = await captureRefusal(() => otherApi.usage(thread.ref))
+  const missing = await captureRefusal(() => api.usage('no-such-thread'))
+  assert.deepEqual(refused, missing, 'refused exactly as a missing thread is')
+
+  // A thread a person started in that chat is not the extension's either.
+  const byPerson = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'hello')
+  assert.deepEqual(await captureRefusal(() => api.usage(byPerson.thread.id)), missing)
+
+  // The grant withdrawn: its own thread refuses too.
+  await model.removeMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  assert.deepEqual(await captureRefusal(() => api.usage(thread.ref)), missing)
+})
+
+test("a thread's usage survives renaming the thread and its chat: the turns move with the key", async () => {
+  const { recordChatUsageTurn } = await import('@/app/_authed/(agent)/_server/chat-usage-store')
+  const owner = await makeUser('ext-sender-usage-rename@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Usage Before Rename')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  seedMockConnection([])
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+  const { thread } = await api.startThread({
+    chat: chat.slug,
+    agentNodeId: 'agent-session',
+    message: 'TASK-3: go',
+    title: 'TASK-3 Development',
+  })
+  const keyOf = async () =>
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.threadId)))[0]?.sessionKey ?? ''
+  const firstKey = await keyOf()
+  await recordChatUsageTurn({
+    sessionId: 'usage-rename-1',
+    sessionKey: firstKey,
+    usage: { totalTokens: 400 },
+    at: new Date('2026-09-26T13:00:00.000Z'),
+  })
+
+  await model.renameThread(reqAs(owner), thread.threadId, 'TASK-3 Build')
+  const secondKey = await keyOf()
+  assert.notEqual(secondKey, firstKey, 'the rename re-keyed the thread')
+  await recordChatUsageTurn({
+    sessionId: 'usage-rename-1',
+    sessionKey: secondKey,
+    usage: { totalTokens: 60 },
+    at: new Date('2026-09-26T13:05:00.000Z'),
+  })
+  await model.renameGroupChat(reqAs(owner), chat.id, 'Usage After Rename')
+  assert.notEqual(await keyOf(), secondKey, 'and so did the chat rename')
+
+  // Read by the thread's id, which no rename changes.
+  assert.deepEqual(
+    (await api.usage(thread.threadId)).turns.map((turn) => turn.tokens.total),
+    [400, 60],
+  )
+  const left = await db
+    .select()
+    .from(chatUsageTurn)
+    .where(inArray(chatUsageTurn.sessionKey, [firstKey, secondKey]))
+  assert.equal(left.length, 0, 'nothing is left under the old keys')
 })
 
 test('an agent caller acts as itself: its own chats, its own membership, and a thread it may later delete', async () => {

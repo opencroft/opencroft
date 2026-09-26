@@ -15,7 +15,13 @@ import test from 'node:test'
 import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
 import { eq } from 'drizzle-orm'
 
-import { deleteChatUsage, queryChatUsage, recordChatUsageTurn, usageDay } from './chat-usage-store'
+import {
+  deleteChatUsage,
+  queryChatUsage,
+  queryChatUsageTurnsBySessionKey,
+  recordChatUsageTurn,
+  usageDay,
+} from './chat-usage-store'
 
 /** The model rows a session's one recorded turn produced, reached the way a read does — through the turn. */
 async function modelRowsOf(sessionId: string) {
@@ -50,6 +56,61 @@ test('a recorded turn reads back with its counters, model and cost', async () =>
   assert.equal(row.cacheReadTokens, 100_000)
   assert.equal(row.costAmount, 0.42)
   assert.equal(row.costCurrency, 'USD')
+})
+
+test("a session key gathers a thread's turns across its session ids, oldest first, from `since` on", async () => {
+  const key = 'agent:thread-usage:chat-x:dev:usage-key-1'
+  // The same thread, reopened under a new session id between turns.
+  await recordChatUsageTurn({
+    sessionId: 'sess-key-a',
+    sessionKey: key,
+    usage: { totalTokens: 300, inputTokens: 200, outputTokens: 100 },
+    cost: { amount: 0.03, currency: 'USD' },
+    at: new Date('2026-09-26T10:05:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-key-b',
+    sessionKey: key,
+    usage: { totalTokens: 50 },
+    at: new Date('2026-09-26T10:10:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-key-a',
+    sessionKey: key,
+    usage: { totalTokens: 1_000, inputTokens: 900, outputTokens: 60, cacheReadTokens: 40 },
+    cost: { amount: 0.1, currency: 'USD' },
+    at: new Date('2026-09-26T10:00:00.000Z'),
+  })
+  // Another thread, and a keyless session: neither is this thread's.
+  await recordChatUsageTurn({
+    sessionId: 'sess-key-c',
+    sessionKey: 'agent:thread-usage:chat-x:dev:usage-key-2',
+    usage: { totalTokens: 7 },
+    at: new Date('2026-09-26T10:07:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-key-a',
+    usage: { totalTokens: 9 },
+    at: new Date('2026-09-26T10:08:00.000Z'),
+  })
+
+  const all = await queryChatUsageTurnsBySessionKey(key)
+  assert.deepEqual(
+    all.map((turn) => [turn.endedAt.toISOString(), turn.tokens.total, turn.cost?.amount ?? null]),
+    [
+      ['2026-09-26T10:00:00.000Z', 1_000, 0.1],
+      ['2026-09-26T10:05:00.000Z', 300, 0.03],
+      ['2026-09-26T10:10:00.000Z', 50, null],
+    ],
+  )
+  assert.deepEqual(all[0]?.tokens, { input: 900, output: 60, cacheRead: 40, cacheWrite: 0, total: 1_000 })
+
+  // `since` is inclusive: a turn that ended at that instant counts.
+  const since = await queryChatUsageTurnsBySessionKey(key, new Date('2026-09-26T10:05:00.000Z'))
+  assert.deepEqual(
+    since.map((turn) => turn.tokens.total),
+    [300, 50],
+  )
 })
 
 test('a harness that reports only the total still records a row', async () => {
