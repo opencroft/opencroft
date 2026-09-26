@@ -8,6 +8,7 @@ import { Sidebar, SidebarContent, SidebarProvider } from 'ui/sidebar'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { AppSidebarProvider, useAppSidebarSlot } from '@/app/_shell/app-sidebar'
 import { AppTitleBar } from '@/app/_shell/app-title-bar'
+import { CloseSheetOnNavigate } from '@/app/_shell/close-sheet-on-navigate'
 import { RightSidebar } from '@/app/_shell/right-sidebar'
 
 interface Props {
@@ -41,6 +42,7 @@ function Shell({ spaces, children }: Props) {
       className='flex-col'
       style={{ '--sidebar-width': '24rem', '--title-bar-height': `${barHeight}px` } as CSSProperties}
     >
+      <CloseSheetOnNavigate />
       <div ref={barRef} className='sticky top-0 z-20'>
         <Suspense fallback={null}>
           <AppTitleBar spaces={spaces} hasSidebar={hasContent} />
