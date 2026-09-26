@@ -3,7 +3,7 @@
 import { useSession } from '@opencroft/auth/client'
 import { PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { createContext, useContext, useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Button } from 'ui/button'
 import {
   DropdownMenu,
@@ -178,36 +178,8 @@ interface Props {
   title: string
   /** The chat's display name, used only if it has to be created. */
   chatName?: string
-  /**
-   * Whether the closed chat shows the corner launcher. Off for a surface that
-   * opens the chat from a control of its own (see `useChatDock`), such as an
-   * App's title-bar actions.
-   */
-  launcher?: boolean
   /** The surface the chat sits beside, floats over, or covers. */
   children: ReactNode
-}
-
-export interface ChatDockControl {
-  /** Whether the chat panel is open. */
-  open: boolean
-  setOpen: (open: boolean) => void
-}
-
-const ChatDockContext = createContext<ChatDockControl | null>(null)
-
-/**
- * The dock this component sits in: whether its chat is open, and a way to open
- * or close it -- for a surface's own control in place of the corner launcher.
- * Throws outside a ChatDock, like `useSelection`: calling it there is a wiring
- * mistake, and a control that silently did nothing would hide it.
- */
-export function useChatDock(): ChatDockControl {
-  const ctx = useContext(ChatDockContext)
-  if (!ctx) {
-    throw new Error('useChatDock must be called inside a ChatDock')
-  }
-  return ctx
 }
 
 /**
@@ -234,9 +206,8 @@ export function useChatDock(): ChatDockControl {
  * does not close it. What the cover DOES honour is the Back action, because
  * on a phone that is the reflex for "leave what is covering the screen".
  */
-export function ChatDock({ space, id, title, chatName, launcher = true, children }: Props) {
+export function ChatDock({ space, id, title, chatName, children }: Props) {
   const [open, setOpen] = useLocalStorage<boolean>(OPEN_KEY, false)
-  const control = useMemo<ChatDockControl>(() => ({ open, setOpen }), [open, setOpen])
   const [mode, setMode] = useLocalStorage<ChatDockMode>(MODE_KEY, MODE_DEFAULT)
   // Undefined until one has been set, which is what tells the docked panel to
   // keep its own default rather than being resized to a remembered nothing.
@@ -290,9 +261,8 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   // The chat's threads waiting on someone -- a permission to grant or a
   // question to answer -- for the launcher's badge, off the same shared poll
   // every chat list reads. Polled only while the launcher is what shows: an
-  // open panel carries each thread's own status. Not at all without a
-  // launcher: nothing would show the count.
-  const { pendingKeys } = useSessionActivityKeys(launcher && !open)
+  // open panel carries each thread's own status.
+  const { pendingKeys } = useSessionActivityKeys(!open)
   const waitingCount = countChatThreadKeys(pendingKeys, space)
 
   const beginFloatGesture = (
@@ -477,24 +447,22 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
 
   if (open && !isMobile && mode !== 'float') {
     return (
-      <ChatDockContext.Provider value={control}>
-        <DockPanel
-          dock={mode}
-          size={size}
-          onSizeChange={setSize}
-          showHeader={false}
-          panel={pane({
-            headerClassName: 'h-[45px] gap-0.5 px-2 py-1',
-            titleClassName: 'mr-1.5 flex min-w-0 flex-1 items-center',
-            buttonSize: 'icon',
-            withModeMenu: true,
-            fallbackTitle: <span className='truncate text-xs text-muted-foreground'>{title}</span>,
-          })}
-          className='h-full w-full'
-        >
-          {surface}
-        </DockPanel>
-      </ChatDockContext.Provider>
+      <DockPanel
+        dock={mode}
+        size={size}
+        onSizeChange={setSize}
+        showHeader={false}
+        panel={pane({
+          headerClassName: 'h-[45px] gap-0.5 px-2 py-1',
+          titleClassName: 'mr-1.5 flex min-w-0 flex-1 items-center',
+          buttonSize: 'icon',
+          withModeMenu: true,
+          fallbackTitle: <span className='truncate text-xs text-muted-foreground'>{title}</span>,
+        })}
+        className='h-full w-full'
+      >
+        {surface}
+      </DockPanel>
     )
   }
 
@@ -502,9 +470,7 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   // page around an extension's surface can scroll, and a corner anchored to a
   // container rides away with it -- these belong to the viewport.
   const overlay = !open ? (
-    launcher ? (
-      <ChatLauncher waitingCount={waitingCount} className='fixed right-4 bottom-4 z-40' onClick={() => setOpen(true)} />
-    ) : null
+    <ChatLauncher waitingCount={waitingCount} className='fixed right-4 bottom-4 z-40' onClick={() => setOpen(true)} />
   ) : isMobile ? (
     <div className='fixed inset-0 z-50 flex min-h-0 flex-col bg-background'>
       {/* Touch targets, not pointer targets, on the full-screen cover. */}
@@ -570,11 +536,9 @@ export function ChatDock({ space, id, title, chatName, launcher = true, children
   )
 
   return (
-    <ChatDockContext.Provider value={control}>
-      <div className='flex h-full min-h-0 w-full'>
-        {surface}
-        {overlay}
-      </div>
-    </ChatDockContext.Provider>
+    <div className='flex h-full min-h-0 w-full'>
+      {surface}
+      {overlay}
+    </div>
   )
 }
