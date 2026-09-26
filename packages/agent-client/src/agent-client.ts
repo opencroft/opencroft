@@ -38,6 +38,7 @@ import { type ChatMessageRecord, toChatMessages } from './chat-completion'
 import { findSelectOption, MODE_SELECTOR, MODEL_SELECTOR, THOUGHT_LEVEL_SELECTOR } from './config-selectors'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
+import { deliveryNoteBlock, hasUnresolvedToolCalls, isDeliveryNote } from './delivery-note'
 import { ActionRequiredError, errorMessage, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
 import { isTerminalToolStatus, lastConversationEvent } from './fold'
 import type { HarnessAdapter, HarnessTurnEnd } from './harness-adapters'
@@ -1074,7 +1075,7 @@ function childEventOf(update: SessionNotification['update']): ChatEvent | null {
       // envelope is no more the reader's business nested than it is at the top
       // level.
       const text = textOf(update.content)
-      return isTaskNotification(text) ? null : { kind: 'user', text, ...chunkMessageId(update) }
+      return isTaskNotification(text) || isDeliveryNote(text) ? null : { kind: 'user', text, ...chunkMessageId(update) }
     }
     case 'agent_message_chunk':
       return { kind: 'agent_message', text: textOf(update.content), ...chunkMessageId(update) }
@@ -1405,8 +1406,10 @@ export function handleUpdate(notification: SessionNotification): void {
       const text = textOf(update.content)
       // Before the boundary, not after it: a notification that is not part of
       // the conversation must not end a turn either, or a reader would be shown
-      // their own turn split in two at a message nobody sent.
-      if (isTaskNotification(text)) {
+      // their own turn split in two at a message nobody sent. A steer's
+      // delivery note (see delivery-note.ts) is the same: it was written for
+      // the model, beside the message, and nobody said it.
+      if (isTaskNotification(text) || isDeliveryNote(text)) {
         break
       }
       const session = store.sessions.get(sessionId)
@@ -3312,11 +3315,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (first?.type === 'text' && first.text.trimStart().startsWith('/')) {
       return 'declined'
     }
+    // Onto a copy: a declined steer is delivered later by a prompt built from
+    // `prompt`, and that prompt aborts nothing, so it carries no note.
+    const note = findAdapter(session.selection.adapterId)?.steerDeliveryNote
+    const steered = note && hasUnresolvedToolCalls(session.events) ? [...prompt, deliveryNoteBlock(note)] : prompt
     let outcome: string | undefined
     try {
       const result = await entry.connection.extMethod('_session/steering', {
         sessionId,
-        prompt,
+        prompt: steered,
         _meta: { steering: { idleBehavior: 'promptRequired' } },
       })
       outcome = (result as { outcome?: string }).outcome

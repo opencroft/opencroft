@@ -115,6 +115,12 @@ export interface HarnessAdapter {
   // advertised; 'ignore' keeps the engine queueing mid-turn prompts regardless,
   // for a harness whose steering contract the engine doesn't handle yet.
   advertisedSteering?: 'trust' | 'ignore'
+  // A note sent with a steer that lands while the turn still has tool calls
+  // without a result, as its own content block (see delivery-note.ts). For a
+  // harness that answers such a steer by cancelling the calls that had not
+  // started yet, in words the model would otherwise misread. Unset means the
+  // steer goes out as it is.
+  steerDeliveryNote?: string
   // Reads the harness's own "this session is idle again" off one session
   // update. Needed for turns the harness starts ITSELF: a harness that
   // ignores `idleBehavior` answers a steer that finds no live turn with
@@ -260,6 +266,19 @@ function codexHarnessTurnEnd(update: SessionNotification['update']): HarnessTurn
 // on the 'claude' adapter below.
 const CLAUDE_AGENT_ENV: Record<string, string> = { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }
 
+// WORKAROUND, see delivery-note.ts. The bridge steers at the
+// SDK's `now` priority, which aborts the running cycle, and Claude Code answers
+// every issued tool call that had not started with its generic user-cancel
+// text. Remove once the bridge delivers a steer without aborting issued tool
+// calls, or once the harness's own skip wording reaches the model.
+const CLAUDE_STEER_DELIVERY_NOTE = [
+  'This message arrived while tool calls of yours were still pending, and delivering it can cancel',
+  'the ones that had not started yet. A cancelled call reports "The user doesn\'t want to take this',
+  'action right now. STOP what you are doing and wait for the user to tell you how to proceed."',
+  'Here that is not a refusal and not an instruction to stop: nothing refused the call. Re-run it if',
+  'it is still needed, and take this message into account.',
+].join(' ')
+
 export const HARNESS_ADAPTERS: HarnessAdapter[] = [
   {
     id: 'native',
@@ -310,6 +329,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     // spawn names (see wrapInDocker), so a flag inherited from the host's
     // process reached host-run agents and silently never reached the rest.
     staticEnv: CLAUDE_AGENT_ENV,
+    steerDeliveryNote: CLAUDE_STEER_DELIVERY_NOTE,
   },
   {
     id: 'claude-subscription',
@@ -326,6 +346,7 @@ export const HARNESS_ADAPTERS: HarnessAdapter[] = [
     supportsElicitation: true,
     forkNeedsResume: true,
     staticEnv: CLAUDE_AGENT_ENV,
+    steerDeliveryNote: CLAUDE_STEER_DELIVERY_NOTE,
     note: 'Auth with a Claude Pro/Max subscription: run `claude setup-token`, then paste the OAuth token as the API key secret.',
   },
   {

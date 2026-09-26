@@ -12,6 +12,7 @@ import {
   type QueueStore,
 } from './agent-client'
 import type { AgentConnection } from './connection'
+import { deliveryNoteBlock, isDeliveryNote } from './delivery-note'
 import { CODEX_USER_INPUT_FORM } from './elicitation-form.fixtures'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
 import { decodeBatch } from './queue-tags'
@@ -5501,6 +5502,167 @@ test('a harness that advertised steering injects a mid-turn message instead of q
   assert.equal(users.length, 1, 'the injected message shows once in the transcript')
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── the delivery note a steer carries while tool calls are out
+
+type SteerBlock = { type: string; text?: string }
+const steeredBlocks = (h: { extMethodCalls: Array<{ method: string; params: Record<string, unknown> }> }) =>
+  h.extMethodCalls
+    .filter((call) => call.method === '_session/steering')
+    .map((call) => call.params.prompt as SteerBlock[])
+
+test('a steer that lands while tool calls are unresolved carries the adapter note as its own block', async () => {
+  const h = await setup('claude', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  // One call running and one issued behind it in the same message: the second
+  // is what the harness cancels when the steer aborts the cycle.
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'running', title: 'sleep', status: 'in_progress' })
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'queued', title: 'write', status: 'pending' })
+
+  await h.client.prompt(h.sessionId, 'steer me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const [blocks] = steeredBlocks(h)
+  assert.ok(blocks, 'it steered')
+  assert.equal(blocks.length, 2, 'the message block, then the note block')
+  assert.match(blocks[0].text ?? '', /steer me/)
+  assert.doesNotMatch(blocks[0].text ?? '', /delivery-note/, 'the message text itself is untouched')
+  assert.equal(isDeliveryNote(blocks[1].text ?? ''), true)
+  assert.match(blocks[1].text ?? '', /not a refusal/)
+
+  const said = h.events.filter((event) => event.kind === 'user' && event.text.includes('steer me'))
+  assert.equal(said.length, 1)
+  assert.doesNotMatch(
+    said[0].kind === 'user' ? said[0].text : '',
+    /delivery-note|not a refusal/,
+    'the reader sees only what was sent',
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('calls issued without a status and none running still get the note', async () => {
+  // ACP's tool_call status is optional (pending when absent). Two calls issued
+  // in one message and neither started is exactly what the abort skips.
+  const h = await setup('claude', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'issued-1', title: 'write' })
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'issued-2', title: 'write' })
+
+  await h.client.prompt(h.sessionId, 'steer me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const [blocks] = steeredBlocks(h)
+  assert.equal(blocks?.length, 2, 'the message, then the note')
+  assert.equal(isDeliveryNote(blocks?.[1]?.text ?? ''), true)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a steer with every tool call resolved goes out without the note', async () => {
+  const h = await setup('claude', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'done', title: 'read', status: 'pending' })
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call_update', toolCallId: 'done', status: 'completed' })
+
+  await h.client.prompt(h.sessionId, 'steer me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const [blocks] = steeredBlocks(h)
+  assert.ok(blocks, 'it steered')
+  assert.equal(blocks.length, 1, 'only the message')
+  assert.equal(
+    blocks.some((block) => isDeliveryNote(block.text ?? '')),
+    false,
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('an adapter without a note steers as before, tool calls out or not', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'running', title: 'sleep', status: 'in_progress' })
+
+  await h.client.prompt(h.sessionId, 'steer me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const [blocks] = steeredBlocks(h)
+  assert.equal(blocks?.length, 1)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a declined steer is delivered later without the note', async () => {
+  // The fallback is an ordinary prompt after the turn, which aborts nothing.
+  const h = await setup('claude', { steeringSupported: true, steerOutcome: 'promptRequired' })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'running', title: 'sleep', status: 'in_progress' })
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(steeredBlocks(h)[0]?.length, 2, 'the steer itself carried it')
+
+  h.endTurn()
+  await settle()
+  const prompted = h.promptBlockCalls.at(-1) ?? []
+  assert.match((prompted[0] as SteerBlock | undefined)?.text ?? '', /second/)
+  assert.equal(
+    prompted.some((block) => isDeliveryNote((block as SteerBlock).text ?? '')),
+    false,
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a replayed delivery note is dropped without splitting the turn it rode in', async () => {
+  // A harness replays a user message block by block, so the note comes back as
+  // a chunk of its own, right after the message it travelled with.
+  counter += 1
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'claude',
+    model: 'test-model',
+    apiKey: '',
+    cwd: `/tmp/agent-client-test-${counter}`,
+  }
+  const sessionId = `delivery-note-replay-${counter}`
+  const note = deliveryNoteBlock('pending calls may be skipped')
+  const push = (update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const connection = {
+    loadSession: async () => {
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'run it' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'running' } })
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'also this' } })
+      push({ sessionUpdate: 'user_message_chunk', content: note })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'noted' } })
+      push({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: '<delivery-note>\nmine' } })
+      push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' } })
+      return {}
+    },
+  } as unknown as AgentConnection
+  const store = (globalThis as typeof globalThis & { __acpStore?: AcpStoreShape }).__acpStore
+  assert.ok(store, 'agent-client global store must exist after import')
+  store.connections.set(connectionKey(selection), {
+    connection,
+    lastSessionId: null,
+    loadSession: true,
+    initialized: Promise.resolve(),
+  })
+  const client = createAgentClient()
+  assert.ok(await client.loadSession(sessionId, selection))
+  const events: ChatEvent[] = []
+  client.subscribe(sessionId, (event) => events.push(event))
+
+  assert.deepEqual(
+    events.filter((event) => event.kind === 'user').map((event) => (event.kind === 'user' ? event.text : '')),
+    ['run it', 'also this', '<delivery-note>\nmine'],
+    'what somebody sent, including a message that merely starts with the tag, and nothing else',
+  )
+  assert.equal(events.filter((event) => event.kind === 'turn_end').length, 3, 'one boundary per real message')
+  await client.deleteSession(sessionId)
 })
 
 test('a realtime message steers into the turn even while a subagent is running', async () => {
