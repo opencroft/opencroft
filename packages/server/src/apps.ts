@@ -1,3 +1,5 @@
+import type { HostAgentGroupChatsApi, HostGroupChatsApi } from './host'
+
 /**
  * Server-side App lifecycle contracts. An extension that provides Apps (see
  * `AppEntry` in `@opencroft/core`) may export `apps` from its server module —
@@ -32,6 +34,13 @@ export interface AppInstanceContext {
 /** The context an App action runs in: the instance, plus the agent that asked, when the surface could name one. */
 export interface AppActionContext extends AppInstanceContext {
   callerAgent?: string
+  /**
+   * Group chats acting as whoever this call is on behalf of: `callerAgent` when
+   * an agent called — with `turns` for reading — and the extension's own
+   * system identity otherwise, which cannot read. Bound by the host for this
+   * one call and unusable once it ends — see `HostGroupChatsApi`.
+   */
+  groupChats: HostGroupChatsApi | HostAgentGroupChatsApi
   /**
    * Present when the action runs as a background task, and aborted when that
    * task is cancelled or times out. The host cannot stop a handler itself: one

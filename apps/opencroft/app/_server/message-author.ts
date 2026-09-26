@@ -112,9 +112,54 @@ export const SYSTEM_SENDER_IDS: ReadonlySet<string> = new Set([
   SEND_MESSAGE_SYSTEM_AUTHOR,
 ])
 
-/** Whether `value` names a system sender that exists — see SYSTEM_SENDER_IDS. */
+/**
+ * The identity an extension speaks as when it sends on its own behalf —
+ * through `host.groupChats` outside any agent's action call. One per
+ * extension, derived from its WHOLE id, so a transcript and a members list
+ * both say which extension it was: `local/task-pipelines` speaks as
+ * `system.ext.local.task-pipelines`.
+ *
+ * The whole id, not its last segment: `local/x` and `installed/x` are
+ * different extensions, and an identity is what a chat's grant is keyed by —
+ * sharing one would hand each the other's grants. The `ext.` segment keeps
+ * these apart from the trigger identities above.
+ */
+export function extensionSystemSender(extensionId: string): string {
+  const path = extensionId
+    .toLowerCase()
+    .split('/')
+    .map((part) => part.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, ''))
+    .filter(Boolean)
+    .join('.')
+  return `system.ext.${path}`
+}
+
+// The extensions whose host has been built in this process — each can send as
+// its own identity from that moment, so each is part of the population a grant
+// is checked against. Derived from the running extensions, never listed by
+// hand, for the reason SYSTEM_SENDER_IDS gives. globalThis-backed because dev
+// SSR can re-instantiate this module while the hosts it would forget live on.
+const globalForExtensionSenders = globalThis as unknown as { __EXTENSION_SYSTEM_SENDERS__?: Set<string> }
+if (!globalForExtensionSenders.__EXTENSION_SYSTEM_SENDERS__) {
+  globalForExtensionSenders.__EXTENSION_SYSTEM_SENDERS__ = new Set()
+}
+const extensionSystemSenders = globalForExtensionSenders.__EXTENSION_SYSTEM_SENDERS__
+
+/** Record that an extension's host exists, and return the identity it sends as. */
+export function registerExtensionSystemSender(extensionId: string): string {
+  const id = extensionSystemSender(extensionId)
+  extensionSystemSenders.add(id)
+  return id
+}
+
+/** Whether `value` names a system sender that exists — see SYSTEM_SENDER_IDS and extensionSystemSender. */
 export function isKnownSystemSender(value: string): boolean {
-  return SYSTEM_SENDER_IDS.has(value)
+  return SYSTEM_SENDER_IDS.has(value) || extensionSystemSenders.has(value)
+}
+
+/** Every system sender a grant may name right now, sorted. */
+export function listSystemSenderIds(): string[] {
+  return [...new Set([...SYSTEM_SENDER_IDS, ...extensionSystemSenders])].sort()
 }
 
 /**

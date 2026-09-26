@@ -793,8 +793,16 @@ export async function callAppAction(
   if (!handler) {
     throw new Error(`App ${row.extensionId}/${row.appSlug} has no action "${actionId}"`)
   }
-  const ctx = { ...(await instanceContext(row)), callerAgent, signal }
-  return handler(ctx, params)
+  // Lazy: the extension host reaches back into this module (app handles), and
+  // the action path is the only one here that needs the host at all.
+  const { groupChatsForCaller } = await import('@/app/_authed/(extension-runtime)/_server/host')
+  const groupChats = groupChatsForCaller(row.extensionId, callerAgent)
+  const ctx = { ...(await instanceContext(row)), callerAgent, signal, groupChats: groupChats.api }
+  try {
+    return await handler(ctx, params)
+  } finally {
+    groupChats.end()
+  }
 }
 
 /**

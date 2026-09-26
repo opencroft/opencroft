@@ -5040,3 +5040,163 @@ test('a thread whose agent is mid-turn is refused, and is deletable once the tur
   assert.deepEqual(after, { deleted: true }, 'once the turn has ended the same delete goes through')
   assert.deepEqual(await threadRowsFor(chatId), [])
 })
+
+// ---------------------------------------------------------------------------
+// SENDER-BOUND ACCESS FOR EXTENSIONS. What an App gets as `groupChats`: the
+// same gates as every other way into a chat, with the sender decided by the
+// host — the agent that called the action, or the extension's own system
+// identity — and never by the extension.
+// ---------------------------------------------------------------------------
+
+const { groupChatsForCaller } = await import('@/app/_authed/(extension-runtime)/_server/host')
+const { extensionSystemSender, isKnownSystemSender, listSystemSenderIds } = await import('@/app/_server/message-author')
+
+const TEST_EXTENSION = 'local/sender-test'
+const EXTENSION_PRINCIPAL = { kind: 'system', systemId: 'system.ext.local.sender-test' } as const
+
+test('an extension system sender exists once its host is built, and is grantable only then', async () => {
+  assert.equal(extensionSystemSender('local/task-pipelines'), 'system.ext.local.task-pipelines')
+  assert.equal(isKnownSystemSender('system.ext.never-built'), false)
+  const owner = await makeUser('ext-sender-grant@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender grant')
+  await assert.rejects(
+    () => model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.ext.never-built' }),
+    /No such system sender/,
+  )
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  assert.ok(listSystemSenderIds().includes('system.ext.local.sender-test'), 'offered in the members dialog')
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+})
+
+test('without a grant the extension sees no chat and every call refuses as a missing one would', async () => {
+  const owner = await makeUser('ext-sender-ungranted@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender ungranted')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+
+  assert.equal(
+    (await api.list()).some((c) => c.ref === chat.id),
+    false,
+  )
+  const refused = await captureRefusal(() =>
+    api.startThread({ chat: chat.slug, agentNodeId: 'agent-session', message: 'hello' }),
+  )
+  const missing = await captureRefusal(() =>
+    api.startThread({ chat: 'no-such-chat', agentNodeId: 'agent-session', message: 'hello' }),
+  )
+  assert.deepEqual(refused, missing)
+  assert.equal(
+    (await db.select().from(groupChatThread).where(eq(groupChatThread.groupChatId, chat.id))).length,
+    0,
+    'nothing was created',
+  )
+})
+
+test('a granted extension lists the chat, opens a thread for an agent member, sends, and reads it back', async () => {
+  const owner = await makeUser('ext-sender-granted@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender granted', 'workflow sessions')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  const inbox: string[] = []
+  seedMockConnection(inbox)
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+
+  const listed = (await api.list()).find((c) => c.ref === chat.id)
+  assert.deepEqual(listed?.agents, [{ nodeId: 'agent-session', name: 'Agent Session' }])
+
+  const { thread } = await api.startThread({
+    chat: chat.slug,
+    agentNodeId: 'agent-session',
+    message: 'TASK-1: implement it',
+    title: 'TASK-1 Development',
+  })
+  await waitForPrompts(inbox, 1)
+  assert.match(inbox[0] ?? '', /TASK-1: implement it/)
+  assert.match(inbox[0] ?? '', /workflow sessions/, 'the standing context rides the first message, as on every start')
+  assert.equal(thread.title, 'TASK-1 Development')
+  assert.deepEqual(thread.chat, { ref: chat.id, slug: chat.slug, name: chat.name })
+  assert.equal(thread.agent.nodeId, 'agent-session')
+
+  const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.threadId))
+  assert.equal(row?.createdByUserId, null)
+  assert.equal(row?.createdByAgentNodeId, null, 'no agent started it either: provenance says so')
+
+  assert.deepEqual(await api.thread(thread.ref), thread, 'the ref it handed out resolves back to the same thread')
+  await api.send({ thread: thread.ref, message: 'back to you: address the review' })
+  await waitForPrompts(inbox, 2)
+  assert.match(inbox[1] ?? '', /address the review/)
+  assert.equal('turns' in api, false, 'a system grant opens threads and posts; it never reads transcripts')
+})
+
+test('an agent caller acts as itself: its own chats, its own membership, and a thread it may later delete', async () => {
+  const owner = await makeUser('ext-sender-agent@example.test')
+  const mine = await model.createGroupChat(reqAs(owner), 'ext sender agent room')
+  await model.addMember(reqAs(owner), mine.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), mine.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  // Granted to the EXTENSION, not to the agent: an agent caller must not borrow it.
+  const notMine = await model.createGroupChat(reqAs(owner), 'ext sender extension only')
+  await model.addMember(reqAs(owner), notMine.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), notMine.id, EXTENSION_PRINCIPAL)
+  seedMockConnection([], 'Agent Session Two')
+  const api = groupChatsForCaller(TEST_EXTENSION, 'Agent Session').api
+
+  const refs = (await api.list()).map((c) => c.ref)
+  assert.ok(refs.includes(mine.id))
+  assert.equal(refs.includes(notMine.id), false, 'the extension grant does not extend to the agent that called it')
+  await captureRefusal(() => api.startThread({ chat: notMine.id, agentNodeId: 'agent-session-2', message: 'hi' }))
+
+  const { thread } = await api.startThread({ chat: mine.id, agentNodeId: 'agent-session-2', message: 'review this' })
+  const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.threadId))
+  assert.equal(row?.createdByAgentNodeId, 'agent-session', 'started BY the caller, addressed TO the colleague')
+})
+
+test('a caller name that resolves to no single agent refuses every call instead of acting as someone', async () => {
+  for (const name of ['No Such Agent', 'Twin Agent']) {
+    const api = groupChatsForCaller(TEST_EXTENSION, name).api
+    await assert.rejects(() => api.list(), /no single agent is named/)
+  }
+})
+
+test('an agent-bound copy stops working when the action it was handed to ends', async () => {
+  const owner = await makeUser('ext-sender-ended@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender ended call')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const bound = groupChatsForCaller(TEST_EXTENSION, 'Agent Session')
+  assert.ok(
+    (await bound.api.list()).some((c) => c.ref === chat.id),
+    'usable during the call',
+  )
+  bound.end()
+  await assert.rejects(() => bound.api.list(), /action call that has ended/)
+})
+
+test("two extensions whose ids end alike are two identities, and neither holds the other's grant", async () => {
+  const local = extensionSystemSender('local/same-name')
+  const installed = extensionSystemSender('installed/same-name')
+  assert.notEqual(local, installed)
+  const owner = await makeUser('ext-sender-same-slug@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender same slug')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  groupChatsForCaller('local/same-name', undefined)
+  const other = groupChatsForCaller('installed/same-name', undefined).api
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: local })
+  assert.equal(
+    (await other.list()).some((c) => c.ref === chat.id),
+    false,
+  )
+})
+
+test('an agent caller reads the threads of chats it belongs to', async () => {
+  const owner = await makeUser('ext-sender-agent-reads@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'ext sender agent reads')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  seedMockConnection([], 'Agent Session Two')
+  const { api } = groupChatsForCaller(TEST_EXTENSION, 'Agent Session')
+  assert.ok('turns' in api)
+  const { thread } = await api.startThread({ chat: chat.id, agentNodeId: 'agent-session-2', message: 'read me back' })
+  const page = await api.turns(thread.ref)
+  assert.ok(Array.isArray(page.turns))
+})

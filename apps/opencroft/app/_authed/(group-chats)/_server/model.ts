@@ -98,6 +98,7 @@ import {
   listAgentNodesImpl,
 } from '@/app/_authed/(space)/_server/agents-impl'
 import {
+  type AttributedSender,
   authorForAgentNode,
   authorForPerson,
   isKnownSystemSender,
@@ -1127,9 +1128,10 @@ export type MemberPrincipal =
  * against the `user` table for the same reason: existence, not just shape.
  *
  * A system principal is the explicit grant that lets an automated pipeline —
- * a schedule's script, the forge webhook — deliver into this chat's threads.
- * Validated against the identities this application can actually stamp a
- * message with (`SYSTEM_SENDER_IDS`, derived from the author map itself), on
+ * a schedule's script, the forge webhook, an extension acting on its own
+ * behalf — deliver into this chat's threads. Validated against the identities
+ * this application can actually stamp a message with (`isKnownSystemSender`:
+ * the author map's identities and each running extension's own), on
  * the same principle as the two above: existence, not shape. Checking the
  * `system.` namespace instead would accept `system.scripts` — a row that
  * authorizes nothing, reads as granted in the members list, and leaves the
@@ -2898,6 +2900,11 @@ async function resolveById(ref: string): Promise<ThreadDeliveryTarget | null> {
  * refusal — a reference must not be a way to learn which threads exist.
  */
 export async function resolveThreadForAgent(agentNodeId: string, threadRef: string): Promise<ThreadDeliveryTarget> {
+  return resolveThreadForPrincipal({ kind: 'agent', agentNodeId }, threadRef)
+}
+
+/** `resolveThreadForAgent` for any sending principal — an agent node or a granted system identity. */
+async function resolveThreadForPrincipal(principal: SendPrincipal, threadRef: string): Promise<ThreadDeliveryTarget> {
   const trimmed = threadRef.trim()
   if (!trimmed) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
@@ -2906,7 +2913,7 @@ export async function resolveThreadForAgent(agentNodeId: string, threadRef: stri
   if (!row) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  if (!(await isAgentMember(row.groupChatId, agentNodeId))) {
+  if (!(await isPrincipalMember(row.groupChatId, principal))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   return row
@@ -3356,4 +3363,168 @@ export async function deliverThreadFromNode(
   }
   const { queued } = await deliverIntoThread(row, text, { queue, sender })
   return { status: queued ? 'queued' : 'delivered' }
+}
+
+// ── Sender-bound access, for extensions ─────────────────────────────────────
+//
+// The counterparts of the `…AsAgent` functions for a caller that has already
+// been turned into an `AttributedSender` by the host: an agent that invoked an
+// App action, or an extension's own system identity. Every one of them gates
+// on THAT principal's membership row, exactly as the agent tools and the
+// send-message node do, and none of them takes a principal from anything an
+// extension wrote: the host builds the sender and binds it before handing
+// these to extension code (see the extension runtime's `groupChats`).
+
+/** A chat as a sender-bound caller sees it: its address, its name, and its agent members. */
+export interface SenderGroupChat {
+  ref: string
+  slug: string
+  name: string
+  agents: Array<{ nodeId: string; name: string }>
+}
+
+/** A thread as a sender-bound caller sees it — enough to show it and to embed it. */
+export interface SenderThread {
+  ref: string
+  threadId: string
+  title: string | null
+  chat: { ref: string; slug: string; name: string }
+  agent: { nodeId: string; name: string | null }
+  createdAt: Date
+}
+
+/** Every chat the sender is a member of. The membership row is the query, as in `listGroupChatsForAgentView`. */
+export async function listGroupChatsForSender(sender: AttributedSender): Promise<SenderGroupChat[]> {
+  const byPrincipal =
+    sender.principal.kind === 'agent'
+      ? eq(groupChatMember.agentNodeId, sender.principal.agentNodeId)
+      : eq(groupChatMember.systemId, sender.principal.systemId)
+  const chats = await db
+    .select({ id: groupChat.id, slug: groupChat.slug, name: groupChat.name })
+    .from(groupChat)
+    .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
+    .where(byPrincipal)
+    .orderBy(asc(groupChat.name))
+  const members = await agentMembersByChat(chats.map((c) => c.id))
+  return chats.map((c) => ({ ref: c.id, slug: c.slug, name: c.name, agents: members.get(c.id) ?? [] }))
+}
+
+/** A chat by id or slug, if the sender is a member of it — refused as UNAVAILABLE otherwise, whichever it was. */
+async function chatForSender(sender: AttributedSender, chatRef: string): Promise<GroupChatSummary> {
+  const trimmed = chatRef.trim()
+  const chat =
+    (trimmed && (await chatRowBySlug(trimmed))) ||
+    (trimmed && (await db.select(chatColumns).from(groupChat).where(eq(groupChat.id, trimmed)).limit(1))[0]) ||
+    null
+  if (!chat || !(await isPrincipalMember(chat.id, sender.principal))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return chat
+}
+
+/**
+ * Start a thread in a chat the sender is a member of, addressed to an agent
+ * member, with an opening message from the sender. The same `createThread`
+ * every other start goes through; the gate is `startThreadAsAgent`'s, with the
+ * target named by node id — the caller is code, and a node id is what code
+ * holds, where a name is what an agent reads off a list.
+ */
+export async function startThreadForSender(
+  sender: AttributedSender,
+  chatRef: string,
+  agentNodeId: string,
+  firstMessage: string,
+  opts?: { title?: string; folder?: string },
+): Promise<{ thread: SenderThread; folder: string | null }> {
+  const chat = await chatForSender(sender, chatRef)
+  const trimmed = firstMessage.trim()
+  if (!trimmed) {
+    throw new Error('A message needs some text')
+  }
+  const folder = folderNameArgument(opts?.folder)
+  if (!(await isAgentMember(chat.id, agentNodeId))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const started = await createThread(chat.id, agentNodeId, trimmed, {
+    title: opts?.title,
+    createdByUserId: null,
+    // An agent sender started it and may delete it later, as with
+    // `startThreadAsAgent`. A system sender fills neither creator column:
+    // provenance then says "no user, no agent", which is true.
+    createdByAgentNodeId: sender.principal.kind === 'agent' ? sender.principal.agentNodeId : null,
+    sender: sender.author,
+  })
+  if (folder) {
+    await placeThreadInFolder(chat.id, started.thread.id, folder)
+  }
+  return { thread: await senderThreadFor(started.thread.id), folder: folder ?? null }
+}
+
+/** Send into a thread of a chat the sender is a member of — `deliverIntoThread`, as every other send. */
+export async function sendInThreadForSender(
+  sender: AttributedSender,
+  threadRef: string,
+  text: string,
+  queue: QueueMode,
+): Promise<{ status: 'queued' | 'delivered' }> {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    throw new Error('A message needs some text')
+  }
+  const row = await resolveThreadForPrincipal(sender.principal, threadRef)
+  const { queued } = await deliverIntoThread(row, trimmed, { queue, sender: sender.author })
+  return { status: queued ? 'queued' : 'delivered' }
+}
+
+/** A thread of a chat the sender is a member of. */
+export async function threadForSender(sender: AttributedSender, threadRef: string): Promise<SenderThread> {
+  const row = await resolveThreadForPrincipal(sender.principal, threadRef)
+  return senderThreadFor(row.id)
+}
+
+/**
+ * A thread's recent turns — the shared `turnsPageForSessionKey`, behind the
+ * sender's membership. Offered to extensions only for an AGENT sender: a
+ * system grant lets an extension open threads and post, never read, since it
+ * would then pass a chat's transcripts to whoever its UI serves.
+ */
+export async function threadTurnsForSender(
+  sender: AttributedSender,
+  threadRef: string,
+  params?: { turns?: number; beforeIndex?: number },
+): Promise<TurnsPage> {
+  const row = await resolveThreadForPrincipal(sender.principal, threadRef)
+  return turnsPageForSessionKey(row.sessionKey, { turns: params?.turns, beforeIndex: params?.beforeIndex })
+}
+
+// Ungated: every caller above has already resolved the thread through the sender's membership.
+async function senderThreadFor(threadId: string): Promise<SenderThread> {
+  const [row] = await db
+    .select({
+      id: groupChatThread.id,
+      slug: groupChatThread.slug,
+      sessionKey: groupChatThread.sessionKey,
+      title: groupChatThread.title,
+      agentNodeId: groupChatThread.agentNodeId,
+      createdAt: groupChatThread.createdAt,
+      chatId: groupChat.id,
+      chatSlug: groupChat.slug,
+      chatName: groupChat.name,
+    })
+    .from(groupChatThread)
+    .innerJoin(groupChat, eq(groupChat.id, groupChatThread.groupChatId))
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  const agentName = (await listAgentNodesImpl()).find((n) => n.nodeId === row.agentNodeId)?.name ?? null
+  return {
+    ref: agentThreadRef(row),
+    threadId: row.id,
+    title: row.title,
+    chat: { ref: row.chatId, slug: row.chatSlug, name: row.chatName },
+    agent: { nodeId: row.agentNodeId, name: agentName },
+    createdAt: row.createdAt,
+  }
 }

@@ -70,7 +70,7 @@ import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-dir
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
-import { SYSTEM_SENDER_IDS } from '@/app/_server/message-author'
+import { listSystemSenderIds } from '@/app/_server/message-author'
 import { requireSessionServerFn } from '@/app/_server/require-session'
 
 // So no client file ever has a reason to name model.ts directly — the same
@@ -220,8 +220,9 @@ export const listGroupChatMembers = createServerFn({ method: 'GET', strict: { ou
  * The system senders a grant may name.
  *
  * Served rather than baked into the client so the members dialog offers
- * exactly what `addMember` accepts — one derived set (`SYSTEM_SENDER_IDS`,
- * built from the author map itself), read on both sides of the request. A copy
+ * exactly what `addMember` accepts — one derived population (`listSystemSenderIds`:
+ * the author map's identities plus each running extension's own), read on both
+ * sides of the request. A copy
  * in the client drifts the moment a trigger is added, and a free-text field
  * drifts on a single keystroke: `system.scripts` is a grant that authorizes
  * nothing, reads in the list as granted, and leaves the pipeline failing with
@@ -238,7 +239,7 @@ export const listGroupChatMembers = createServerFn({ method: 'GET', strict: { ou
 export const listSystemSenders = createServerFn({ method: 'GET', strict: { output: false } }).handler(
   async (): Promise<string[]> => {
     await requireSessionServerFn()
-    return [...SYSTEM_SENDER_IDS].sort()
+    return listSystemSenderIds()
   },
 )
 

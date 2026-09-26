@@ -78,6 +78,82 @@ export interface HostSendMessageApi {
   ): Promise<HostSendMessageResult>
 }
 
+/** A group chat as the bound sender sees it: its address, name and agent members. */
+export interface HostGroupChat {
+  /** The chat's id — accepted wherever a chat is named, as is its slug. */
+  ref: string
+  /** The chat's slug: what `EmbeddedAgentChat` takes as `space`. */
+  slug: string
+  name: string
+  agents: Array<{ nodeId: string; name: string }>
+}
+
+/** A thread as the bound sender sees it. `threadId` is what `EmbeddedAgentChat` takes as `thread.threadId`. */
+export interface HostGroupChatThread {
+  /** Opaque thread reference: store it, pass it back. */
+  ref: string
+  threadId: string
+  title: string | null
+  chat: { ref: string; slug: string; name: string }
+  agent: { nodeId: string; name: string | null }
+  createdAt: Date
+}
+
+/** One turn of a thread's session, summarised — the same shape `group_chat_turns` returns. */
+export interface HostThreadTurn {
+  index: number
+  prompt: string
+  promptLength: number
+  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
+  finalMessage?: string
+  finalMessageLength?: number
+}
+
+export interface HostThreadTurnsPage {
+  turns: HostThreadTurn[]
+  hasMore: boolean
+  nextBeforeIndex: number | null
+  sessionStatus: string
+}
+
+/**
+ * Group chats, acting as ONE sender the host chose: inside an App action
+ * invoked by an agent (`ctx.groupChats`), that agent; everywhere else
+ * (`host.groupChats`, or an action nobody's agent called), the extension's own
+ * system identity `system.ext.<extension id, dotted>` — e.g.
+ * `system.ext.local.task-pipelines`. There is no way to name another sender.
+ *
+ * Every call is gated on that sender's membership of the chat, exactly as an
+ * agent's group-chat tools are; a system identity is a member once a person
+ * grants it in the chat's members list. A chat or thread the sender cannot
+ * reach refuses with "Not available", whichever of the two it was.
+ *
+ * A system identity may open threads and post; it cannot read transcripts.
+ * Reading is `HostAgentGroupChatsApi.turns`, offered only when an agent is the
+ * sender and so only over chats that agent belongs to.
+ */
+export interface HostGroupChatsApi {
+  /** Chats the sender is a member of, with their agent members. */
+  list(): Promise<HostGroupChat[]>
+  /** Open a thread addressed to an agent member of `chat` (id or slug), with `message` as its first message from the sender. */
+  startThread(input: {
+    chat: string
+    agentNodeId: string
+    message: string
+    title?: string
+    folder?: string
+  }): Promise<{ thread: HostGroupChatThread; folder: string | null }>
+  /** Send into a thread; `queue` defaults to `wait` (after the running turn). */
+  send(input: { thread: string; message: string; queue?: 'wait' | 'push' }): Promise<{ status: 'queued' | 'delivered' }>
+  thread(ref: string): Promise<HostGroupChatThread>
+}
+
+/** `groupChats` acting as the agent that invoked an App action: the same calls, plus reading. */
+export interface HostAgentGroupChatsApi extends HostGroupChatsApi {
+  /** The thread's recent turns, newest last; page back with `beforeIndex` from the previous page. */
+  turns(ref: string, page?: { turns?: number; beforeIndex?: number }): Promise<HostThreadTurnsPage>
+}
+
 export interface HostExecContextApi {
   /** Dispatch an execution-context event to every target connected to `sourceHandleId` on `sourceNodeId` (broadcast). `primary`'s shape is caller-defined -- narrow it at the call site. */
   dispatch(
@@ -171,6 +247,8 @@ export interface ExtensionServerHost {
   /** The calling extension's own added App instances (see `AppsExport` in this package). */
   apps: HostAppsApi
   sendMessage: HostSendMessageApi
+  /** Group chats as this extension's own system identity — see HostGroupChatsApi. */
+  groupChats: HostGroupChatsApi
   mcpTokens: HostMcpTokensApi
   execContext: HostExecContextApi
   /**
@@ -244,6 +322,7 @@ export declare const storage: ExtensionServerHost['storage']
 export declare const secrets: ExtensionServerHost['secrets']
 export declare const apps: ExtensionServerHost['apps']
 export declare const sendMessage: ExtensionServerHost['sendMessage']
+export declare const groupChats: ExtensionServerHost['groupChats']
 export declare const execContext: ExtensionServerHost['execContext']
 export declare const events: ExtensionServerHost['events']
 export declare const openclaw: ExtensionServerHost['openclaw']

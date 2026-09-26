@@ -5,7 +5,7 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
-import type { ExtensionServerHost, HostMcpTokensApi, HostSecretsApi } from '@opencroft/server'
+import type { ExtensionServerHost, HostAgentGroupChatsApi, HostMcpTokensApi, HostSecretsApi } from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
   exec,
@@ -41,7 +41,7 @@ import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
-import { senderForSend } from '@/app/_server/message-author'
+import { type AttributedSender, registerExtensionSystemSender, senderForSend } from '@/app/_server/message-author'
 import { newGraphId } from '@/lib/graph-id'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
@@ -662,6 +662,92 @@ function execFilePromise(cmd: string, args: string[]): Promise<string> {
   })
 }
 
+/**
+ * Group chats as seen by ONE sender the host has already decided: the agent
+ * that invoked an App action, or the extension's own system identity. The
+ * extension never names who it speaks as — see `groupChatsForCaller` — so it
+ * cannot speak as an agent that did not call it.
+ */
+export type HostGroupChatsApi = ExtensionServerHost['groupChats']
+export type { HostAgentGroupChatsApi }
+
+// Lazy: the group-chat model imports this module (turnsPageForSessionKey), so a
+// static import here would be a cycle.
+const groupChatModel = () => import('@/app/_authed/(group-chats)/_server/model')
+
+/**
+ * Resolve the sender on first use and hold it, so a sender that cannot be
+ * named — an unknown or ambiguous agent — refuses every call with the
+ * attribution error rather than acting as anyone. `live` is asked before every
+ * call: an agent-bound copy stops working once the action that received it has
+ * ended, so an extension cannot keep it and speak as that agent later.
+ */
+function boundSender(resolve: () => Promise<AttributedSender>, live: () => boolean): () => Promise<AttributedSender> {
+  let sender: Promise<AttributedSender> | undefined
+  return () => {
+    if (!live()) {
+      return Promise.reject(new Error('This group-chat access was bound to an action call that has ended'))
+    }
+    sender ??= resolve()
+    return sender
+  }
+}
+
+/** What any sender may do: see its chats, open threads, post, resolve a thread. No reading. */
+function groupChatsForSender(who: () => Promise<AttributedSender>): HostGroupChatsApi {
+  return {
+    list: async () => (await groupChatModel()).listGroupChatsForSender(await who()),
+    startThread: async ({ chat, agentNodeId, message, title, folder }) => {
+      const { startThreadForSender } = await groupChatModel()
+      return startThreadForSender(await who(), chat, agentNodeId, message, { title, folder })
+    },
+    send: async ({ thread, message, queue }) =>
+      (await groupChatModel()).sendInThreadForSender(await who(), thread, message, queue ?? 'wait'),
+    thread: async (ref) => (await groupChatModel()).threadForSender(await who(), ref),
+  }
+}
+
+/**
+ * `groupChats` for one App action invocation: the calling agent when an agent
+ * called — who may also read, over the chats it belongs to — and the
+ * extension's own system identity otherwise, which may not. Built by the host
+ * per call and put on the action's context, never chosen by the extension. The
+ * caller ends it with `end()` when the action settles.
+ */
+export function groupChatsForCaller(
+  extensionId: string,
+  callerAgent: string | undefined,
+): { api: HostGroupChatsApi | HostAgentGroupChatsApi; end: () => void } {
+  if (!callerAgent) {
+    return { api: extensionGroupChats(extensionId), end: () => {} }
+  }
+  let ended = false
+  const who = boundSender(
+    () => senderForSend({ callerAgent }, [], listAgentNodesImpl),
+    () => !ended,
+  )
+  const api: HostAgentGroupChatsApi = {
+    ...groupChatsForSender(who),
+    turns: async (ref, page) => (await groupChatModel()).threadTurnsForSender(await who(), ref, page),
+  }
+  return {
+    api,
+    end: () => {
+      ended = true
+    },
+  }
+}
+
+function extensionGroupChats(extensionId: string): HostGroupChatsApi {
+  const systemId = registerExtensionSystemSender(extensionId)
+  return groupChatsForSender(
+    boundSender(
+      async () => ({ author: systemId, principal: { kind: 'system', systemId } }),
+      () => true,
+    ),
+  )
+}
+
 export interface ExtensionStorageApi {
   get<T = unknown>(key: string): Promise<T | null>
   set<T = unknown>(key: string, value: T): Promise<void>
@@ -749,6 +835,12 @@ export interface ExtensionHost {
    *  create, envelope composition, hidden-by-default registration) — the same
    *  mechanism its `text-in` wiring uses, not a parallel implementation. */
   sendMessage: HostSendMessageApi
+  /**
+   * Group chats as this extension's own system identity (`system.ext.<dotted extension id>`).
+   * An App action gets `ctx.groupChats` instead, bound to its calling agent
+   * when an agent called — see `groupChatsForCaller`.
+   */
+  groupChats: HostGroupChatsApi
   /** An agent node's credentials for the MCP endpoint — see the package declaration. */
   mcpTokens: HostMcpTokensApi
   /**
@@ -863,6 +955,7 @@ export function createHost(extensionId: string): ExtensionHost {
     storage: storageApi(extensionId),
     apps: appsApi(extensionId),
     sendMessage: sendMessageApi,
+    groupChats: extensionGroupChats(extensionId),
     mcpTokens: mcpTokensApi,
     events: {
       broadcast: (name, payload) => {
