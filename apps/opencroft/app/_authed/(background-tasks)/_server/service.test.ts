@@ -183,6 +183,25 @@ async function told(svc: BackgroundTasks, taskId: string): Promise<BackgroundTas
 
 // ── in-process tasks ─────────────────────────────────────────────────────
 
+test('a subscriber to the running keys hears a task start and its ending, each as it happens', async () => {
+  const svc = service({ engine: fakeEngine().engine })
+  const heard: string[][] = []
+  const unsubscribe = svc.subscribeRunningSessionKeys(() => heard.push([...svc.runningSessionKeys()]))
+  let finish: (value: unknown) => void = () => {}
+  const started = await inProcessTask(svc, () => new Promise((resolve) => (finish = resolve)))
+  assert.ok(
+    heard.some((keys) => keys.includes(KEY)),
+    'the start was heard with the key already in',
+  )
+  finish('done')
+  await told(svc, started.taskId)
+  assert.deepEqual(heard.at(-1), [], 'the ending was heard with the key gone')
+  const count = heard.length
+  unsubscribe()
+  await inProcessTask(svc, async () => 'again')
+  assert.equal(heard.length, count, 'nothing is heard after unsubscribing')
+})
+
 test('an in-process task reads working while it runs, then completes with its result and is told once', async () => {
   const fake = fakeEngine()
   const svc = service({ engine: fake.engine })

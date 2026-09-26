@@ -156,4 +156,6 @@ export interface BackgroundTaskService {
    * database each time.
    */
   runningSessionKeys(): ReadonlySet<string>
+  /** Called after every change to what runningSessionKeys() answers. Returns the unsubscribe. */
+  subscribeRunningSessionKeys(listener: () => void): () => void
 }

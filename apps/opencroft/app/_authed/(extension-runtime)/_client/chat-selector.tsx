@@ -87,11 +87,9 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
     }
   }, [open, space])
 
-  // The same shared poll the group-chat screen's list reads, so a row here
-  // shows the same live state as the same thread there.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(
-    open && (threads?.length ?? 0) > 0,
-  )
+  // The same shared session activity the group-chat screen's list reads, so a
+  // row here shows the same live state as the same thread there.
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
 
   // EVERY thread of the chat, newest first — the menu is bounded by its own
   // scroll box (the kit's CommandList, 300px) rather than by a count.
@@ -203,7 +201,7 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
                   // offers, wired the same way: Rename and Delete report the row
                   // and a host dialog takes over; Stop maps the thread id to its
                   // session key and calls the one shared stop path. The row's
-                  // state comes from the shared activity poll, so nothing needs
+                  // state comes from the shared session activity, so nothing needs
                   // reloading after a stop.
                   onRename={(id) => {
                     const thread = (threads ?? []).find((t) => t.id === id)

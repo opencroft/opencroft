@@ -208,6 +208,7 @@ function fakeService() {
     listRunning: unexpected,
     cancel: unexpected,
     runningSessionKeys: () => new Set(),
+    subscribeRunningSessionKeys: () => () => {},
   }
   substituteBackgroundTaskService(service)
   return { runnerTasks, inProcess }

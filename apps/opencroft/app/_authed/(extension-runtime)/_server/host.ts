@@ -32,9 +32,9 @@ import { asc, eq } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { queryChatUsageTurnsBySessionKey } from '@/app/_authed/(agent)/_server/chat-usage-store'
+import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
-import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
@@ -415,12 +415,7 @@ export function turnsPageForSessionKey(
   params: { turns?: number; beforeIndex?: number },
 ): TurnsPage {
   const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
-  const sessionStatus = deriveSessionStatus(sessionKey, {
-    pending: new Set(agentClient.awaitingUserSessionKeys()),
-    active: new Set(agentClient.activeSessionKeys()),
-    background: backgroundWorkSessionKeys(),
-    alive: new Set(agentClient.aliveSessionKeys()),
-  })
+  const sessionStatus = deriveSessionStatus(sessionKey, sessionActivitySets())
   const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
   if (!meta) {
     // No live process for this session (dead, or never started) — nothing

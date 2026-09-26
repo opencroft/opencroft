@@ -17,11 +17,7 @@ import { getRequest } from '@tanstack/react-start/server'
 
 import { findPersistedTabKey } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import {
-  GroupChatAccessError,
-  listMemberSessionKeys,
-  requireSessionKeyMember,
-} from '@/app/_authed/(group-chats)/_server/model'
+import { GroupChatAccessError, requireSessionKeyMember } from '@/app/_authed/(group-chats)/_server/model'
 
 export { requireSessionKeyMember }
 
@@ -79,9 +75,4 @@ export function requireSessionAccess(sessionId: string): Promise<string> {
 /** Server-function gate on a session key. Resolves to the key and the agent its thread runs. */
 export function requireSessionKeyAccess(sessionKey: string): Promise<{ sessionKey: string; agentNodeId: string }> {
   return orRefuse(requireSessionKeyMember(getRequest(), sessionKey))
-}
-
-/** Server-function gate for a read across sessions: the keys of every thread the caller may reach. */
-export function requireMemberSessionKeys(): Promise<Set<string>> {
-  return orRefuse(listMemberSessionKeys(getRequest()))
 }

@@ -1,9 +1,10 @@
 // The keys of the sessions with a task of this host's still running — what
 // makes such a session read as working rather than idle, in memory or not.
 //
-// Read on hot paths (every chat list's activity poll, the audit page, the idle
+// Read on hot paths (every session-activity push, the audit page, the idle
 // reaper), so answered from memory: filled from the registry once, lazily, and
-// kept current by every start and ending this process records.
+// kept current by every start and ending this process records. Subscribers
+// hear each change, so a pushed view of the keys needs no timer.
 
 import type { InFlight } from './in-flight'
 
@@ -23,6 +24,8 @@ export function createRunningKeysState(): RunningKeysState {
 }
 
 export class RunningKeys {
+  private readonly listeners = new Set<() => void>()
+
   constructor(
     private readonly state: RunningKeysState,
     private readonly deps: {
@@ -73,6 +76,7 @@ export class RunningKeys {
           }
           state.status = 'loaded'
           this.deps.guard.recovered('load')
+          this.changed()
         },
         (error: unknown) => {
           state.status = 'idle'
@@ -88,12 +92,32 @@ export class RunningKeys {
 
   track(taskId: string, sessionKey: string | undefined): void {
     this.state.byTask.set(taskId, sessionKey ?? null)
+    this.changed()
   }
 
   untrack(taskId: string): void {
     this.state.byTask.delete(taskId)
     if (this.state.status === 'loading') {
       this.state.endedMeanwhile.add(taskId)
+    }
+    this.changed()
+  }
+
+  /** Called after every change to what sessionKeys() answers. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch (error) {
+        this.deps.guard.logOnce('keys-listener', 'a running-keys listener threw', error)
+      }
     }
   }
 }

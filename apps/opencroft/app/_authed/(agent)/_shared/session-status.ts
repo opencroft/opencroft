@@ -32,9 +32,8 @@ function classify(flags: {
   return 'offline'
 }
 
-// For a surface reading the polled activity sets — a list of sessions it does
-// not have open, so every input arrives the same way and up to one poll
-// interval late.
+// For a surface reading the activity sets — a list of sessions it does not
+// have open, so every input arrives the same way.
 export function deriveSessionStatus(
   sessionKey: string,
   keys: { pending: Set<string>; active: Set<string>; background: Set<string>; alive: Set<string> },

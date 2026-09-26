@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { streamOwnSessionActivity } from '@/app/_authed/(agent)/_server/session-activity'
 import { requireSession } from '@/app/_server/require-session'
+import type { SSEEvent } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
 import { getAllDockerSnapshots } from '@/server/scheduler/docker-ps-poller'
 
@@ -32,18 +34,32 @@ export const Route = createFileRoute('/_authed/(sse)/api/sse')({
               }
             }, spaceId)
 
+            // Every connection opens with the person's current picture, so a
+            // new tab, a reload and the browser's own reconnect all start
+            // from the truth rather than from whatever the page held before.
+            const stopActivity = streamOwnSessionActivity(request, (activity) => {
+              const event: SSEEvent = { type: 'session_activity', activity }
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+              } catch {
+                stopActivity()
+              }
+            })
+
             const keepalive = setInterval(() => {
               try {
                 controller.enqueue(encoder.encode(': keepalive\n\n'))
               } catch {
                 clearInterval(keepalive)
                 unsubscribe()
+                stopActivity()
               }
             }, 30_000)
 
             const abortHandler = () => {
               clearInterval(keepalive)
               unsubscribe()
+              stopActivity()
               try {
                 controller.close()
               } catch {}

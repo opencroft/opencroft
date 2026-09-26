@@ -89,6 +89,7 @@ function fakeService(overrides: Partial<BackgroundTaskService> = {}) {
     listRunning: async () => unused(),
     cancel: async () => unused(),
     runningSessionKeys: () => unused(),
+    subscribeRunningSessionKeys: () => unused(),
     ...overrides,
   }
   substituteBackgroundTaskService(service)

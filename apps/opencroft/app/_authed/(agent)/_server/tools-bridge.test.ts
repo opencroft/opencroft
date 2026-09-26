@@ -145,6 +145,7 @@ async function ownerSeenByTaskStatus(
     listRunning: unexpected,
     cancel: unexpected,
     runningSessionKeys: () => new Set(),
+    subscribeRunningSessionKeys: () => () => {},
   }
   substituteBackgroundTaskService(service)
   try {

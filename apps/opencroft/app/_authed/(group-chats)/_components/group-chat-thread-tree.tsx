@@ -7,7 +7,7 @@ import type { GroupChatThreadEntry, ThreadLayout } from '@/app/_authed/(group-ch
 
 interface GroupChatThreadTreeProps {
   threads: GroupChatThreadEntry[]
-  /** Live process state per thread, from the shared session-activity poll. */
+  /** Live process state per thread, from the shared session activity. */
   statusById: ThreadStatusById
   /** The arrangement to draw. Owned by the caller -- see `useThreadLayout`. */
   layout: ThreadLayout

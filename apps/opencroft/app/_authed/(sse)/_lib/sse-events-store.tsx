@@ -7,6 +7,7 @@
 
 import { createContext, useCallback, useContext, useRef, useSyncExternalStore } from 'react'
 
+import { receiveSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { getStream } from '@/app/_authed/(extension-runtime)/_client/stream'
 import type { Comment, DockerContainerSnapshot, PendingApproval, PendingAskUser, SSEEvent } from '@/lib/sse-events'
 
@@ -150,6 +151,11 @@ class SSEEventsStore {
         return
       case 'toast':
         // Handled by useSSE directly (sonner), nothing to store.
+        return
+      case 'session_activity':
+        // Held by the session-activity store its readers subscribe to, so a
+        // change there re-renders the chat lists and not every SSE reader.
+        receiveSessionActivity(event.activity)
         return
     }
     this.emit()

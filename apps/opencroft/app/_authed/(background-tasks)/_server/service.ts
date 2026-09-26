@@ -323,6 +323,10 @@ export class BackgroundTasks implements BackgroundTaskService {
     return this.keys.sessionKeys()
   }
 
+  subscribeRunningSessionKeys(listener: () => void): () => void {
+    return this.keys.subscribe(listener)
+  }
+
   /** Read the running tasks' keys now rather than on first use — at startup. */
   loadRunningKeys(): void {
     this.keys.load()

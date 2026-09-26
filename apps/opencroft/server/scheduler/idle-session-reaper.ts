@@ -8,13 +8,13 @@
 
 import { stopLocalSessionProcessImpl } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
 import {
   agentAutoUnloadIdleEnabled,
   agentAutoUnloadIdleMinutes,
   isAgentNode,
 } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
-import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -72,12 +72,7 @@ export function selectDueSessions(
 }
 
 function currentStatuses(sessionKeys: string[]): Map<string, SessionStatus> {
-  const keys = {
-    pending: new Set(agentClient.awaitingUserSessionKeys()),
-    active: new Set(agentClient.activeSessionKeys()),
-    background: backgroundWorkSessionKeys(),
-    alive: new Set(agentClient.aliveSessionKeys()),
-  }
+  const keys = sessionActivitySets()
   return new Map(sessionKeys.map((key) => [key, deriveSessionStatus(key, keys)]))
 }
 
@@ -138,12 +133,7 @@ async function reapOne(sessionKey: string): Promise<void> {
     // `background` is part of the status itself (live background work reads as
     // `working` — see deriveSessionStatus), so a session mid-delegation can
     // never classify as idle here: unloading it would kill that work silently.
-    const fresh = deriveSessionStatus(sessionKey, {
-      pending: new Set(agentClient.awaitingUserSessionKeys()),
-      active: new Set(agentClient.activeSessionKeys()),
-      background: backgroundWorkSessionKeys(),
-      alive: new Set(agentClient.aliveSessionKeys()),
-    })
+    const fresh = deriveSessionStatus(sessionKey, sessionActivitySets())
     if (fresh !== 'idle') {
       return
     }

@@ -176,6 +176,19 @@ export function registerCompactionHandler(handler: CompactionHandler): void {
 // adapter's spawn environment instead -- the plan-tools flag lives there.
 process.env.CLAUDE_AGENT_LOGS ??= join(process.cwd(), 'data', 'claude-acp-logs')
 
+// Held here, beside the engine that reports it, so a reader of the activity
+// sets (session-activity.ts) can subscribe without this module importing it
+// back — the same cycle-avoidance as SessionOpener above.
+const engineActivityListeners = new Set<() => void>()
+
+/** Called after each change the engine reports to a session's activity. Returns the unsubscribe. */
+export function subscribeEngineActivity(listener: () => void): () => void {
+  engineActivityListeners.add(listener)
+  return () => {
+    engineActivityListeners.delete(listener)
+  }
+}
+
 export const agentClient = createAgentClient({
   // Sleep Mode's gate: while the instance is asleep no queue is drained to
   // any agent — see (mcp)/_server/sleep-mode for why the flag is a
@@ -222,6 +235,11 @@ export const agentClient = createAgentClient({
   onEvent: (sessionId, event, sessionKey) => {
     persistSessionEvent(event, sessionKey)
     persistUsageOnTurnEnd(sessionId, event, sessionKey)
+  },
+  onActivityChange: () => {
+    for (const listener of engineActivityListeners) {
+      listener()
+    }
   },
   // Live compaction transitions (never replay — the engine gates that). The
   // registered handler re-delivers the session's standing context once a

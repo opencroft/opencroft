@@ -105,6 +105,23 @@ export type { PermissionContext, PermissionHandler, PermissionOutcome } from './
 /** An attachment as a prompt is handed one: positioned or not (see prompt()). */
 export type PromptAttachmentInput = AttachmentRef & { message?: number }
 
+/**
+ * One session's activity, as AgentClientOptions.onActivityChange reports it.
+ * `alive: false` is the last report a session gets: its record left the
+ * engine, and every other field reads as idle.
+ */
+export interface SessionActivity {
+  sessionId: string
+  sessionKey?: string
+  alive: boolean
+  /** Turns in flight, steers included — what activeSessionKeys counts. */
+  activeTurns: number
+  /** An unresolved permission request or an unanswered question. */
+  awaitingUser: boolean
+  /** A subagent or background task still running with no turn needed. */
+  backgroundWork: boolean
+}
+
 export interface AgentClientOptions {
   mcpServerName?: string
   // Resolve the attachments a delivery carries (see attachments.ts) into the
@@ -164,6 +181,17 @@ export interface AgentClientOptions {
   // would have to look the key up on every chunk of every stream, which is a
   // scan of the whole registry per event.
   onEvent?: (sessionId: string, event: ChatEvent, sessionKey?: string) => void
+  // Notified whenever a session's activity (see SessionActivity) differs from
+  // what was last reported for it: it opened, a turn started or settled, it
+  // began or stopped waiting on the person, its background work started or
+  // ended, its key moved, or it was dropped. A mutation that leaves the
+  // activity as it was reports nothing. The same reads the key lists below
+  // answer from (awaitingUserSessionKeys, activeSessionKeys,
+  // backgroundWorkSessionKeys, aliveSessionKeys), so a host can keep a view of
+  // them current without asking on a timer. Called synchronously at the
+  // change, inside a try/catch, return value ignored — same isolation as
+  // onEvent.
+  onActivityChange?: (activity: SessionActivity) => void
   // Notified on every LIVE status transition of a context compaction — once
   // per status a compaction entity reaches, with its full merged state, and
   // never during a session/load history replay (a replayed `completed` is old
@@ -794,6 +822,57 @@ function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
 // module-level and fires for every session rather than per client instance.
 let onEventHook: ((sessionId: string, event: ChatEvent, sessionKey?: string) => void) | undefined
 
+// Same shape and reasoning for AgentClientOptions.onActivityChange: the
+// mutations it reports happen in module-level functions too.
+let onActivityChangeHook: ((activity: SessionActivity) => void) | undefined
+
+// What was last reported per live session, so an unchanged activity reports
+// nothing. An entry leaves with its session's final `alive: false` report.
+const reportedActivity = new Map<string, string>()
+
+function readActivity(sessionId: string): SessionActivity {
+  const session = store.sessions.get(sessionId)
+  if (!session) {
+    return { sessionId, alive: false, activeTurns: 0, awaitingUser: false, backgroundWork: false }
+  }
+  const ownAsk = (pending: { sessionId: string }) => pending.sessionId === sessionId
+  const sessionKey = session.selection.sessionKey
+  return {
+    sessionId,
+    ...(sessionKey ? { sessionKey } : {}),
+    alive: true,
+    activeTurns: session.activeTurns,
+    awaitingUser:
+      [...store.pendingPermissions.values()].some(ownAsk) || [...store.pendingElicitations.values()].some(ownAsk),
+    backgroundWork: hasLiveBackgroundWork(session),
+  }
+}
+
+// Called after every mutation of what readActivity reads. A session that was
+// never reported alive has no transition to report when it goes.
+function reportActivity(sessionId: string): void {
+  if (!onActivityChangeHook) {
+    return
+  }
+  const activity = readActivity(sessionId)
+  const previous = reportedActivity.get(sessionId)
+  if (activity.alive) {
+    const fingerprint = JSON.stringify(activity)
+    if (previous === fingerprint) {
+      return
+    }
+    reportedActivity.set(sessionId, fingerprint)
+  } else {
+    if (previous === undefined) {
+      return
+    }
+    reportedActivity.delete(sessionId)
+  }
+  try {
+    onActivityChangeHook(activity)
+  } catch {}
+}
+
 // Same shape and reasoning for AgentClientOptions.onCompaction — handleUpdate,
 // its caller, is module-level too.
 let onCompactionHook: ((sessionId: string, compaction: CompactionState) => void) | undefined
@@ -833,11 +912,13 @@ function putSession(sessionId: string, session: SessionState): void {
     endSubscriptions(previous)
   }
   store.sessions.set(sessionId, session)
+  reportActivity(sessionId)
 }
 
 function dropSession(sessionId: string): void {
   endSubscriptions(store.sessions.get(sessionId))
   store.sessions.delete(sessionId)
+  reportActivity(sessionId)
 }
 
 // The modes and config options a session's log last reported, each undefined
@@ -872,6 +953,8 @@ function emit(sessionId: string, event: ChatEvent): void {
       onEventHook(sessionId, event, session.meta.sessionKey)
     } catch {}
   }
+  // Every ask raised or settled, and every subagent or task state, is emitted.
+  reportActivity(sessionId)
 }
 
 // Turns actually running: prompts of ours and turns the harness started. The
@@ -2488,6 +2571,7 @@ const EXIT_GRACE_MS = 200
 
 export function createAgentClient(options: AgentClientOptions = {}) {
   onEventHook = options.onEvent
+  onActivityChangeHook = options.onActivityChange
   onCompactionHook = options.onCompaction
   onHarnessTurnEndHook = (sessionId, signal) => endHarnessTurns(sessionId, signal)
   const mcpServerName = options.mcpServerName ?? 'local'
@@ -3306,6 +3390,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     session.activeTurns += 1
     session.steerHolds = (session.steerHolds ?? 0) + 1
+    reportActivity(sessionId)
     // A slash-led text is a harness command, and a command is never
     // conversational input to somebody else's turn. It is also the one input
     // a harness that starts turns from steers may run WITHOUT starting a turn
@@ -3360,6 +3445,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   function releaseSteerHold(sessionId: string, session: SessionState): void {
     session.steerHolds = Math.max(0, (session.steerHolds ?? 0) - 1)
     session.activeTurns = Math.max(0, session.activeTurns - 1)
+    reportActivity(sessionId)
     if (session.activeTurns === 0 && store.sessions.get(sessionId) === session) {
       handOver(sessionId, session)
     }
@@ -3387,6 +3473,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     session.harnessTurnCancelled = undefined
     session.harnessTurnConnection = undefined
     session.activeTurns = Math.max(1, session.activeTurns - (count - 1))
+    reportActivity(sessionId)
     if (message || (signal === 'error' && !failure)) {
       emit(sessionId, { kind: 'error', message: message ?? 'The agent reported a system error and stopped.' })
       settleTurn(sessionId, {})
@@ -3541,6 +3628,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // as idle, and a send landing in an await here would dispatch a second
     // prompt over this one.
     session.activeTurns += 1
+    reportActivity(sessionId)
     let connection: AgentConnection
     try {
       connection = await connectionForSession(sessionId)
@@ -4103,6 +4191,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return
     }
     session.activeTurns = Math.max(0, session.activeTurns - 1)
+    reportActivity(sessionId)
     if (runningTurns(session) > 0) {
       return
     }
@@ -4718,6 +4807,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         session.selection = { ...session.selection, sessionKey: to }
         session.meta.sessionKey = to
         moved = true
+        reportActivity(session.meta.id)
       }
       return moved
     },
@@ -6074,6 +6164,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         entry.process?.kill()
       }
       store.connections.clear()
+      const dropped = [...store.sessions.keys()]
       for (const session of store.sessions.values()) {
         releaseNotifications(session)
         endSubscriptions(session)
@@ -6082,6 +6173,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       store.nativeSessions.clear()
       store.pendingPermissions.clear()
       store.pendingElicitations.clear()
+      for (const sessionId of dropped) {
+        reportActivity(sessionId)
+      }
       store.acpTokenPermissions.clear()
       store.acpTokenSession.clear()
       store.lastSessionId = null

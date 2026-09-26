@@ -99,11 +99,11 @@ function ThreadConversation({
 }) {
   const [artifacts, setArtifacts] = useState(initialArtifacts)
   const [openArtifactId, setOpenArtifactId] = useState<string | undefined>(undefined)
-  // The shared session-activity poll, exactly as the group-chat screen reads
-  // it for its thread list — one status vocabulary, one source. The header's
+  // The shared session activity, exactly as the group-chat screen reads it
+  // for its thread list — one status vocabulary, one source. The header's
   // status line and the list row a reader just came from must never disagree
   // about the same session.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(true)
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
   const status = deriveSessionStatus(thread.sessionKey, {
     pending: pendingKeys,
     active: activeKeys,

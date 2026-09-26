@@ -13,8 +13,8 @@
 //     MCP route; /api/acp/attachments/<id> through attachmentResponse, the
 //     function its Nitro route hands every request to (that the route reaches
 //     it is attachment-routing.test.ts's to prove);
-//   - the server-function gates (requireSessionAccess, requireSessionKeyAccess,
-//     requireMemberSessionKeys), run inside `requestHandler` from
+//   - the server-function gates (requireSessionAccess, requireSessionKeyAccess),
+//     run inside `requestHandler` from
 //     @tanstack/react-start/server, which is what installs the request that
 //     their `getRequest()` reads. The `createServerFn` wrappers in acp.ts are
 //     NOT called here: nothing in this repo invokes a compiled server function
@@ -38,6 +38,7 @@ import type { AgentSelection } from 'agent-client/types'
 import { eq, inArray } from 'drizzle-orm'
 
 import { slug } from '@/app/_authed/(server)/_server/types'
+import type { SessionActivitySnapshot } from '@/lib/sse-events'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-session-access-test-'))
 process.env.PGLITE_PATH = join(workdir, 'pglite')
@@ -69,6 +70,7 @@ const { saveAttachment } = await import('@/app/_authed/(agent)/_server/attachmen
 const { ensureAuth } = await import('@opencroft/auth/server')
 const { Route: StreamRoute } = await import('@/app/_authed/(agent)/api/acp.stream')
 const { attachmentResponse } = await import('@/app/_authed/(agent)/_server/attachment-response')
+const activity = await import('@/app/_authed/(agent)/_server/session-activity')
 
 // attachmentResponse waits for server start before its lookup. Starting the real
 // server here would arm every scheduler and keep this process alive, so the
@@ -543,15 +545,54 @@ test('requireSessionKeyAccess: a non-member and an unknown key throw 403, an ano
   })
 })
 
-test('requireMemberSessionKeys: each caller gets their own chats’ keys, an anonymous caller throws 401', async () => {
-  const mine = await inRequest(reqAs(member), () => access.requireMemberSessionKeys())
-  assert.ok('resolved' in mine)
-  assert.deepEqual([...mine.resolved].sort(), await chatKeys(chatA.id))
-  const theirs = await inRequest(reqAs(outsider), () => access.requireMemberSessionKeys())
-  assert.ok('resolved' in theirs)
-  assert.deepEqual([...theirs.resolved].sort(), [foreignKey])
-  assert.deepEqual(
-    await thrownAnswer(await inRequest(reqAnonymous(), () => access.requireMemberSessionKeys())),
-    UNAUTHORIZED,
-  )
+// ── streamOwnSessionActivity ────────────────────────────────────────────
+//
+// The pushed activity every signed-in page's event stream carries. Scoped by
+// listMemberSessionKeys (proved above); what is proved here is that the stream
+// applies it, opens with the current picture, and pushes a change without
+// being asked.
+
+async function framesUntil(
+  frames: SessionActivitySnapshot[],
+  count: number,
+  deadlineMs = 2000,
+): Promise<SessionActivitySnapshot[]> {
+  const deadline = Date.now() + deadlineMs
+  while (frames.length < count && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  return frames
+}
+
+test('streamOwnSessionActivity: each person’s stream opens with their own sessions only, and pushes a change', async () => {
+  const mine: SessionActivitySnapshot[] = []
+  const theirs: SessionActivitySnapshot[] = []
+  const anonymous: SessionActivitySnapshot[] = []
+  const stops = [
+    activity.streamOwnSessionActivity(reqAs(member), (frame) => mine.push(frame)),
+    activity.streamOwnSessionActivity(reqAs(outsider), (frame) => theirs.push(frame)),
+    activity.streamOwnSessionActivity(reqAnonymous(), (frame) => anonymous.push(frame)),
+  ]
+  try {
+    const [opening] = await framesUntil(mine, 1)
+    assert.ok(opening, 'the member’s stream opens with a picture')
+    assert.ok(opening.alive.includes(siblingKey), 'the member’s live thread is in it')
+    assert.ok(!opening.alive.includes(foreignKey), 'another chat’s live thread is not')
+    const [foreignOpening] = await framesUntil(theirs, 1)
+    assert.ok(foreignOpening)
+    assert.deepEqual(foreignOpening.alive, [foreignKey])
+
+    // Stopping the member's thread is pushed to the member, unasked, and to
+    // nobody else: the outsider's picture did not change.
+    await stopLocalSessionProcessImpl(siblingKey)
+    const [, afterStop] = await framesUntil(mine, 2)
+    assert.ok(afterStop, 'the change was pushed')
+    assert.ok(!afterStop.alive.includes(siblingKey))
+    assert.equal(theirs.length, 1, 'an unchanged picture is not sent again')
+    assert.equal(anonymous.length, 0, 'a caller who is not signed in is sent nothing')
+  } finally {
+    for (const stop of stops) {
+      stop()
+    }
+  }
 })

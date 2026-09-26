@@ -121,11 +121,11 @@ export function GroupChatDetailScreen({
   // wears the count so a closed panel still says the chat carries some.
   const [pinsOpen, setPinsOpen] = useState(false)
 
-  // The shared session-activity poll, not a second mechanism invented for this
+  // The shared session activity, not a second mechanism invented for this
   // screen — one status vocabulary, one source. A thread's sessionKey is
-  // exactly the tab key that poll already reports on; nothing about it is
+  // exactly the key that activity already reports on; nothing about it is
   // group-chat-specific.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(threads.length > 0)
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
   const threadStatusById = useMemo(() => {
     const map = new Map<string, ReturnType<typeof deriveSessionStatus>>()
     for (const t of threads) {
@@ -147,8 +147,8 @@ export function GroupChatDetailScreen({
     // this has to act on; `sessionKey` rides on every list entry. Same server
     // fn the sidebar chat list's own Stop process calls, so there is one way
     // to stop a process, not two. Nothing is invalidated afterwards: the row's
-    // state comes from the shared activity poll, which reports the process
-    // gone on its next tick.
+    // state comes from the shared session activity, which the server pushes
+    // when the process goes.
     const sessionKey = threadSessionKey(threads, threadId)
     if (!sessionKey) {
       return

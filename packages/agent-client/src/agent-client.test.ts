@@ -10,6 +10,7 @@ import {
   handleUpdate,
   interceptDraftSessionUpdates,
   type QueueStore,
+  type SessionActivity,
 } from './agent-client'
 import type { AgentConnection } from './connection'
 import { deliveryNoteBlock, isDeliveryNote } from './delivery-note'
@@ -107,6 +108,7 @@ async function setup(
     imagePrompt?: boolean
     loadAttachments?: AgentClientOptions['loadAttachments']
     stopHostTask?: AgentClientOptions['stopHostTask']
+    onActivityChange?: AgentClientOptions['onActivityChange']
   } = {},
 ) {
   counter += 1
@@ -224,6 +226,9 @@ async function setup(
       : {}),
     ...(options.stopHostTask
       ? ({ stopHostTask: options.stopHostTask } satisfies Pick<AgentClientOptions, 'stopHostTask'>)
+      : {}),
+    ...(options.onActivityChange
+      ? ({ onActivityChange: options.onActivityChange } satisfies Pick<AgentClientOptions, 'onActivityChange'>)
       : {}),
   })
   const meta = await client.createSession(selection)
@@ -6158,6 +6163,56 @@ test('a host task is reported as the host’s own and holds the session working 
 
   assert.equal(h.client.upsertAsyncTask('no-such-session', HOST_TASK), false, 'nothing in memory to hold it')
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── onActivityChange ───────────────────────────────────────────────────────
+
+test('onActivityChange reports every activity transition of a session once, and nothing else', async () => {
+  const reports: SessionActivity[] = []
+  const h = await setup('openclaw', { sessionKey: 'agent:activity', onActivityChange: (a) => reports.push(a) })
+  const own = () => reports.filter((a) => a.sessionId === h.sessionId)
+  const state = (activity: Partial<SessionActivity>): SessionActivity => ({
+    sessionId: h.sessionId,
+    sessionKey: 'agent:activity',
+    alive: true,
+    activeTurns: 0,
+    awaitingUser: false,
+    backgroundWork: false,
+    ...activity,
+  })
+
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const permission = raisePermission(h.sessionId)
+  const asked = permissionsIn(h.events).at(-1)
+  assert.ok(asked)
+  h.client.resolvePermission(asked.requestId, 'approved')
+  await permission
+  const question = raiseCodexAsk(h.sessionId)
+  const ask = asksIn(h.events).at(-1)
+  assert.ok(ask)
+  h.client.resolveElicitation(ask.requestId, { target: 'None of the above' })
+  await question
+  h.endTurn()
+  await settle()
+  h.client.upsertAsyncTask(h.sessionId, HOST_TASK)
+  h.client.upsertAsyncTask(h.sessionId, { ...HOST_TASK, summary: 'still going' })
+  h.client.upsertAsyncTask(h.sessionId, { ...HOST_TASK, state: 'completed' })
+  assert.equal(h.client.renameSessionKey('agent:activity', 'agent:activity-moved'), true)
+  await h.client.deleteSession(h.sessionId)
+
+  assert.deepEqual(own(), [
+    state({}),
+    state({ activeTurns: 1 }),
+    state({ activeTurns: 1, awaitingUser: true }),
+    state({ activeTurns: 1 }),
+    state({ activeTurns: 1, awaitingUser: true }),
+    state({ activeTurns: 1 }),
+    state({}),
+    state({ backgroundWork: true }),
+    state({}),
+    state({ sessionKey: 'agent:activity-moved' }),
+    { sessionId: h.sessionId, alive: false, activeTurns: 0, awaitingUser: false, backgroundWork: false },
+  ])
 })
 
 test('stopping a host task goes to the host, and a harness task still goes to the harness', async () => {

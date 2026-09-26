@@ -3,8 +3,8 @@ import { createServerFn } from '@tanstack/react-start'
 import { and, asc, desc, eq, type SQL } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
-import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { type BackgroundTaskList, backgroundTaskList } from '@/app/_authed/(background-tasks)/_server/task-list'
 import type { AuditStatus } from '@/app/_authed/(mcp)/_server/audit'
 import { getSleepModeInfo, setSleepMode as setSleep } from '@/app/_authed/(mcp)/_server/sleep-mode'
@@ -140,12 +140,7 @@ export interface LiveSessionRow {
 export const listLiveSessions = createServerFn({ method: 'GET', strict: { output: false } })
   .middleware([adminOnly])
   .handler(async (): Promise<LiveSessionRow[]> => {
-    const keys = {
-      pending: new Set(agentClient.awaitingUserSessionKeys()),
-      active: new Set(agentClient.activeSessionKeys()),
-      background: backgroundWorkSessionKeys(),
-      alive: new Set(agentClient.aliveSessionKeys()),
-    }
+    const keys = sessionActivitySets()
     const rows: LiveSessionRow[] = []
     for (const meta of agentClient.listSessions()) {
       // The activity sets are keyed by session key; a session without one

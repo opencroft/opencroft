@@ -258,10 +258,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   useHistoryBackClose(isMobile && open, () => setOpen(false))
 
   // The chat's threads waiting on someone -- a permission to grant or a
-  // question to answer -- for the launcher's badge, off the same shared poll
-  // every chat list reads. Polled only while the launcher is what shows: an
-  // open panel carries each thread's own status.
-  const { pendingKeys } = useSessionActivityKeys(!open)
+  // question to answer -- for the launcher's badge, off the same pushed
+  // session activity every chat list reads.
+  const { pendingKeys } = useSessionActivityKeys()
   const waitingCount = countChatThreadKeys(pendingKeys, space)
 
   const beginFloatGesture = (

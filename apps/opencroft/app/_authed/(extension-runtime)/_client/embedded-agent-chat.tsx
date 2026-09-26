@@ -425,10 +425,9 @@ function EmbeddedThread({
   const onThreadStarted = useCallback(() => setThreadTick((tick) => tick + 1), [])
   const openThread = useCallback((threadId: string) => choose({ threadId }), [choose])
 
-  // The same shared session-activity poll (and the same derivation) the
-  // group-chat screens read — one status vocabulary, one source. Enabled only
-  // once there is a thread whose session the status could be about.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys(Boolean(thread))
+  // The same shared session activity (and the same derivation) the
+  // group-chat screens read — one status vocabulary, one source.
+  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
   const status = thread
     ? deriveSessionStatus(thread.sessionKey, {
         pending: pendingKeys,

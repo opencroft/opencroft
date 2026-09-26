@@ -37,13 +37,8 @@ import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance
 import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
 import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { refusalAsData, type SessionOpenRefusal } from '@/app/_authed/(agent)/_shared/session-open-refusal'
-import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
-import {
-  requireMemberSessionKeys,
-  requireSessionAccess,
-  requireSessionKeyAccess,
-} from '@/app/_authed/(group-chats)/_server/session-access'
+import { requireSessionAccess, requireSessionKeyAccess } from '@/app/_authed/(group-chats)/_server/session-access'
 
 // Opens the session under the agent the thread runs, not the one the request
 // names: a thread's agent is fixed, and taking it from the wire would let a
@@ -250,30 +245,6 @@ export const editTurnLocal = createServerFn({ method: 'POST', strict: { output: 
     const tabKey = await requireSessionAccess(data.sessionId)
     return editTurnLocalImpl({ ...data, tabKey })
   })
-
-// Tab keys of chat sessions currently blocked on someone (an unresolved
-// permission request or an unanswered question), tab keys with a turn actively
-// running, tab keys with live background work (a subagent or task still
-// running — Working even with no turn open), and tab keys with a live agent process at
-// all (alive is a superset of the others — see aliveSessionKeys) — polled
-// once, from a shared module every chat list surface reads
-// (use-session-activity.ts), to set each chat's process-visibility indicator:
-// warning (pending), primary (active/background), success (alive but
-// neither), or none (not in `alive`). Only the caller's own threads: a key
-// names its chat and thread, so the whole engine's list would describe every
-// conversation on the instance.
-export const listSessionActivity = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<{ pending: string[]; active: string[]; background: string[]; alive: string[] }> => {
-    const mine = await requireMemberSessionKeys()
-    const own = (keys: Iterable<string>) => [...keys].filter((key) => mine.has(key))
-    return {
-      pending: own(agentClient.awaitingUserSessionKeys()),
-      active: own(agentClient.activeSessionKeys()),
-      background: own(backgroundWorkSessionKeys()),
-      alive: own(agentClient.aliveSessionKeys()),
-    }
-  },
-)
 
 // Stop a session's agent process without closing the chat: ends the ACP
 // session (gracefully, or kills the underlying subprocess if nothing else

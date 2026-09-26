@@ -38,6 +38,18 @@ export interface DockerContainerSnapshot {
   running: boolean
 }
 
+// The session keys of the receiving person's own chat threads, by activity:
+// waiting on someone (pending), a turn running (active), background work
+// running (background), a live agent process at all (alive — a superset of the
+// others). Always the whole picture, never a delta, so a missed frame cannot
+// leave a reader out of step.
+export interface SessionActivitySnapshot {
+  pending: string[]
+  active: string[]
+  background: string[]
+  alive: string[]
+}
+
 // A stream chunk's shape is owned by whichever node produced it (text, audio,
 // or anything else JSON-safe), not by core — this event just carries it
 // verbatim from the server stream registry to the client stream registry.
@@ -61,6 +73,7 @@ export type SSEEvent = BaseEvent &
     | { type: 'docker_ps_updated'; dockerNodeId: string; containers: DockerContainerSnapshot[] }
     | { type: 'stream_chunk'; nodeId: string; handleId: string; chunk: StreamChunkPayload }
     | { type: 'node_data_updated'; nodeId: string; data: Record<string, unknown> }
+    | { type: 'session_activity'; activity: SessionActivitySnapshot }
   )
 
 /** Comment anchored to a node, as stored on the client side. One per node. */
