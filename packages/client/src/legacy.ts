@@ -307,6 +307,8 @@ export interface ChatDockProps {
   title: string
   /** The chat's display name, used only if it has to be created. */
   chatName?: string
+  /** Whether the closed chat shows the corner launcher (default true); off when the surface opens it with `useChatDock`. */
+  launcher?: boolean
   /** The surface the chat sits beside, floats over, or covers. */
   children: ReactNode
 }
@@ -315,6 +317,18 @@ export interface ChatDockProps {
  * docks plus the floating window, the mobile cover and its Back behaviour.
  */
 export declare const ChatDock: FC<ChatDockProps>
+
+export interface ChatDockControl {
+  /** Whether the chat panel is open. */
+  open: boolean
+  setOpen: (open: boolean) => void
+}
+/**
+ * The ChatDock this component sits in, for a surface's own open/close control
+ * (e.g. in `AppActions`) in place of the corner launcher. Throws outside a
+ * ChatDock. The open state is the reader's, shared by every surface.
+ */
+export declare const useChatDock: () => ChatDockControl
 
 // ── Selection scope ─────────────────────────────────────────────────────────
 // What the reader has selected on the surface the chat sits beside, and
