@@ -9,6 +9,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
 } from 'react'
 
 import { appPathOf, resolveAppHref } from '@/app/_authed/(apps)/_lib/app-routes'
@@ -42,15 +43,23 @@ export interface AppLocation {
   search: URLSearchParams
 }
 
-/** Where the App is: re-renders the caller on every move within the App. */
+/**
+ * Where the App is: re-renders the caller on every move within the App. While
+ * the host leaves the App it is still mounted for a render or two, at an
+ * address that is none of its pages; it then keeps reading the page it was on,
+ * so nothing in it takes that address for a page and answers it.
+ */
 export function useAppLocation(): AppLocation {
   const base = useAppBase('useAppLocation')
   const pathname = useLocation({ select: (location) => location.pathname })
   const searchStr = useLocation({ select: (location) => location.searchStr })
-  return useMemo(
-    () => ({ path: appPathOf(pathname, base), search: new URLSearchParams(searchStr) }),
-    [base, pathname, searchStr],
-  )
+  const path = appPathOf(pathname, base)
+  const last = useRef<{ path: string; searchStr: string }>({ path: path ?? '/', searchStr })
+  if (path !== null) {
+    last.current = { path, searchStr }
+  }
+  const here = last.current
+  return useMemo(() => ({ path: here.path, search: new URLSearchParams(here.searchStr) }), [here.path, here.searchStr])
 }
 
 /**
@@ -60,8 +69,8 @@ export function useAppLocation(): AppLocation {
  */
 export function useAppHref(): (to: string) => string {
   const base = useAppBase('useAppHref')
-  const pathname = useLocation({ select: (location) => location.pathname })
-  return useCallback((to: string) => resolveAppHref(base, appPathOf(pathname, base), to), [base, pathname])
+  const { path } = useAppLocation()
+  return useCallback((to: string) => resolveAppHref(base, path, to), [base, path])
 }
 
 export interface AppNavigateOptions {
@@ -72,15 +81,25 @@ export interface AppNavigateOptions {
 /**
  * Moves the App to `to` (see useAppHref): a history entry, so back and forward
  * walk the App's pages. The App stays mounted and nothing scrolls.
+ *
+ * Does nothing once the host has left the App's addresses: the App is on its
+ * way out, and a move it made then — a default page, a tidied query — would
+ * pull the reader back into it.
  */
 export function useAppNavigate(): (to: string, options?: AppNavigateOptions) => void {
   const router = useRouter()
+  const base = useAppBase('useAppNavigate')
   const href = useAppHref()
   return useCallback(
     (to: string, options?: AppNavigateOptions) => {
+      // The address the browser is at now: updated as history changes, where
+      // the rendered location may still be the one being left.
+      if (appPathOf(router.latestLocation.pathname, base) === null) {
+        return
+      }
       router.navigate({ href: href(to), replace: options?.replace, resetScroll: false })
     },
-    [router, href],
+    [router, base, href],
   )
 }
 

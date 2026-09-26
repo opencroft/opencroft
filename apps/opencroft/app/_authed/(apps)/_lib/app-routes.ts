@@ -8,9 +8,17 @@ export function appBasePath(pathname: string): string | null {
   return pathname.match(APP_BASE)?.[0] ?? null
 }
 
-/** The App-relative path of `pathname` under `base`: always starts with `/`. */
-export function appPathOf(pathname: string, base: string): string {
-  return pathname.slice(base.length) || '/'
+/**
+ * The App-relative path of `pathname` under `base`, always starting with `/`;
+ * null when `pathname` is not one of the App's addresses — the host is
+ * leaving the App (another App, the graph, Back out of it) while the App is
+ * still mounted.
+ */
+export function appPathOf(pathname: string, base: string): string | null {
+  if (pathname === base) {
+    return '/'
+  }
+  return pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : null
 }
 
 /**

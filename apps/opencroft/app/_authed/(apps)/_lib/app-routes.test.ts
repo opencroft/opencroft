@@ -15,6 +15,15 @@ test('the App path is what follows the base, and the bare address is the root', 
   assert.equal(appPathOf('/space/s/app/a', '/space/s/app/a'), '/')
 })
 
+test('an address outside the App has no App path', () => {
+  // Another App, including one whose slug starts with this one's.
+  assert.equal(appPathOf('/space/s/app/design-kit', '/space/s/app/demo'), null)
+  assert.equal(appPathOf('/space/s/app/demo-2/tasks', '/space/s/app/demo'), null)
+  // The graph and other host pages.
+  assert.equal(appPathOf('/space/s', '/space/s/app/demo'), null)
+  assert.equal(appPathOf('/', '/space/s/app/demo'), null)
+})
+
 test('an App path is addressed under the instance', () => {
   assert.equal(
     resolveAppHref('/space/s/app/a', '/inbox', '/item/K-1?tab=activity'),
