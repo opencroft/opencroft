@@ -109,11 +109,23 @@ export type MarkdownReferenceTone = 'neutral' | 'info' | 'success' | 'warning' |
 
 /** What a recognised identifier's chip shows. */
 export interface MarkdownReference {
+  /** The short name -- a key, a node's name. Never truncated. */
   label: string
-  /** Lucide icon name. */
-  icon?: string
+  /** Text after the label, e.g. a summary. The first thing to truncate. */
+  detail?: string
+  /**
+   * A lucide icon name, drawn at the text's size; or your own mark -- your
+   * type glyph -- drawn exactly as given.
+   */
+  icon?: string | ReactNode
+  /**
+   * The state as you draw it elsewhere -- your status badge -- shown first,
+   * on the left, and truncated only once `detail` has nothing left.
+   */
+  state?: ReactNode
+  /** A state dot after the label, for a state with no drawing of its own. */
   tone?: MarkdownReferenceTone
-  /** The state in words, read out beside the dot. */
+  /** The state in words, read out by assistive technology. */
   stateLabel?: string
   /** Where pressing the chip goes. A same-origin address navigates inside the app. */
   href?: string

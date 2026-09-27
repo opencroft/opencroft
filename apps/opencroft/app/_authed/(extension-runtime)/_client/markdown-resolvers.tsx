@@ -7,7 +7,7 @@ import { ReferenceChip } from 'agent-chat/components/reference-chip'
 import { useEffect, useSyncExternalStore } from 'react'
 
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
-import { ReferenceStore } from '@/app/_authed/(extension-runtime)/_client/markdown-reference-store'
+import { ReferenceStore, referenceIcon } from '@/app/_authed/(extension-runtime)/_client/markdown-reference-store'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 
@@ -51,14 +51,15 @@ function ResolvedReference({ kind, id, trailing }: InlineReference) {
   }, [kind, id, trailing])
 
   const shown = referenceStore.shown(kind, id, entry)
-  const Icon = shown.icon ? resolveIcon(shown.icon) : null
   const menu = referenceStore.resolver(kind)?.menu?.(id, entry?.reference ?? null) ?? []
   const { href } = shown
   const open = shown.open ?? (href && isSameOrigin(href) ? () => router.history.push(href) : undefined)
   return (
     <ReferenceChip
       label={shown.label}
-      icon={Icon ? <Icon /> : undefined}
+      detail={shown.detail}
+      state={shown.state}
+      icon={referenceIcon(shown.icon)}
       tone={shown.tone}
       stateLabel={shown.stateLabel}
       status={entry?.status ?? 'pending'}

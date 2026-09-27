@@ -39,7 +39,8 @@ export const terminalResolver: MarkdownResolver = {
           target,
           ref
             ? {
-                label: ref.detail ? `${ref.name} · ${ref.detail}` : ref.name,
+                label: ref.name,
+                detail: ref.detail ? `· ${ref.detail}` : undefined,
                 icon: ref.icon ?? 'SquareTerminal',
                 href: spaceHref(ref.spaceSlug),
               }
@@ -77,13 +78,22 @@ export const linkResolver: MarkdownResolver = {
             return [url, null]
           }
           const page = app[3] ? decodeURIComponent(app[3]) : ''
-          return [url, { label: page ? `${ref.name} · ${page}` : ref.name, icon: ref.icon ?? 'AppWindow', href: url }]
+          const detail = page ? `· ${page}` : undefined
+          return [url, { label: ref.name, detail, icon: ref.icon ?? 'AppWindow', href: url }]
         }
         const space = SPACE_PATH.exec(pathname)
         if (space) {
           return [url, { label: decodeURIComponent(space[1]), icon: 'LayoutGrid', href: url }]
         }
-        return [url, { label: rest, icon: 'Link', href: url }]
+        // The first path segment names it; the rest may be long, so it is the
+        // part that truncates.
+        const cut = rest.slice(1).search(/[/?#]/) + 1
+        return [
+          url,
+          cut > 0
+            ? { label: rest.slice(0, cut), detail: rest.slice(cut), icon: 'Link', href: url }
+            : { label: rest, icon: 'Link', href: url },
+        ]
       }),
     )
   },

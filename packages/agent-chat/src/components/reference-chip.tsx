@@ -15,14 +15,25 @@ export interface ReferenceChipMenuItem {
 
 export interface ReferenceChipProps {
   /**
-   * What the chip names. Before anything is known about the identifier this
-   * is the identifier itself, so the chip reads correctly from the first
-   * paint and only gains detail afterwards.
+   * What the chip names -- a key, a name. Never truncated, so keep it short
+   * and put anything long in `detail`. Before anything is known about the
+   * identifier this is the identifier itself, so the chip reads correctly
+   * from the first paint and only gains detail afterwards.
    */
   label: string
-  /** Leading mark, sized by the chip. */
+  /** Text after the label -- a task's summary. The first thing to truncate. */
+  detail?: string
+  /**
+   * The thing's state as its owner draws it -- a task's status badge --
+   * first, on the left. Truncated only once `detail` has nothing left.
+   */
+  state?: ReactNode
+  /**
+   * Leading mark. A lucide icon handed over bare is sized by the chip; a
+   * composed mark (an owner's own type glyph) is drawn exactly as given.
+   */
   icon?: ReactNode
-  /** A state dot after the label -- a task's status, a terminal's liveness. */
+  /** A state dot after the label, for a state with no drawing of its own. */
   tone?: ReferenceChipTone
   /** The state in words, for assistive technology and beside the dot. */
   stateLabel?: string
@@ -49,7 +60,7 @@ export const REFERENCE_CHIP_CLASS =
   'inline-flex max-w-full items-baseline gap-1 rounded-md border border-border/70 bg-muted/60 px-1 py-px align-baseline text-[0.92em] leading-snug font-medium text-foreground no-underline'
 export const REFERENCE_CHIP_UNKNOWN_CLASS = 'border-dashed bg-transparent font-normal text-muted-foreground'
 export const REFERENCE_CHIP_ICON_CLASS =
-  'inline-flex size-[1em] shrink-0 self-center items-center justify-center text-muted-foreground [&_svg]:size-full'
+  'inline-flex min-h-[1em] min-w-[1em] shrink-0 self-center items-center justify-center text-muted-foreground [&>svg]:size-[1em]'
 
 const TONE_CLASS: Record<ReferenceChipTone, string> = {
   neutral: 'bg-muted-foreground',
@@ -102,6 +113,8 @@ const keepToChip = (event: SyntheticEvent) => event.stopPropagation()
 // host's.
 export function ReferenceChip({
   label,
+  detail,
+  state,
   icon,
   tone,
   stateLabel,
@@ -120,16 +133,22 @@ export function ReferenceChip({
   )
   const content = (
     <>
+      {/* Shrinks, but at a thousandth of the detail's rate, so it gives way
+          only once the detail is gone. */}
+      {state && !unknown ? <span className='inline-flex min-w-0 shrink self-center'>{state}</span> : null}
       {icon ? (
         <span className={REFERENCE_CHIP_ICON_CLASS} aria-hidden='true'>
           {icon}
         </span>
       ) : null}
+      <span className='shrink-0 whitespace-nowrap'>{label}</span>
       {/* One line with an ellipsis, like `truncate`, but through a line clamp
           over wrappable text: a container that sizes itself to the narrowest
           its content allows (a transcript does) must be able to shrink the
-          chip, and nowrap text would make the whole label unbreakable. */}
-      <span className='min-w-0 line-clamp-1 [overflow-wrap:anywhere]'>{label}</span>
+          chip, and nowrap text would make the whole detail unbreakable. */}
+      {detail ? (
+        <span className='min-w-0 shrink-[1000] line-clamp-1 [overflow-wrap:anywhere]'>{detail}</span>
+      ) : null}
       {tone && !unknown ? (
         <span className={cn('size-1.5 shrink-0 self-center rounded-full', TONE_CLASS[tone])} aria-hidden='true' />
       ) : null}

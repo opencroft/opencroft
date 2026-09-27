@@ -6,6 +6,7 @@ import {
 } from 'agent-chat/components/markdown-references'
 import {
   REFERENCE_CHIP_CLASS,
+  REFERENCE_CHIP_ICON_CLASS,
   REFERENCE_CHIP_UNKNOWN_CLASS,
   referenceChipToneClass,
 } from 'agent-chat/components/reference-chip'
@@ -23,6 +24,15 @@ import { cn } from '@/lib/utils'
  * answers. They are refreshed when the resolver says they changed, and only
  * a resolver with no way to say so is asked again, after a minute.
  */
+
+/** A reference's mark as an element: a lucide name resolved, an owner's own mark as it is. */
+export function referenceIcon(icon: MarkdownReference['icon']): ReactNode {
+  if (typeof icon !== 'string') {
+    return icon
+  }
+  const Icon = resolveIcon(icon)
+  return <Icon />
+}
 
 /** How long an answer lasts from a resolver with no `subscribe`. */
 const UNWATCHED_TTL_MS = 60_000
@@ -339,14 +349,16 @@ export class ReferenceStore {
   private decorate({ kind, id }: InlineReference) {
     const entry = this.get(kind, id)
     const shown = this.shown(kind, id, entry)
-    const Icon = shown.icon ? resolveIcon(shown.icon) : null
+    const icon = referenceIcon(shown.icon)
     return {
       className: cn(
         REFERENCE_CHIP_CLASS,
         entry?.status === 'unknown' && REFERENCE_CHIP_UNKNOWN_CLASS,
         shown.tone && entry?.status !== 'unknown' && referenceChipToneClass(shown.tone),
       ),
-      icon: Icon ? <Icon /> : undefined,
+      // Sized as the chip sizes its mark: the editor's widget has no chip
+      // around it to do that.
+      icon: icon ? <span className={cn(REFERENCE_CHIP_ICON_CLASS, 'mr-1 align-[-0.125em]')}>{icon}</span> : undefined,
     }
   }
 
