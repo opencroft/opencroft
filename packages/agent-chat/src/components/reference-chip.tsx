@@ -87,7 +87,7 @@ const keepToChip = (event: SyntheticEvent) => event.stopPropagation()
 //
 // INLINE, AT THE TEXT'S OWN SIZE. It sits inside a sentence, so it takes the
 // sentence's size and baseline rather than a control's, and a long name
-// truncates rather than widening the line.
+// truncates rather than widening the line -- or whatever holds the line.
 //
 // ONE PRESS OPENS. A real link when there is somewhere to go, a button when
 // the host does something else; with neither it is only a label. Anything
@@ -125,7 +125,11 @@ export function ReferenceChip({
           {icon}
         </span>
       ) : null}
-      <span className='min-w-0 truncate'>{label}</span>
+      {/* One line with an ellipsis, like `truncate`, but through a line clamp
+          over wrappable text: a container that sizes itself to the narrowest
+          its content allows (a transcript does) must be able to shrink the
+          chip, and nowrap text would make the whole label unbreakable. */}
+      <span className='min-w-0 line-clamp-1 [overflow-wrap:anywhere]'>{label}</span>
       {tone && !unknown ? (
         <span className={cn('size-1.5 shrink-0 self-center rounded-full', TONE_CLASS[tone])} aria-hidden='true' />
       ) : null}
