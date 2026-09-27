@@ -47,6 +47,32 @@ test('terminal targets in their real shapes are recognised', () => {
   ])
 })
 
+test('a node with a UUID id is a terminal target too', () => {
+  assert.deepEqual(terminals('open a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal please'), [
+    'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal',
+  ])
+  assert.deepEqual(terminals('(c0c1dd53-1c65-4abc-a0f5-c6d3f2e4203a/route-db).'), [
+    'c0c1dd53-1c65-4abc-a0f5-c6d3f2e4203a/route-db',
+  ])
+  assert.deepEqual(terminals('DD4291D4-494A-477F-BD50-2B77F5390D04/worktree-terminal-myrepo-task'), [
+    'DD4291D4-494A-477F-BD50-2B77F5390D04/worktree-terminal-myrepo-task',
+  ])
+})
+
+test('a UUID is not a terminal target without a terminal handle, inside a path, or cut short', () => {
+  for (const text of [
+    'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+    'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/files',
+    '/srv/a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal',
+    'https://example.com/a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal',
+    'x-a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal',
+    'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal/logs',
+    'a1b2c3d4-5e6f-4a7b-8c9d/terminal',
+  ]) {
+    assert.deepEqual(terminals(text), [], text)
+  }
+})
+
 // Ordinary prose and code-adjacent text that has to stay text: file paths,
 // URL paths, and identifiers that look like keys.
 const FALSE_POSITIVES = [
@@ -57,6 +83,7 @@ const FALSE_POSITIVES = [
   'x.localhost_ab12/terminal and -localhost_ab12/terminal are not starts.',
   'Fetch https://example.com/terminal and www.example.com/route-1 elsewhere.',
   'Visit https://example.com/localhost_ab12/terminal.',
+  'A UUID path /srv/a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d/terminal and a bare a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d.',
   'UTF-8, SHA-256, GPT-4 and ISO-8601.',
   `A labelled [link](${ORIGIN}/space/x) keeps its label.`,
   'An external bare link https://elsewhere.test/space/x stays a link.',
