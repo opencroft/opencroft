@@ -23,6 +23,7 @@
 // for "you cannot have this", and this is the second line of defence, not the
 // thing holding that property up.
 
+import type { ReactNode } from 'react'
 import { Button } from 'ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 
@@ -34,20 +35,25 @@ import {
 
 const GENERIC = 'Something went wrong loading this. Try again.'
 
-function Shell({ message }: { message: string }) {
+function Shell({ message, action }: { message: string; action?: ReactNode }) {
   return (
     <Empty className='py-12'>
       <EmptyHeader>
         <EmptyTitle>Not available</EmptyTitle>
         <EmptyDescription>{message}</EmptyDescription>
       </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
     </Empty>
   )
 }
 
-/** A refusal the loader already identified. */
-export function GroupChatRefusal({ code }: { code: GroupChatAccessFailure }) {
-  return <Shell message={groupChatAccessMessageForCode(code)} />
+/**
+ * A refusal the loader already identified. `action` is the way out a page
+ * offers -- a link to where the reader can go instead; a surface with a Back
+ * of its own passes none.
+ */
+export function GroupChatRefusal({ code, action }: { code: GroupChatAccessFailure; action?: ReactNode }) {
+  return <Shell message={groupChatAccessMessageForCode(code)} action={action} />
 }
 
 /** Anything that reached an error boundary — by now, only the unexpected. */
@@ -57,26 +63,40 @@ export function GroupChatErrorState({ error }: { error: unknown }) {
 
 // A thread's own two outcomes, beside the refusal above. Both surfaces that
 // open a thread by id -- the thread route and the embedded chat -- render
-// these, so a reader is told the same thing wherever they were reading.
+// these, so a reader is told the same thing wherever they were reading. Each
+// takes the same optional `action` as the refusal: the thread route passes its
+// link back to the thread list, the dock passes none because its header's
+// Back already leads there.
 
 /**
  * The chat holds no such thread: it was deleted. Only ever said to a member
  * of that chat -- the lookup behind it checks membership first -- which is
  * what makes it safe to say at all.
  */
-export function GroupChatThreadGone({ className }: { className?: string }) {
+export function GroupChatThreadGone({ action, className }: { action?: ReactNode; className?: string }) {
   return (
     <Empty className={className}>
       <EmptyHeader>
         <EmptyTitle>This thread was deleted</EmptyTitle>
-        <EmptyDescription>It is no longer in this chat. Go back to the chat to open another one.</EmptyDescription>
+        <EmptyDescription>
+          It is no longer in this chat. Go back to the thread list to open another one.
+        </EmptyDescription>
       </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
     </Empty>
   )
 }
 
 /** Loading the thread failed for a reason that is not an answer about it. */
-export function GroupChatThreadLoadFailed({ onRetry, className }: { onRetry: () => void; className?: string }) {
+export function GroupChatThreadLoadFailed({
+  onRetry,
+  action,
+  className,
+}: {
+  onRetry: () => void
+  action?: ReactNode
+  className?: string
+}) {
   return (
     <Empty className={className}>
       <EmptyHeader>
@@ -84,9 +104,12 @@ export function GroupChatThreadLoadFailed({ onRetry, className }: { onRetry: () 
         <EmptyDescription>Something went wrong loading it.</EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
-        <Button size='sm' variant='outline' onClick={onRetry}>
-          Try again
-        </Button>
+        <div className='flex flex-wrap justify-center gap-2'>
+          <Button size='sm' variant='outline' onClick={onRetry}>
+            Try again
+          </Button>
+          {action}
+        </div>
       </EmptyContent>
     </Empty>
   )

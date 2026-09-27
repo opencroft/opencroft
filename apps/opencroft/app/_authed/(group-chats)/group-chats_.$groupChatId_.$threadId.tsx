@@ -1,5 +1,6 @@
-import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { useCallback, useRef, useState } from 'react'
+import { Button } from 'ui/button'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
@@ -78,7 +79,39 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
 // embedded chat shows, and Try again reruns the loader.
 function ThreadLoadFailed() {
   const router = useRouter()
-  return <GroupChatThreadLoadFailed className='py-12' onRetry={() => void router.invalidate()} />
+  const { groupChatId } = Route.useParams()
+  return (
+    <GroupChatThreadLoadFailed
+      className='py-12'
+      onRetry={() => void router.invalidate()}
+      action={<BackToThreadList groupChatId={groupChatId} />}
+    />
+  )
+}
+
+// The page's way out of a thread it cannot show, as the dock's Back is the
+// dock's: to the chat's thread list, where another thread can be opened.
+function BackToThreadList({ groupChatId }: { groupChatId: string }) {
+  return (
+    <Button
+      size='sm'
+      variant='outline'
+      nativeButton={false}
+      render={<Link to='/group-chats/$groupChatId' params={{ groupChatId }} />}
+    >
+      Back to the thread list
+    </Button>
+  )
+}
+
+// A reader refused this chat would be refused its thread list too, so the way
+// out of a refusal is the list of chats they do have.
+function BackToChats() {
+  return (
+    <Button size='sm' variant='outline' nativeButton={false} render={<Link to='/group-chats' />}>
+      Back to your chats
+    </Button>
+  )
 }
 
 function GroupChatThreadPage() {
@@ -99,14 +132,14 @@ function GroupChatThreadPage() {
   )
 
   if (data.refused) {
-    return <GroupChatRefusal code={data.code} />
+    return <GroupChatRefusal code={data.code} action={<BackToChats />} />
   }
   // Not a member: the same collapsed refusal as a chat the reader cannot have.
   if (data.found === 'refused') {
-    return <GroupChatRefusal code='not-found' />
+    return <GroupChatRefusal code='not-found' action={<BackToChats />} />
   }
   if (data.found === 'gone') {
-    return <GroupChatThreadGone className='py-12' />
+    return <GroupChatThreadGone className='py-12' action={<BackToThreadList groupChatId={groupChatId} />} />
   }
   // The session lives in its own component so its hooks are never behind the
   // refusal branch above — a hook after an early return is a different hook
