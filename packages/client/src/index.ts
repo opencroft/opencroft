@@ -77,6 +77,100 @@ export interface TerminalRefProps {
 /** A terminal target shown as its node's name plus which of its terminals it is. */
 export declare const TerminalRef: FC<TerminalRefProps>
 
+/** A graph reference as `NodeRef` / `TerminalRef` show it. */
+export interface GraphRefDescription {
+  kind: 'node' | 'app'
+  /** The name its owner gave it, else its type's name. */
+  name: string
+  /** For a terminal target: which of the node's terminals, when that needs saying. */
+  detail?: string
+  /** Lucide icon name of its type. */
+  icon?: string
+  accent?: string
+  /** The node type's name, or `App`. */
+  typeName: string
+  spaceSlug: string
+}
+
+/**
+ * The data behind `NodeRef` and `TerminalRef`: node ids, App instance ids or
+ * `<space>.<app-slug>` addresses, and "node-id/handle-id" terminal targets,
+ * each described across every space, or null when nothing answers to it.
+ * Everything asked for in the same tick, by any caller, is one request, and
+ * answers are shared with those components.
+ */
+export declare const describeGraphRefs: (refs: string[]) => Promise<Record<string, GraphRefDescription | null>>
+
+/** Called whenever the graph changed, so a description read before may be stale. */
+export declare const subscribeGraphRefs: (listener: () => void) => () => void
+
+/** A reference's state, shown as a dot beside its name. */
+export type MarkdownReferenceTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
+
+/** What a recognised identifier's chip shows. */
+export interface MarkdownReference {
+  label: string
+  /** Lucide icon name. */
+  icon?: string
+  tone?: MarkdownReferenceTone
+  /** The state in words, read out beside the dot. */
+  stateLabel?: string
+  /** Where pressing the chip goes. A same-origin address navigates inside the app. */
+  href?: string
+  /** What pressing the chip does, for a target that is not a page. */
+  open?: () => void
+}
+
+export interface MarkdownReferenceMenuItem {
+  label: string
+  /** Lucide icon name. */
+  icon?: string
+  onSelect: () => void
+}
+
+/**
+ * Recognises one kind of identifier in markdown and says what it is. Declared
+ * under `provides.markdownResolvers` of `defineExtension`; every `Markdown`
+ * and `MarkdownEditor` the host renders then uses it, with nothing to wire.
+ *
+ * Keep the pattern tight: whatever it claims becomes a chip at once, before
+ * `resolve` has answered, and one nothing answers to stays a muted chip.
+ * Code, inline code and links with a label of their own are never claimed.
+ */
+export interface MarkdownResolver {
+  /** Unique across extensions, e.g. `myext.ticket`. */
+  id: string
+  /**
+   * `text` (default): prose. `url`: a bare link, one whose text is its own
+   * address, tested against the whole address.
+   */
+  match?: 'text' | 'url'
+  /**
+   * The identifier's shape. Folded into one expression with every other
+   * resolver's: flags are dropped and named groups are not allowed. `null`
+   * claims nothing (yet).
+   */
+  pattern: RegExp | string | null
+  /** For a pattern that changes: call `set` with each new one; return the unsubscribe. */
+  watchPattern?: (set: (pattern: RegExp | string | null) => void) => () => void
+  /** What the chip shows from the identifier alone, before `resolve` answers. */
+  preview?: (id: string) => Partial<MarkdownReference>
+  /**
+   * Everything on screen that this resolver claimed and is not already known,
+   * batched: one call per tick, each identifier once. Null, or a missing key,
+   * means nothing answers to it.
+   */
+  resolve: (ids: string[]) => Promise<Record<string, MarkdownReference | null>>
+  /**
+   * Call `invalidate` when what `resolve` answered may have changed -- all of
+   * it, or the listed identifiers. Answers are otherwise kept for the session;
+   * without this they are asked again after a minute.
+   */
+  subscribe?: (invalidate: (ids?: string[]) => void) => () => void
+  /** The chip's context menu in rendered markdown; none when empty. */
+  menu?: (id: string, reference: MarkdownReference | null) => MarkdownReferenceMenuItem[]
+}
+
 export interface CodeBlockProps {
   /** The code to render, exactly as it was written. */
   code: string

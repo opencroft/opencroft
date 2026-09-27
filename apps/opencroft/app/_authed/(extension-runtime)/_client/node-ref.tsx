@@ -2,8 +2,8 @@
 
 import { AppWindow, Box, type LucideIcon } from 'lucide-react'
 
-import { type GraphRefState, useGraphRef } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
-import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { describeGraphRef, type GraphRefState, useGraphRef } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
+import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { cn } from '@/lib/utils'
 
 export interface NodeRefProps {
@@ -32,17 +32,12 @@ export function refDisplay(ref: GraphRefState, id: string): RefDisplay {
       known: false,
     }
   }
-  const { info } = ref
-  if (info.kind === 'app') {
-    return { icon: AppWindow, name: info.name, hint: `App · ${info.spaceSlug} · ${id}`, known: true }
-  }
-  const type = extensionRegistry.resolveNode(info.typeId)
+  const described = describeGraphRef(ref.info)
   return {
-    icon: type?.icon ?? Box,
-    accent: type?.accent,
-    // The same fallback the canvas outline uses for an unnamed node.
-    name: info.name || type?.name || info.typeId,
-    hint: `${type?.name ?? info.typeId} · ${info.spaceSlug} · ${id}`,
+    icon: described.kind === 'app' ? AppWindow : resolveIcon(described.icon),
+    accent: described.accent,
+    name: described.name,
+    hint: `${described.typeName} · ${described.spaceSlug} · ${id}`,
     known: true,
   }
 }

@@ -1,0 +1,178 @@
+'use client'
+
+import type { MouseEvent, ReactNode, SyntheticEvent } from 'react'
+
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/components/ui/context-menu'
+import { cn } from 'ui/lib/utils'
+
+export type ReferenceChipTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
+
+export interface ReferenceChipMenuItem {
+  label: string
+  icon?: ReactNode
+  onSelect: () => void
+}
+
+export interface ReferenceChipProps {
+  /**
+   * What the chip names. Before anything is known about the identifier this
+   * is the identifier itself, so the chip reads correctly from the first
+   * paint and only gains detail afterwards.
+   */
+  label: string
+  /** Leading mark, sized by the chip. */
+  icon?: ReactNode
+  /** A state dot after the label -- a task's status, a terminal's liveness. */
+  tone?: ReferenceChipTone
+  /** The state in words, for assistive technology and beside the dot. */
+  stateLabel?: string
+  /**
+   * `pending`: nothing is known yet. `resolved`: the label and state are the
+   * thing's own. `unknown`: it was looked up and nothing answers to it -- the
+   * chip stays, muted, rather than turning back into text and moving the line.
+   */
+  status?: 'pending' | 'resolved' | 'unknown'
+  /** Where pressing it goes. The chip is then a real link. */
+  href?: string
+  /** What pressing it does, for a target that is not a page. */
+  onOpen?: () => void
+  /** Offered on right-click and long press; no menu when empty. */
+  menu?: ReferenceChipMenuItem[]
+  className?: string
+}
+
+// The chip's own look, as classes, for a surface that cannot render the
+// component but has to draw the same chip: a text editor styles the identifier
+// in place with these, so the chip being typed and the chip being read are
+// one look.
+export const REFERENCE_CHIP_CLASS =
+  'inline-flex max-w-full items-baseline gap-1 rounded-md border border-border/70 bg-muted/60 px-1 py-px align-baseline text-[0.92em] leading-snug font-medium text-foreground no-underline'
+export const REFERENCE_CHIP_UNKNOWN_CLASS = 'border-dashed bg-transparent font-normal text-muted-foreground'
+export const REFERENCE_CHIP_ICON_CLASS =
+  'inline-flex size-[1em] shrink-0 self-center items-center justify-center text-muted-foreground [&_svg]:size-full'
+
+const TONE_CLASS: Record<ReferenceChipTone, string> = {
+  neutral: 'bg-muted-foreground',
+  info: 'bg-sky-500',
+  success: 'bg-emerald-500',
+  warning: 'bg-amber-500',
+  danger: 'bg-destructive',
+  muted: 'bg-muted-foreground/40',
+}
+
+// The same dot, drawn after the text by the element itself, for a surface
+// that styles text in place and has no element of its own to put a dot in.
+const TONE_AFTER_CLASS: Record<ReferenceChipTone, string> = {
+  neutral: 'after:bg-muted-foreground',
+  info: 'after:bg-sky-500',
+  success: 'after:bg-emerald-500',
+  warning: 'after:bg-amber-500',
+  danger: 'after:bg-destructive',
+  muted: 'after:bg-muted-foreground/40',
+}
+const AFTER_DOT_CLASS =
+  "after:ml-1 after:inline-block after:size-1.5 after:shrink-0 after:self-center after:rounded-full after:content-['']"
+
+/** A tone's dot as classes on the chip's own element, for a chip drawn by `REFERENCE_CHIP_CLASS`. */
+export function referenceChipToneClass(tone: ReferenceChipTone): string {
+  return cn(AFTER_DOT_CLASS, TONE_AFTER_CLASS[tone])
+}
+
+// A menu inside a message sits inside the message's own menu. The chip's
+// press is the chip's, so it goes no further than the chip.
+const keepToChip = (event: SyntheticEvent) => event.stopPropagation()
+
+// An identifier in text, drawn as the thing it names: a small inline chip
+// with the thing's mark, its name and its state.
+//
+// INLINE, AT THE TEXT'S OWN SIZE. It sits inside a sentence, so it takes the
+// sentence's size and baseline rather than a control's, and a long name
+// truncates rather than widening the line.
+//
+// ONE PRESS OPENS. A real link when there is somewhere to go, a button when
+// the host does something else; with neither it is only a label. Anything
+// else it offers is in its context menu -- right-click, or a long press on
+// touch -- and there is no menu at all when there is nothing to offer.
+//
+// THREE STATES, TOLD BY SHAPE AS WELL AS COLOUR. Pending shows the identifier
+// as written; resolved shows the thing's own name and state; unknown keeps the
+// identifier with a dashed edge and no fill.
+//
+// Presentational and fully controlled: finding, resolving and opening are the
+// host's.
+export function ReferenceChip({
+  label,
+  icon,
+  tone,
+  stateLabel,
+  status = 'resolved',
+  href,
+  onOpen,
+  menu,
+  className,
+}: ReferenceChipProps) {
+  const unknown = status === 'unknown'
+  const classes = cn(
+    REFERENCE_CHIP_CLASS,
+    unknown && REFERENCE_CHIP_UNKNOWN_CLASS,
+    (href || onOpen) && 'cursor-pointer hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
+    className,
+  )
+  const content = (
+    <>
+      {icon ? (
+        <span className={REFERENCE_CHIP_ICON_CLASS} aria-hidden='true'>
+          {icon}
+        </span>
+      ) : null}
+      <span className='min-w-0 truncate'>{label}</span>
+      {tone && !unknown ? (
+        <span className={cn('size-1.5 shrink-0 self-center rounded-full', TONE_CLASS[tone])} aria-hidden='true' />
+      ) : null}
+      {stateLabel ? <span className='sr-only'>{stateLabel}</span> : null}
+    </>
+  )
+  const open = onOpen
+    ? (event: MouseEvent) => {
+        // A plain press opens here; a modified one on a link is the browser's
+        // (a new tab, a download), as on any other link.
+        if (href && (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0)) {
+          return
+        }
+        event.preventDefault()
+        onOpen()
+      }
+    : undefined
+  const chip = href ? (
+    <a href={href} className={classes} onClick={open}>
+      {content}
+    </a>
+  ) : onOpen ? (
+    <button type='button' className={classes} onClick={open}>
+      {content}
+    </button>
+  ) : (
+    <span className={classes}>{content}</span>
+  )
+  if (!menu?.length) {
+    return chip
+  }
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={chip}
+        onContextMenu={keepToChip}
+        onPointerDown={keepToChip}
+        onTouchStart={keepToChip}
+      />
+      <ContextMenuContent>
+        {menu.map((item) => (
+          <ContextMenuItem key={item.label} onClick={item.onSelect}>
+            {item.icon}
+            {item.label}
+          </ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}

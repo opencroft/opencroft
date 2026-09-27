@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 
+import { MarkdownResolversHost } from '@/app/_authed/(extension-runtime)/_client/markdown-resolvers'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
 import { AppShell } from '@/app/_shell/app-shell'
@@ -61,6 +62,7 @@ function AuthedLayout() {
   const { spaces } = Route.useLoaderData()
   return (
     <SSEProvider>
+      <MarkdownResolversHost />
       <AppShell spaces={spaces}>
         <Outlet />
       </AppShell>

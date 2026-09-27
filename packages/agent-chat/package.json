@@ -17,6 +17,7 @@
     "./use-paginated-history": "./src/use-paginated-history.ts",
     "./session": "./src/session.ts",
     "./user-parts": "./src/user-parts.ts",
+    "./components/markdown-references": "./src/components/markdown-references.ts",
     "./components/*": "./src/components/*.tsx",
     "./server": "./src/server/index.ts",
     "./server/*": "./src/server/*.ts",

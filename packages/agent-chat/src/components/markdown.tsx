@@ -1,4 +1,11 @@
-import { Children, type ComponentProps, isValidElement, type ReactElement, type ReactNode } from 'react'
+import {
+  Children,
+  type ComponentProps,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+  useSyncExternalStore,
+} from 'react'
 import type { Components, ExtraProps } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkDirective from 'remark-directive'
@@ -8,6 +15,12 @@ import { cn } from 'ui/lib/utils'
 import { CodeBlock } from './code-block'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
 import { DIRECTIVE_ELEMENTS, remarkDirectiveBlocks } from './markdown-directives'
+import {
+  getMarkdownReferences,
+  REFERENCE_ELEMENT,
+  remarkInlineReferences,
+  subscribeMarkdownReferences,
+} from './markdown-references'
 import { MarkdownSpoiler } from './markdown-spoiler'
 import { MarkdownTabs } from './markdown-tabs'
 import { MermaidDiagram } from './mermaid-diagram'
@@ -107,10 +120,18 @@ function TabElement({ children }: TabElementProps) {
   return <>{children}</>
 }
 
+// An identifier the installed reference source recognised; drawn however that
+// source draws it, or as the identifier's own text if the source has gone.
+function ReferenceElement({ kind, id, trailing, children }: BlockProps<{ kind: string; id: string; trailing?: string }>) {
+  const source = getMarkdownReferences()
+  return <>{source ? source.render({ kind, id, trailing: trailing === 'true' }) : children}</>
+}
+
 /**
- * The documentation blocks, as the two halves `react-markdown` takes: the
- * remark plugins that read them, and the renderers for the elements those
- * plugins produce.
+ * The documentation blocks, and the references the installed source
+ * recognises (see `./markdown-references`), as the two halves `react-markdown`
+ * takes: the remark plugins that read them, and the renderers for the
+ * elements those plugins produce.
  *
  * For a surface that renders markdown with its own `react-markdown` for a
  * reason of its own -- a page that stamps source positions onto what it
@@ -119,7 +140,7 @@ function TabElement({ children }: TabElementProps) {
  * `Markdown` itself is built from this, so the two cannot drift apart.
  */
 export const markdownDirectiveBlocks = {
-  remarkPlugins: [remarkDirective, remarkDirectiveBlocks],
+  remarkPlugins: [remarkDirective, remarkDirectiveBlocks, remarkInlineReferences],
   // `Components` only knows HTML's element names; the blocks' own names are
   // keys beside them.
   components: {
@@ -127,6 +148,7 @@ export const markdownDirectiveBlocks = {
     [DIRECTIVE_ELEMENTS.spoiler]: SpoilerElement,
     [DIRECTIVE_ELEMENTS.tabs]: TabsElement,
     [DIRECTIVE_ELEMENTS.tab]: TabElement,
+    [REFERENCE_ELEMENT]: ReferenceElement,
   } as Components,
 }
 
@@ -143,7 +165,7 @@ const remarkPlugins = [remarkGfm, ...markdownDirectiveBlocks.remarkPlugins]
 // author wrote goes missing -- it only stops being a paragraph, list or heading,
 // which a label or a one-line hint has no room for (and `<label>` does not
 // permit: its content model is phrasing content only).
-const inlineElements = ['a', 'strong', 'em', 'del', 'code', 'br']
+const inlineElements = ['a', 'strong', 'em', 'del', 'code', 'br', REFERENCE_ELEMENT]
 
 export interface MarkdownProps {
   /** The markdown source. */
@@ -183,9 +205,14 @@ export interface MarkdownProps {
  *
  * Documentation blocks written as directives -- callouts, `details` spoilers
  * and `tabs` -- render as those blocks; any other directive renders as its
- * plain content.
+ * plain content. Identifiers the installed reference source recognises render
+ * as that source draws them; code never does.
  */
 export function Markdown({ text, className, typography = 'chat', inline = false }: MarkdownProps) {
+  // Read for the re-render alone: the plugin reads the source itself, and a
+  // new source -- recognisers arriving after the first paint -- has to run it
+  // again.
+  useSyncExternalStore(subscribeMarkdownReferences, getMarkdownReferences, getMarkdownReferences)
   const Wrapper = inline ? 'span' : 'div'
   return (
     <Wrapper className={cn('prose-chat', typography === 'inherit' && 'prose-chat-inherit', className)}>

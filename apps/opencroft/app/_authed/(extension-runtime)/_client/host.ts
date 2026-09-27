@@ -42,6 +42,7 @@ import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { GraphCanvasLoading } from '@/app/_authed/(extension-runtime)/_client/graph-canvas-loading'
+import { describeGraphRefs, subscribeGraphRefs } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
 import { NodeRef } from '@/app/_authed/(extension-runtime)/_client/node-ref'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
@@ -477,6 +478,10 @@ export const extensionHostApi = {
   // An App instance's own actions, run as the signed-in person — see
   // `callAppActionFromUi`.
   callAppAction,
+  // The data behind NodeRef / TerminalRef, for code that needs a graph
+  // reference's name rather than the component -- a markdown resolver.
+  describeGraphRefs,
+  subscribeGraphRefs,
   createStorage: createStorageFor,
   createPortal,
   icons: safeIcons,

@@ -15,6 +15,7 @@ import { cn } from 'ui/lib/utils'
 import { prepareLanguage, resolveLanguage, tokenize } from './components/code-highlight'
 import { directiveBlockExtensions } from './markdown-editor-blocks'
 import { DirectiveSafeText } from './markdown-editor-directives'
+import { MarkdownEditorReferences } from './markdown-editor-references'
 import { createSlashMenuStore, SlashMenu, SlashMenuPopup, type SlashMenuStore } from './markdown-editor-slash-menu'
 import { ALL_TOOLBAR_GROUPS, type MarkdownEditorToolbarGroup, Toolbar } from './markdown-editor-toolbar'
 
@@ -262,6 +263,8 @@ export function markdownEditorExtensions({
     TableKit,
     Placeholder.configure({ placeholder: placeholder ?? '' }),
     CodeBlockHighlight,
+    // Identifiers the installed reference source recognises, styled in place.
+    MarkdownEditorReferences,
     ...directiveBlockExtensions,
     ...(slashMenu ? [SlashMenu.configure({ store: slashMenu })] : []),
     // Read and write markdown. `html: true` keeps legacy HTML bodies readable

@@ -10,6 +10,7 @@ function GraphAppView({ instanceId }: AppComponentProps) {
   return <GraphCanvas instanceId={instanceId} />
 }
 
+import { linkResolver, terminalResolver } from './markdown-resolvers'
 import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentSpeechRecognitionTab } from './nodes/agent-asr'
 import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
@@ -85,6 +86,7 @@ export default defineExtension({
         component: GraphAppView as unknown as never,
       },
     ],
+    markdownResolvers: [terminalResolver, linkResolver],
   },
   nodes: [
     {
