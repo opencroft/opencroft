@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { type AuthorRun, authorRuns } from './author-runs'
 import { detailEntryKeys, withHeader } from './detail-entries'
 import { Markdown } from './markdown'
+import { MessageContextMenu } from './message-context-menu'
 
 import { SelectionBadge } from './selection-badge'
 
@@ -665,11 +666,19 @@ function MessageMenu({
 // message waiting to be read and one already in the transcript are the same
 // object with the same header. That is what lets one component render both
 // instead of two that drift apart.
-function UserMessageBubble({
-  part,
-  preview,
-  menu,
-}: {
+//
+// The whole bubble carries the message's context menu, the preview form
+// included: it is the same message, and a right-click on the pinned header
+// should not fall through to the browser's own menu.
+function UserMessageBubble(props: UserMessageBubbleProps) {
+  return (
+    <MessageContextMenu text={props.part.text}>
+      <UserMessageBox {...props} />
+    </MessageContextMenu>
+  )
+}
+
+interface UserMessageBubbleProps {
   part: ChatUserMessagePart
   // True for the short form that stays behind once the turn has slid away: the
   // same bubble, clamped to its opening lines. It is a second rendering rather
@@ -680,7 +689,9 @@ function UserMessageBubble({
   // slot. Omitted for the preview form, which is a clamped look at a message
   // whose real, interactive self is somewhere else.
   menu?: ReactNode
-}) {
+}
+
+function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
   return (
     <div className='flex flex-col relative min-w-0 gap-1.5 rounded-md bg-muted border-1 p-2'>
       {preview && (
@@ -860,9 +871,21 @@ export function ChatAssistantText({
         {toggle}
       </div>
       {text ? (
-        <Markdown text={text} />
+        <AgentMessageText text={text} />
       ) : null}
     </div>
+  )
+}
+
+// One of the agent's messages, with the message's context menu. Every place a
+// turn renders the agent's words goes through this -- the expanded chain, the
+// collapsed view and a subagent's transcript -- so a message offers the same
+// menu however much of its turn is showing.
+function AgentMessageText({ text }: { text: string }) {
+  return (
+    <MessageContextMenu text={text}>
+      <Markdown text={text} />
+    </MessageContextMenu>
   )
 }
 
@@ -976,7 +999,7 @@ function SubagentBlock({
           {item.items.map((child, i) => {
             if (child.kind === 'assistant-text') {
               // biome-ignore lint/suspicious/noArrayIndexKey: text and thinking entries carry no id and their text may repeat; the host rebuilds this list whole
-              return child.text.trim() ? <Markdown key={i} text={child.text} /> : null
+              return child.text.trim() ? <AgentMessageText key={i} text={child.text} /> : null
             }
             if (child.kind === 'thinking') {
               // biome-ignore lint/suspicious/noArrayIndexKey: as for the text entry above
@@ -1172,7 +1195,7 @@ export function ChatTurnDetails({
               lastTextEntry.kind === 'item' &&
               lastTextEntry.item.kind === 'assistant-text' &&
               lastTextEntry.item.text.trim() && (
-                <Markdown text={lastTextEntry.item.text} />
+                <AgentMessageText text={lastTextEntry.item.text} />
               )}
             {/* Tool call — animate on changes */}
             {lastToolAfterText && lastToolAfterText.kind === 'tool' && (
@@ -1199,7 +1222,7 @@ export function ChatTurnDetails({
                   }
                   if (last.item.kind === 'assistant-text') {
                     return last.item.text.trim() ? (
-                      <Markdown text={last.item.text} />
+                      <AgentMessageText text={last.item.text} />
                     ) : null
                   }
                 }

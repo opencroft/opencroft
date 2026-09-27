@@ -1,6 +1,7 @@
 'use client'
 
 import { AgentChat } from 'agent-chat/agent-chat'
+import type { AgentComposerHandle } from 'agent-chat/agent-command-bar'
 import { Approvals } from 'agent-chat/approvals'
 import { WORK_ID_ATTR } from 'agent-chat/components/chat-turn'
 import { useClearControl } from 'agent-chat/use-clear-control'
@@ -390,6 +391,7 @@ export function GroupChatThreadChat({
     await acp.session.clearSession?.()
   }, [thread.id, acp.session.clearSession])
   const clear = useClearControl(clearSession)
+  const composerRef = useRef<AgentComposerHandle>(null)
 
   // AgentCommandBarHost hands back the sessionKey it was given as `key` (it
   // is `thread.sessionKey`, the same value passed as `source.tabKey` above),
@@ -434,6 +436,9 @@ export function GroupChatThreadChat({
   // simply appeared to vanish. The kit's error slot renders it directly above
   // the composer, the same place and shape the members dialog reports its own
   // refusals, and the text is back in the composer to be copied or retried.
+  //
+  // `composerRef` is the one link from the transcript to the composer: a
+  // message's Reply writes into the composer through it.
   const composer = (
     <AgentCommandBarHost
       startIcon={false}
@@ -454,6 +459,7 @@ export function GroupChatThreadChat({
       attachments={selectionScope?.selection && selectionScope.passEnabled ? SELECTION_BADGE : undefined}
       attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
       canAttachImages={acp.canAttachImages}
+      composerRef={composerRef}
     />
   )
 
@@ -472,6 +478,7 @@ export function GroupChatThreadChat({
         unread={unread}
         onRemoveUnread={acp.removeQueued}
         onDeliverUnread={acp.deliverQueue}
+        composerRef={composerRef}
         footerExtra={
           <>
             {/* In the footer so it stands under an empty chat and under a

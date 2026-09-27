@@ -1,13 +1,16 @@
 'use client'
 
-import type { ReactNode } from 'react'
-import { useCallback, useRef } from 'react'
+import type { ReactNode, RefObject } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import { LogoLoader } from 'ui/components/ui/logo-loader'
 
+import type { AgentComposerHandle } from './agent-command-bar'
 import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
 import { ChatEmptyState } from './components/chat-empty-state'
 import type { ChatTurnRenderers, ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
 import { ChatUnread, type ChatUnreadMessage } from './components/chat-unread'
+import { MessageActionsProvider } from './components/message-context-menu'
+import { appendQuotedReply } from './message-quote'
 import type { AgentChatSession } from './session'
 import { ThinkingIndicator } from './thinking-indicator'
 
@@ -110,6 +113,11 @@ export interface AgentChatProps {
   // a host-specific status indicator (e.g. a voice playback visualizer) with
   // nowhere else in this component's own contract to live.
   footerExtra?: ReactNode
+  // The composer this conversation replies into -- the same ref the host hands
+  // `useAgentCommandBar`. With it every message's context menu offers Reply,
+  // which quotes the message (or the selected part of it) at the end of the
+  // composer; without it the menu offers Copy alone.
+  composerRef?: RefObject<AgentComposerHandle | null>
 }
 
 export function AgentChat({
@@ -128,8 +136,18 @@ export function AgentChat({
   onRemoveUnread,
   onDeliverUnread,
   footerExtra,
+  composerRef,
 }: AgentChatProps) {
   const displayName = agentName ?? session.botName
+  // Provided around both renderings below, since unread messages show in the
+  // panel state too. Memoized: every message in the transcript reads it.
+  const messageActions = useMemo(
+    () =>
+      composerRef
+        ? { onReply: (text: string) => composerRef.current?.update((current) => appendQuotedReply(current, text)) }
+        : {},
+    [composerRef],
+  )
   // Editing is keyed on the block's own id, which the host assigned and can
   // resolve against its whole conversation. Nothing is derived from a position
   // in `blocks` here: that array is a bounded tail, so a position in it is not
@@ -180,35 +198,39 @@ export function AgentChat({
 
   if (panelState) {
     return (
-      <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
-        <div className='flex flex-1 items-center justify-center p-4'>{panelState}</div>
-        {footer}
-      </div>
+      <MessageActionsProvider value={messageActions}>
+        <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
+          <div className='flex flex-1 items-center justify-center p-4'>{panelState}</div>
+          {footer}
+        </div>
+      </MessageActionsProvider>
     )
   }
 
   return (
-    <ChatConversation
-      ref={conversationRef}
-      sessionKey={session.sessionKey}
-      blocks={blocks}
-      hasMessages={hasMessages}
-      hasUndelivered={(unread?.length ?? 0) > 0}
-      loading={session.loading}
-      emptyText={emptyText}
-      waiting={session.waiting}
-      historyHeaderParts={historyHeaderParts}
-      hasMoreHistory={session.hasMoreHistory === true}
-      loadingMoreHistory={session.loadingMoreHistory === true}
-      onLoadOlder={loadOlder}
-      onEditUser={onEditUser}
-      onForkUser={onForkUser}
-      defaultExpanded={defaultExpanded}
-      botName={displayName}
-      agentAvatar={agentAvatar}
-      renderers={renderers}
-      renderTool={renderTool}
-      footer={footer}
-    />
+    <MessageActionsProvider value={messageActions}>
+      <ChatConversation
+        ref={conversationRef}
+        sessionKey={session.sessionKey}
+        blocks={blocks}
+        hasMessages={hasMessages}
+        hasUndelivered={(unread?.length ?? 0) > 0}
+        loading={session.loading}
+        emptyText={emptyText}
+        waiting={session.waiting}
+        historyHeaderParts={historyHeaderParts}
+        hasMoreHistory={session.hasMoreHistory === true}
+        loadingMoreHistory={session.loadingMoreHistory === true}
+        onLoadOlder={loadOlder}
+        onEditUser={onEditUser}
+        onForkUser={onForkUser}
+        defaultExpanded={defaultExpanded}
+        botName={displayName}
+        agentAvatar={agentAvatar}
+        renderers={renderers}
+        renderTool={renderTool}
+        footer={footer}
+      />
+    </MessageActionsProvider>
   )
 }

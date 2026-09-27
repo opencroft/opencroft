@@ -6,8 +6,10 @@ import { canonicalModeOf } from 'agent-client/session-modes'
 import {
   type ReactElement,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -85,6 +87,15 @@ export interface AgentCommandBarControlsContext {
   insertText: (text: string) => void
   sendMessage: (text: string) => void
   streaming: boolean
+}
+
+// A handle on the composer for something elsewhere on the screen that writes
+// into it -- a reply quoted from the transcript is the case it exists for.
+export interface AgentComposerHandle {
+  // Replace the composer's text with `update(current)`, then focus it with the
+  // caret at the end. `current` is what is in the composer now, typed or not
+  // yet saved.
+  update: (update: (current: string) => string) => void
 }
 
 // The context/cost reading the bar hands to its ring. Declared once and
@@ -234,6 +245,9 @@ export interface UseAgentCommandBarOptions {
    *  be identity-stable when nothing meaningful changed; it feeds the memoized
    *  bar. */
   presence?: { value: PresenceValue; onSelect: (presence: PresenceValue) => void; steering?: boolean }
+  /** Receives the composer's handle, for a host that writes into it from
+   *  elsewhere -- see `AgentComposerHandle`. */
+  composerRef?: Ref<AgentComposerHandle>
 }
 
 // Everything the command bar needs that the design-kit component deliberately
@@ -280,6 +294,7 @@ export function useAgentCommandBar({
   pictures,
   emptySendLabel,
   presence,
+  composerRef,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
   // already in place — no separate fetch-then-fill flicker. This state
@@ -435,6 +450,38 @@ export function useAgentCommandBar({
     [onChangeText, setValue],
   )
   const sendMessage = useCallback((text: string) => sendRef.current(text), [])
+
+  // Writing into the composer from elsewhere: a load like `insertText`'s, and
+  // draft-tracked the same way, but the whole text is the caller's to shape.
+  //
+  // The caret is placed after the commit rather than here, because only then
+  // does the kit bar's textarea hold the new text: the bar takes a load during
+  // its own render, so by this hook's layout effect the two agree.
+  const [caretToEnd, setCaretToEnd] = useState(false)
+  useImperativeHandle(
+    composerRef,
+    () => ({
+      update: (update) => {
+        const next = update(textRef.current)
+        textRef.current = next
+        setValue(next)
+        onChangeText(next)
+        setCaretToEnd(true)
+      },
+    }),
+    [onChangeText, setValue],
+  )
+  useLayoutEffect(() => {
+    if (!caretToEnd) {
+      return
+    }
+    setCaretToEnd(false)
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.focus()
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    }
+  }, [caretToEnd])
   // Read through a structural type rather than narrowing the union: `find` does
   // not narrow by its predicate, and flattenOptions already takes unknown and
   // returns [] for anything that is not a value list.

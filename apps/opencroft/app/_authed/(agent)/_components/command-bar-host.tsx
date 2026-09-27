@@ -3,12 +3,13 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import {
   type AgentCommandBarControlsContext,
+  type AgentComposerHandle,
   type CommandBarUsage,
   useAgentCommandBar,
 } from 'agent-chat/agent-command-bar'
 import type { CompactRenderState } from 'agent-chat/use-compact-control'
 import type { Presence } from 'agent-client/types'
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentChatInputControls, type AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
@@ -84,6 +85,8 @@ interface AgentCommandBarHostProps {
    *  would leave the reader unable to tell "this agent cannot see pictures"
    *  from "this product cannot send them". */
   canAttachImages?: boolean
+  /** Forwarded to the package hook's `composerRef`. */
+  composerRef?: Ref<AgentComposerHandle>
 }
 
 // The approval button's wording. It lives here rather than in the package
@@ -125,6 +128,7 @@ export function AgentCommandBarHost({
   attachmentControls,
   presence,
   canAttachImages = false,
+  composerRef,
 }: AgentCommandBarHostProps) {
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
@@ -230,6 +234,7 @@ export function AgentCommandBarHost({
     attachmentControls,
     pictures,
     presence,
+    composerRef,
   })
 
   return barNode
