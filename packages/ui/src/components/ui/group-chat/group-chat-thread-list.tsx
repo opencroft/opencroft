@@ -64,6 +64,14 @@ export interface GroupChatThreadListProps {
      That is deliberate: the kit does not know session keys, and the host
      already holds the thread -> session mapping. Map before acting. */
   onStopProcess?: (id: string) => void
+  /** Per-row archive, forwarded to ChatListItem's context-menu Archive, right
+     before Delete. Offered on a removed-agent row too, the same reasoning
+     onStopProcess above gives: archiving is a property of the thread, not of
+     the membership. */
+  onArchive?: (id: string) => void
+  /** Per-row unarchive, forwarded the same way. A host offers this or
+     `onArchive`, never both -- see ChatListItem. */
+  onUnarchive?: (id: string) => void
   /** Per-row delete. Forwards to ChatListItem's context-menu Delete; the host
      decides whether to confirm before acting (the kit does not). */
   onDelete?: (id: string) => void
@@ -88,7 +96,17 @@ export interface GroupChatThreadListProps {
 // to stop it lying. Now that the real thing is available the label has nothing
 // to do, and there is no room to keep both -- ChatListItem composes exactly
 // `description · statusWord`, with no third segment, and the line truncates.
-export function GroupChatThreadList({ threads, activeId, onSelect, onRename, onStopProcess, onDelete, className }: GroupChatThreadListProps) {
+export function GroupChatThreadList({
+  threads,
+  activeId,
+  onSelect,
+  onRename,
+  onStopProcess,
+  onArchive,
+  onUnarchive,
+  onDelete,
+  className,
+}: GroupChatThreadListProps) {
   return (
     <div className={cn('flex w-full min-w-0 flex-col gap-0.5', className)}>
       {threads.map((t) => (
@@ -121,6 +139,8 @@ export function GroupChatThreadList({ threads, activeId, onSelect, onRename, onS
           // cannot stop one. A host for which stopping is meaningless withholds
           // the handler and the item never appears.
           onStopProcess={onStopProcess}
+          onArchive={onArchive}
+          onUnarchive={onUnarchive}
           onDelete={onDelete}
         />
       ))}

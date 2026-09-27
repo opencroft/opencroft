@@ -1,7 +1,7 @@
 'use client'
 
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
-import { Pencil, Square, X } from 'lucide-react'
+import { Archive, ArchiveRestore, Pencil, Square, X } from 'lucide-react'
 
 import { AgentAvatar } from '../media/agent-avatar'
 import { ListRow } from '../utils/list-row'
@@ -36,6 +36,12 @@ interface ChatListItemProps {
   onRename?: (id: string) => void
   onStopProcess?: (id: string) => void
   onClose?: (id: string) => void
+  // Archive and unarchive are mutually exclusive on any one row -- a row is
+  // either in the active list (offered Archive) or the archive (offered
+  // Unarchive), never both -- so a host passes at most one. Positioned last,
+  // immediately before Delete: the two are the row's other lifecycle moves.
+  onArchive?: (id: string) => void
+  onUnarchive?: (id: string) => void
   onDelete?: (id: string) => void
   actions?: ChatListItemAction[]
   // Forwarded to the shared row shell, where it lands on the row element that
@@ -118,7 +124,7 @@ export const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
   // Derive the dot and the description's status word from the single `status`.
   const dot = status ? STATUS_DOT[status] : undefined
   const statusWord = status ? STATUS_WORD[status] : null
@@ -177,6 +183,16 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
 
   if (onClose) {
     entries.push({ label: 'Close', icon: <X className='size-3' />, onSelect: () => onClose(id) })
+  }
+
+  // Last, right next to Delete -- the same parity a row's other destructive or
+  // reversible-lifecycle move gets.
+  if (onArchive) {
+    entries.push({ label: 'Archive', icon: <Archive className='size-3' />, onSelect: () => onArchive(id) })
+  }
+
+  if (onUnarchive) {
+    entries.push({ label: 'Unarchive', icon: <ArchiveRestore className='size-3' />, onSelect: () => onUnarchive(id) })
   }
 
   return (

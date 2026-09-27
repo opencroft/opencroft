@@ -14,9 +14,16 @@ interface GroupChatThreadTreeProps {
   onChange: (nodes: ChatListNode[]) => void
   activeId?: string
   onSelect: (threadId: string) => void
-  onRename: (threadId: string) => void
-  onStopProcess: (threadId: string) => void
-  onDelete: (threadId: string) => void
+  // Omitted where a row action makes no sense for the list being drawn -- the
+  // chat's own archive draws this same tree read-only apart from Unarchive,
+  // and passes none of the three below.
+  onRename?: (threadId: string) => void
+  onStopProcess?: (threadId: string) => void
+  onDelete?: (threadId: string) => void
+  // Mutually exclusive: the active list offers Archive, the chat's own archive
+  // offers Unarchive, and neither list offers both.
+  onArchive?: (threadId: string) => void
+  onUnarchive?: (threadId: string) => void
   className?: string
 }
 
@@ -40,6 +47,8 @@ export function GroupChatThreadTree({
   onRename,
   onStopProcess,
   onDelete,
+  onArchive,
+  onUnarchive,
   className,
 }: GroupChatThreadTreeProps) {
   return (
@@ -50,6 +59,8 @@ export function GroupChatThreadTree({
       onRename={onRename}
       onStopProcess={onStopProcess}
       onDelete={onDelete}
+      onArchive={onArchive}
+      onUnarchive={onUnarchive}
       onChange={onChange}
       className={className}
     />

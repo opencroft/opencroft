@@ -762,6 +762,12 @@ export const groupChatThread = pgTable(
     // the threads it opened and of no others (groupChats.usage). NULL for every
     // thread a person or an agent started, and for every row before this column.
     createdBySystemId: text(),
+    // When the thread was archived; NULL while it is active. An archived thread
+    // keeps its row, its session and its history, leaves the chat's active
+    // thread list for the archive list, and refuses every send until it is
+    // unarchived. A timestamp rather than a flag because "since when" is the
+    // one thing an archive is asked about beyond "is it".
+    archivedAt: timestamp({ withTimezone: true, mode: 'date' }),
     createdAt: createdAt(),
   },
   (t) => [

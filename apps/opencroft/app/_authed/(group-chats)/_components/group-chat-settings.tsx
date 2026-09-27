@@ -1,29 +1,46 @@
 'use client'
 
-// The group chat's menu -- the header control to the right of the pin toggle,
-// where the avatar cluster used to stand. It opens the chat's members: who is
-// in, each removable, and a search that adds -- the kit picker's two states.
-// Below them, the automated senders, which are grants rather than people.
+// The group chat's settings -- the header control to the right of the pin
+// toggle, where the avatar cluster and then a members-only popover used to
+// stand. Now a dialog with three sections: Members (the picker, unchanged),
+// Permissions (the automated-sender grants, unchanged) and Archive (the
+// chat's archived threads, drawn by the same GroupChatThreadTree the active
+// list uses, over the chat's 'archive' layout).
 //
 // This owns the requests, the pending and error state, and the candidate
-// derivation -- app-side because it is a fact about this group chat rather than
-// a shape decision.
+// derivation for Members and Permissions -- app-side because they are facts
+// about this group chat rather than shape decisions the kit dialog should
+// know. Archive reuses the tree wholesale; the only state of its own is the
+// archive layout, fetched lazily once the dialog opens (the same lazy-on-open
+// pattern the members and senders lists below already use).
 
 import { EllipsisVertical } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
-import { Popover, PopoverContent, PopoverTrigger } from 'ui/popover'
+import { GroupChatSettingsDialog } from 'ui/group-chat/group-chat-settings-dialog'
 
+import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
-import type { DirectoryUser, GroupChatWriteResult, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
+import { EMPTY_THREAD_LAYOUT, type ThreadStatusById } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
+import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
+import type {
+  DirectoryUser,
+  GroupChatThreadEntry,
+  GroupChatWriteResult,
+  MemberRef,
+} from '@/app/_authed/(group-chats)/_server/actions'
 import {
   addGroupChatMember,
+  getGroupChatThreadLayout,
   listGroupChatMembers,
   listSystemSenders,
   removeGroupChatMember,
+  setGroupChatThreadArchived,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 
@@ -34,6 +51,15 @@ interface Props {
   directory: DirectoryUser[]
   /** Every agent node in the graph. */
   agents: AgentNodeRef[]
+  /** This chat's archived threads -- the screen already split them out of the
+   *  full thread list it loaded, so nothing here re-fetches them. */
+  archivedThreads: GroupChatThreadEntry[]
+  /** The same live-status map the active list reads, so an archived thread's
+   *  row (its session can still be mid-turn) never disagrees with the one the
+   *  active list would have shown it. */
+  statusById: ThreadStatusById
+  /** Opening an archived row leaves the dialog and goes to its thread. */
+  onOpenThread: (threadId: string) => void
 }
 
 function toPrincipal(principal: { kind: 'user' | 'agent'; id: string }) {
@@ -42,7 +68,15 @@ function toPrincipal(principal: { kind: 'user' | 'agent'; id: string }) {
     : ({ kind: 'agent', agentNodeId: principal.id } as const)
 }
 
-export function GroupChatMenu({ groupChatId, members, directory, agents }: Props) {
+export function GroupChatSettings({
+  groupChatId,
+  members,
+  directory,
+  agents,
+  archivedThreads,
+  statusById,
+  onOpenThread,
+}: Props) {
   const refresh = useGroupChatRefresh()
 
   // Both principal kinds in one list, which is what the picker takes: the
@@ -124,34 +158,67 @@ export function GroupChatMenu({ groupChatId, members, directory, agents }: Props
     }
   }
 
+  // The archive's own layout, fetched only once the dialog is open -- while
+  // it loads, the tree draws as unarranged (every thread loose), which is
+  // exactly how an actually-unarranged archive looks, so there is no separate
+  // loading state to build.
+  const [archiveLayout, setArchiveLayout] = useState(EMPTY_THREAD_LAYOUT)
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    let cancelled = false
+    getGroupChatThreadLayout({ data: { groupChatId, list: 'archive' } })
+      .then((loaded) => {
+        if (!cancelled) {
+          setArchiveLayout(loaded)
+        }
+      })
+      .catch(() => {
+        // Left at EMPTY_THREAD_LAYOUT: the archive draws every thread loose,
+        // same fallback the active list's own load-failure would leave it in.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, groupChatId])
+  const { layout: archiveTree, persist: persistArchive } = useThreadLayout(groupChatId, 'archive', archiveLayout)
+
+  // Unarchiving from here has nowhere to show a refusal in place -- unlike the
+  // thread screen's own notice -- so it reports the same way Stop process
+  // does elsewhere in this dialog's tree: a toast, since nobody's finger is
+  // still on the row waiting for an answer.
+  const unarchiveThread = (threadId: string) => {
+    setGroupChatThreadArchived({ data: { threadId, archived: false } })
+      .then((result) => {
+        if (!result.ok) {
+          toast(groupChatAccessMessageForCode(result.code))
+          return
+        }
+        return refresh()
+      })
+      .catch((err) => {
+        console.error('Failed to unarchive thread', threadId, err)
+        toast('That thread could not be unarchived.')
+      })
+  }
+
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (!next) {
-          setError(undefined)
-        }
-      }}
-    >
-      <PopoverTrigger
-        render={
-          <Button
-            type='button'
-            variant='ghost'
-            size='icon-sm'
-            aria-label={`Chat menu — members (${members.length})`}
-            title='Members'
-          />
-        }
+    <>
+      <Button
+        type='button'
+        variant='ghost'
+        size='icon-sm'
+        aria-label='Chat settings'
+        title='Chat settings'
+        onClick={() => setOpen(true)}
       >
         <EllipsisVertical />
-      </PopoverTrigger>
-      {/* The same dress the space selector's and the chat selector's menus
-          wear: a Command with its search on a divider and flat rows, no inset
-          of this menu's own. */}
-      <PopoverContent side='bottom' align='end' className='w-72 p-0'>
-        <div className='flex flex-col'>
+      </Button>
+      <GroupChatSettingsDialog
+        open={open}
+        onOpenChange={setOpen}
+        members={
           <AddMemberPicker
             candidates={candidates}
             members={members.map((m) => ({ kind: m.kind, id: m.id }))}
@@ -171,8 +238,10 @@ export function GroupChatMenu({ groupChatId, members, directory, agents }: Props
             removing={pending}
             error={error}
           />
-          {systemGrants.length > 0 || ungrantedSenders.length > 0 ? (
-            <div className='space-y-2 border-t p-3'>
+        }
+        permissions={
+          systemGrants.length > 0 || ungrantedSenders.length > 0 ? (
+            <div className='space-y-2 p-3'>
               <p className='text-xs text-muted-foreground'>
                 Automated senders — a grant lets a scheduled pipeline or webhook deliver into this chat's threads.
               </p>
@@ -218,9 +287,29 @@ export function GroupChatMenu({ groupChatId, members, directory, agents }: Props
                 </div>
               ) : null}
             </div>
-          ) : null}
-        </div>
-      </PopoverContent>
-    </Popover>
+          ) : (
+            <p className='p-3 text-sm text-muted-foreground'>No automated senders are granted to this chat.</p>
+          )
+        }
+        archive={
+          archivedThreads.length > 0 ? (
+            <GroupChatThreadTree
+              className='p-1'
+              threads={archivedThreads}
+              statusById={statusById}
+              layout={archiveTree}
+              onChange={persistArchive}
+              onSelect={(threadId) => {
+                onOpenThread(threadId)
+                setOpen(false)
+              }}
+              onUnarchive={unarchiveThread}
+            />
+          ) : (
+            <p className='p-3 text-sm text-muted-foreground'>No threads are archived.</p>
+          )
+        }
+      />
+    </>
   )
 }

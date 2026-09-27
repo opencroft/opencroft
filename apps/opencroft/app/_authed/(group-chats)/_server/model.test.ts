@@ -23,7 +23,7 @@ import type { AgentConnection } from 'agent-client/connection'
 // time a reader would see, rather than on the tag's spelling.
 import { decodeBatch } from 'agent-client/queue-tags'
 import type { AgentSelection } from 'agent-client/types'
-import { and, eq, inArray, like } from 'drizzle-orm'
+import { and, eq, inArray, isNull, like } from 'drizzle-orm'
 
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { slug } from '@/app/_authed/(server)/_server/types'
@@ -4060,9 +4060,9 @@ async function listedThread(chatId: string, threadRef: string) {
   return chat?.threads.find((t) => t.ref === threadRef)
 }
 
-/** Each folder of the chat's layout as `name[threadIds]`, in order. */
-async function foldersOf(chatId: string): Promise<string[]> {
-  const { layout } = await layoutStore.readThreadLayout(chatId)
+/** Each folder of one of the chat's layouts as `name[threadIds]`, in order. */
+async function foldersOf(chatId: string, list: 'active' | 'archive' = 'active'): Promise<string[]> {
+  const { layout } = await layoutStore.readThreadLayout(chatId, list)
   return layout.entries.flatMap((e) => (e.kind === 'folder' ? [`${e.folder.name}[${e.folder.threadIds}]`] : []))
 }
 
@@ -4085,9 +4085,10 @@ test('a thread started into an existing folder joins it, and no second folder is
     title: 'First',
   })
   // A person made the folder and filed a thread in it, the way a drag writes.
-  const { version } = await layoutStore.readThreadLayout(chatId)
+  const { version } = await layoutStore.readThreadLayout(chatId, 'active')
   await layoutStore.writeThreadLayout(
     chatId,
+    'active',
     {
       entries: [
         { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [first.thread.id] } },
@@ -4110,7 +4111,7 @@ test('a thread started with no folder leaves the layout untouched and lists at t
   const started = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'loose')
 
   assert.equal(started.folder, null)
-  assert.equal((await layoutStore.readThreadLayout(chatId)).version, 0, 'nothing was written to the layout')
+  assert.equal((await layoutStore.readThreadLayout(chatId, 'active')).version, 0, 'nothing was written to the layout')
   const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
   assert.equal((await listedThread(chatId, ref))?.folder, null)
 })
@@ -4141,7 +4142,7 @@ test('renaming a thread as an agent moves its address the way the UI rename does
   const nodeId = await model.requireAgentNode('Agent Session')
   assert.equal((await model.resolveThreadForAgent(nodeId, oldRef)).id, started.thread.id, 'the old ref still lands')
   assert.equal((await model.resolveThreadForAgent(nodeId, renamed.ref)).id, started.thread.id)
-  assert.equal((await layoutStore.readThreadLayout(chatId)).version, 0, 'nothing was written to the layout')
+  assert.equal((await layoutStore.readThreadLayout(chatId, 'active')).version, 0, 'nothing was written to the layout')
 })
 
 test('filing an existing thread moves it out of its folder into the named one, creating it when missing', async () => {
@@ -5459,4 +5460,222 @@ test('a person-bound copy stops working when the action it was handed to ends', 
   bound.end()
   await assert.rejects(() => api.personChats(), /action call that has ended/)
   await assert.rejects(() => api.grantExtension(chat.id), /action call that has ended/)
+})
+
+// ---------------------------------------------------------------------------
+// ARCHIVED THREADS. An archived thread keeps its history, moves from the
+// chat's thread list to its archive keeping its folder, and takes no message
+// from anyone until it is unarchived.
+// ---------------------------------------------------------------------------
+
+/** Where a thread sits in each of its chat's two lists, as `name[ids]` folders and loose ids. */
+async function placementOf(chatId: string): Promise<{ active: string[]; archive: string[] }> {
+  const describe = async (list: 'active' | 'archive') =>
+    (await layoutStore.readThreadLayout(chatId, list)).layout.entries.map((e) =>
+      e.kind === 'folder' ? `${e.folder.name}[${e.folder.threadIds}]` : e.threadId,
+    )
+  return { active: await describe('active'), archive: await describe('archive') }
+}
+
+async function archivedAtOf(threadId: string): Promise<Date | null> {
+  const [row] = await db
+    .select({ archivedAt: groupChatThread.archivedAt })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+  assert.ok(row, 'the thread row exists')
+  return row.archivedAt
+}
+
+test('a member archives a thread: it keeps its folder in the archive, and every write into it is refused by name', async () => {
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('archive-person@example.test', 'archive by hand')
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'first')
+  await waitForPrompts(inbox, 1)
+  await model.renameThreadAsAgent('Agent Session', model.threadRefFromSessionKey(thread.sessionKey), {
+    folder: 'Reviews',
+  })
+
+  await model.setThreadArchived(reqAs(owner), thread.id, true)
+
+  assert.ok(await archivedAtOf(thread.id), 'the row says archived')
+  assert.deepEqual(await placementOf(chatId), { active: ['Reviews[]'], archive: [`Reviews[${thread.id}]`] })
+  const sent = await captureRefusal(() => model.sendMessageInThread(reqAs(owner), thread.id, 'hi?', { queue: 'wait' }))
+  assert.deepEqual(sent, { code: 'thread-archived', message: 'This thread is archived; unarchive it to write' })
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+  assert.deepEqual(
+    await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Session Two', ref, 'hi?', 'wait')),
+    sent,
+    'an agent is refused the same way',
+  )
+  assert.deepEqual(await captureRefusal(() => model.compactThread(reqAs(owner), thread.id)), sent)
+  assert.equal(inbox.length, 1, 'nothing reached the agent')
+  const listed = (await model.listGroupChatsForAgentView('Agent Session')).find((c) => c.ref === chatId)
+  assert.deepEqual(
+    listed?.threads.map((t) => [t.archived, t.folder]),
+    [[true, 'Reviews']],
+    'group_chat_list marks it, with its folder in the archive',
+  )
+  // The history is kept: the row and its session key are untouched.
+  const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.id))
+  assert.equal(row?.sessionKey, thread.sessionKey)
+})
+
+test('unarchiving puts the thread into the folder it has in the archive, creating it, and it takes messages again', async () => {
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('unarchive-person@example.test', 'unarchive by hand')
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'first')
+  await waitForPrompts(inbox, 1)
+  await model.setThreadArchived(reqAs(owner), thread.id, true)
+  assert.deepEqual(await placementOf(chatId), { active: [], archive: [thread.id] }, 'no folder: loose in the archive')
+  // Moved between folders in the archive, the way a drag writes it.
+  const archived = await layoutStore.readThreadLayout(chatId, 'archive')
+  await layoutStore.writeThreadLayout(
+    chatId,
+    'archive',
+    { entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Later', open: true, threadIds: [thread.id] } }] },
+    archived.version,
+  )
+
+  await model.setThreadArchived(reqAs(owner), thread.id, false)
+
+  assert.equal(await archivedAtOf(thread.id), null)
+  assert.deepEqual(await placementOf(chatId), { active: [`Later[${thread.id}]`], archive: ['Later[]'] })
+  await model.sendMessageInThread(reqAs(owner), thread.id, 'welcome back', { queue: 'wait' })
+  await waitForPrompts(inbox, 2)
+  assert.match(inbox[1] ?? '', /welcome back/)
+})
+
+test('archiving twice changes nothing the second time, and a non-member is refused as for a missing thread', async () => {
+  seedMockConnection([], 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('archive-twice@example.test', 'archive twice')
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'first')
+  await model.setThreadArchived(reqAs(owner), thread.id, true)
+  const stamped = await archivedAtOf(thread.id)
+  const versions = async () =>
+    Promise.all([
+      layoutStore.readThreadLayout(chatId, 'active').then((l) => l.version),
+      layoutStore.readThreadLayout(chatId, 'archive').then((l) => l.version),
+    ])
+  const before = await versions()
+
+  await model.setThreadArchived(reqAs(owner), thread.id, true)
+
+  assert.deepEqual(await archivedAtOf(thread.id), stamped, 'the archive time is the first one')
+  assert.deepEqual(await versions(), before, 'neither layout was written')
+  const outsider = await makeUser('archive-outsider@example.test')
+  assert.deepEqual(
+    await captureRefusal(() => model.setThreadArchived(reqAs(outsider), thread.id, false)),
+    await captureRefusal(() => model.setThreadArchived(reqAs(outsider), 'no-such-thread', false)),
+  )
+  assert.ok(await archivedAtOf(thread.id), 'still archived')
+})
+
+test('an agent archives only a thread it owns, the same rule as deleting one', async () => {
+  seedMockConnection([], 'Agent Session Two')
+  const { owner, chatId } = await chatWithBothAgents('archive-agent@example.test', 'archive as agent')
+  await model.addMember(reqAs(owner), chatId, { kind: 'agent', agentNodeId: 'agent-a' })
+  const { thread } = await model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', 'do this')
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+
+  assert.deepEqual(await model.setThreadArchivedAsAgent('Agent A', ref, true), {
+    changed: false,
+    refused: 'not-owned',
+  })
+  assert.equal(await archivedAtOf(thread.id), null, 'a refused archive changes nothing')
+  // Started by one agent, addressed to the other: each may archive or unarchive it.
+  assert.deepEqual(await model.setThreadArchivedAsAgent('Agent Session', ref, true), { changed: true })
+  assert.ok(await archivedAtOf(thread.id))
+  assert.deepEqual(await model.setThreadArchivedAsAgent('Agent Session Two', ref, false), { changed: true })
+  assert.equal(await archivedAtOf(thread.id), null)
+})
+
+test('an extension archives and unarchives the threads it opened, and no other', async () => {
+  const owner = await makeUser('archive-ext@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'archive ext')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  seedMockConnection([])
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+  const { thread } = await api.startThread({ chat: chat.slug, agentNodeId: 'agent-session', message: 'TASK-3: go' })
+  const byPerson = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'mine')
+
+  assert.equal((await api.archive(thread.ref)).archived, true)
+  assert.equal((await api.thread(thread.ref)).archived, true)
+  const refused = await captureRefusal(() => api.send({ thread: thread.ref, message: 'more' }))
+  assert.equal(refused.code, 'thread-archived')
+  assert.equal((await api.unarchive(thread.ref)).archived, false)
+
+  assert.deepEqual(
+    await captureRefusal(() => api.archive(byPerson.thread.id)),
+    await captureRefusal(() => api.archive('no-such-thread')),
+    'a thread it did not open refuses as a missing one would',
+  )
+  assert.equal(await archivedAtOf(byPerson.thread.id), null)
+})
+
+test('a message waiting behind a running turn is dropped when the thread is archived, not delivered after', async () => {
+  const { owner, chatId } = await chatWithBothAgents('archive-queue@example.test', 'archive drops the queue')
+  const prompts: string[] = []
+  let releaseTurn: (() => void) | undefined
+  const heldTurn = new Promise<void>((resolve) => {
+    releaseTurn = resolve
+  })
+  const connection = {
+    newSession: async () => ({ sessionId: `archive-queue-${crypto.randomUUID()}` }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      if (prompts.length === 1) {
+        await heldTurn
+      }
+      return { stopReason: 'end_turn' }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    setSessionConfigOption: async () => ({}),
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(connectionKey(selection), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'long job')
+  await waitForPrompts(prompts, 1)
+  await model.sendMessageInThread(reqAs(owner), thread.id, 'queued before the archive', { queue: 'wait' })
+  const waiting = () =>
+    db
+      .select({ id: agentQueueEntryTable.id })
+      .from(agentQueueEntryTable)
+      .where(and(eq(agentQueueEntryTable.sessionKey, thread.sessionKey), isNull(agentQueueEntryTable.removedAt)))
+  // The durable row is written after the in-memory queue changes; wait for it
+  // so the assertion below is about the archive, not about a write in flight.
+  for (let attempt = 0; attempt < 200 && (await waiting()).length === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.equal((await waiting()).length, 1, 'precondition: the message is waiting behind the turn')
+
+  try {
+    await model.setThreadArchived(reqAs(owner), thread.id, true)
+  } finally {
+    releaseTurn?.()
+  }
+
+  // Give a drain every chance to happen before asserting it did not.
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal(prompts.length, 1, 'the waiting message never reached the agent')
+  assert.equal((await waiting()).length, 0, 'and nothing durable is left to bring it back on a later load')
 })

@@ -14,7 +14,7 @@
 // content without going through model.ts first is a bug.
 
 import { db, groupChatMember, groupChatThread, user } from '@opencroft/db'
-import { inArray } from 'drizzle-orm'
+import { and, inArray, isNull } from 'drizzle-orm'
 
 import type { GroupChatThreadSummary } from '@/app/_authed/(group-chats)/_server/model'
 import {
@@ -92,6 +92,11 @@ export interface GroupChatThreadEntry {
    * having been kept off list rows before it was needed for live status.
    */
   hasDraft: boolean
+  /**
+   * True for an archived thread: it is drawn in the chat's archive rather than
+   * its thread list, opens read-only, and refuses every send until unarchived.
+   */
+  archived: boolean
 }
 
 // A reference that no longer resolves is shown, not hidden. `agentNodeId` is
@@ -195,10 +200,11 @@ export async function listGroupChatsForUserView(request: Request): Promise<Group
     .from(groupChatMember)
     .where(inArray(groupChatMember.groupChatId, chatIds))
 
+  // Active threads only: an archived one is not in the chat's thread list.
   const threadRows = await db
     .select({ groupChatId: groupChatThread.groupChatId })
     .from(groupChatThread)
-    .where(inArray(groupChatThread.groupChatId, chatIds))
+    .where(and(inArray(groupChatThread.groupChatId, chatIds), isNull(groupChatThread.archivedAt)))
 
   const agents = await agentsByNodeId()
   const users = await usersById(memberRows.flatMap((r) => (r.userId ? [r.userId] : [])))
@@ -257,6 +263,7 @@ export async function listThreadsInGroupChatView(
     agentIsMember: agentMembers.has(t.agentNodeId),
     sessionKey: t.sessionKey,
     hasDraft: Boolean(t.draft?.trim()),
+    archived: t.archivedAt !== null,
   }))
 }
 
@@ -316,5 +323,6 @@ async function enrichThread(
     hasDraft: Boolean(thread.draft?.trim()),
     sessionKey: thread.sessionKey,
     draft: thread.draft,
+    archived: thread.archivedAt !== null,
   }
 }

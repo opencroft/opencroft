@@ -625,7 +625,7 @@ function EmbeddedChatHome({
       listDirectoryUsersForPicker(),
       listAgentNodes(),
       listMyGroupChatPins({ data: chat.id }),
-      getGroupChatThreadLayout({ data: chat.id }),
+      getGroupChatThreadLayout({ data: { groupChatId: chat.id, list: 'active' } }),
     ])
     setData({ chat: fresh, threads, directory, agents, pins, layout })
   }, [chat.id])

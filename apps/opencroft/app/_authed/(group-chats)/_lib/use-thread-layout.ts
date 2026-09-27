@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import type { ChatListNode } from 'ui/chat/chat-list'
 
 import { nodesToLayout } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
-import type { ThreadLayout, VersionedThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
+import type { ThreadLayout, ThreadList, VersionedThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
 import { saveGroupChatThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
 
 /**
@@ -17,7 +17,7 @@ import { saveGroupChatThreadLayout } from '@/app/_authed/(group-chats)/_server/a
  * dragged, and the second one's next save would lose the version check and
  * report the person's own change as somebody else's.
  */
-export function useThreadLayout(groupChatId: string, loaded: VersionedThreadLayout) {
+export function useThreadLayout(groupChatId: string, list: ThreadList, loaded: VersionedThreadLayout) {
   // What is on screen, which runs ahead of the server between a drag and its
   // acknowledgement. Deliberately carries no version: a tree that has not been
   // acknowledged has no version, and pairing one with it would be inventing the
@@ -48,7 +48,7 @@ export function useThreadLayout(groupChatId: string, loaded: VersionedThreadLayo
     try {
       while (tree) {
         const result = await saveGroupChatThreadLayout({
-          data: { groupChatId, layout: tree, expectedVersion: confirmedVersion.current },
+          data: { groupChatId, list, layout: tree, expectedVersion: confirmedVersion.current },
         })
         if (!result.ok) {
           // Someone else got there first. Take their arrangement and say so --

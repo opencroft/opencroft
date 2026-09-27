@@ -718,7 +718,7 @@ async function threadUsage(systemId: string, ref: string, since: string | undefi
   }
 }
 
-/** What any sender may do: see its chats, open threads, post, resolve a thread, read the usage of its extension's own threads. No transcripts. */
+/** What any sender may do: see its chats, open threads, post, resolve a thread, archive the threads it owns, read the usage of its extension's own threads. No transcripts. */
 function groupChatsForSender(who: () => Promise<AttributedSender>, systemId: string): HostGroupChatsApi {
   return {
     list: async () => (await groupChatModel()).listGroupChatsForSender(await who()),
@@ -729,6 +729,8 @@ function groupChatsForSender(who: () => Promise<AttributedSender>, systemId: str
     send: async ({ thread, message, queue }) =>
       (await groupChatModel()).sendInThreadForSender(await who(), thread, message, queue ?? 'wait'),
     thread: async (ref) => (await groupChatModel()).threadForSender(await who(), ref),
+    archive: async (ref) => (await groupChatModel()).setThreadArchivedForSender(await who(), ref, true),
+    unarchive: async (ref) => (await groupChatModel()).setThreadArchivedForSender(await who(), ref, false),
     usage: async (ref, options) => {
       await who()
       return threadUsage(systemId, ref, options?.since)

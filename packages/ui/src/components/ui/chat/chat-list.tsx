@@ -3,8 +3,8 @@
 import { useState, useRef, useEffect, type DragEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil } from 'lucide-react'
 
-import { ChatListItem, type ChatListItemAction, type ChatStatus } from 'ui/components/ui/chat/chat-list-item'
-import { RowContextMenu } from 'ui/components/ui/utils/row-context-menu'
+import { ChatListItem, type ChatListItemAction, type ChatStatus } from './chat-list-item'
+import { RowContextMenu } from '../utils/row-context-menu'
 import { cn } from 'ui/lib/utils'
 
 export interface ChatListLeaf {
@@ -54,6 +54,10 @@ interface ChatListProps {
   onRename?: (id: string) => void
   onStopProcess?: (id: string) => void
   onClose?: (id: string) => void
+  // Forwarded straight to every row -- see ChatListItem for why the two are
+  // mutually exclusive per row and why they sit right before Delete.
+  onArchive?: (id: string) => void
+  onUnarchive?: (id: string) => void
   onDelete?: (id: string) => void
   onChange?: (nodes: ChatListNode[]) => void
   onRenameFolder?: (folderId: string, name: string) => void
@@ -324,7 +328,7 @@ function dragPayload(p: Press): Drag {
 // keeps native HTML5 DnD + right-click untouched. Two identical short
 // vibration pulses mark the same two moments -- armed, then menu-open -- where
 // the Vibration API exists.
-export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolders = true, onSelect, onRename, onStopProcess, onClose, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
+export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolders = true, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
   const [over, setOver] = useState<Over | null>(null)
@@ -795,6 +799,8 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
             onRename={onRename}
             onStopProcess={onStopProcess}
             onClose={onClose}
+            onArchive={onArchive}
+            onUnarchive={onUnarchive}
             onDelete={onDelete}
             actions={itemActions}
             onPointerDown={noteInputType}

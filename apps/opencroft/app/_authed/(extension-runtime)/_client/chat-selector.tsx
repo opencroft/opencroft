@@ -3,6 +3,7 @@
 import { Link } from '@tanstack/react-router'
 import { MessageCircleMore, SquarePen } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/command'
 import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
@@ -17,9 +18,14 @@ import {
   GroupChatThreadDeleteDialog,
   GroupChatThreadRenameDialog,
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
-import { getGroupChatEmbedView, listGroupChatThreadsView } from '@/app/_authed/(group-chats)/_server/actions'
+import {
+  getGroupChatEmbedView,
+  listGroupChatThreadsView,
+  setGroupChatThreadArchived,
+} from '@/app/_authed/(group-chats)/_server/actions'
 
 export interface ChatSelectorProps {
   /** The group chat's slug — same address the embedded chat surface takes. */
@@ -105,8 +111,12 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
   //
   // The cap saved nothing either way: the server applies no limit of its own,
   // so every thread is already loaded and in memory by the time this runs.
+  // Archived threads are the chat's archive, not its thread list; they are
+  // reached from the chat's settings, as on the chat's own screen.
   const shown = useMemo(() => {
-    const all = [...(threads ?? [])].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    const all = (threads ?? [])
+      .filter((t) => !t.archived)
+      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     const q = query.trim().toLowerCase()
     if (!q) {
       return all
@@ -222,6 +232,22 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
                   onDelete={(id) => {
                     setDeleteTarget(id)
                     close()
+                  }}
+                  // Beside Delete, as on the chat's own screen. No confirm: it
+                  // is undone from the chat's settings.
+                  onArchive={(id) => {
+                    setGroupChatThreadArchived({ data: { threadId: id, archived: true } })
+                      .then((result) => {
+                        if (!result.ok) {
+                          toast(groupChatAccessMessageForCode(result.code))
+                          return
+                        }
+                        setThreads((prev) => prev?.map((t) => (t.id === id ? { ...t, archived: true } : t)) ?? null)
+                      })
+                      .catch((err) => {
+                        console.error('Failed to archive thread', id, err)
+                        toast('That thread could not be archived.')
+                      })
                   }}
                   // No scroll of its own — the CommandList above is the menu's
                   // one scroll container, and a second nested one splits the

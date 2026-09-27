@@ -97,6 +97,8 @@ export interface HostGroupChatThread {
   chat: { ref: string; slug: string; name: string }
   agent: { nodeId: string; name: string | null }
   createdAt: Date
+  /** True while the thread is archived: it refuses every send until unarchived. */
+  archived: boolean
 }
 
 /** One turn of a thread's session, summarised — the same shape `group_chat_turns` returns. */
@@ -167,6 +169,16 @@ export interface HostGroupChatsApi {
   /** Send into a thread; `queue` defaults to `wait` (after the running turn). */
   send(input: { thread: string; message: string; queue?: 'wait' | 'push' }): Promise<{ status: 'queued' | 'delivered' }>
   thread(ref: string): Promise<HostGroupChatThread>
+  /**
+   * Archive a thread the sender owns — one it started, or for an agent sender
+   * one addressed to it. The thread keeps its history and its folder, moves to
+   * the chat's archive, and refuses every send (`send` included) until it is
+   * unarchived. Already archived: nothing changes. Any other thread refuses
+   * with "Not available".
+   */
+  archive(ref: string): Promise<HostGroupChatThread>
+  /** Bring an archived thread back into the chat's thread list, into the folder it has in the archive. Same gate as `archive`. */
+  unarchive(ref: string): Promise<HostGroupChatThread>
   /**
    * The usage of a thread THIS extension opened (through `startThread`, as its
    * own system identity): its turns' tokens and cost, optionally only turns

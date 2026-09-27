@@ -59,7 +59,7 @@ import {
 } from '@/app/_authed/(agent)/_server/attachment-store'
 import { queryChatUsageTokensBySession } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { gatewayDefaults } from '@/app/_authed/(agent)/_server/gateway-defaults'
-import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
+import { dropWaitingEntries, queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
   appendSessionEvent,
   clearSessionEvents,
@@ -999,6 +999,17 @@ export async function stopLocalImpl(sessionId: string): Promise<{ delivered: num
 // of the queue; there is no answer here worth returning.
 export async function deliverQueueLocalImpl(sessionId: string): Promise<void> {
   await agentClient.prompt(sessionId, '', { queue: 'push', origin: { kind: 'system' } })
+}
+
+// Drop everything waiting for a tab without ending it: the live queue when the
+// session is resident, and the durable rows either way, so a session loaded
+// later does not bring them back. A running turn is not touched.
+export async function clearQueueLocalImpl(tabKey: string): Promise<void> {
+  const entry = tabSessions.get(tabKey)
+  if (entry) {
+    agentClient.clearQueue(entry.id)
+  }
+  await dropWaitingEntries(tabKey)
 }
 
 export async function cancelLocalImpl(sessionId: string): Promise<void> {

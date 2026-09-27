@@ -11,10 +11,21 @@ import { getSetting, upsertSettingCas } from '@/server/data'
 // Only the SKELETON is stored: thread ids, folder names, and order. A thread's
 // title, its agent and its live status are read from the thread rows on every
 // load, so nothing here can go stale against a rename or a departed agent.
-const SETTING_PREFIX = 'group-chat-thread-layout:'
+//
+// TWO LISTS PER CHAT, one row each: the active threads and the archived ones.
+// Each keeps its own folders and order, so a thread moved between folders in
+// the archive comes back to the folder it had there. Which list a thread is
+// DRAWN in is decided by its row's `archivedAt`, never by which layout
+// mentions it -- a layout is only where it sits within its list.
+export type ThreadList = 'active' | 'archive'
 
-function settingId(groupChatId: string): string {
-  return `${SETTING_PREFIX}${groupChatId}`
+const SETTING_PREFIX: Record<ThreadList, string> = {
+  active: 'group-chat-thread-layout:',
+  archive: 'group-chat-thread-archive-layout:',
+}
+
+function settingId(groupChatId: string, list: ThreadList): string {
+  return `${SETTING_PREFIX[list]}${groupChatId}`
 }
 
 export interface ThreadLayoutFolder {
@@ -81,8 +92,8 @@ function parseLayout(raw: string): ThreadLayout {
  * cannot close one standing open beside it, and every other feature in that
  * table has the same exposure. Not this module's to fix.
  */
-export async function readThreadLayout(groupChatId: string): Promise<VersionedThreadLayout> {
-  const row = await getSetting(settingId(groupChatId))
+export async function readThreadLayout(groupChatId: string, list: ThreadList): Promise<VersionedThreadLayout> {
+  const row = await getSetting(settingId(groupChatId, list))
   if (!row) {
     // Version 0 is "no row yet", which is what upsertSettingCas expects from a
     // first writer -- so an unarranged chat and an arranged one are written the
@@ -113,10 +124,11 @@ export async function readThreadLayout(groupChatId: string): Promise<VersionedTh
  */
 export async function writeThreadLayout(
   groupChatId: string,
+  list: ThreadList,
   layout: ThreadLayout,
   expectedVersion: number,
 ): Promise<number | null> {
-  const row = await upsertSettingCas(settingId(groupChatId), JSON.stringify(layout), expectedVersion)
+  const row = await upsertSettingCas(settingId(groupChatId, list), JSON.stringify(layout), expectedVersion)
   return row?.version ?? null
 }
 
@@ -148,16 +160,17 @@ export const MAX_THREAD_LAYOUT_ATTEMPTS = 5
  */
 export async function updateThreadLayout(
   groupChatId: string,
+  list: ThreadList,
   change: (layout: ThreadLayout) => ThreadLayout | null,
-  read: (groupChatId: string) => Promise<VersionedThreadLayout> = readThreadLayout,
+  read: (groupChatId: string, list: ThreadList) => Promise<VersionedThreadLayout> = readThreadLayout,
 ): Promise<void> {
   for (let attempt = 0; attempt < MAX_THREAD_LAYOUT_ATTEMPTS; attempt++) {
-    const current = await read(groupChatId)
+    const current = await read(groupChatId, list)
     const next = change(current.layout)
     if (!next) {
       return
     }
-    if ((await writeThreadLayout(groupChatId, next, current.version)) !== null) {
+    if ((await writeThreadLayout(groupChatId, list, next, current.version)) !== null) {
       return
     }
   }
@@ -188,18 +201,11 @@ export function withThreadInFolder(layout: ThreadLayout, threadId: string, folde
   if (target?.folder.threadIds.includes(threadId)) {
     return null
   }
-  const entries: ThreadLayoutEntry[] = layout.entries
-    .filter((entry) => entry.kind === 'folder' || entry.threadId !== threadId)
-    .map((entry) => {
-      if (entry.kind === 'thread') {
-        return entry
-      }
-      const threadIds = entry.folder.threadIds.filter((id) => id !== threadId)
-      return {
-        kind: 'folder',
-        folder: { ...entry.folder, threadIds: entry === target ? [...threadIds, threadId] : threadIds },
-      }
-    })
+  const entries: ThreadLayoutEntry[] = (withoutThread(layout, threadId) ?? layout).entries.map((entry) =>
+    entry.kind === 'folder' && entry.folder.id === target?.folder.id
+      ? { kind: 'folder', folder: { ...entry.folder, threadIds: [...entry.folder.threadIds, threadId] } }
+      : entry,
+  )
   if (!target) {
     const lastFolder = entries.findLastIndex((entry) => entry.kind === 'folder')
     entries.splice(lastFolder + 1, 0, {
@@ -208,6 +214,52 @@ export function withThreadInFolder(layout: ThreadLayout, threadId: string, folde
     })
   }
   return { entries }
+}
+
+/**
+ * The layout with `threadId` filed in the folder named `folderName`, or loose at
+ * the end of the top level when `folderName` is null; `null` when it is already
+ * there. What moving a thread between the active list and the archive does to
+ * the list it arrives in: it keeps the folder it had by name, and a folder the
+ * arriving list does not have is created.
+ */
+export function withThreadPlaced(
+  layout: ThreadLayout,
+  threadId: string,
+  folderName: string | null,
+): ThreadLayout | null {
+  if (folderName !== null) {
+    return withThreadInFolder(layout, threadId, folderName)
+  }
+  if (layout.entries.some((entry) => entry.kind === 'thread' && entry.threadId === threadId)) {
+    return null
+  }
+  return { entries: [...(withoutThread(layout, threadId) ?? layout).entries, { kind: 'thread', threadId }] }
+}
+
+/**
+ * The layout with `threadId` taken out of wherever it is, or `null` when it is
+ * not there. A folder it leaves is kept even when empty, as with a drag.
+ */
+export function withoutThread(layout: ThreadLayout, threadId: string): ThreadLayout | null {
+  if (
+    !folderNameByThreadId(layout).has(threadId) &&
+    !layout.entries.some((entry) => entry.kind === 'thread' && entry.threadId === threadId)
+  ) {
+    return null
+  }
+  return {
+    entries: layout.entries
+      .filter((entry) => entry.kind === 'folder' || entry.threadId !== threadId)
+      .map((entry) =>
+        entry.kind === 'thread'
+          ? entry
+          : {
+              kind: 'folder',
+              folder: { ...entry.folder, threadIds: entry.folder.threadIds.filter((id) => id !== threadId) },
+            },
+      ),
+  }
 }
 
 /** Same id scheme as the list component's, skipping any the layout holds. */

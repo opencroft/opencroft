@@ -2,6 +2,7 @@ import { requireGroupChatMember } from '@/app/_authed/(group-chats)/_server/mode
 import {
   readThreadLayout,
   type ThreadLayout,
+  type ThreadList,
   type VersionedThreadLayout,
   writeThreadLayout,
 } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
@@ -14,14 +15,18 @@ import {
 // group-chat model -- the model writes layouts too, on an agent's behalf, and
 // behind its own gate.
 
-/** The layout of a chat the caller is a member of. */
-export async function getThreadLayout(request: Request, groupChatId: string): Promise<VersionedThreadLayout> {
+/** One of the layouts of a chat the caller is a member of. */
+export async function getThreadLayout(
+  request: Request,
+  groupChatId: string,
+  list: ThreadList,
+): Promise<VersionedThreadLayout> {
   await requireGroupChatMember(request, groupChatId)
-  return readThreadLayout(groupChatId)
+  return readThreadLayout(groupChatId, list)
 }
 
 /**
- * Replace the layout of a chat the caller is a member of.
+ * Replace one of the layouts of a chat the caller is a member of.
  *
  * `null` still means the version check refused it, and it means nothing about
  * membership: a non-member gets the same refusal every other group-chat read
@@ -31,9 +36,10 @@ export async function getThreadLayout(request: Request, groupChatId: string): Pr
 export async function putThreadLayout(
   request: Request,
   groupChatId: string,
+  list: ThreadList,
   layout: ThreadLayout,
   expectedVersion: number,
 ): Promise<number | null> {
   await requireGroupChatMember(request, groupChatId)
-  return writeThreadLayout(groupChatId, layout, expectedVersion)
+  return writeThreadLayout(groupChatId, list, layout, expectedVersion)
 }

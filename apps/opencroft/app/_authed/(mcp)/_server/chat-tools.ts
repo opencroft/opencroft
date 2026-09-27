@@ -13,6 +13,7 @@ import {
   listThreadTurnsAsAgent,
   renameThreadAsAgent,
   sendMessageInThreadAsAgent,
+  setThreadArchivedAsAgent,
   startThreadAsAgent,
   threadCompactStatusAsAgent,
   threadRefFromSessionKey,
@@ -41,7 +42,9 @@ export const definitions = [
       'means the figure is live. Null only when genuinely UNKNOWN (the session has never reported usage), ' +
       'and null must not be read as "nothing held"; `contextLimit` alone is null when the harness cannot ' +
       "say what the model's window is. Use it to spot a thread that should be compacted " +
-      '(group_chat_compact) before dispatching into it.',
+      "(group_chat_compact) before dispatching into it. A thread with `archived: true` is in the chat's " +
+      'archive and refuses every send until it is unarchived (group_chat_archive_thread); its `folder` is ' +
+      'its folder in the archive.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
@@ -242,6 +245,30 @@ export const definitions = [
         },
       },
       required: ['thread'],
+    },
+  },
+  {
+    name: 'group_chat_archive_thread',
+    description:
+      'Archive a thread of a group chat you are a member of, or unarchive it. An archived thread keeps ' +
+      "its history and moves from the chat's thread list to its archive, in the same folder; nothing can " +
+      'be sent into it, by anyone, until it is unarchived, and messages still waiting in its queue are ' +
+      'dropped. Unarchiving returns it to the thread list, into the folder it has in the archive. Use it ' +
+      'to retire finished work without destroying it. The same threads are yours to archive as to delete: ' +
+      'one you started, or one addressed to you.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        archived: {
+          type: 'boolean',
+          description: 'true to archive the thread, false to unarchive it.',
+        },
+      },
+      required: ['thread', 'archived'],
     },
   },
   {
@@ -540,6 +567,38 @@ export const handlers: Record<string, ToolHandler> = {
       )
     }
     return textResult(`Thread "${thread}" deleted: its session, history and queue are gone.`)
+  },
+
+  // ── group_chat_archive_thread ───────────────────────────────────
+  //
+  // No approval wrapper; the gate is deletion's ownership rule
+  // (`setThreadArchivedAsAgent`), for the same reason as there: membership
+  // admits every thread of the chat, and closing a colleague's thread to
+  // messages is not the caller's call to make. Archiving destroys nothing, so
+  // unlike deletion a running turn is not a refusal.
+  group_chat_archive_thread: async (args, caller) => {
+    const agent = requireCallingAgent(caller)
+    const thread = args.thread as string | undefined
+    if (!thread) {
+      fail(-32602, 'Missing required param: thread')
+    }
+    const archived = args.archived
+    if (typeof archived !== 'boolean') {
+      fail(-32602, 'Missing or invalid param: archived must be true or false')
+    }
+    const result = await setThreadArchivedAsAgent(agent, thread, archived)
+    if (!result.changed) {
+      fail(
+        -32602,
+        `"${thread}" is not yours to ${archived ? 'archive' : 'unarchive'} and was NOT changed. You may archive a ` +
+          'thread you started, or a thread addressed to you; this is neither. Ask the agent it belongs to.',
+      )
+    }
+    return textResult(
+      archived
+        ? `Thread "${thread}" archived: it keeps its history and takes no messages until it is unarchived.`
+        : `Thread "${thread}" unarchived: it is back in the thread list and takes messages again.`,
+    )
   },
 
   // ── group_chat_compact / group_chat_compact_status ──────────────

@@ -20,6 +20,7 @@
 import { Pin, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 import { GroupChatDetail } from 'ui/group-chat/group-chat-detail'
@@ -34,10 +35,12 @@ import {
   GroupChatThreadDeleteDialog,
   GroupChatThreadRenameDialog,
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
-import { GroupChatMenu } from '@/app/_authed/(group-chats)/_components/group-chat-menu'
 import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/group-chat-pins-panel'
+import { GroupChatSettings } from '@/app/_authed/(group-chats)/_components/group-chat-settings'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
+import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type {
@@ -47,6 +50,7 @@ import type {
   listGroupChatThreadsView,
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
+import { setGroupChatThreadArchived } from '@/app/_authed/(group-chats)/_server/actions'
 import type { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 
 /** Everything the screen draws, in the shape the server functions answer with. */
@@ -104,6 +108,12 @@ export function GroupChatDetailScreen({
   activeThreadId,
   className,
 }: GroupChatDetailScreenProps) {
+  // Every write below that is not Delete or Rename (both keep their own
+  // confirm dialogs and their own reload) goes through this -- the same
+  // route-invalidate-or-host-reload fallback the pins panel and the members
+  // dialog already use.
+  const refresh = useGroupChatRefresh()
+
   // Which thread's Delete was chosen — the shared confirm dialog takes over.
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   // Which thread's Rename was chosen. The kit's row reports the id and stops
@@ -142,6 +152,33 @@ export function GroupChatDetailScreen({
     return map
   }, [threads, pendingKeys, activeKeys, backgroundKeys, aliveKeys])
 
+  // The active list draws only non-archived threads; an archived one moved to
+  // the chat's own archive, drawn in the settings dialog instead. Split here,
+  // once, rather than filtering at each of the three places that draw the
+  // active list (the tree, the search results, the count that decides whether
+  // to draw a list at all).
+  const activeThreads = useMemo(() => threads.filter((t) => !t.archived), [threads])
+  const archivedThreads = useMemo(() => threads.filter((t) => t.archived), [threads])
+
+  // Archiving needs no confirm -- it is reversible from the settings dialog's
+  // Archive section -- so it fires the same way Stop process does: straight
+  // from the row, with a toast standing in for the UI Stop process has none
+  // of (a background action nobody's fingers are still on).
+  const archiveThread = (threadId: string) => {
+    setGroupChatThreadArchived({ data: { threadId, archived: true } })
+      .then((result) => {
+        if (!result.ok) {
+          toast(groupChatAccessMessageForCode(result.code))
+          return
+        }
+        return refresh()
+      })
+      .catch((err) => {
+        console.error('Failed to archive thread', threadId, err)
+        toast('That thread could not be archived.')
+      })
+  }
+
   const stopThread = (threadId: string) => {
     // The kit hands back the row id -- the THREAD id, not the session key
     // this has to act on; `sessionKey` rides on every list entry. Same server
@@ -162,10 +199,10 @@ export function GroupChatDetailScreen({
   // stays presentational and every write goes through one hook, one store and
   // one compare-and-swap guard. A refused write is answered by adopting the
   // arrangement that won, which is state a presentational list cannot hold.
-  const { layout, persist } = useThreadLayout(groupChatId, loadedLayout)
+  const { layout, persist } = useThreadLayout(groupChatId, 'active', loadedLayout)
   const threadTree = (
     <GroupChatThreadTree
-      threads={threads}
+      threads={activeThreads}
       statusById={threadStatusById}
       layout={layout}
       onChange={persist}
@@ -174,6 +211,7 @@ export function GroupChatDetailScreen({
       onStopProcess={stopThread}
       onRename={(threadId) => setRenameThreadId(threadId)}
       onDelete={(threadId) => setDeleteTarget(threadId)}
+      onArchive={archiveThread}
     />
   )
 
@@ -185,7 +223,7 @@ export function GroupChatDetailScreen({
     if (!trimmedQuery) {
       return []
     }
-    return [...threads]
+    return [...activeThreads]
       .filter(
         (t) =>
           (t.title ?? '').toLowerCase().includes(trimmedQuery) || t.agent.name.toLowerCase().includes(trimmedQuery),
@@ -200,7 +238,7 @@ export function GroupChatDetailScreen({
         status: threadStatusById.get(t.id),
         hasDraft: t.hasDraft,
       }))
-  }, [threads, trimmedQuery, threadStatusById])
+  }, [activeThreads, trimmedQuery, threadStatusById])
   // The header's two parts, memoized on exactly what they read so a host that
   // holds them in state is told once per real change. While a search is open
   // the field is the whole header: the other controls step aside, and the
@@ -232,7 +270,7 @@ export function GroupChatDetailScreen({
     ) : null
     const actions = searching ? null : (
       <>
-        {threads.length > 0 ? (
+        {activeThreads.length > 0 ? (
           <Button
             type='button'
             variant='ghost'
@@ -253,11 +291,31 @@ export function GroupChatDetailScreen({
         >
           <Pin />
         </Toggle>
-        <GroupChatMenu groupChatId={groupChatId} members={chat.members} directory={directory} agents={agents} />
+        <GroupChatSettings
+          groupChatId={groupChatId}
+          members={chat.members}
+          directory={directory}
+          agents={agents}
+          archivedThreads={archivedThreads}
+          statusById={threadStatusById}
+          onOpenThread={onOpenThread}
+        />
       </>
     )
     return { title, actions }
-  }, [searching, query, pinsOpen, threads.length, groupChatId, chat.members, directory, agents])
+  }, [
+    searching,
+    query,
+    pinsOpen,
+    activeThreads.length,
+    groupChatId,
+    chat.members,
+    directory,
+    agents,
+    archivedThreads,
+    threadStatusById,
+    onOpenThread,
+  ])
   // Reported through a ref so an inline callback never re-arms this, and
   // cleared on the way out: a host that took the header must hear that it is
   // gone, or its window keeps a search field over nothing.
@@ -280,11 +338,12 @@ export function GroupChatDetailScreen({
         onRename={(threadId) => setRenameThreadId(threadId)}
         onStopProcess={stopThread}
         onDelete={(threadId) => setDeleteTarget(threadId)}
+        onArchive={archiveThread}
       />
     ) : (
       <p className='px-1 py-2 text-sm text-muted-foreground'>No threads match the search.</p>
     )
-  ) : threads.length > 0 ? (
+  ) : activeThreads.length > 0 ? (
     threadTree
   ) : undefined
 

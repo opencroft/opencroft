@@ -28,6 +28,7 @@ const FAILURES = [
   'slug-taken',
   'slug-unusable',
   'turn-not-found',
+  'thread-archived',
 ] as const
 
 // Compile-time proof that the list above still matches the server's union. If
@@ -86,6 +87,7 @@ const MESSAGES: Record<GroupChatAccessFailure, string> = {
   // straight at the conversation it is about. See the code's own comment for
   // why it is not collapsed into "not available".
   'turn-not-found': 'That message is no longer where this page thinks it is — reload the chat and try again.',
+  'thread-archived': 'This thread is archived; unarchive it to write.',
 }
 
 /**

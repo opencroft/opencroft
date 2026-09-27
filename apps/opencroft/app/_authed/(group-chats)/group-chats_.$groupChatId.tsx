@@ -43,7 +43,7 @@ export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$group
         listDirectoryUsersForPicker(),
         listAgentNodes(),
         listMyGroupChatPins({ data: params.groupChatId }),
-        getGroupChatThreadLayout({ data: params.groupChatId }),
+        getGroupChatThreadLayout({ data: { groupChatId: params.groupChatId, list: 'active' } }),
       ])
       return { chat, threads, directory, agents, pins, layout }
     }),

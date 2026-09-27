@@ -63,6 +63,7 @@ import {
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { storedGroupChatKeys } from '@/app/_authed/(group-chats)/_server/orphaned-session-keys'
+import { moveThreadBetweenLists, threadListOf } from '@/app/_authed/(group-chats)/_server/thread-archive'
 import {
   folderNameByThreadId,
   readThreadLayout,
@@ -137,6 +138,8 @@ export interface GroupChatThreadSummary {
   createdAt: Date
   /** Unsent composer text for this thread, or null when there is none. */
   draft: string | null
+  /** When the thread was archived; null while it is active. */
+  archivedAt: Date | null
 }
 
 /**
@@ -358,6 +361,7 @@ const threadSummaryColumns = {
   title: groupChatThread.title,
   createdAt: groupChatThread.createdAt,
   draft: groupChatThread.draft,
+  archivedAt: groupChatThread.archivedAt,
 }
 
 export type GroupChatSlugResolution =
@@ -837,7 +841,9 @@ export function describeThreadKeyMigration(report: ThreadKeyMigrationReport): st
   )
 }
 
-async function countKeySpellings(table: typeof groupChatThread | typeof agentQueueEntry | typeof groupChatThreadAlias): Promise<{ colon: number; dot: number }> {
+async function countKeySpellings(
+  table: typeof groupChatThread | typeof agentQueueEntry | typeof groupChatThreadAlias,
+): Promise<{ colon: number; dot: number }> {
   const [row] = await db
     .select({
       colon: sql<number>`count(*) filter (where ${table.sessionKey} like ${'group-chat:%'})`,
@@ -879,7 +885,12 @@ async function retireEmptyColonAliases(): Promise<number> {
   const stored = await storedGroupChatKeys()
   const empty = colonAliases.filter((alias) => alias.sessionKey && !stored.has(alias.sessionKey))
   if (empty.length > 0) {
-    await db.delete(groupChatThreadAlias).where(inArray(groupChatThreadAlias.id, empty.map((alias) => alias.id)))
+    await db.delete(groupChatThreadAlias).where(
+      inArray(
+        groupChatThreadAlias.id,
+        empty.map((alias) => alias.id),
+      ),
+    )
   }
   return empty.length
 }
@@ -2094,6 +2105,8 @@ async function createThread(
       // Carried through as it went in, so this literal stays a faithful copy of
       // the row rather than a partial one that happens to satisfy delivery.
       createdByAgentNodeId: opts.createdByAgentNodeId,
+      createdBySystemId: opts.createdBySystemId ?? null,
+      archivedAt: null,
     },
     firstMessage,
     { queue: 'wait', sender: opts.sender },
@@ -2269,6 +2282,8 @@ export interface ThreadDeliveryTarget {
   sessionKey: string
   deliveredContextSignature: string | null
   createdByAgentNodeId: string | null
+  createdBySystemId: string | null
+  archivedAt: Date | null
 }
 
 const threadDeliveryColumns = {
@@ -2278,6 +2293,19 @@ const threadDeliveryColumns = {
   sessionKey: groupChatThread.sessionKey,
   deliveredContextSignature: groupChatThread.deliveredContextSignature,
   createdByAgentNodeId: groupChatThread.createdByAgentNodeId,
+  createdBySystemId: groupChatThread.createdBySystemId,
+  archivedAt: groupChatThread.archivedAt,
+}
+
+/**
+ * Refuse a write into an archived thread, naming why. Reached only past a
+ * membership gate, so it leaks nothing, and a caller who can see the thread
+ * needs to be told what to do rather than handed a generic failure.
+ */
+function refuseIfArchived(thread: { archivedAt: Date | null }): void {
+  if (thread.archivedAt) {
+    throw new GroupChatAccessError('thread-archived', 'This thread is archived; unarchive it to write')
+  }
 }
 
 /**
@@ -2298,8 +2326,10 @@ const threadDeliveryColumns = {
  * how one caller quietly stops carrying standing context, or stops respecting
  * the agent-membership rule, without any test noticing.
  *
- * The one rule that IS here rather than in a caller: the thread's agent must
- * still be a member. That is a property of the thread, not of who is asking.
+ * The two rules that ARE here rather than in a caller: the thread must not be
+ * archived, and the thread's agent must still be a member. Both are properties
+ * of the thread, not of who is asking -- which is what makes an archived thread
+ * refuse a person, an agent, a scheduled pipeline and an extension alike.
  *
  * Returns whether the message queued behind a turn already running or was
  * dispatched immediately — read right after the session opens and before the
@@ -2316,6 +2346,7 @@ async function deliverIntoThread(
   text: string,
   opts: { front?: boolean; queue: QueueMode; sender: string; attachments?: readonly string[] },
 ): Promise<{ queued: boolean; sessionId: string }> {
+  refuseIfArchived(row)
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
   // the sessionKey, and every send through them would keep reaching it. This
@@ -2422,6 +2453,7 @@ export async function compactThread(request: Request, threadId: string): Promise
       groupChatId: groupChatThread.groupChatId,
       agentNodeId: groupChatThread.agentNodeId,
       sessionKey: groupChatThread.sessionKey,
+      archivedAt: groupChatThread.archivedAt,
     })
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
@@ -2432,6 +2464,9 @@ export async function compactThread(request: Request, threadId: string): Promise
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
+  // Compaction writes a restore prompt into the session, so an archived thread
+  // refuses it like any other write.
+  refuseIfArchived(row)
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
@@ -2544,9 +2579,7 @@ export type DeleteThreadAsAgentResult = { deleted: true } | { deleted: false; re
 export async function deleteThreadAsAgent(agent: AgentRef, threadRef: string): Promise<DeleteThreadAsAgentResult> {
   const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
-  const addressedToCaller = row.agentNodeId === agentNodeId
-  const startedByCaller = row.createdByAgentNodeId === agentNodeId
-  if (!addressedToCaller && !startedByCaller) {
+  if (!ownsThread(row, { kind: 'agent', agentNodeId })) {
     return { deleted: false, refused: 'not-owned' }
   }
   // Asked of the key, because the key is what a thread has; a session id is an
@@ -2558,6 +2591,85 @@ export async function deleteThreadAsAgent(agent: AgentRef, threadRef: string): P
   }
   await tearDownAndDeleteThread(row.id, row.sessionKey)
   return { deleted: true }
+}
+
+/**
+ * Whether a non-person principal owns a thread: may delete it, or archive it.
+ *
+ * An agent owns the threads addressed to it and the ones it started; an
+ * extension's system identity owns the ones it started. A person is not asked
+ * this -- any member may manage any thread of their chat from its list.
+ */
+function ownsThread(row: ThreadDeliveryTarget, principal: SendPrincipal): boolean {
+  return principal.kind === 'agent'
+    ? row.agentNodeId === principal.agentNodeId || row.createdByAgentNodeId === principal.agentNodeId
+    : row.createdBySystemId === principal.systemId
+}
+
+// ── Archiving ──────────────────────────────────────────────────────────────
+//
+// The move itself is `moveThreadBetweenLists`; these are its gates, one per
+// kind of caller, and they are deletion's gates: a person may archive any
+// thread of a chat they are in, an agent or an extension only a thread it owns
+// (`ownsThread`). No turn-in-progress refusal, unlike deletion: archiving
+// destroys nothing, and a turn running when it happens is left to finish.
+
+/** Archive or unarchive a thread, as a member of its chat. */
+export async function setThreadArchived(request: Request, threadId: string, archived: boolean): Promise<void> {
+  const sessionUser = await requireSignedInUser(request)
+  const [row] = await db
+    .select({
+      id: groupChatThread.id,
+      groupChatId: groupChatThread.groupChatId,
+      sessionKey: groupChatThread.sessionKey,
+    })
+    .from(groupChatThread)
+    .where(eq(groupChatThread.id, threadId))
+    .limit(1)
+  if (!row || !(await isUserMember(row.groupChatId, sessionUser.id))) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await moveThreadBetweenLists(row, archived)
+}
+
+export type ArchiveThreadAsAgentResult = { changed: true } | { changed: false; refused: 'not-owned' }
+
+/**
+ * Archive or unarchive a thread as an agent. Refuses by name a thread the agent
+ * does not own, for the reason `deleteThreadAsAgent` gives: the caller was
+ * shown it by `group_chat_list`, so naming it back tells them nothing new.
+ */
+export async function setThreadArchivedAsAgent(
+  agent: AgentRef,
+  threadRef: string,
+  archived: boolean,
+): Promise<ArchiveThreadAsAgentResult> {
+  const agentNodeId = await requireAgentNode(agent)
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  if (!ownsThread(row, { kind: 'agent', agentNodeId })) {
+    return { changed: false, refused: 'not-owned' }
+  }
+  await moveThreadBetweenLists(row, archived)
+  return { changed: true }
+}
+
+/**
+ * Archive or unarchive a thread as a host-bound sender -- an extension's own
+ * system identity, or the agent that invoked its action. A thread the sender
+ * does not own is refused as UNAVAILABLE, the way `usageSessionKeyForSystem`
+ * refuses one: an extension manages what it started and nothing else.
+ */
+export async function setThreadArchivedForSender(
+  sender: AttributedSender,
+  threadRef: string,
+  archived: boolean,
+): Promise<SenderThread> {
+  const row = await resolveThreadForPrincipal(sender.principal, threadRef)
+  if (!ownsThread(row, sender.principal)) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  await moveThreadBetweenLists(row, archived)
+  return senderThreadFor(row.id)
 }
 
 /**
@@ -2799,9 +2911,12 @@ export interface AgentThreadRef {
   title: string | null
   /**
    * The thread-list folder this thread is filed in, by the name a person sees
-   * on the list; null for a thread at the top level.
+   * on the list; null for a thread at the top level. For an archived thread,
+   * its folder in the archive.
    */
   folder: string | null
+  /** True for an archived thread, which refuses every send until it is unarchived. */
+  archived: boolean
   /** The agent this thread talks to — which may be the caller itself. */
   agentNodeId: string
   createdAt: Date
@@ -2990,6 +3105,7 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
       sessionKey: groupChatThread.sessionKey,
       slug: groupChatThread.slug,
       createdAt: groupChatThread.createdAt,
+      archivedAt: groupChatThread.archivedAt,
     })
     .from(groupChatThread)
     .where(
@@ -3046,11 +3162,21 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
   // defensible default (see startThreadAsAgent): without this the caller would
   // be made to guess a name and get the deliberately vague refusal for a typo.
   const membersByChatId = await agentMembersByChat(chats.map((c) => c.id))
-  // Read from the same shared layout the thread list draws, so the folder named
-  // here is the one a person sees the thread in.
+  // Read from the same shared layouts the thread lists draw, so the folder named
+  // here is the one a person sees the thread in. A thread id is in at most one
+  // of a chat's two lists, so one map per chat answers for both.
   const folderByChatId = new Map(
     await Promise.all(
-      chats.map(async (c) => [c.id, folderNameByThreadId((await readThreadLayout(c.id)).layout)] as const),
+      chats.map(async (c) => {
+        const [active, archive] = await Promise.all([
+          readThreadLayout(c.id, 'active'),
+          readThreadLayout(c.id, 'archive'),
+        ])
+        return [
+          c.id,
+          new Map([...folderNameByThreadId(active.layout), ...folderNameByThreadId(archive.layout)]),
+        ] as const
+      }),
     ),
   )
   return chats.map((chat) => ({
@@ -3064,6 +3190,7 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
         ref: agentThreadRef(t),
         title: t.title,
         folder: folderByChatId.get(chat.id)?.get(t.id) ?? null,
+        archived: t.archivedAt !== null,
         agentNodeId: t.agentNodeId,
         createdAt: t.createdAt,
         contextUsage: contextUsageByKey.get(t.sessionKey) ?? null,
@@ -3078,12 +3205,18 @@ function agentThreadRef(t: { id: string; slug: string | null; sessionKey: string
 }
 
 /**
- * File a thread in the folder of that name, creating the folder if the chat has
- * none. No gate: every caller has already established that the one asking is a
+ * File a thread in the folder of that name within the list it is in -- the
+ * archive for an archived thread -- creating the folder if that list has none.
+ * No gate: every caller has already established that the one asking is a
  * member of the thread's chat.
  */
-async function placeThreadInFolder(groupChatId: string, threadId: string, folder: string): Promise<void> {
-  await updateThreadLayout(groupChatId, (layout) => withThreadInFolder(layout, threadId, folder))
+async function placeThreadInFolder(
+  thread: { id: string; groupChatId: string; archivedAt: Date | null },
+  folder: string,
+): Promise<void> {
+  await updateThreadLayout(thread.groupChatId, threadListOf(thread), (layout) =>
+    withThreadInFolder(layout, thread.id, folder),
+  )
 }
 
 /**
@@ -3249,7 +3382,7 @@ export async function startThreadAsAgent(
   })
   if (folder) {
     try {
-      await placeThreadInFolder(groupChatId, started.thread.id, folder)
+      await placeThreadInFolder({ id: started.thread.id, groupChatId, archivedAt: null }, folder)
     } catch (error) {
       throw new Error(
         `The thread "${threadRefFromSessionKey(started.thread.sessionKey)}" was started and its message sent, but it could not be ` +
@@ -3291,7 +3424,7 @@ export async function renameThreadAsAgent(
     await applyThreadRename(await threadRowForRename(target.id), changes.title)
   }
   if (folder) {
-    await placeThreadInFolder(target.groupChatId, target.id, folder)
+    await placeThreadInFolder(target, folder)
   }
   const [row] = await db
     .select({
@@ -3306,7 +3439,7 @@ export async function renameThreadAsAgent(
   if (!row) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  const { layout } = await readThreadLayout(target.groupChatId)
+  const { layout } = await readThreadLayout(target.groupChatId, threadListOf(target))
   return { ref: agentThreadRef(row), title: row.title, folder: folderNameByThreadId(layout).get(row.id) ?? null }
 }
 
@@ -3330,6 +3463,7 @@ export async function renameThreadAsAgent(
 export async function compactThreadAsAgent(agent: AgentRef, threadRef: string): Promise<ThreadCompactWatch> {
   const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  refuseIfArchived(row)
   if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
   }
@@ -3445,6 +3579,8 @@ export interface SenderThread {
   chat: { ref: string; slug: string; name: string }
   agent: { nodeId: string; name: string | null }
   createdAt: Date
+  /** True while the thread is archived: every send into it is refused. */
+  archived: boolean
 }
 
 /** Every chat the sender is a member of. The membership row is the query, as in `listGroupChatsForAgentView`. */
@@ -3567,7 +3703,7 @@ export async function startThreadForSender(
     sender: sender.author,
   })
   if (folder) {
-    await placeThreadInFolder(chat.id, started.thread.id, folder)
+    await placeThreadInFolder({ id: started.thread.id, groupChatId: chat.id, archivedAt: null }, folder)
   }
   return { thread: await senderThreadFor(started.thread.id), folder: folder ?? null }
 }
@@ -3640,6 +3776,7 @@ async function senderThreadFor(threadId: string): Promise<SenderThread> {
       title: groupChatThread.title,
       agentNodeId: groupChatThread.agentNodeId,
       createdAt: groupChatThread.createdAt,
+      archivedAt: groupChatThread.archivedAt,
       chatId: groupChat.id,
       chatSlug: groupChat.slug,
       chatName: groupChat.name,
@@ -3659,5 +3796,6 @@ async function senderThreadFor(threadId: string): Promise<SenderThread> {
     chat: { ref: row.chatId, slug: row.chatSlug, name: row.chatName },
     agent: { nodeId: row.agentNodeId, name: agentName },
     createdAt: row.createdAt,
+    archived: row.archivedAt !== null,
   }
 }

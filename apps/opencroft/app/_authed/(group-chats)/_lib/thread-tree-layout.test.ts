@@ -18,6 +18,7 @@ function thread(id: string, over: Partial<GroupChatThreadEntry> = {}): GroupChat
     sessionKey: `group-chat:chat-1:anna:${id}`,
     agentIsMember: true,
     hasDraft: false,
+    archived: false,
     ...over,
   }
 }

@@ -8,9 +8,10 @@ import { useClearControl } from 'agent-chat/use-clear-control'
 import type { CompactStatus } from 'agent-chat/use-compact-control'
 import { useCompactControl } from 'agent-chat/use-compact-control'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
+import { ArchivedThreadNotice } from 'ui/group-chat/archived-thread-notice'
 import type { ThreadWork, ThreadWorkItem } from 'ui/group-chat/thread-work-control'
 import { Flex } from 'ui/layout/flex'
 import { StickySection } from 'ui/layouts/sticky-section'
@@ -33,6 +34,7 @@ import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/select
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
@@ -42,6 +44,7 @@ import {
   getGroupChatThreadCompactStatus,
   openGroupChatThreadSession,
   sendGroupChatThreadMessage,
+  setGroupChatThreadArchived,
   setGroupChatThreadDraft,
 } from '@/app/_authed/(group-chats)/_server/actions'
 
@@ -132,6 +135,43 @@ export function GroupChatThreadChat({
     () => ({ agentNodeId: thread.agent.nodeId, tabKey: thread.sessionKey }),
     [thread.agent.nodeId, thread.sessionKey],
   )
+
+  // Archived state, confirmed locally the moment Unarchive succeeds rather
+  // than waited out through a reload: this component has no host-owned
+  // refresh to lean on (the embedded surface's home screen and the route's
+  // loader both sit outside it), and the thread itself needs nothing else to
+  // change once writing is allowed again. Reset whenever the thread identity
+  // changes, so a stale override from a previous thread can never survive a
+  // switch between two open at once.
+  const refresh = useGroupChatRefresh()
+  const [archivedOverride, setArchivedOverride] = useState<boolean | null>(null)
+  const [unarchiving, setUnarchiving] = useState(false)
+  const [unarchiveError, setUnarchiveError] = useState<string>()
+  // biome-ignore lint/correctness/useExhaustiveDependencies(thread.id): not read in the body — it exists to reset this state when the thread identity changes, not because either setter reads it
+  useEffect(() => {
+    setArchivedOverride(null)
+    setUnarchiveError(undefined)
+  }, [thread.id])
+  const archived = archivedOverride ?? thread.archived
+  const unarchive = useCallback(async () => {
+    setUnarchiveError(undefined)
+    setUnarchiving(true)
+    try {
+      const result = await setGroupChatThreadArchived({ data: { threadId: thread.id, archived: false } })
+      if (!result.ok) {
+        setUnarchiveError(groupChatAccessMessageForCode(result.code))
+        return
+      }
+      setArchivedOverride(false)
+      // The thread is back in the chat's list; the lists around it reload.
+      await refresh()
+    } catch (err) {
+      console.error('Failed to unarchive thread', thread.id, err)
+      setUnarchiveError('This thread could not be unarchived.')
+    } finally {
+      setUnarchiving(false)
+    }
+  }, [thread.id, refresh])
 
   // The surrounding selection scope, if any (an extension surface mounts one;
   // the thread route does not). Read through a ref inside the transport so the
@@ -439,7 +479,13 @@ export function GroupChatThreadChat({
   //
   // `composerRef` is the one link from the transcript to the composer: a
   // message's Reply writes into the composer through it.
-  const composer = (
+  // An archived thread trades its composer for the notice: sending into it is
+  // refused server-side regardless, but leaving the composer up would invite
+  // a person to type into a box that can never deliver, and clear only after
+  // the refusal comes back.
+  const composer = archived ? (
+    <ArchivedThreadNotice onUnarchive={() => void unarchive()} pending={unarchiving} error={unarchiveError} />
+  ) : (
     <AgentCommandBarHost
       startIcon={false}
       session={acp.session}

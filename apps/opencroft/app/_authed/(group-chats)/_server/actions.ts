@@ -45,6 +45,7 @@ import {
   resolveGroupChatBySlug,
   sendMessageInThread,
   setGroupChatTopic,
+  setThreadArchived,
   setThreadDraft,
   startThread,
   threadCompactStatus,
@@ -64,7 +65,11 @@ import {
   listThreadsInGroupChatView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import { getThreadLayout, putThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-access'
-import type { ThreadLayout, VersionedThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
+import type {
+  ThreadLayout,
+  ThreadList,
+  VersionedThreadLayout,
+} from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
 import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
@@ -91,6 +96,7 @@ export type {
   MemberRef,
   StartThreadResult,
   ThreadLayout,
+  ThreadList,
   VersionedThreadLayout,
 }
 
@@ -424,8 +430,10 @@ export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: 
 // ── Thread folders ───────────────────────────────────────────────────────
 
 export const getGroupChatThreadLayout = createServerFn({ method: 'GET', strict: { output: false } })
-  .inputValidator((groupChatId: string) => groupChatId)
-  .handler(async ({ data: groupChatId }): Promise<VersionedThreadLayout> => getThreadLayout(getRequest(), groupChatId))
+  .inputValidator((data: { groupChatId: string; list: ThreadList }) => data)
+  .handler(
+    async ({ data }): Promise<VersionedThreadLayout> => getThreadLayout(getRequest(), data.groupChatId, data.list),
+  )
 
 /**
  * Saved, or refused because someone else saved first.
@@ -439,14 +447,27 @@ export const getGroupChatThreadLayout = createServerFn({ method: 'GET', strict: 
 export type SaveThreadLayoutResult = { ok: true; version: number } | { ok: false; current: VersionedThreadLayout }
 
 export const saveGroupChatThreadLayout = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { groupChatId: string; layout: ThreadLayout; expectedVersion: number }) => data)
+  .inputValidator(
+    (data: { groupChatId: string; list: ThreadList; layout: ThreadLayout; expectedVersion: number }) => data,
+  )
   .handler(async ({ data }): Promise<SaveThreadLayoutResult> => {
-    const version = await putThreadLayout(getRequest(), data.groupChatId, data.layout, data.expectedVersion)
+    const version = await putThreadLayout(getRequest(), data.groupChatId, data.list, data.layout, data.expectedVersion)
     if (version === null) {
-      return { ok: false, current: await getThreadLayout(getRequest(), data.groupChatId) }
+      return { ok: false, current: await getThreadLayout(getRequest(), data.groupChatId, data.list) }
     }
     return { ok: true, version }
   })
+
+/**
+ * Archive a thread, or bring it back. Same gate as deleting one: any member of
+ * its chat. Returns the write result so a refusal keeps its code.
+ */
+export const setGroupChatThreadArchived = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { threadId: string; archived: boolean }) => data)
+  .handler(
+    async ({ data }): Promise<GroupChatWriteResult> =>
+      asWriteResult(() => setThreadArchived(getRequest(), data.threadId, data.archived)),
+  )
 
 // The people a member picker offers. Signed-in only; see user-directory.ts for
 // why this is its own function rather than a widened admin read.

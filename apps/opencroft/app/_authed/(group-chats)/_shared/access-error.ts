@@ -98,6 +98,13 @@ export type GroupChatAccessFailure =
    * fault that is not there. What they need to be told is to reload.
    */
   | 'turn-not-found'
+  /**
+   * The thread is archived, and an archived thread takes no messages from
+   * anyone until it is unarchived. Outside the collapse for the reason the
+   * codes above share: only a caller who may already have the thread gets this
+   * far, and they need to be told to unarchive it, not that it is missing.
+   */
+  | 'thread-archived'
 
 /**
  * PHASE 2 CONTRACT, verified against the actual wire format rather than

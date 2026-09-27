@@ -5927,6 +5927,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       persist(session, (store, key) => store.remove(key, [id]))
     },
 
+    // Drop every still-queued prompt, for a host that has closed the session to
+    // new messages: what was waiting when it closed must not be delivered
+    // after. A running turn is left alone. Returns how many were dropped.
+    clearQueue(sessionId: string): number {
+      const session = store.sessions.get(sessionId)
+      const ids = session?.queue?.map((item) => item.id) ?? []
+      if (!session || ids.length === 0) {
+        return 0
+      }
+      session.queue = []
+      emitQueue(sessionId, session.queue)
+      persist(session, (store, key) => store.remove(key, ids))
+      return ids.length
+    },
+
     /**
      * What the reader's Stop means, decided here rather than by the caller.
      *

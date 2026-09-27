@@ -119,6 +119,20 @@ export async function moveQueueEntries(moves: readonly { from: string; to: strin
   }
 }
 
+/**
+ * Mark everything still waiting under a key as removed, without retiring the key.
+ *
+ * For a session closed to new messages while it lives on: its waiting entries
+ * must not be delivered, including by a later load of a session that is not
+ * resident now. Marked, not deleted, for the same commutativity `remove` keeps.
+ */
+export async function dropWaitingEntries(sessionKey: string): Promise<void> {
+  await db
+    .update(agentQueueEntry)
+    .set({ removedAt: new Date() })
+    .where(and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)))
+}
+
 export const queueStore: QueueStore = {
   async append(sessionKey, entry, placement) {
     await db
