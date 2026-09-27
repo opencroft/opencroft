@@ -18,6 +18,7 @@ import { inArray } from 'drizzle-orm'
 
 import {
   findThreadBySlug,
+  findThreadInGroupChat,
   getGroupChat,
   getThread,
   listGroupChatsForUser,
@@ -285,6 +286,22 @@ export async function findThreadViewBySlug(
   threadSlug: string,
 ): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
   const thread = await findThreadBySlug(request, groupChatId, agentNodeId, threadSlug)
+  if (!thread) {
+    return null
+  }
+  return enrichThread(request, thread)
+}
+
+/**
+ * One thread of a given group chat by id, enriched like `getThreadView`, or
+ * null when the chat holds no such thread -- see `findThreadInGroupChat`.
+ */
+export async function findThreadViewInGroupChat(
+  request: Request,
+  groupChatId: string,
+  threadId: string,
+): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
+  const thread = await findThreadInGroupChat(request, groupChatId, threadId)
   if (!thread) {
     return null
   }

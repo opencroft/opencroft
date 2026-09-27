@@ -45,6 +45,11 @@
 //   - thread exists       → the shared assembly reattaches to it. No agent
 //                           picker: the thread names its agent, and switching
 //                           conversations is the chat's home screen's job.
+//   - a selected thread
+//     is not in the chat  → "This thread was deleted", and the host is told
+//                           so it can forget the selection. A reader who lost
+//                           the chat itself gets the chat's states above
+//                           instead; any other failure offers Try again.
 
 import { MessageCirclePlus, UserPlus } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -52,7 +57,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
 import type { ThreadWork } from 'ui/group-chat/thread-work-control'
 import { LogoLoader } from 'ui/logo-loader'
@@ -84,9 +89,9 @@ import {
   addGroupChatMember,
   createMyGroupChat,
   findGroupChatEmbedThread,
+  findGroupChatEmbedThreadById,
   getGroupChatEmbedView,
   getGroupChatThreadLayout,
-  getGroupChatThreadView,
   getMyGroupChatView,
   joinSpaceGroupChat,
   listDirectoryUsersForPicker,
@@ -177,6 +182,12 @@ export interface EmbeddedAgentChatProps {
    * has one header whichever screen is up.
    */
   onHomeHeader?: (header: GroupChatDetailHeader | null) => void
+  /**
+   * The thread `thread` selected no longer exists in this chat: it was deleted.
+   * The surface says so in place; a host that remembers the selection should
+   * forget it, so the next visit does not land on it again.
+   */
+  onThreadGone?: (threadId: string) => void
   className?: string
 }
 
@@ -197,6 +208,7 @@ export function EmbeddedAgentChat({
   onChatAvailable,
   onThreadContext,
   onHomeHeader,
+  onThreadGone,
   className,
 }: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
@@ -269,6 +281,8 @@ export function EmbeddedAgentChat({
           onSelectionChange={onSelectionChange}
           onThreadContext={onThreadContext}
           onHomeHeader={onHomeHeader}
+          onThreadGone={onThreadGone}
+          onChatLost={reload}
           className={className}
         />
       )
@@ -318,6 +332,8 @@ function EmbeddedThread({
   onSelectionChange,
   onThreadContext,
   onHomeHeader,
+  onThreadGone,
+  onChatLost,
   className,
 }: {
   chat: GroupChatDetailView
@@ -328,6 +344,10 @@ function EmbeddedThread({
   onSelectionChange?: (selection: EmbeddedChatSelection) => void
   onThreadContext?: (context: EmbeddedThreadContext | null) => void
   onHomeHeader?: (header: GroupChatDetailHeader | null) => void
+  onThreadGone?: (threadId: string) => void
+  /** The reader is no longer a member: resolve the chat again, whose own
+   *  states say what access they have. */
+  onChatLost: () => void
   className?: string
 }) {
   // A choice made on the home screen goes to the host when it takes them --
@@ -369,13 +389,20 @@ function EmbeddedThread({
   // null = the first send will create it.
   const [thread, setThread] = useState<(GroupChatThreadEntry & { draft: string | null }) | null | undefined>(undefined)
   const [threadError, setThreadError] = useState<string>()
+  // The selected thread is not in this chat any more -- it was deleted.
+  const [threadGone, setThreadGone] = useState(false)
   const [threadTick, setThreadTick] = useState(0)
+  // Through a ref, like onThreadContext below, so an inline host callback
+  // never re-runs the load.
+  const onThreadGoneRef = useRef(onThreadGone)
+  onThreadGoneRef.current = onThreadGone
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies(threadTick): not read in the body — it exists to re-resolve the thread after the first send creates it
+  // biome-ignore lint/correctness/useExhaustiveDependencies(threadTick): not read in the body — it exists to re-resolve the thread after the first send creates it, or on Try again
   useEffect(() => {
     let cancelled = false
     setThread(undefined)
     setThreadError(undefined)
+    setThreadGone(false)
     // The home screen names no thread; nothing to resolve.
     if (home) {
       setThread(null)
@@ -383,18 +410,28 @@ function EmbeddedThread({
     }
     // A selected thread is loaded by its own id — no (agent, slug) mapping,
     // because the home screen offers every thread of the chat, not just the
-    // picked agent's.
+    // picked agent's. It is looked for inside THIS chat, which is what lets
+    // the server say "deleted" rather than one answer for every failure.
     if (explicitThreadId) {
-      getGroupChatThreadView({ data: explicitThreadId })
-        .then((entry) => {
-          if (!cancelled) {
-            setThread(entry)
+      findGroupChatEmbedThreadById({ data: { groupChatId: chat.id, threadId: explicitThreadId } })
+        .then((result) => {
+          if (cancelled) {
+            return
+          }
+          if (result.state === 'ok') {
+            setThread(result.thread)
+          } else if (result.state === 'gone') {
+            setThread(null)
+            setThreadGone(true)
+            onThreadGoneRef.current?.(explicitThreadId)
+          } else {
+            onChatLost()
           }
         })
-        .catch((error) => {
+        .catch(() => {
           if (!cancelled) {
             setThread(null)
-            setThreadError(failureMessage(error, 'This thread could not be loaded.'))
+            setThreadError('Something went wrong loading it.')
           }
         })
       return () => {
@@ -420,9 +457,9 @@ function EmbeddedThread({
     return () => {
       cancelled = true
     }
-  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, home, threadTick])
+  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, home, threadTick, onChatLost])
 
-  const onThreadStarted = useCallback(() => setThreadTick((tick) => tick + 1), [])
+  const reloadThread = useCallback(() => setThreadTick((tick) => tick + 1), [])
   const openThread = useCallback((threadId: string) => choose({ threadId }), [choose])
 
   // The same shared session activity (and the same derivation) the
@@ -493,13 +530,26 @@ function EmbeddedThread({
   if (explicitThreadId) {
     // A selected thread that failed to load must not fall through to the
     // start composer — that would offer to start the DEFAULT thread under a
-    // heading the reader did not choose.
-    return (
+    // heading the reader did not choose. The way out is the host's Back,
+    // which the dock shows whenever a thread is selected.
+    return threadGone ? (
       <Empty className={cn('h-full', className)}>
         <EmptyHeader>
-          <EmptyTitle>This thread is not available</EmptyTitle>
-          <EmptyDescription>{threadError ?? 'It may have been deleted.'}</EmptyDescription>
+          <EmptyTitle>This thread was deleted</EmptyTitle>
+          <EmptyDescription>It is no longer in this chat. Go back to the chat to open another one.</EmptyDescription>
         </EmptyHeader>
+      </Empty>
+    ) : (
+      <Empty className={cn('h-full', className)}>
+        <EmptyHeader>
+          <EmptyTitle>This thread could not be loaded</EmptyTitle>
+          <EmptyDescription>{threadError}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button size='sm' variant='outline' onClick={reloadThread}>
+            Try again
+          </Button>
+        </EmptyContent>
       </Empty>
     )
   }
@@ -548,7 +598,7 @@ function EmbeddedThread({
             onSelectAgent={setRememberedAgent}
             loadError={threadError}
             placeholder={selectedAgent ? undefined : 'Choose an agent to start'}
-            onThreadStarted={onThreadStarted}
+            onThreadStarted={reloadThread}
           />
         </CommandBarFrame>
       </div>

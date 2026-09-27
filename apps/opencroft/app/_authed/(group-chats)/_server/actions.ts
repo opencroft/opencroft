@@ -58,6 +58,7 @@ import type {
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import {
   findThreadViewBySlug,
+  findThreadViewInGroupChat,
   getGroupChatDetailView,
   getThreadView,
   listGroupChatsForUserView,
@@ -527,6 +528,38 @@ export const findGroupChatEmbedThread = createServerFn({ method: 'GET', strict: 
       return null
     }
     return findThreadViewBySlug(getRequest(), data.groupChatId, data.agentNodeId, threadSlug)
+  })
+
+/**
+ * A thread an embedded surface names by id, inside the chat it has open:
+ *
+ *   `ok`        the thread.
+ *   `gone`      the chat holds no such thread -- it was deleted. Safe to say,
+ *               see `findThreadInGroupChat`.
+ *   `refused`   the caller is no longer a member of the chat. The surface
+ *               re-resolves the chat itself, whose states (Join, the collapsed
+ *               refusal) already say what access they have.
+ *
+ * Returned as data, like `joinSpaceGroupChat`'s refusal, because a thrown one
+ * reaches the browser with its code stripped.
+ */
+export type GroupChatEmbedThreadById =
+  | { state: 'ok'; thread: GroupChatThreadEntry & { draft: string | null } }
+  | { state: 'gone' }
+  | { state: 'refused' }
+
+export const findGroupChatEmbedThreadById = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; threadId: string }) => data)
+  .handler(async ({ data }): Promise<GroupChatEmbedThreadById> => {
+    try {
+      const thread = await findThreadViewInGroupChat(getRequest(), data.groupChatId, data.threadId)
+      return thread ? { state: 'ok', thread } : { state: 'gone' }
+    } catch (error) {
+      if (error instanceof GroupChatAccessError) {
+        return { state: 'refused' }
+      }
+      throw error
+    }
   })
 
 // A thread's artifacts, for the reader. Gated on the caller's own membership,

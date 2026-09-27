@@ -3,7 +3,7 @@
 import { useSession } from '@opencroft/auth/client'
 import { PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Button } from 'ui/button'
 import {
   DropdownMenu,
@@ -237,6 +237,31 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     lastChatKey(session?.user.id ?? 'unresolved', space),
     undefined,
   )
+  // A selected thread the surface found deleted. The REMEMBERED selection
+  // goes back to the chat's home at once, so the next opening lands there;
+  // this keeps the deleted thread on screen for the rest of this visit, so
+  // the reader is told what happened rather than moved without a word. Any
+  // other choice, and closing the chat, ends it.
+  const [goneThreadId, setGoneThreadId] = useState<string | null>(null)
+  const shownSelection: EmbeddedChatSelection | undefined = goneThreadId ? { threadId: goneThreadId } : chatSelection
+  const select = useCallback(
+    (selection: EmbeddedChatSelection) => {
+      setGoneThreadId(null)
+      setChatSelection(selection)
+    },
+    [setChatSelection],
+  )
+  const onThreadGone = useCallback(
+    (threadId: string) => {
+      setGoneThreadId(threadId)
+      setChatSelection({ home: true })
+    },
+    [setChatSelection],
+  )
+  const close = () => {
+    setGoneThreadId(null)
+    setOpen(false)
+  }
 
   // What the open thread's header says -- who it is with, where it is, what
   // it has delegated -- as the surface reports it; null while no thread is
@@ -255,7 +280,7 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   const [liveFloat, setLiveFloat] = useState<FloatRect | null>(null)
   const floatRect = liveFloat ?? float
 
-  useHistoryBackClose(isMobile && open, () => setOpen(false))
+  useHistoryBackClose(isMobile && open, close)
 
   // The chat's threads waiting on someone -- a permission to grant or a
   // question to answer -- for the launcher's badge, off the same pushed
@@ -338,11 +363,12 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     <EmbeddedAgentChat
       space={space}
       id={id}
-      thread={chatSelection}
-      onSelectionChange={setChatSelection}
+      thread={shownSelection}
+      onSelectionChange={select}
       title={chatName}
       onThreadContext={setThreadContext}
       onHomeHeader={setHomeHeader}
+      onThreadGone={onThreadGone}
       className='min-h-0 flex-1'
     />
   )
@@ -364,19 +390,25 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // Back leads it: an open thread is the second of the panel's two windows,
   // and the arrow returns to the first -- the chat's home, where the threads
   // are listed, searched and started. That home is what replaced the "Choose
-  // a chat" menu this header used to carry.
-  const cluster = threadContext ? (
-    <div className='flex min-w-0 flex-1 items-center gap-1'>
-      <BackButton label='Back to the chat' onClick={() => setChatSelection({ home: true })} />
-      <ThreadAgentCluster
-        agent={threadContext.agent}
-        status={threadContext.status}
-        groupChatName={threadContext.groupChatName}
-        threadTitle={threadContext.threadTitle}
-        className='min-w-0 flex-1'
-      />
-    </div>
-  ) : null
+  // a chat" menu this header used to carry. It is there for a SELECTED thread
+  // before and without its context too -- while it loads, and when it is
+  // deleted or fails -- because those screens have no other way out.
+  const selectsThread = shownSelection !== undefined && 'threadId' in shownSelection
+  const cluster =
+    threadContext || selectsThread ? (
+      <div className='flex min-w-0 flex-1 items-center gap-1'>
+        <BackButton label='Back to the chat' onClick={() => select({ home: true })} />
+        {threadContext ? (
+          <ThreadAgentCluster
+            agent={threadContext.agent}
+            status={threadContext.status}
+            groupChatName={threadContext.groupChatName}
+            threadTitle={threadContext.threadTitle}
+            className='min-w-0 flex-1'
+          />
+        ) : null}
+      </div>
+    ) : null
   // The delegated-work control sits with the conversation controls, the same
   // size and shape as the chat switch beside it. It draws nothing until the
   // thread has delegated something to list.
@@ -397,7 +429,7 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   const surface = <div className='flex min-h-0 min-w-0 flex-1'>{children}</div>
 
   const closeButton = (buttonSize: 'icon' | 'icon-sm') => (
-    <Button variant='ghost' size={buttonSize} aria-label='Close chat' title='Close chat' onClick={() => setOpen(false)}>
+    <Button variant='ghost' size={buttonSize} aria-label='Close chat' title='Close chat' onClick={close}>
       <X />
     </Button>
   )

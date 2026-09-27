@@ -3440,6 +3440,49 @@ test('findThreadBySlug: a member gets the row, absence is null, a non-member is 
   assert.equal(refusal.code, 'not-found')
 })
 
+test('findThreadInGroupChat: a member gets the row, a deleted or foreign thread is null, a non-member is refused', async () => {
+  const owner = await makeUser('embed-byid-owner@example.test')
+  const outsider = await makeUser('embed-byid-outsider@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'Embed ById Chat')
+  const otherChat = await model.createGroupChat(reqAs(outsider), 'Embed ById Other')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  await model.addMember(reqAs(outsider), otherChat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+
+  // Direct insert, as above: the lookup is under test, not the session machinery.
+  const [row, foreign] = await db
+    .insert(groupChatThread)
+    .values([
+      {
+        groupChatId: chat.id,
+        agentNodeId: 'agent-a',
+        sessionKey: 'group-chat:embed-byid-chat:agent-a:kept',
+        slug: 'kept',
+        createdByUserId: owner.id,
+      },
+      {
+        groupChatId: otherChat.id,
+        agentNodeId: 'agent-a',
+        sessionKey: 'group-chat:embed-byid-other:agent-a:elsewhere',
+        slug: 'elsewhere',
+        createdByUserId: outsider.id,
+      },
+    ])
+    .returning()
+  assert.ok(row && foreign)
+
+  assert.equal((await model.findThreadInGroupChat(reqAs(owner), chat.id, row.id))?.id, row.id)
+
+  // Another chat's thread is absence here, never a refusal: the answer must
+  // not tell a caller which ids exist outside the chat they named.
+  assert.equal(await model.findThreadInGroupChat(reqAs(owner), chat.id, foreign.id), null)
+
+  await db.delete(groupChatThread).where(eq(groupChatThread.id, row.id))
+  assert.equal(await model.findThreadInGroupChat(reqAs(owner), chat.id, row.id), null)
+
+  const refusal = await captureRefusal(() => model.findThreadInGroupChat(reqAs(outsider), chat.id, row.id))
+  assert.equal(refusal.code, 'not-found')
+})
+
 // ---------------------------------------------------------------------------
 // RENAMING MOVES AN ADDRESS. A slug is the identity of a live session, not a
 // label, so these tests are about the migration: that the conversation, its

@@ -558,6 +558,31 @@ export async function getThread(request: Request, threadId: string): Promise<Gro
   return row
 }
 
+/**
+ * One thread by id, looked up INSIDE a group chat the caller names, or null
+ * when that chat holds no such thread (it was deleted, or the id was never
+ * one of this chat's).
+ *
+ * Absence can be an answer here, where `getThread` must refuse it, because
+ * membership is checked on the chat BEFORE the thread is looked for: only a
+ * member reaches the null, and what it tells them is about a chat whose
+ * threads they can already list. A thread of another chat is null too, never
+ * a refusal, so the answer says nothing about ids outside this chat.
+ */
+export async function findThreadInGroupChat(
+  request: Request,
+  groupChatId: string,
+  threadId: string,
+): Promise<GroupChatThreadSummary | null> {
+  await requireGroupChatMember(request, groupChatId)
+  const [row] = await db
+    .select(threadSummaryColumns)
+    .from(groupChatThread)
+    .where(and(eq(groupChatThread.groupChatId, groupChatId), eq(groupChatThread.id, threadId)))
+    .limit(1)
+  return row ?? null
+}
+
 // ── Writing ─────────────────────────────────────────────────────────────
 
 /**
