@@ -115,7 +115,7 @@ export interface HostThreadUsageTurn {
   endedAt: string
   /** The model the turn ran on, when the harness named it. */
   model: string | null
-  /** The turn's own token spend — this turn's, not a running total. */
+  /** The turn's own token spend — this turn's, not a running total — including what its subagents spent. */
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
   /** The turn's own cost; null when the harness does not price the session. */
   cost: { amount: number; currency: string } | null

@@ -37,6 +37,7 @@ import { attachmentSrc } from '@/app/_authed/(agent)/_lib/attachment-src'
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
+import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
 import { useReconnect } from '@/app/_authed/(agent)/_lib/use-reconnect'
 import {
   attachmentSizes,
@@ -176,11 +177,12 @@ export type QueuedMessage = QueuedPrompt
 //   whole session, and a sum over it would silently miss turns that are not
 //   loaded yet (the bug this replaced). Instead it is `mergeTokenAccounts`ed
 //   from two sources with a clean split: `seedUsage.tokens`, the database's
-//   own SUM over every ChatUsageTurn row for this session as of open time
+//   own SUM over every recorded turn of this session as of open time
 //   (see ContextUsage.tokens / queryChatUsageTokensBySession), plus this
 //   connection's own live 'turn_end' increments (see the stream effect's
 //   `replayingHistoryRef` branch) — never events replayed from history,
-//   which the base already accounts for. Neither half is a running window
+//   which the base already accounts for. Both halves count a turn by model,
+//   subagents included (see turnModelUsage). Neither half is a running window
 //   sum, so nothing here needs to "survive" a reconnect: the base is fixed
 //   at open and the live half only ever grows from turns this connection
 //   itself watched finish.
@@ -1050,9 +1052,10 @@ export function useAcpSession(
       // A LIVE turn_end (this branch only -- replayed ones return above, and
       // the base already accounts for them) adds its spend onto the running
       // account. See AgentUsage's own doc and mergeTokenAccounts.
+      // Counted as the base counts it: by model, subagents included.
       if (event.kind === 'turn_end' && event.usage) {
-        const turnUsage = event.usage
-        setLiveTokens((prev) => addTurnTokens(prev, turnUsage))
+        const spend = turnModelUsage(event.usage, event.quota, event.model)
+        setLiveTokens((prev) => spend.reduce((totals, entry) => addTurnTokens(totals, entry.tokenCount), prev))
       }
       // turn_end / error: the turn is over, so whatever the client optimistically
       // marked working is not working. A NON-EMPTY queue snapshot is the other

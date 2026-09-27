@@ -10,16 +10,15 @@
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import test from 'node:test'
 
-import { chatUsageCostRepair, chatUsageTurn, chatUsageTurnModel, db, migrationsFolder } from '@opencroft/db'
-import { eq, sql } from 'drizzle-orm'
+import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
+import { eq } from 'drizzle-orm'
 
 import {
   deleteChatUsage,
   queryChatUsage,
+  queryChatUsageTokensBySession,
   queryChatUsageTurnsBySessionKey,
   recordChatUsageTurn,
   usageDay,
@@ -265,111 +264,44 @@ test('a reset refuses a half-picked custom period rather than deleting to the ed
   await assert.rejects(deleteChatUsage({ kind: 'custom' }))
 })
 
-// The data repair for turns booked with their session's running total, run
-// against rows shaped the way the bug wrote them. It runs once when the schema
-// migrates, over an empty table here, so it is replayed over these rows by hand.
-test('the running-total repair books each inflated turn its own increment, and leaves an unrecoverable one unpriced', async () => {
-  // Every turn is 100 in / 100 out: far below a dollar of spend, so any
-  // figure over the repair's bound can only be a running total.
-  const usage = { totalTokens: 200, inputTokens: 100, outputTokens: 100 }
-  const record = (sessionId: string, amount: number, minute: number) =>
-    recordChatUsageTurn({
-      sessionId,
-      usage,
-      cost: { amount, currency: 'USD' },
-      at: new Date(`2026-09-20T10:${String(minute).padStart(2, '0')}:00.000Z`),
-    })
-  // Two increments, then two reopenings, each booked with the running total
-  // it had reached: 0.5, then 0.75 + 0.25 = 1.
-  await record('sess-repair', 0.25, 1)
-  await record('sess-repair', 0.25, 2)
-  await record('sess-repair', 0.75, 3)
-  await record('sess-repair', 0.25, 4)
-  await record('sess-repair', 1.5, 5)
-  // A running total with nothing recorded before it, and one that does not
-  // follow from what was (the harness restarted its count in between): the
-  // turn's own share of either cannot be recovered.
-  await record('sess-repair-unknown', 40, 1)
-  await record('sess-repair-restarted', 0.25, 1)
-  await record('sess-repair-restarted', 20, 2)
+test("a turn's tokens and a session's account include what its subagents spent", async () => {
+  const key = 'agent:thread-usage:chat-x:dev:usage-key-subagents'
+  // The turn's own usage is the main loop; its breakdown adds a subagent.
+  await recordChatUsageTurn({
+    sessionId: 'sess-subagents',
+    sessionKey: key,
+    model: 'claude-opus-5-5',
+    usage: { totalTokens: 100, inputTokens: 100 },
+    quota: {
+      tokenCount: { totalTokens: 100, inputTokens: 100 },
+      modelUsage: [
+        { model: 'claude-opus-5-5', tokenCount: { totalTokens: 100, inputTokens: 100 } },
+        { model: 'claude-haiku-4-5', tokenCount: { totalTokens: 50, outputTokens: 30, cacheReadTokens: 20 } },
+      ],
+    },
+    at: new Date('2026-09-26T11:00:00.000Z'),
+  })
+  // No breakdown: the turn's own usage is all there is.
+  await recordChatUsageTurn({
+    sessionId: 'sess-subagents',
+    sessionKey: key,
+    usage: { totalTokens: 10, inputTokens: 10 },
+    at: new Date('2026-09-26T11:05:00.000Z'),
+  })
 
-  // Statement by statement, as the migrator runs it.
-  const migration = readFileSync(join(migrationsFolder, '0040_repair_resumed_turn_cost.sql'), 'utf8')
-  for (const statement of migration.split('--> statement-breakpoint')) {
-    await db.execute(sql.raw(statement))
-  }
-
-  const costsOf = (sessionId: string) =>
-    db
-      .select({ amount: chatUsageTurn.costAmount, currency: chatUsageTurn.costCurrency })
-      .from(chatUsageTurn)
-      .where(eq(chatUsageTurn.sessionId, sessionId))
-      .orderBy(chatUsageTurn.createdAt)
-  assert.deepEqual(await costsOf('sess-repair'), [
-    { amount: 0.25, currency: 'USD' },
-    { amount: 0.25, currency: 'USD' },
-    { amount: 0.25, currency: 'USD' },
-    { amount: 0.25, currency: 'USD' },
-    { amount: 0.5, currency: 'USD' },
-  ])
-  assert.deepEqual(await costsOf('sess-repair-unknown'), [{ amount: null, currency: null }])
-  assert.deepEqual(await costsOf('sess-repair-restarted'), [
-    { amount: 0.25, currency: 'USD' },
-    { amount: null, currency: null },
-  ])
-  const [tokens] = await db
-    .select({ input: chatUsageTurn.inputTokens, output: chatUsageTurn.outputTokens })
-    .from(chatUsageTurn)
-    .where(eq(chatUsageTurn.sessionId, 'sess-repair-unknown'))
-  assert.deepEqual(tokens, { input: 100, output: 100 }, 'tokens are not touched')
-
-  // Every change, and only the changes, left its trail: what the turn held and
-  // what it holds now, under the migration that did it.
-  const trail = await db
-    .select({
-      sessionId: chatUsageTurn.sessionId,
-      migration: chatUsageCostRepair.migration,
-      originalAmount: chatUsageCostRepair.originalAmount,
-      originalCurrency: chatUsageCostRepair.originalCurrency,
-      repairedAmount: chatUsageCostRepair.repairedAmount,
-      current: chatUsageTurn.costAmount,
-    })
-    .from(chatUsageCostRepair)
-    .innerJoin(chatUsageTurn, eq(chatUsageCostRepair.turnId, chatUsageTurn.id))
-    .orderBy(chatUsageTurn.sessionId, chatUsageTurn.createdAt)
-  const migration0040 = '0040_repair_resumed_turn_cost'
-  assert.deepEqual(trail, [
-    {
-      sessionId: 'sess-repair',
-      migration: migration0040,
-      originalAmount: 0.75,
-      originalCurrency: 'USD',
-      repairedAmount: 0.25,
-      current: 0.25,
-    },
-    {
-      sessionId: 'sess-repair',
-      migration: migration0040,
-      originalAmount: 1.5,
-      originalCurrency: 'USD',
-      repairedAmount: 0.5,
-      current: 0.5,
-    },
-    {
-      sessionId: 'sess-repair-restarted',
-      migration: migration0040,
-      originalAmount: 20,
-      originalCurrency: 'USD',
-      repairedAmount: null,
-      current: null,
-    },
-    {
-      sessionId: 'sess-repair-unknown',
-      migration: migration0040,
-      originalAmount: 40,
-      originalCurrency: 'USD',
-      repairedAmount: null,
-      current: null,
-    },
-  ])
+  assert.deepEqual(
+    (await queryChatUsageTurnsBySessionKey(key)).map((turn) => turn.tokens),
+    [
+      { input: 100, output: 30, cacheRead: 20, cacheWrite: 0, total: 150 },
+      { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, total: 10 },
+    ],
+  )
+  assert.deepEqual(await queryChatUsageTokensBySession('sess-subagents'), {
+    total: 160,
+    input: 110,
+    output: 30,
+    cacheRead: 20,
+    cacheWrite: 0,
+  })
+  assert.equal(await queryChatUsageTokensBySession('sess-subagents-none'), undefined, 'no turn, no account')
 })

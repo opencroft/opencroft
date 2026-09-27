@@ -4,6 +4,7 @@ import type { SessionCost, TurnQuota, TurnTokenUsage } from 'agent-client/types'
 import { and, eq, gte, lte, sql, sum } from 'drizzle-orm'
 import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
 
+import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
 
 // Per-turn usage accounting for agent-chat sessions, read off the turn_end
@@ -81,46 +82,62 @@ export async function recordChatUsageTurn(input: {
     })
     .returning({ id: chatUsageTurn.id })
 
-  // The reported breakdown, or — when the harness gave none — the turn's own
-  // usage standing in as its one and only "model" row. Always at least one
-  // row per recorded turn this way, so a model-grouped read never needs a
-  // fallback branch for "no breakdown yet".
-  const modelRow = (model: string | null, usage: TurnTokenUsage) => ({ turnId: turn.id, model, ...tokenColumns(usage) })
-  await db
-    .insert(chatUsageTurnModel)
-    .values(
-      input.quota?.modelUsage?.length
-        ? input.quota.modelUsage.map((entry) => modelRow(entry.model, entry.tokenCount))
-        : [modelRow(input.model ?? null, input.usage)],
-    )
+  // Always at least one row per recorded turn (see turnModelUsage), so a read
+  // over the model rows never needs a fallback branch for "no breakdown yet".
+  await db.insert(chatUsageTurnModel).values(
+    turnModelUsage(input.usage, input.quota, input.model).map((entry) => ({
+      turnId: turn.id,
+      model: entry.model,
+      ...tokenColumns(entry.tokenCount),
+    })),
+  )
+}
+
+/**
+ * Each recorded turn's full token spend, subagents included: its model rows,
+ * summed per turn. A turn row's own counters are the main agent loop only (see
+ * turnModelUsage), so every token account reads these instead.
+ */
+function turnTokens() {
+  return db
+    .select({
+      turnId: chatUsageTurnModel.turnId,
+      input: sum(chatUsageTurnModel.inputTokens).mapWith(Number).as('input'),
+      output: sum(chatUsageTurnModel.outputTokens).mapWith(Number).as('output'),
+      cacheRead: sum(chatUsageTurnModel.cacheReadTokens).mapWith(Number).as('cacheRead'),
+      cacheWrite: sum(chatUsageTurnModel.cacheWriteTokens).mapWith(Number).as('cacheWrite'),
+      total: sum(chatUsageTurnModel.totalTokens).mapWith(Number).as('total'),
+    })
+    .from(chatUsageTurnModel)
+    .groupBy(chatUsageTurnModel.turnId)
+    .as('turnTokens')
 }
 
 /**
  * The authoritative token account for one session, as of now: a plain SUM of
- * ChatUsageTurn's own five counters (the turn's main-loop figures, not the
- * per-model breakdown — the same rows the account this mirrors, the ring's
- * `sessionTokens`, has always meant), grouped down to a single row by
- * `sessionId` in the database rather than fetched-and-summed client-side.
+ * its turns' model rows (subagents included, see turnTokens), grouped down to
+ * a single row in the database rather than fetched-and-summed client-side.
  *
- * Every recorded turn's counters default to 0, never NULL (see
- * `tokenColumns`), so SUM is NULL here only when the session has NO row at
- * all — reported as absent (`undefined`), never as an all-zero account, the
- * same "absent, not measured" distinction `UsageTokens` keeps everywhere
- * else. This is the BASE a session's client seeds its running token account
- * from at open; the client adds its own live turn_end increments on top
- * rather than re-fetching this on every turn (see use-acp-session's
- * `mergeTokenAccounts`).
+ * Every recorded turn has at least one model row, and its counters default to
+ * 0, never NULL (see `tokenColumns`), so SUM is NULL here only when the session
+ * has NO turn at all — reported as absent (`undefined`), never as an all-zero
+ * account, the same "absent, not measured" distinction `UsageTokens` keeps
+ * everywhere else. This is the BASE a session's client seeds its running token
+ * account from at open; the client adds its own live turn_end increments on
+ * top, counted by the same rule, rather than re-fetching this on every turn
+ * (see use-acp-session's `mergeTokenAccounts`).
  */
 export async function queryChatUsageTokensBySession(sessionId: string): Promise<UsageTokens | undefined> {
   const [row] = await db
     .select({
-      total: sum(chatUsageTurn.totalTokens),
-      input: sum(chatUsageTurn.inputTokens),
-      output: sum(chatUsageTurn.outputTokens),
-      cacheRead: sum(chatUsageTurn.cacheReadTokens),
-      cacheWrite: sum(chatUsageTurn.cacheWriteTokens),
+      total: sum(chatUsageTurnModel.totalTokens),
+      input: sum(chatUsageTurnModel.inputTokens),
+      output: sum(chatUsageTurnModel.outputTokens),
+      cacheRead: sum(chatUsageTurnModel.cacheReadTokens),
+      cacheWrite: sum(chatUsageTurnModel.cacheWriteTokens),
     })
-    .from(chatUsageTurn)
+    .from(chatUsageTurnModel)
+    .innerJoin(chatUsageTurn, eq(chatUsageTurnModel.turnId, chatUsageTurn.id))
     .where(eq(chatUsageTurn.sessionId, sessionId))
 
   if (!row || row.total === null) {
@@ -140,6 +157,7 @@ export interface ChatUsageTurnRecord {
   /** When the turn ended — the row is written at its turn_end. */
   endedAt: Date
   model: string | null
+  /** The turn's whole token spend, subagents included (see turnTokens). */
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
   /** This turn's own cost; null when the harness does not price the session. */
   cost: SessionCost | null
@@ -155,19 +173,21 @@ export async function queryChatUsageTurnsBySessionKey(
   sessionKey: string,
   since?: Date,
 ): Promise<ChatUsageTurnRecord[]> {
+  const tokens = turnTokens()
   const rows = await db
     .select({
       endedAt: chatUsageTurn.createdAt,
       model: chatUsageTurn.model,
-      input: chatUsageTurn.inputTokens,
-      output: chatUsageTurn.outputTokens,
-      cacheRead: chatUsageTurn.cacheReadTokens,
-      cacheWrite: chatUsageTurn.cacheWriteTokens,
-      total: chatUsageTurn.totalTokens,
+      input: tokens.input,
+      output: tokens.output,
+      cacheRead: tokens.cacheRead,
+      cacheWrite: tokens.cacheWrite,
+      total: tokens.total,
       costAmount: chatUsageTurn.costAmount,
       costCurrency: chatUsageTurn.costCurrency,
     })
     .from(chatUsageTurn)
+    .innerJoin(tokens, eq(tokens.turnId, chatUsageTurn.id))
     .where(
       since
         ? and(eq(chatUsageTurn.sessionKey, sessionKey), gte(chatUsageTurn.createdAt, since))

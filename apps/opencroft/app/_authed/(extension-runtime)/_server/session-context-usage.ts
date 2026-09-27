@@ -27,7 +27,7 @@ export interface ContextUsage {
   rateLimits?: RateLimitWindow[]
   /**
    * The session's authoritative token account as of now — a grouped SUM of
-   * ChatUsageTurn's own counters for this session (see
+   * its recorded turns' per-model counters, subagents included (see
    * chat-usage-store's queryChatUsageTokensBySession), independent of the
    * used/size context window above. Absent when the session has never
    * recorded a turn. This is the BASE the client seeds a session's running
