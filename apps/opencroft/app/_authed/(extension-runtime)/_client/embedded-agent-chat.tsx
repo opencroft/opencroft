@@ -57,7 +57,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
 import type { ThreadWork } from 'ui/group-chat/thread-work-control'
 import { LogoLoader } from 'ui/logo-loader'
@@ -73,7 +73,11 @@ import {
   type GroupChatDetailHeader,
   GroupChatDetailScreen,
 } from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
-import { GroupChatRefusal } from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import {
+  GroupChatRefusal,
+  GroupChatThreadGone,
+  GroupChatThreadLoadFailed,
+} from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
@@ -89,7 +93,7 @@ import {
   addGroupChatMember,
   createMyGroupChat,
   findGroupChatEmbedThread,
-  findGroupChatEmbedThreadById,
+  findGroupChatThreadInChat,
   getGroupChatEmbedView,
   getGroupChatThreadLayout,
   getMyGroupChatView,
@@ -413,7 +417,7 @@ function EmbeddedThread({
     // picked agent's. It is looked for inside THIS chat, which is what lets
     // the server say "deleted" rather than one answer for every failure.
     if (explicitThreadId) {
-      findGroupChatEmbedThreadById({ data: { groupChatId: chat.id, threadId: explicitThreadId } })
+      findGroupChatThreadInChat({ data: { groupChatId: chat.id, threadId: explicitThreadId } })
         .then((result) => {
           if (cancelled) {
             return
@@ -430,8 +434,8 @@ function EmbeddedThread({
         })
         .catch(() => {
           if (!cancelled) {
+            // Neither found nor gone: the load-failed state, with Try again.
             setThread(null)
-            setThreadError('Something went wrong loading it.')
           }
         })
       return () => {
@@ -533,24 +537,9 @@ function EmbeddedThread({
     // heading the reader did not choose. The way out is the host's Back,
     // which the dock shows whenever a thread is selected.
     return threadGone ? (
-      <Empty className={cn('h-full', className)}>
-        <EmptyHeader>
-          <EmptyTitle>This thread was deleted</EmptyTitle>
-          <EmptyDescription>It is no longer in this chat. Go back to the chat to open another one.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <GroupChatThreadGone className={cn('h-full', className)} />
     ) : (
-      <Empty className={cn('h-full', className)}>
-        <EmptyHeader>
-          <EmptyTitle>This thread could not be loaded</EmptyTitle>
-          <EmptyDescription>{threadError}</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button size='sm' variant='outline' onClick={reloadThread}>
-            Try again
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <GroupChatThreadLoadFailed onRetry={reloadThread} className={cn('h-full', className)} />
     )
   }
   // No thread to show: the chat's home screen, unless a specific new id was

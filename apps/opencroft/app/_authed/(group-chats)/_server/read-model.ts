@@ -16,11 +16,11 @@
 import { db, groupChatMember, groupChatThread, user } from '@opencroft/db'
 import { inArray } from 'drizzle-orm'
 
+import type { GroupChatThreadSummary } from '@/app/_authed/(group-chats)/_server/model'
 import {
   findThreadBySlug,
   findThreadInGroupChat,
   getGroupChat,
-  getThread,
   listGroupChatsForUser,
   listMembers,
   listThreadsInGroupChat,
@@ -261,20 +261,26 @@ export async function listThreadsInGroupChatView(
 }
 
 /**
- * One thread, with its agent resolved. Same shape the list entries carry,
- * plus the draft's own text — which list rows still don't get, for the same
- * reason `hasDraft`'s doc comment on `GroupChatThreadEntry` gives.
+ * One thread of a given group chat by id, with its agent resolved, or null
+ * when the chat holds no such thread -- see `findThreadInGroupChat`. Same
+ * shape the list entries carry, plus the draft's own text — which list rows
+ * still don't get, for the same reason `hasDraft`'s doc comment on
+ * `GroupChatThreadEntry` gives.
  */
-export async function getThreadView(
+export async function findThreadViewInGroupChat(
   request: Request,
+  groupChatId: string,
   threadId: string,
-): Promise<GroupChatThreadEntry & { draft: string | null }> {
-  const thread = await getThread(request, threadId)
+): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
+  const thread = await findThreadInGroupChat(request, groupChatId, threadId)
+  if (!thread) {
+    return null
+  }
   return enrichThread(request, thread)
 }
 
 /**
- * One agent's thread with a given slug, enriched like `getThreadView`, or
+ * One agent's thread with a given slug, enriched like `findThreadViewInGroupChat`, or
  * null when no such thread exists — the embedded surface's "first send will
  * create it" state, which the caller needs as data rather than a refusal.
  * The gate is `findThreadBySlug`'s, per this module's header rule.
@@ -292,27 +298,11 @@ export async function findThreadViewBySlug(
   return enrichThread(request, thread)
 }
 
-/**
- * One thread of a given group chat by id, enriched like `getThreadView`, or
- * null when the chat holds no such thread -- see `findThreadInGroupChat`.
- */
-export async function findThreadViewInGroupChat(
-  request: Request,
-  groupChatId: string,
-  threadId: string,
-): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
-  const thread = await findThreadInGroupChat(request, groupChatId, threadId)
-  if (!thread) {
-    return null
-  }
-  return enrichThread(request, thread)
-}
-
 /** The shared tail of the single-thread reads: resolve the agent and its
  *  current membership for one already-gated thread row. */
 async function enrichThread(
   request: Request,
-  thread: Awaited<ReturnType<typeof getThread>>,
+  thread: GroupChatThreadSummary,
 ): Promise<GroupChatThreadEntry & { draft: string | null }> {
   const agents = await agentsByNodeId()
   const agentMembers = await agentMemberIds(request, thread.groupChatId)

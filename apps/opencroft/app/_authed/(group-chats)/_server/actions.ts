@@ -60,7 +60,6 @@ import {
   findThreadViewBySlug,
   findThreadViewInGroupChat,
   getGroupChatDetailView,
-  getThreadView,
   listGroupChatsForUserView,
   listThreadsInGroupChatView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
@@ -455,13 +454,6 @@ export const listDirectoryUsersForPicker = createServerFn({ method: 'GET', stric
   async (): Promise<DirectoryUser[]> => listDirectoryUsers(getRequest()),
 )
 
-export const getGroupChatThreadView = createServerFn({ method: 'GET', strict: { output: false } })
-  .inputValidator((threadId: string) => threadId)
-  .handler(
-    async ({ data: threadId }): Promise<GroupChatThreadEntry & { draft: string | null }> =>
-      getThreadView(getRequest(), threadId),
-  )
-
 // ── The embedded surface's reads ─────────────────────────────────────────
 
 /**
@@ -531,26 +523,27 @@ export const findGroupChatEmbedThread = createServerFn({ method: 'GET', strict: 
   })
 
 /**
- * A thread an embedded surface names by id, inside the chat it has open:
+ * A thread named by id, inside the chat the reader has open -- the thread
+ * route and the embedded surface both open threads this way:
  *
  *   `ok`        the thread.
  *   `gone`      the chat holds no such thread -- it was deleted. Safe to say,
  *               see `findThreadInGroupChat`.
- *   `refused`   the caller is no longer a member of the chat. The surface
- *               re-resolves the chat itself, whose states (Join, the collapsed
- *               refusal) already say what access they have.
+ *   `refused`   the caller is not a member of the chat. Each surface answers
+ *               with its chat-level state, which already says what access
+ *               the reader has.
  *
  * Returned as data, like `joinSpaceGroupChat`'s refusal, because a thrown one
  * reaches the browser with its code stripped.
  */
-export type GroupChatEmbedThreadById =
+export type GroupChatThreadInChat =
   | { state: 'ok'; thread: GroupChatThreadEntry & { draft: string | null } }
   | { state: 'gone' }
   | { state: 'refused' }
 
-export const findGroupChatEmbedThreadById = createServerFn({ method: 'GET', strict: { output: false } })
+export const findGroupChatThreadInChat = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; threadId: string }) => data)
-  .handler(async ({ data }): Promise<GroupChatEmbedThreadById> => {
+  .handler(async ({ data }): Promise<GroupChatThreadInChat> => {
     try {
       const thread = await findThreadViewInGroupChat(getRequest(), data.groupChatId, data.threadId)
       return thread ? { state: 'ok', thread } : { state: 'gone' }

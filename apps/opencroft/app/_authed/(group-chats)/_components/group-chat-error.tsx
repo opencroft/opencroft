@@ -23,7 +23,8 @@
 // for "you cannot have this", and this is the second line of defence, not the
 // thing holding that property up.
 
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
+import { Button } from 'ui/button'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
 
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import {
@@ -52,4 +53,41 @@ export function GroupChatRefusal({ code }: { code: GroupChatAccessFailure }) {
 /** Anything that reached an error boundary — by now, only the unexpected. */
 export function GroupChatErrorState({ error }: { error: unknown }) {
   return <Shell message={groupChatAccessMessage(error) ?? GENERIC} />
+}
+
+// A thread's own two outcomes, beside the refusal above. Both surfaces that
+// open a thread by id -- the thread route and the embedded chat -- render
+// these, so a reader is told the same thing wherever they were reading.
+
+/**
+ * The chat holds no such thread: it was deleted. Only ever said to a member
+ * of that chat -- the lookup behind it checks membership first -- which is
+ * what makes it safe to say at all.
+ */
+export function GroupChatThreadGone({ className }: { className?: string }) {
+  return (
+    <Empty className={className}>
+      <EmptyHeader>
+        <EmptyTitle>This thread was deleted</EmptyTitle>
+        <EmptyDescription>It is no longer in this chat. Go back to the chat to open another one.</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  )
+}
+
+/** Loading the thread failed for a reason that is not an answer about it. */
+export function GroupChatThreadLoadFailed({ onRetry, className }: { onRetry: () => void; className?: string }) {
+  return (
+    <Empty className={className}>
+      <EmptyHeader>
+        <EmptyTitle>This thread could not be loaded</EmptyTitle>
+        <EmptyDescription>Something went wrong loading it.</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button size='sm' variant='outline' onClick={onRetry}>
+          Try again
+        </Button>
+      </EmptyContent>
+    </Empty>
+  )
 }

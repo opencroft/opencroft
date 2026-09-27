@@ -142,7 +142,8 @@ test('hasDraft reflects an unsent draft on both the list and the single-thread v
 
   const beforeList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
   assert.equal(beforeList[0]?.hasDraft, false, 'no draft yet')
-  const beforeSingle = await view.getThreadView(reqAs(owner), thread.id)
+  const beforeSingle = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
+  assert.ok(beforeSingle)
   assert.equal(beforeSingle.hasDraft, false)
   assert.equal(beforeSingle.draft, null)
 
@@ -150,13 +151,15 @@ test('hasDraft reflects an unsent draft on both the list and the single-thread v
 
   const afterList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
   assert.equal(afterList[0]?.hasDraft, true, 'the list must reflect the saved draft')
-  const afterSingle = await view.getThreadView(reqAs(owner), thread.id)
+  const afterSingle = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
+  assert.ok(afterSingle)
   assert.equal(afterSingle.hasDraft, true)
   assert.equal(afterSingle.draft, 'unsent text', 'the single-thread view carries the text itself, unlike the list')
 
   await model.setThreadDraft(reqAs(owner), thread.id, '')
 
-  const cleared = await view.getThreadView(reqAs(owner), thread.id)
+  const cleared = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
+  assert.ok(cleared)
   assert.equal(cleared.hasDraft, false, 'an empty string clears the draft, the same as the 1:1 chat')
 })
 
@@ -185,7 +188,8 @@ test('a thread reports whether its agent is still a member, before and after rem
 
   // The single-thread read has to agree with the list one — the thread screen
   // reads through that path, not this one.
-  const single = await view.getThreadView(reqAs(owner), after[0].id)
+  const single = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, after[0].id)
+  assert.ok(single)
   assert.equal(single.agentIsMember, false, 'the single-thread view must not disagree with the list')
 })
 
@@ -256,7 +260,7 @@ test('the view layer refuses a non-member exactly as the model does', async () =
   )
 
   await assert.rejects(
-    () => view.getThreadView(reqAs(outsider), thread.id),
+    () => view.findThreadViewInGroupChat(reqAs(outsider), chat.id, thread.id),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError)
       assert.equal(error.code, 'not-found')
