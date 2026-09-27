@@ -454,7 +454,10 @@ export type ChatEvent =
       // the delta, which is the figure day/model accounting sums. A compaction
       // or conversation reset drops the cumulative back down; the boundary reads
       // that as the post-reset spend rather than a negative turn. Absent when the
-      // harness does not price the session.
+      // harness does not price the session, and for the first priced turn of a
+      // reopened session whose earlier running total is unknown: that reading
+      // mixes the turn's own spend with the history's, and the history was
+      // booked already.
       cost?: SessionCost
     }
   | { kind: 'error'; message: string }

@@ -10,10 +10,12 @@
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import test from 'node:test'
 
-import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
-import { eq } from 'drizzle-orm'
+import { chatUsageCostRepair, chatUsageTurn, chatUsageTurnModel, db, migrationsFolder } from '@opencroft/db'
+import { eq, sql } from 'drizzle-orm'
 
 import {
   deleteChatUsage,
@@ -261,4 +263,113 @@ test('a reset removes the turns inside its period, their model rows with them, a
 test('a reset refuses a half-picked custom period rather than deleting to the edge of time', async () => {
   await assert.rejects(deleteChatUsage({ kind: 'custom', from: '2026-08-01' }))
   await assert.rejects(deleteChatUsage({ kind: 'custom' }))
+})
+
+// The data repair for turns booked with their session's running total, run
+// against rows shaped the way the bug wrote them. It runs once when the schema
+// migrates, over an empty table here, so it is replayed over these rows by hand.
+test('the running-total repair books each inflated turn its own increment, and leaves an unrecoverable one unpriced', async () => {
+  // Every turn is 100 in / 100 out: far below a dollar of spend, so any
+  // figure over the repair's bound can only be a running total.
+  const usage = { totalTokens: 200, inputTokens: 100, outputTokens: 100 }
+  const record = (sessionId: string, amount: number, minute: number) =>
+    recordChatUsageTurn({
+      sessionId,
+      usage,
+      cost: { amount, currency: 'USD' },
+      at: new Date(`2026-09-20T10:${String(minute).padStart(2, '0')}:00.000Z`),
+    })
+  // Two increments, then two reopenings, each booked with the running total
+  // it had reached: 0.5, then 0.75 + 0.25 = 1.
+  await record('sess-repair', 0.25, 1)
+  await record('sess-repair', 0.25, 2)
+  await record('sess-repair', 0.75, 3)
+  await record('sess-repair', 0.25, 4)
+  await record('sess-repair', 1.5, 5)
+  // A running total with nothing recorded before it, and one that does not
+  // follow from what was (the harness restarted its count in between): the
+  // turn's own share of either cannot be recovered.
+  await record('sess-repair-unknown', 40, 1)
+  await record('sess-repair-restarted', 0.25, 1)
+  await record('sess-repair-restarted', 20, 2)
+
+  // Statement by statement, as the migrator runs it.
+  const migration = readFileSync(join(migrationsFolder, '0040_repair_resumed_turn_cost.sql'), 'utf8')
+  for (const statement of migration.split('--> statement-breakpoint')) {
+    await db.execute(sql.raw(statement))
+  }
+
+  const costsOf = (sessionId: string) =>
+    db
+      .select({ amount: chatUsageTurn.costAmount, currency: chatUsageTurn.costCurrency })
+      .from(chatUsageTurn)
+      .where(eq(chatUsageTurn.sessionId, sessionId))
+      .orderBy(chatUsageTurn.createdAt)
+  assert.deepEqual(await costsOf('sess-repair'), [
+    { amount: 0.25, currency: 'USD' },
+    { amount: 0.25, currency: 'USD' },
+    { amount: 0.25, currency: 'USD' },
+    { amount: 0.25, currency: 'USD' },
+    { amount: 0.5, currency: 'USD' },
+  ])
+  assert.deepEqual(await costsOf('sess-repair-unknown'), [{ amount: null, currency: null }])
+  assert.deepEqual(await costsOf('sess-repair-restarted'), [
+    { amount: 0.25, currency: 'USD' },
+    { amount: null, currency: null },
+  ])
+  const [tokens] = await db
+    .select({ input: chatUsageTurn.inputTokens, output: chatUsageTurn.outputTokens })
+    .from(chatUsageTurn)
+    .where(eq(chatUsageTurn.sessionId, 'sess-repair-unknown'))
+  assert.deepEqual(tokens, { input: 100, output: 100 }, 'tokens are not touched')
+
+  // Every change, and only the changes, left its trail: what the turn held and
+  // what it holds now, under the migration that did it.
+  const trail = await db
+    .select({
+      sessionId: chatUsageTurn.sessionId,
+      migration: chatUsageCostRepair.migration,
+      originalAmount: chatUsageCostRepair.originalAmount,
+      originalCurrency: chatUsageCostRepair.originalCurrency,
+      repairedAmount: chatUsageCostRepair.repairedAmount,
+      current: chatUsageTurn.costAmount,
+    })
+    .from(chatUsageCostRepair)
+    .innerJoin(chatUsageTurn, eq(chatUsageCostRepair.turnId, chatUsageTurn.id))
+    .orderBy(chatUsageTurn.sessionId, chatUsageTurn.createdAt)
+  const migration0040 = '0040_repair_resumed_turn_cost'
+  assert.deepEqual(trail, [
+    {
+      sessionId: 'sess-repair',
+      migration: migration0040,
+      originalAmount: 0.75,
+      originalCurrency: 'USD',
+      repairedAmount: 0.25,
+      current: 0.25,
+    },
+    {
+      sessionId: 'sess-repair',
+      migration: migration0040,
+      originalAmount: 1.5,
+      originalCurrency: 'USD',
+      repairedAmount: 0.5,
+      current: 0.5,
+    },
+    {
+      sessionId: 'sess-repair-restarted',
+      migration: migration0040,
+      originalAmount: 20,
+      originalCurrency: 'USD',
+      repairedAmount: null,
+      current: null,
+    },
+    {
+      sessionId: 'sess-repair-unknown',
+      migration: migration0040,
+      originalAmount: 40,
+      originalCurrency: 'USD',
+      repairedAmount: null,
+      current: null,
+    },
+  ])
 })

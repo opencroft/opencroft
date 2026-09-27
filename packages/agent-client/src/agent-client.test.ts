@@ -3297,6 +3297,97 @@ test('a restored cumulative cost counts as already accounted for, so the first t
   await h.client.deleteSession(h.sessionId)
 })
 
+// A session reopened mid-way, the way a host brings one back after its process
+// stopped or it went idle: from the transcript the host recorded, with the
+// harness resuming its own running total where it left off. The harness's
+// prompt and resume are setup()'s; only the resume capability is switched on.
+async function reopenedMidway(recorded: ChatEvent[]) {
+  const h = await setup('openclaw', { contextWindow: 200_000 })
+  const entry = acpStore().connections.get(h.connectionKey) as { resumeSession?: boolean }
+  entry.resumeSession = true
+  const sessionId = `reopened-${h.sessionId}`
+  assert.ok(await h.client.restoreSession(sessionId, h.selection, recorded), 'precondition: the session reopened')
+  const events: ChatEvent[] = []
+  h.client.subscribe(sessionId, (event) => events.push(event))
+  // A subscriber is handed the restored log first; only the turns after it count.
+  const reopenedAt = events.length
+  const turn = async (cumulative: number) => {
+    await h.client.prompt(sessionId, 'next', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+    handleUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: 'usage_update',
+        used: 9_000,
+        size: 200_000,
+        cost: { amount: cumulative, currency: 'USD' },
+      },
+    } as Parameters<typeof handleUpdate>[0])
+    h.endTurn()
+    await settle()
+  }
+  const turnCosts = () =>
+    events
+      .slice(reopenedAt)
+      .filter((event): event is Extract<ChatEvent, { kind: 'turn_end' }> => event.kind === 'turn_end')
+      .map((event) => event.cost?.amount)
+  const close = async () => {
+    await h.client.deleteSession(sessionId)
+    await h.client.deleteSession(h.sessionId)
+  }
+  return { client: h.client, sessionId, turn, turnCosts, close }
+}
+
+test('a session reopened from its transcript is charged each turn, never the running total it recorded', async () => {
+  // The recorded session was 60.00 into its running total, all of it booked by
+  // the process that recorded it. The bare reading after the priced one is how
+  // most readings arrive, and it is not a retraction of the total.
+  const r = await reopenedMidway([
+    { kind: 'user', text: 'one' },
+    { kind: 'usage', used: 8_000, size: 200_000, cost: { amount: 60, currency: 'USD' } },
+    { kind: 'usage', used: 8_500, size: 200_000 },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ])
+  await r.turn(60.5)
+  await r.turn(61.25)
+  assert.deepEqual(r.turnCosts(), [0.5, 0.75])
+  await r.close()
+})
+
+test("the host's figure from the last turn's end raises a transcript's older baseline, and never lowers it", async () => {
+  // The transcript's last priced reading can predate the last turn's end; the
+  // host's persisted figure was taken there.
+  const raised = await reopenedMidway([
+    { kind: 'usage', used: 8_000, size: 200_000, cost: { amount: 60, currency: 'USD' } },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ])
+  raised.client.restoreUsage(raised.sessionId, { used: 8_000, size: 200_000, cost: { amount: 62, currency: 'USD' } })
+  await raised.turn(62.5)
+  assert.deepEqual(raised.turnCosts(), [0.5])
+  await raised.close()
+
+  const kept = await reopenedMidway([
+    { kind: 'usage', used: 8_000, size: 200_000, cost: { amount: 60, currency: 'USD' } },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ])
+  kept.client.restoreUsage(kept.sessionId, { used: 8_000, size: 200_000, cost: { amount: 12, currency: 'USD' } })
+  await kept.turn(60.5)
+  assert.deepEqual(kept.turnCosts(), [0.5])
+  await kept.close()
+})
+
+test('a reopened session with no recorded total leaves its first priced turn unpriced, then prices the next', async () => {
+  // Nothing says how much of the first reading the history already accounts
+  // for. Booking it whole would charge one turn the session's entire spend.
+  const r = await reopenedMidway([
+    { kind: 'user', text: 'one' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ])
+  await r.turn(60.5)
+  await r.turn(61)
+  assert.deepEqual(r.turnCosts(), [undefined, 0.5])
+  await r.close()
+})
+
 // ── hasActiveTurn ────────────────────────────────────────────────────────
 //
 // Same underlying read as activeSessionKeys, by raw session id — the check a

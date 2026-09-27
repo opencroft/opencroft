@@ -21,6 +21,7 @@ import type {
   ChatEvent,
   CompactionState,
   PlanItem,
+  SessionCost,
   SessionMode,
   SubagentInfo,
 } from './types'
@@ -47,7 +48,9 @@ export interface RestoredSessionState {
   configOptions: SessionConfigOption[]
   commands: AvailableCommand[]
   title?: string
-  usage?: { used: number; size?: number }
+  // `cost` is the session's running total as last recorded: the restored
+  // session's cost baseline, besides what its reading displays.
+  usage?: { used: number; size?: number; cost?: SessionCost }
   compactions: Map<string, CompactionState>
   // The whole spawn tree, as the live session holds it: the session's own
   // subagents and the ones they spawned.
@@ -189,7 +192,13 @@ export function foldRestoredState(events: readonly ChatEvent[]): RestoredSession
         }
         break
       case 'usage':
-        state.usage = event.size === undefined ? { used: event.used } : { used: event.used, size: event.size }
+        // A reading without a cost leaves the last recorded one standing, as
+        // the live mirror does: a bare context reading is not a retraction.
+        state.usage = {
+          used: event.used,
+          ...(event.size !== undefined ? { size: event.size } : {}),
+          ...(event.cost ? { cost: event.cost } : state.usage?.cost ? { cost: state.usage.cost } : {}),
+        }
         break
       case 'compaction':
         state.compactions.set(event.compaction.compactionId, { ...event.compaction })

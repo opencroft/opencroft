@@ -555,10 +555,18 @@ interface SessionState {
   // in full at the turn boundary. See the usage_update case for why.
   pendingUsage?: { used: number; size?: number }
   // Cumulative session cost already attributed to earlier turns, so the next
-  // turn boundary can hand over just its own increment (see settleTurn). Starts
-  // absent — the first priced turn's delta is the whole figure — and tracks the
-  // running total as reported. A drop below it is a compaction/conversation
-  // reset, after which the fresh cumulative IS the turn's cost.
+  // turn boundary can hand over just its own increment (see settleTurn), and
+  // tracks the running total as reported. A drop below it is a
+  // compaction/conversation reset, after which the fresh cumulative IS the
+  // turn's cost.
+  //
+  // Absent means UNKNOWN, not zero. A session this process created starts at
+  // 0: nothing was spent in it before. A session reopened from history starts
+  // at the running total its record carries (restoreSession, restoreUsage);
+  // one reopened with no such record, or forked from another, starts absent,
+  // because its harness may resume counting from a total that earlier turns
+  // were already booked with. Differencing that against zero books the whole
+  // history as one turn.
   costAccountedFor?: number
 }
 
@@ -4253,13 +4261,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // total is a compaction/conversation reset, and the fresh figure is then
       // the whole of this turn's spend. Tracked only at the boundary, so the
       // repeated mid-turn cost readings never double-count.
+      //
+      // With no known baseline the turn is left unpriced: its own share of
+      // the reading cannot be told apart from the history's, and an unpriced
+      // turn is an honest gap where the running total would be a figure many
+      // times too large. The reading still becomes the baseline, so the turns
+      // after it are priced.
       let turnCost: SessionCost | undefined
       const cumulative = session.usage?.cost
       if (cumulative && Number.isFinite(cumulative.amount)) {
-        const prior = session.costAccountedFor ?? 0
-        const amount = cumulative.amount < prior ? cumulative.amount : cumulative.amount - prior
+        const prior = session.costAccountedFor
+        if (prior !== undefined) {
+          const amount = cumulative.amount < prior ? cumulative.amount : cumulative.amount - prior
+          turnCost = { amount, currency: cumulative.currency }
+        }
         session.costAccountedFor = cumulative.amount
-        turnCost = { amount, currency: cumulative.currency }
       }
       emit(sessionId, {
         kind: 'turn_end',
@@ -4571,7 +4587,25 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       usage: { used: number; size?: number; cost?: SessionCost; rateLimits?: RateLimitWindow[] },
     ): void {
       const session = store.sessions.get(sessionId)
-      if (!session || session.usage) {
+      if (!session) {
+        return
+      }
+      // A restored cumulative was already attributed, turn by turn, by the
+      // process that recorded it. Without marking it accounted for, the first
+      // boundary after a restart would difference against nothing and hand the
+      // whole history to one turn. A harness that restarts its own counter on
+      // resume then reads as a reset at that boundary, which is the right
+      // answer for that case too.
+      //
+      // Applied even when the session already holds a reading: a session
+      // rebuilt from its transcript does, and the transcript's last reading can
+      // be older than this figure, which was recorded at the last turn's end.
+      // Raised, never lowered: a higher baseline is a later point of the same
+      // running total, whichever of the two records it came from.
+      if (usage.cost && Number.isFinite(usage.cost.amount)) {
+        session.costAccountedFor = Math.max(session.costAccountedFor ?? 0, usage.cost.amount)
+      }
+      if (session.usage) {
         return
       }
       // Normalised on the way in, exactly as a live reading is. What is handed
@@ -4585,15 +4619,6 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         ...normalized,
         ...(usage.cost ? { cost: usage.cost } : {}),
         ...(usage.rateLimits ? { rateLimits: usage.rateLimits } : {}),
-      }
-      // A restored cumulative was already attributed, turn by turn, by the
-      // process that recorded it. Without marking it accounted for, the first
-      // boundary after a restart would difference against zero and hand the
-      // whole history to one turn. A harness that restarts its own counter on
-      // resume then reads as a reset at that boundary, which is the right
-      // answer for that case too.
-      if (usage.cost && Number.isFinite(usage.cost.amount)) {
-        session.costAccountedFor = usage.cost.amount
       }
     },
 
@@ -4892,6 +4917,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         activeTurns: 0,
         queue: [],
         presence: DEFAULT_PRESENCE,
+        // A new session has spent nothing yet, so its first priced turn owns
+        // the whole of the first reading.
+        costAccountedFor: 0,
       })
       // A session opened under a key that was holding messages when the last
       // process stopped takes them back, at the cadence it was reading at,
@@ -5200,6 +5228,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         queue: [],
         presence: DEFAULT_PRESENCE,
         ...(state.usage ? { usage: state.usage } : {}),
+        // The running total the log last recorded was booked, turn by turn, by
+        // the process that recorded it. The host can raise this with a later
+        // figure it kept (restoreUsage).
+        ...(state.usage?.cost ? { costAccountedFor: state.usage.cost.amount } : {}),
       })
       // Subagents route by a module-level map rather than off the session, so
       // restoring the records is not enough: without this a chunk arriving from
