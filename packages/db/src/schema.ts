@@ -256,29 +256,6 @@ export const chatUsageTurnModel = pgTable(
   (t) => [index('ChatUsageTurnModel_turnId_idx').on(t.turnId)],
 )
 
-// The trail of a data repair that rewrote a ChatUsageTurn's cost in place: the
-// figure the turn held before, the one the repair gave it (null: left
-// unpriced), and which migration did it. Written by the migration from the same
-// query that decides the new figure, and read back by it to apply that figure,
-// so what is recorded here is what was done. Restoring `originalAmount` and
-// `originalCurrency` onto the turn undoes it. Goes with its turn, as the model
-// rows do.
-export const chatUsageCostRepair = pgTable(
-  'ChatUsageCostRepair',
-  {
-    turnId: text()
-      .notNull()
-      .references(() => chatUsageTurn.id, { onDelete: 'cascade' }),
-    // The tag of the migration that made the repair.
-    migration: text().notNull(),
-    originalAmount: doublePrecision().notNull(),
-    originalCurrency: text(),
-    repairedAmount: doublePrecision(),
-    createdAt: createdAt(),
-  },
-  (t) => [primaryKey({ columns: [t.turnId, t.migration] })],
-)
-
 export const mcpAuditLog = pgTable(
   'McpAuditLog',
   {
