@@ -1,5 +1,3 @@
-'use server'
-
 import { db, setting } from '@opencroft/db'
 import { eq } from 'drizzle-orm'
 

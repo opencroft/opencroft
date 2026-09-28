@@ -31,7 +31,7 @@
   ],
   "biome": "2.4.16",
   "filesScanned": 1037,
-  "total": 329,
+  "total": 328,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -467,9 +467,6 @@
     },
     "apps/opencroft/hooks/utils/use-local-storage.ts": {
       "lint/correctness/useExhaustiveDependencies": 1
-    },
-    "apps/opencroft/hooks/utils/use-slug.ts": {
-      "lint/style/useTemplate": 1
     },
     "apps/opencroft/scripts/collect-extension-deps.mjs": {
       "format": 1

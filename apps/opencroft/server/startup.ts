@@ -24,8 +24,7 @@ import { maintainThreadKeys } from '@/server/thread-key-maintenance'
 const globalForStartup = globalThis as unknown as { __opencroftReady?: Promise<void> }
 
 /**
- * Server-side boot tasks (formerly Next.js instrumentation register()). Runs once
- * per process from a server-only entry point (the SSE route handler), in the same
+ * Server-side boot tasks. Runs once per process from a server-only entry point (the SSE route handler), in the same
  * module context that serves docker snapshots. Idempotent.
  *
  * Resolves once the server may serve requests: the thread-key migration and the
