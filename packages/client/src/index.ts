@@ -111,7 +111,7 @@ export type MarkdownReferenceTone = 'neutral' | 'info' | 'success' | 'warning' |
 export interface MarkdownReference {
   /** The short name -- a key, a node's name. Never truncated. */
   label: string
-  /** Text after the label, e.g. a summary. The first thing to truncate. */
+  /** Text after the label, e.g. a summary, in regular weight. The first thing to truncate. */
   detail?: string
   /**
    * A lucide icon name, drawn at the text's size; or your own mark -- your
@@ -119,8 +119,8 @@ export interface MarkdownReference {
    */
   icon?: string | ReactNode
   /**
-   * The state as you draw it elsewhere -- your status badge -- shown first,
-   * on the left, and truncated only once `detail` has nothing left.
+   * The state as you draw it elsewhere -- your status badge -- shown at the
+   * chip's right end, and truncated only once `detail` has nothing left.
    */
   state?: ReactNode
   /** A state dot after the label, for a state with no drawing of its own. */

@@ -21,11 +21,14 @@ export interface ReferenceChipProps {
    * from the first paint and only gains detail afterwards.
    */
   label: string
-  /** Text after the label -- a task's summary. The first thing to truncate. */
+  /**
+   * Text after the label -- a task's summary -- in regular weight, so the
+   * label reads as the name. The first thing to truncate.
+   */
   detail?: string
   /**
-   * The thing's state as its owner draws it -- a task's status badge --
-   * first, on the left. Truncated only once `detail` has nothing left.
+   * The thing's state as its owner draws it -- a task's status badge -- at
+   * the chip's right end. Truncated only once `detail` has nothing left.
    */
   state?: ReactNode
   /**
@@ -125,21 +128,18 @@ export function ReferenceChip({
   className,
 }: ReferenceChipProps) {
   const unknown = status === 'unknown'
+  const showState = Boolean(state) && !unknown
   const classes = cn(
     REFERENCE_CHIP_CLASS,
     unknown && REFERENCE_CHIP_UNKNOWN_CLASS,
+    // A state fills the chip's height, so its gap above and below is the
+    // chip's vertical padding; its gap on the right is made the same.
+    showState && 'pr-px',
     (href || onOpen) && 'cursor-pointer hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
     className,
   )
   const content = (
     <>
-      {/* Never shrinks with the rest: a flex share, however small, clips a
-          short status by a fraction of a pixel and it shows an ellipsis.
-          Capped instead, leaving room for the mark and the key, so it gives
-          way only once the chip is too narrow for the detail at all. */}
-      {state && !unknown ? (
-        <span className='inline-flex min-w-0 shrink-0 max-w-[calc(100%-5rem)] self-center'>{state}</span>
-      ) : null}
       {icon ? (
         <span className={REFERENCE_CHIP_ICON_CLASS} aria-hidden='true'>
           {icon}
@@ -151,7 +151,14 @@ export function ReferenceChip({
           its content allows (a transcript does) must be able to shrink the
           chip, and nowrap text would make the whole detail unbreakable. */}
       {detail ? (
-        <span className='min-w-0 shrink-[1000] line-clamp-1 [overflow-wrap:anywhere]'>{detail}</span>
+        <span className='min-w-0 shrink-[1000] line-clamp-1 font-normal [overflow-wrap:anywhere]'>{detail}</span>
+      ) : null}
+      {/* Never shrinks with the rest: a flex share, however small, clips a
+          short status by a fraction of a pixel and it shows an ellipsis.
+          Capped instead, leaving room for the mark and the key, so it gives
+          way only once the chip is too narrow for the detail at all. */}
+      {showState ? (
+        <span className='inline-flex min-w-0 shrink-0 max-w-[calc(100%-5rem)] self-center'>{state}</span>
       ) : null}
       {tone && !unknown ? (
         <span className={cn('size-1.5 shrink-0 self-center rounded-full', TONE_CLASS[tone])} aria-hidden='true' />
