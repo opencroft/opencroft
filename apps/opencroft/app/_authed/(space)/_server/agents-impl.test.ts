@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { agentNodesNamed } from './agents-impl'
+import { agentDirectoryOf, agentNodesNamed } from './agents-impl'
 
 const nodes = [
   { nodeId: 'agent-1', name: 'Alice' },
@@ -81,4 +81,24 @@ test('a node with no name matches nothing, including the empty string', () => {
   const unnamed: { nodeId: string; name?: string }[] = [{ nodeId: 'agent-x' }, { nodeId: 'agent-y', name: '' }]
   assert.deepEqual(agentNodesNamed(unnamed, ''), [{ nodeId: 'agent-y', name: '' }])
   assert.deepEqual(agentNodesNamed(unnamed.slice(0, 1), ''), [])
+})
+
+test('the agent directory is id, name and avatar, ordered by name, and nothing else', () => {
+  // Extensions read this through the host, so the shape is the exposure: an
+  // agent's instructions and space must not ride along with its face.
+  const listed = [
+    {
+      nodeId: 'agent-2',
+      name: 'Carol',
+      avatar: 'data:image/png;base64,AAAA',
+      spaceSlug: 'team',
+      spaceName: 'Team',
+      instructions: [{ nodeId: 'i-1', name: 'Role', instruction: 'secret' }],
+    },
+    { nodeId: 'agent-1', name: 'Alice', spaceSlug: 'team', spaceName: 'Team', instructions: [] },
+  ]
+  assert.deepEqual(agentDirectoryOf(listed), [
+    { id: 'agent-1', name: 'Alice', avatarUrl: null },
+    { id: 'agent-2', name: 'Carol', avatarUrl: 'data:image/png;base64,AAAA' },
+  ])
 })

@@ -116,6 +116,30 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
 }
 
 /**
+ * One agent as a name and a face: the group chat draws its agents from this,
+ * and extensions read it through `host.agents`, so both show the same picture.
+ * Three fields, like the people directory — an agent's instructions and space
+ * stay out of it.
+ */
+export interface DirectoryAgent {
+  id: string
+  name: string
+  avatarUrl: string | null
+}
+
+/** The directory's view of listed agent nodes, ordered by name. */
+export function agentDirectoryOf(nodes: readonly Pick<AgentNodeRef, 'nodeId' | 'name' | 'avatar'>[]): DirectoryAgent[] {
+  return nodes
+    .map((node) => ({ id: node.nodeId, name: node.name, avatarUrl: node.avatar ?? null }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Every agent of every space, ordered by name. Ungated: each caller applies its own gate first. */
+export async function listAgentDirectory(): Promise<DirectoryAgent[]> {
+  return agentDirectoryOf(await listAgentNodesImpl())
+}
+
+/**
  * Every agent in a listing that goes by `agentName` — the one comparison, in
  * one place.
  *

@@ -233,6 +233,19 @@ export interface HostUsersApi {
   list(): Promise<HostUser[]>
 }
 
+/** One agent in the agent directory: its node id, name and avatar — the ones the group chat shows. Nothing else. */
+export interface HostAgent {
+  id: string
+  name: string
+  avatarUrl: string | null
+}
+
+/** The agent directory — every Agent node of every space, the agents' counterpart of `HostUsersApi`. */
+export interface HostAgentsApi {
+  /** Every agent, ordered by name. */
+  list(): Promise<HostAgent[]>
+}
+
 export interface HostExecContextApi {
   /** Dispatch an execution-context event to every target connected to `sourceHandleId` on `sourceNodeId` (broadcast). `primary`'s shape is caller-defined -- narrow it at the call site. */
   dispatch(
@@ -330,6 +343,8 @@ export interface ExtensionServerHost {
   groupChats: HostGroupChatsApi
   /** The people directory: id, name and avatar of every account — see HostUsersApi. */
   users: HostUsersApi
+  /** The agent directory: id, name and avatar of every agent — see HostAgentsApi. */
+  agents: HostAgentsApi
   mcpTokens: HostMcpTokensApi
   execContext: HostExecContextApi
   /**

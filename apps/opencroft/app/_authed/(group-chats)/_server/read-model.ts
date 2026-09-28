@@ -25,7 +25,7 @@ import {
   listMembers,
   listThreadsInGroupChat,
 } from '@/app/_authed/(group-chats)/_server/model'
-import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { listAgentDirectory } from '@/app/_authed/(space)/_server/agents-impl'
 
 /** A participant in a group chat — a person or an agent, rendered alike. */
 export interface MemberRef {
@@ -116,13 +116,14 @@ function missingUser(userId: string): MemberRef {
 /**
  * nodeId -> agent, built once per call.
  *
- * `listAgentNodesImpl()` walks every space's graph, so calling it per thread
+ * `listAgentDirectory()` walks every space's graph, so calling it per thread
  * or per member would re-read the whole registry for each row. One call, one
- * map, however many rows.
+ * map, however many rows. It is also what extensions read as `host.agents`,
+ * so an agent's face here and in an App is the same one.
  */
 async function agentsByNodeId(): Promise<Map<string, AgentRef>> {
-  const nodes = await listAgentNodesImpl()
-  return new Map(nodes.map((n) => [n.nodeId, { nodeId: n.nodeId, name: n.name, avatarUrl: n.avatar ?? null }] as const))
+  const agents = await listAgentDirectory()
+  return new Map(agents.map((a) => [a.id, { nodeId: a.id, name: a.name, avatarUrl: a.avatarUrl }] as const))
 }
 
 /**

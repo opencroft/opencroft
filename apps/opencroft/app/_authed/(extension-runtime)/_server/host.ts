@@ -8,6 +8,7 @@ import { db, spaceApp } from '@opencroft/db'
 import type {
   ExtensionServerHost,
   HostAgentGroupChatsApi,
+  HostAgentsApi,
   HostMcpTokensApi,
   HostPersonGroupChatsApi,
   HostSecretsApi,
@@ -48,7 +49,7 @@ import {
 import { mcpTokensApi } from '@/app/_authed/(mcp)/_server/mcp-tokens'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
-import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { listAgentDirectory, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { type AttributedSender, registerExtensionSystemSender, senderForSend } from '@/app/_server/message-author'
@@ -904,6 +905,8 @@ export interface ExtensionHost {
   groupChats: HostGroupChatsApi
   /** The people directory, three fields per account — see `@/app/_server/user-directory`. */
   users: HostUsersApi
+  /** The agent directory, three fields per agent — see `listAgentDirectory`. */
+  agents: HostAgentsApi
   /** An agent node's credentials for the MCP endpoint — see the package declaration. */
   mcpTokens: HostMcpTokensApi
   /**
@@ -1020,6 +1023,7 @@ export function createHost(extensionId: string): ExtensionHost {
     sendMessage: sendMessageApi,
     groupChats: extensionGroupChats(extensionId),
     users: { list: listUserDirectory },
+    agents: { list: listAgentDirectory },
     mcpTokens: mcpTokensApi,
     events: {
       broadcast: (name, payload) => {
