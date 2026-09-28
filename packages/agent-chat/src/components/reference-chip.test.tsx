@@ -35,7 +35,11 @@ test('the label never truncates; the detail truncates first; the state gives way
   )
   assert.match(html, /<span class="shrink-0 whitespace-nowrap">DEMO-42<\/span>/)
   assert.match(html, /<span class="min-w-0 shrink-\[1000\] line-clamp-1 \[overflow-wrap:anywhere\]">Login fails/)
-  assert.match(html, /<span class="inline-flex min-w-0 shrink self-center"><b data-state="">/)
+  // Not a flex share: capped, so a short status is never clipped by a sliver.
+  assert.match(
+    html,
+    /<span class="inline-flex min-w-0 shrink-0 max-w-\[calc\(100%-5rem\)\] self-center"><b data-state="">/,
+  )
 })
 
 test('an unknown chip shows the identifier alone, with no state', () => {

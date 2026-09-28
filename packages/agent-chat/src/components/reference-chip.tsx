@@ -133,9 +133,13 @@ export function ReferenceChip({
   )
   const content = (
     <>
-      {/* Shrinks, but at a thousandth of the detail's rate, so it gives way
-          only once the detail is gone. */}
-      {state && !unknown ? <span className='inline-flex min-w-0 shrink self-center'>{state}</span> : null}
+      {/* Never shrinks with the rest: a flex share, however small, clips a
+          short status by a fraction of a pixel and it shows an ellipsis.
+          Capped instead, leaving room for the mark and the key, so it gives
+          way only once the chip is too narrow for the detail at all. */}
+      {state && !unknown ? (
+        <span className='inline-flex min-w-0 shrink-0 max-w-[calc(100%-5rem)] self-center'>{state}</span>
+      ) : null}
       {icon ? (
         <span className={REFERENCE_CHIP_ICON_CLASS} aria-hidden='true'>
           {icon}
