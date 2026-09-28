@@ -241,7 +241,7 @@ export function GroupChatSettings({
         }
         permissions={
           systemGrants.length > 0 || ungrantedSenders.length > 0 ? (
-            <div className='space-y-2 p-3'>
+            <div className='space-y-2'>
               <p className='text-xs text-muted-foreground'>
                 Automated senders — a grant lets a scheduled pipeline or webhook deliver into this chat's threads.
               </p>
@@ -288,13 +288,12 @@ export function GroupChatSettings({
               ) : null}
             </div>
           ) : (
-            <p className='p-3 text-sm text-muted-foreground'>No automated senders are granted to this chat.</p>
+            <p className='text-sm text-muted-foreground'>No automated senders are granted to this chat.</p>
           )
         }
         archive={
           archivedThreads.length > 0 ? (
             <GroupChatThreadTree
-              className='p-1'
               threads={archivedThreads}
               statusById={statusById}
               layout={archiveTree}
@@ -306,7 +305,7 @@ export function GroupChatSettings({
               onUnarchive={unarchiveThread}
             />
           ) : (
-            <p className='p-3 text-sm text-muted-foreground'>No threads are archived.</p>
+            <p className='text-sm text-muted-foreground'>No threads are archived.</p>
           )
         }
       />

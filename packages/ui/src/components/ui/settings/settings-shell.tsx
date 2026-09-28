@@ -2,8 +2,8 @@
 
 import type React from 'react'
 
-import { MenuLayout } from 'ui/components/ui/layout/menulayout'
-import { ScrollContent, ScrollPage } from 'ui/components/ui/layout/scrollpage'
+import { MenuLayout } from '../layout/menulayout'
+import { ScrollContent, ScrollPage } from '../layout/scrollpage'
 import { cn } from 'ui/lib/utils'
 
 export interface SettingsSection {
