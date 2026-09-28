@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 
+import { useFullPageAppRoute } from '@/app/_authed/(apps)/_components/full-page-route'
 import { MarkdownResolversHost } from '@/app/_authed/(extension-runtime)/_client/markdown-resolvers'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
@@ -60,10 +61,11 @@ export const Route = createFileRoute('/_authed')({
 
 function AuthedLayout() {
   const { spaces } = Route.useLoaderData()
+  const fullPage = useFullPageAppRoute()
   return (
     <SSEProvider>
       <MarkdownResolversHost />
-      <AppShell spaces={spaces}>
+      <AppShell spaces={spaces} chrome={!fullPage}>
         <Outlet />
       </AppShell>
     </SSEProvider>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { appBasePath, appInstanceBase, appPathOf, resolveAppHref } from './app-routes'
+import { appBasePath, appInstanceBase, appPathOf, isFullPageRoute, resolveAppHref } from './app-routes'
 
 test('an App address names its instance page, and nothing else is taken for one', () => {
   assert.equal(appInstanceBase('my-space.my-app'), '/space/my-space/app/my-app')
@@ -60,4 +60,34 @@ test('an address outside the App is refused', () => {
   ]) {
     assert.throws(() => resolveAppHref('/space/s/app/a', '/inbox', to), /App path/, to)
   }
+})
+
+test('a full-page pattern names exactly the pages it covers', () => {
+  const patterns = ['/component/*/preview/**', '/print/*']
+  for (const path of [
+    '/component/button/preview',
+    '/component/button/preview/example:examples/sizes.tsx',
+    '/print/K-1',
+    '/print/K-1?copy=2',
+  ]) {
+    assert.equal(isFullPageRoute(patterns, path), true, path)
+  }
+  // The pages around them keep the chrome: the component page itself, a
+  // segment `*` would need but is missing, a second segment `*` cannot take,
+  // a prefix that only looks alike, and the bare address.
+  for (const path of [
+    '/component/button',
+    '/component/preview',
+    '/print',
+    '/print/K-1/extra',
+    '/component/button/previews',
+    '/',
+  ]) {
+    assert.equal(isFullPageRoute(patterns, path), false, path)
+  }
+})
+
+test('an App that declares no full-page routes has none', () => {
+  assert.equal(isFullPageRoute(undefined, '/component/button/preview'), false)
+  assert.equal(isFullPageRoute([], '/'), false)
 })

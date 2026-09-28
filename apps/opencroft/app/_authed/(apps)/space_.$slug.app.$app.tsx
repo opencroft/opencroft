@@ -2,7 +2,7 @@ import { createFileRoute, notFound } from '@tanstack/react-router'
 
 import { AppPage } from '@/app/_authed/(apps)/_components/app-page'
 import { instanceBySlug } from '@/app/_authed/(apps)/_lib/instance-by-slug'
-import { listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
+import { appFullPageRoutes, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
@@ -23,7 +23,13 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/app/$app')({
     if (!instance) {
       throw notFound()
     }
-    return { space, instance }
+    // Which of the App's pages draw without the host's chrome. Loaded here,
+    // from the manifest, so the shell knows before the App's own bundle does
+    // and the first paint of such a page is already bare.
+    const fullPageRoutes = await appFullPageRoutes({
+      data: { extensionId: instance.extensionId, appSlug: instance.appSlug },
+    })
+    return { space, instance, fullPageRoutes }
   },
   // Both slugs are the fallback: `head` also runs before the loader resolves,
   // and the address names the app and the space even then.

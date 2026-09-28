@@ -90,6 +90,14 @@ export const listApps = createServerFn({ strict: { output: false } }).handler(as
   )
 })
 
+/** The App pages that draw without the host's chrome (`AppEntry.fullPageRoutes`), from the manifest. */
+export const appFullPageRoutes = createServerFn({ strict: { output: false } })
+  .inputValidator((input: { extensionId: string; appSlug: string }) => input)
+  .handler(async ({ data }): Promise<string[]> => {
+    await requireSession()
+    return (await findApp(data.extensionId, data.appSlug))?.fullPageRoutes ?? []
+  })
+
 /** The Apps added to one space, with the entered parameter values. */
 export const listSpaceApps = createServerFn({ strict: { output: false } })
   .inputValidator((spaceSlug: string) => spaceSlug)

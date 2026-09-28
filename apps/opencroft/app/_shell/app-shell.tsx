@@ -16,6 +16,16 @@ interface Props {
   children: React.ReactNode
 }
 
+interface AppShellProps extends Props {
+  /**
+   * Draw the title bar and sidebars around the page. Off for an App's
+   * full-page routes, which fill the window alone. The providers stay either
+   * way, so an App that sends a title or sidebar content from such a page
+   * sends it nowhere rather than failing.
+   */
+  chrome?: boolean
+}
+
 // Everything below the bar is offset by its height. The bar grows a second row
 // when a page sends it a toolbar, so the height is measured rather than fixed.
 function useMeasuredHeight() {
@@ -64,12 +74,16 @@ function Shell({ spaces, children }: Props) {
   )
 }
 
-export function AppShell({ spaces, children }: Props) {
+export function AppShell({ spaces, children, chrome = true }: AppShellProps) {
   return (
     <TitlebarProvider>
       <TitleBarProvider>
         <AppSidebarProvider>
-          <Shell spaces={spaces}>{children}</Shell>
+          {chrome ? (
+            <Shell spaces={spaces}>{children}</Shell>
+          ) : (
+            <main className='flex h-dvh w-full min-w-0 flex-col'>{children}</main>
+          )}
         </AppSidebarProvider>
       </TitleBarProvider>
     </TitlebarProvider>

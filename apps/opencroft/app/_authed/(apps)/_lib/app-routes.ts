@@ -37,6 +37,30 @@ export function appPathOf(pathname: string, base: string): string | null {
   return pathname.startsWith(`${base}/`) ? pathname.slice(base.length) : null
 }
 
+function pathSegments(path: string): string[] {
+  return path.split('/').filter(Boolean)
+}
+
+function matchesPattern(pattern: string, segments: string[]): boolean {
+  const parts = pathSegments(pattern)
+  const rest = parts.at(-1) === '**'
+  const fixed = rest ? parts.slice(0, -1) : parts
+  if (rest ? segments.length < fixed.length : segments.length !== fixed.length) {
+    return false
+  }
+  return fixed.every((part, i) => part === '*' || part === segments[i])
+}
+
+/**
+ * Whether the App page at `appPath` is one of the App's full-page routes
+ * (`AppEntry.fullPageRoutes`): `*` is exactly one segment, a final `**` any
+ * number of them including none. The query plays no part.
+ */
+export function isFullPageRoute(patterns: readonly string[] | undefined, appPath: string): boolean {
+  const segments = pathSegments(appPath.split('?')[0])
+  return (patterns ?? []).some((pattern) => matchesPattern(pattern, segments))
+}
+
 /**
  * The address an App's `to` names, from the page it is on. `to` is an App
  * path (`/item/K-1?tab=activity`) or, for the page the App is already on,

@@ -92,6 +92,21 @@ export interface AppEntry {
   actions?: AppActionMeta[]
   /** Context sources instances of this App expose (e.g. a terminal per worktree). */
   handles?: AppHandle[]
+  /**
+   * The App's pages that fill the whole window, with none of the host around
+   * them: no title bar, no sidebars. Each entry is an App path pattern, the
+   * form `useAppLocation().path` takes: `*` stands for exactly one segment, and
+   * a final `**` for any number of them, none included — `/print/*` is every
+   * page one segment under `/print`, `/preview/**` is `/preview` and
+   * everything under it. Every other page keeps the host's chrome. A
+   * full-page route keeps its App address and the same sign-in as any other
+   * page.
+   *
+   * Read from the manifest, before the App's client bundle loads, so the page
+   * is drawn without chrome from its first paint; a value given only in the
+   * client's `AppDefinition` has no effect.
+   */
+  fullPageRoutes?: string[]
 }
 
 /** A node contributed by an extension. */

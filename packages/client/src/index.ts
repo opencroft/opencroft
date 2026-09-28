@@ -388,6 +388,12 @@ export declare const callAppAction: <T = unknown>(
  * (`/space/<space>/app/<app>/item/K-1`), and the App matches them itself;
  * everything here is App-relative, so an App never sees which space or slug it
  * was added under.
+ *
+ * The host draws its title bar and sidebars around every App page, except the
+ * ones the App's manifest entry lists in `fullPageRoutes` (see `AppEntry` in
+ * `@opencroft/core`): those fill the window alone — a print view, a
+ * standalone preview — at the same address and behind the same sign-in.
+ * `AppTitle`, `AppActions`, `AppToolbar` and `AppSidebar` show nothing there.
  */
 export interface AppLocation {
   /** The App-relative path, e.g. `/item/K-1`; `/` at the instance's bare address. */
