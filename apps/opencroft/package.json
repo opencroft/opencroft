@@ -16,8 +16,7 @@
     "build": "npm run check:server-fn-shape && vite build && npm run check:client-bundle",
     "check:client-bundle": "node scripts/check-client-bundle.mjs",
     "check:server-fn-shape": "node scripts/check-server-fn-colocation.mjs",
-    "start": "vite preview",
-    "update": "npx shadcn@latest add @croftcn/all --all --overwrite"
+    "start": "vite preview"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1017.0",

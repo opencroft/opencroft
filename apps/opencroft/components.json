@@ -17,8 +17,5 @@
     "ui": "@/components/ui",
     "lib": "@/lib",
     "hooks": "@/hooks"
-  },
-  "registries": {
-    "@croftcn": "https://opencroft.github.io/croftcn/r/{name}.json"
   }
 }
