@@ -12,31 +12,40 @@ jobs:
   prune:
     runs-on: ubuntu-latest
     steps:
+      # build.yml publishes ghcr.io/<owner>/<repository>, so the package is
+      # named after the repository. A scheduled run's event payload carries no
+      # repository object, so the name comes from GITHUB_REPOSITORY.
+      - name: Resolve the package name
+        id: pkg
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          echo "name=${name,,}" >> "$GITHUB_OUTPUT"
+
       - name: Prune dev SHA tags older than 24h
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v3.1.0
         with:
           account: ${{ github.repository_owner }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: opencroft-dev
+          image-names: ${{ steps.pkg.outputs.name }}
           image-tags: dev-*
           cut-off: 1d
           tag-selection: tagged
 
       - name: Prune nightly date tags older than 14 days
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v3.1.0
         with:
           account: ${{ github.repository_owner }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: opencroft-dev
+          image-names: ${{ steps.pkg.outputs.name }}
           image-tags: nightly-*
           cut-off: 2w
           tag-selection: tagged
 
       - name: Prune untagged versions older than 24h
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v3.1.0
         with:
           account: ${{ github.repository_owner }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: opencroft-dev
+          image-names: ${{ steps.pkg.outputs.name }}
           cut-off: 1d
           tag-selection: untagged
