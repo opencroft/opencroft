@@ -4,7 +4,7 @@
 // neither is theoretical:
 //
 // 1. CLIENT BUNDLE. actions.ts is reachable from client code (canvas UI and
-//    spaces-table import its server functions). The client transform only
+//    the spaces page import its server functions). The client transform only
 //    replaces `createServerFn(...).handler(...)` expressions with RPC stubs —
 //    a plain exported function in that same file gets no stub and ships its
 //    server-only imports straight to the browser. That is the acp.ts leak
@@ -28,11 +28,13 @@
 // Nothing in this file may be re-exported from actions.ts as a plain
 // function — that would reinstate reason 1.
 
+import { isSpaceIconPreset } from '@opencroft/db/space-icon-presets'
+
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import { slugify, uniqueSlug } from '@/app/_authed/(space)/_server/slug'
 import { getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from '@/app/_authed/(space)/_server/store'
-import type { GraphData, SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import type { GraphData, SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { toastStore } from '@/lib/toast-store'
 
 export async function registry() {
@@ -187,29 +189,9 @@ export async function resolveSpaceSlugImpl(slug: string): Promise<string | null>
   return r.getBySlug(slug)?.slug ?? null
 }
 
-/**
- * Deleted, or refused because it was the last space left.
- *
- * THE GUARD IS ABOUT THE COUNT, NOT ABOUT WHICH SPACE. It used to also require
- * the space to be the default one, which stopped meaning anything once a slug
- * could move: a renamed default space answers to a different address, so the
- * comparison protected exactly the spaces nobody had renamed. Naming a space is
- * not a decision about whether it may be deleted.
- *
- * So the rule is the count alone -- which is what every surface above this one
- * already promises its callers: the last remaining space cannot be deleted. A
- * lone space that was never the default is now refused too, where it was not
- * before; that is the invariant being true rather than nearly true.
- *
- * At the limit this answers before looking the slug up at all, so a slug that
- * names nothing and the space being protected come back the same -- which they
- * already did to every caller, since the answer is a bare boolean.
- */
+/** Deleted, or false when no space answers to the slug. */
 export async function deleteSpaceImpl(slug: string): Promise<boolean> {
   const r = await registry()
-  if (r.list().length <= 1) {
-    return false
-  }
   return r.remove(slug)
 }
 
@@ -222,44 +204,39 @@ export async function setSpacePinnedImpl(data: { slug: string; pinned: boolean }
   return toSummary(runtime)
 }
 
-export async function setSpaceIconImpl(data: { slug: string; icon: string | null }): Promise<SpaceSummary | null> {
+// An uploaded icon has the same contract as an account avatar (packages/auth
+// updateOwnAvatar): a small, self-contained image data URL. The client
+// re-encodes to a small square before sending; this cap is the server's own
+// say, not a copy of the client's.
+const MAX_ICON_CHARS = 64 * 1024
+const ICON_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+
+/** Throws unless the value is a known preset or an image a space may store. */
+export function assertSpaceIcon(icon: unknown): asserts icon is string {
+  if (typeof icon !== 'string') {
+    throw new Error('A space always has an icon.')
+  }
+  if (icon.startsWith('preset:')) {
+    if (!isSpaceIconPreset(icon)) {
+      throw new Error('That is not one of the preset icons.')
+    }
+    return
+  }
+  if (!ICON_DATA_URL.test(icon)) {
+    throw new Error('A space icon must be a preset or a PNG, JPEG or WebP image.')
+  }
+  if (icon.length > MAX_ICON_CHARS) {
+    throw new Error('That image is too large to store. Choose a smaller one.')
+  }
+}
+
+export async function setSpaceIconImpl(data: { slug: string; icon: string }): Promise<SpaceSummary | null> {
+  assertSpaceIcon(data.icon)
   const r = await registry()
   const runtime = await r.setIcon(data.slug, data.icon)
   if (!runtime) {
     return null
   }
-  return toSummary(runtime)
-}
-
-export async function exportSpaceImpl(slug: string): Promise<SpaceExport | null> {
-  const r = await registry()
-  const space = r.getBySlug(slug)
-  if (!space) {
-    return null
-  }
-  // The DEFAULT graph only, in the shape exports always had -- an import from
-  // before graphs were rows still lands whole. A space's other graphs are not
-  // carried yet; extending the payload for them is a follow-up, not a quiet
-  // reinterpretation of this one.
-  const defaultGraph = space.graphs.get(space.defaultGraphSlug)
-  return {
-    name: space.name,
-    slug: space.slug,
-    graph: defaultGraph?.graph ?? { nodes: [], edges: [] },
-    exportedAt: new Date().toISOString(),
-  }
-}
-
-export async function importSpaceImpl(payload: SpaceExport): Promise<SpaceSummary> {
-  const r = await registry()
-  const existing = new Set(r.list().map((s) => s.slug))
-  const desired = slugify(payload.slug || payload.name || 'space')
-  const slug = uniqueSlug(desired, existing)
-  const graph: GraphData = {
-    nodes: Array.isArray(payload.graph?.nodes) ? payload.graph.nodes : [],
-    edges: Array.isArray(payload.graph?.edges) ? payload.graph.edges : [],
-  }
-  const runtime = await r.create(payload.name || 'Imported', slug, graph)
   return toSummary(runtime)
 }
 

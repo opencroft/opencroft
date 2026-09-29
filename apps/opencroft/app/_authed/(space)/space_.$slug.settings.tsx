@@ -25,13 +25,13 @@ export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
   loader: async ({ params }) => {
     // The space's existence is settled before the app data's rejection can
     // settle it — see settleSpaceRoute. Still one round of concurrent requests.
-    const { space, spaces, data } = await settleSpaceRoute(
+    const { space, data } = await settleSpaceRoute(
       params.slug,
       listSpaces(),
       Promise.all([listApps(), listSpaceApps({ data: params.slug })]),
     )
     const [apps, instances] = data
-    return { space, apps, instances, spaces }
+    return { space, apps, instances }
   },
   head: ({ loaderData, params }) => ({
     meta: [{ title: pageTitle('Settings', loaderData?.space.name ?? params.slug) }],
@@ -50,7 +50,7 @@ const SECTIONS = [
 type SectionId = (typeof SECTIONS)[number]['id']
 
 function SpaceSettingsPage() {
-  const { space, apps, instances, spaces } = Route.useLoaderData()
+  const { space, apps, instances } = Route.useLoaderData()
   const { section = 'general', tab = 'installed' } = Route.useSearch()
   const navigate = Route.useNavigate()
   return (
@@ -93,7 +93,7 @@ function SpaceSettingsPage() {
           </nav>
           <div className='min-w-0 flex-1'>
             {section === 'general' ? (
-              <SpaceGeneralSettings space={space} spaces={spaces} />
+              <SpaceGeneralSettings space={space} />
             ) : section === 'usage' ? (
               <SpaceUsageSettings />
             ) : (

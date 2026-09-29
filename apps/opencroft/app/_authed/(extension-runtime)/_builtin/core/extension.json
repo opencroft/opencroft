@@ -19,30 +19,21 @@
       "name": "Localhost",
       "category": "Infrastructure",
       "icon": "Monitor",
-      "handles": [
-        { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
-        { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
-      ]
+      "handles": [{ "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" }]
     },
     {
       "typeId": "wsl",
       "name": "WSL",
       "category": "Infrastructure",
       "icon": "SquareTerminal",
-      "handles": [
-        { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
-        { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
-      ]
+      "handles": [{ "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" }]
     },
     {
       "typeId": "server",
       "name": "Server",
       "category": "Infrastructure",
       "icon": "Server",
-      "handles": [
-        { "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" },
-        { "id": "fs-out", "contextType": "filesystem-target", "role": "source", "label": "Files" }
-      ],
+      "handles": [{ "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" }],
       "actions": [
         {
           "id": "setKey",
@@ -182,13 +173,6 @@
       "handles": [{ "id": "ssh-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }]
     },
     {
-      "typeId": "file-manager",
-      "name": "File Manager Window",
-      "category": "Windows",
-      "icon": "FolderOpen",
-      "handles": [{ "id": "fs-in", "contextType": "filesystem-target", "role": "target", "label": "Files" }]
-    },
-    {
       "typeId": "script-bash",
       "name": "Bash Script",
       "category": "Scripts",
@@ -244,12 +228,6 @@
           "description": "Execute the script in the connected terminal context (or local if none)."
         }
       ]
-    },
-    {
-      "typeId": "network",
-      "name": "Network",
-      "category": "Applications",
-      "icon": "Network"
     },
     {
       "typeId": "send-message",
@@ -316,8 +294,7 @@
         { "id": "text-out", "contextType": "text-stream", "role": "source", "label": "Text" }
       ]
     },
-    { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" },
-    { "typeId": "domain", "name": "Domain", "category": "Organization", "icon": "Globe" }
+    { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" }
   ],
   "contexts": [
     {

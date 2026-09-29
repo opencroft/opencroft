@@ -72,6 +72,7 @@ export function AgentSpeechTab({
         <div className='flex flex-col gap-1'>
           <Label>API Base</Label>
           <Input
+            autoComplete='off'
             value={data.ttsApiBase ?? ''}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ ttsApiBase: e.target.value })}
             placeholder='http://localhost:8880/v1'
@@ -79,8 +80,10 @@ export function AgentSpeechTab({
         </div>
         <div className='flex flex-col gap-1'>
           <Label>API Key</Label>
+          {/* Not a login: the browser is told so, or it offers saved passwords here. */}
           <Input
             type='password'
+            autoComplete='one-time-code'
             value={data.ttsApiKey ?? ''}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ ttsApiKey: e.target.value })}
             placeholder='not-needed'

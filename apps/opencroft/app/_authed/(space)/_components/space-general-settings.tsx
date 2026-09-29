@@ -23,8 +23,6 @@ import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 interface Props {
   space: SpaceSummary
-  /** Every space, for the transfer target picker. */
-  spaces: SpaceSummary[]
 }
 
 /**
@@ -37,7 +35,7 @@ interface Props {
  * name whose address another space holds is refused with the reason shown,
  * not suffixed (see the registry's rename).
  */
-export function SpaceGeneralSettings({ space, spaces }: Props) {
+export function SpaceGeneralSettings({ space }: Props) {
   const router = useRouter()
 
   const [name, setName] = useState(space.name)
@@ -46,8 +44,6 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
 
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleteError, setDeleteError] = useState<string | undefined>()
-
-  const lastSpace = spaces.length <= 1
 
   async function handleRename() {
     const trimmed = name.trim()
@@ -79,7 +75,7 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
     setDeleteError(undefined)
     const ok = await deleteSpace({ data: space.slug })
     if (!ok) {
-      setDeleteError('The last remaining space cannot be deleted.')
+      setDeleteError('That space could not be found.')
       return
     }
     await router.navigate({ to: '/spaces' })
@@ -114,11 +110,10 @@ export function SpaceGeneralSettings({ space, spaces }: Props) {
             first, from their own settings pages, if any of it should survive.
           </p>
           <div>
-            <Button variant='destructive' onClick={() => setDeleteConfirm(true)} disabled={lastSpace}>
+            <Button variant='destructive' onClick={() => setDeleteConfirm(true)}>
               Delete space
             </Button>
           </div>
-          {lastSpace && <p className='text-xs text-muted-foreground'>The last remaining space cannot be deleted.</p>}
           {deleteError && <p className='text-sm text-destructive'>{deleteError}</p>}
         </Flex>
       </Flex>

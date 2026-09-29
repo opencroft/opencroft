@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { SpacesTable } from '@/app/_authed/(space)/_components/spaces-table'
+import { SpaceListPage } from '@/app/_authed/(space)/_components/space-list-page'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
 
@@ -18,5 +18,5 @@ export const Route = createFileRoute('/_authed/(space)/spaces')({
 function SpacesPage() {
   const spaces = Route.useLoaderData()
   const { new: startNew } = Route.useSearch()
-  return <SpacesTable initialSpaces={spaces} startNew={startNew} />
+  return <SpaceListPage spaces={spaces} startNew={startNew} />
 }

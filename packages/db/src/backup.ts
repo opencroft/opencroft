@@ -169,16 +169,22 @@ function insertChunkSize(columnCount: number): number {
  * Narrow a stored row to what the current schema can accept.
  *
  * Columns added since the backup was written are simply absent and take their
- * defaults. Columns dropped since are discarded HERE rather than left to the
- * driver: drizzle builds an insert from the keys it is handed and looks each
- * one up on the table, so an unknown key does not get ignored, it throws.
+ * defaults. So does a null in a column that has since become required and has
+ * a default (a space's icon): left in, it would fail the whole restore.
+ * Columns dropped since are discarded HERE rather than left to the driver:
+ * drizzle builds an insert from the keys it is handed and looks each one up on
+ * the table, so an unknown key does not get ignored, it throws.
  */
 function reviveRow(row: Record<string, unknown>, spec: TableSpec): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const prop of Object.keys(spec.columns)) {
-    if (Object.hasOwn(row, prop)) {
-      out[prop] = row[prop]
+  for (const [prop, column] of Object.entries(spec.columns)) {
+    if (!Object.hasOwn(row, prop)) {
+      continue
     }
+    if (row[prop] === null && column.notNull && column.hasDefault) {
+      continue
+    }
+    out[prop] = row[prop]
   }
   for (const prop of spec.dateProps) {
     const value = out[prop]

@@ -41,7 +41,9 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizab
 import { useSidebar } from 'ui/sidebar'
 
 import { ExtensionsStateContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
+import { persistedNodes, withCurrentSelection } from '@/app/_authed/(dashboard)/_canvas/graph-view-state'
 import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
+import { inspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
 import { NodeContextMenu } from '@/app/_authed/(dashboard)/_canvas/node-context-menu'
 import { subscribeNodeDataUpdates } from '@/app/_authed/(dashboard)/_canvas/node-data-events'
 import { type BrowserTab, NodeBrowser, NodeInspector } from '@/app/_authed/(dashboard)/_canvas/node-inspector'
@@ -84,10 +86,6 @@ function snap(v: number): number {
   return Math.round(v / 10) * 10
 }
 
-function stripVirtualNodes(nodes: Node[]): Node[] {
-  return nodes.filter((n) => n.type !== 'comment').map(({ selectable, ...rest }) => rest)
-}
-
 function nodeFrameDefaults(category?: string): Partial<Node> {
   if (category === 'Organization') {
     return { zIndex: -1, style: { width: 400, height: 300 } }
@@ -109,7 +107,7 @@ function useDebouncedSave(
     (nodes: Node[], edges: Edge[]) => {
       clearTimeout(timer.current)
       timer.current = setTimeout(async () => {
-        const result = await saveSpaceGraph(slug, { nodes: stripVirtualNodes(nodes), edges }, versionRef.current)
+        const result = await saveSpaceGraph(slug, { nodes: persistedNodes(nodes), edges }, versionRef.current)
         if (result.ok) {
           versionRef.current = result.updatedAt
         } else if (result.conflict) {
@@ -160,6 +158,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
 
   // Back button closes inspector on mobile
   useBackIntercept(isMobile && mobileInspectorVisible, () => setMobileInspectorVisible(false))
+  // A node's own buttons (Logs, Terminal) select the node and ask the
+  // inspector for a tab. On a phone the inspector covers the canvas only when
+  // told to, so the request has to bring it up as well; on a desktop the flag
+  // is not read.
+  useEffect(() => inspectorIntent.onOpen(() => setMobileInspectorVisible(true)), [])
   const { resolvedTheme } = useTheme()
   const { screenToFlowPosition, setCenter, deleteElements } = useReactFlow()
   // Tracks the `updatedAt` this tab last saw for the space's graph row, so
@@ -172,7 +175,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const handleSaveConflict = useCallback(() => {
     toast.warning('This space changed elsewhere — refreshed to the latest version. Redo your last change if needed.')
     fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
-      setNodes(graph.nodes as Node[])
+      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
     })
@@ -349,7 +352,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!current) {
         return
       }
-      setNodes(graph.nodes as Node[])
+      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
       setGraphReady(true)
@@ -390,7 +393,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (updatedAt === graphVersionRef.current) {
         return
       }
-      setNodes(graph.nodes as Node[])
+      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
     })
@@ -425,7 +428,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!current) {
         return
       }
-      setNodes(graph.nodes as Node[])
+      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
       setEdges(graph.edges as Edge[])
       graphVersionRef.current = updatedAt
     })

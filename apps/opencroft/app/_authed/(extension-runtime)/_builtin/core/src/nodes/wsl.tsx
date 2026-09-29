@@ -38,7 +38,6 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
   )
 
   const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])
-  const openFiles = useCallback(() => openInspector('files'), [openInspector])
 
   return (
     <NodeFrame
@@ -65,14 +64,9 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
           )
         }
         output={
-          <>
-            <OutputHandle type='terminal-context' id='terminal'>
-              <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
-            </OutputHandle>
-            <OutputHandle type='filesystem-target' id='fs-out'>
-              <PinButton icon={icons.FolderOpen} label='Files' onClick={openFiles} />
-            </OutputHandle>
-          </>
+          <OutputHandle type='terminal-context' id='terminal'>
+            <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
+          </OutputHandle>
         }
       />
     </NodeFrame>

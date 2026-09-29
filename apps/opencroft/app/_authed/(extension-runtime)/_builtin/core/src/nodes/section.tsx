@@ -83,18 +83,6 @@ export function SectionNode({ id, data, selected }: { id: string; data: SectionD
   )
 }
 
-export function DomainNode({ id, data, selected }: { id: string; data: SectionData; selected?: boolean }) {
-  return (
-    <ResizableContainer
-      id={id}
-      selected={selected}
-      color={data.color || 'oklch(0.6 0.15 320)'}
-      icon={icons.Globe}
-      label={data.label || 'Domain'}
-    />
-  )
-}
-
 export function SectionInspector({
   data,
   updateData,

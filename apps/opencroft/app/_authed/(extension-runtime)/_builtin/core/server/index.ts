@@ -563,7 +563,7 @@ export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>
   }
 
   if (typeId === 'localhost') {
-    if (handleId === 'terminal' || handleId === 'fs-out') {
+    if (handleId === 'terminal') {
       return { type: 'local' }
     }
     return undefined
@@ -574,7 +574,7 @@ export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>
     if (!distro) {
       return undefined
     }
-    if (handleId === 'terminal' || handleId === 'fs-out') {
+    if (handleId === 'terminal') {
       return { type: 'wsl', distro }
     }
     return undefined
@@ -585,7 +585,7 @@ export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>
     if (!address) {
       return undefined
     }
-    if (handleId === 'terminal' || handleId === 'fs-out') {
+    if (handleId === 'terminal') {
       return {
         type: 'ssh',
         host: address,

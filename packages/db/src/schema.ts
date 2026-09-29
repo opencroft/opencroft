@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm/pg-core'
 
 import { authSchema, user } from './auth-schema'
+import { SPACE_ICON_COLOR_IDS, SPACE_ICON_GLYPH_IDS } from './space-icon-presets'
 
 // Timestamps are real Postgres `timestamptz` columns surfacing JS `Date`
 // objects, matching what the app expects (it calls `.toISOString()` /
@@ -59,6 +60,14 @@ export const secret = pgTable(
   (t) => [uniqueIndex('Secret_storeId_key_key').on(t.storeId, t.key), index('Secret_storeId_idx').on(t.storeId)],
 )
 
+// A random preset icon, for the rows no code path names an icon for: an old
+// backup restored without one.
+const randomElement = (ids: readonly string[]) =>
+  `(ARRAY[${ids.map((id) => `'${id}'`).join(', ')}])[1 + floor(random() * ${ids.length})::int]`
+const randomSpaceIcon = sql.raw(
+  `'preset:' || ${randomElement(SPACE_ICON_GLYPH_IDS)} || ':' || ${randomElement(SPACE_ICON_COLOR_IDS)}`,
+)
+
 export const space = pgTable(
   'Space',
   {
@@ -73,8 +82,8 @@ export const space = pgTable(
     /** Which of this space's graphs a bare `<space>` address resolves to. */
     defaultGraphSlug: text().default('default').notNull(),
     pinned: boolean().default(false).notNull(),
-    /** Small square image as a base64 data URL, like `user.image`; null = no icon. */
-    icon: text(),
+    /** `preset:<glyph>:<colour>` from the kit's Space Icon presets, or a small square image as a base64 data URL. */
+    icon: text().notNull().default(randomSpaceIcon),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

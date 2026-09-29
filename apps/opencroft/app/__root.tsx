@@ -33,7 +33,7 @@ import appCss from '@/app/globals.css?url'
 //
 //   /api/acp/*                       agent sessions, streams, skills, tabs,
 //                                    chat-list layout, the MCP server list
-//   /api/spaces, /api/spaces/*       space read/write/export (not /route/$,
+//   /api/spaces, /api/spaces/*       space read/write (not /route/$,
 //                                    see below — a different thing entirely)
 //   /api/files/upload                file upload
 //   /api/backup/*                    database backup downloads

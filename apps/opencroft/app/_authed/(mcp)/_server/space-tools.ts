@@ -43,7 +43,7 @@ export const definitions = [
   },
   {
     name: 'delete_space',
-    description: 'Delete a space by slug. The last remaining space cannot be deleted.',
+    description: 'Delete a space by slug.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -109,7 +109,7 @@ export const handlers: Record<string, ToolHandler> = {
     const slug = await resolveSpace(args)
     const ok = await deleteSpaceImpl(slug)
     if (!ok) {
-      fail(-32602, 'Cannot delete (not found or last remaining space)')
+      fail(-32602, `Space not found: ${slug}`)
     }
     return textResult(`Space ${slug} deleted.`)
   }),

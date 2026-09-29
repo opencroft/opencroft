@@ -104,6 +104,7 @@ import {
 } from '@/app/_authed/(group-chats)/_server/actions'
 import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
+import { useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 import { cn } from '@/lib/utils'
 
@@ -253,6 +254,32 @@ export function EmbeddedAgentChat({
 
   const reload = useCallback(() => setLoadTick((tick) => tick + 1), [])
 
+  // The chat again, in place, without the panel passing through the loading
+  // state: the members dialog asks for it after a write, and the graph
+  // broadcast asks for it when an agent node changes. Member agents ARE graph
+  // nodes, so a rename, a new avatar, an added or a deleted agent is a graph
+  // edit, and until this existed the panel kept the members it loaded with --
+  // an invited agent was not offered until the chat was reopened. A view that
+  // is no longer `ok` goes through the full load, whose states say what
+  // access the reader has now. Nothing to do before the chat is on screen: a
+  // refresh under the create or join screens would only make them flicker.
+  const ready = state.phase === 'ready'
+  const readyRef = useRef(ready)
+  readyRef.current = ready
+  const refreshChat = useCallback(async () => {
+    if (!readyRef.current) {
+      return
+    }
+    const view = await getGroupChatEmbedView({ data: space })
+    if (view.state === 'ok') {
+      setState((prev) => (prev.phase === 'ready' ? { phase: 'ready', chat: view.chat } : prev))
+    } else {
+      reload()
+    }
+  }, [space, reload])
+  // A failed quiet refresh leaves the view as it was; the next one will try again.
+  useOnGraphChange(useCallback(() => refreshChat().catch(() => {}), [refreshChat]))
+
   switch (state.phase) {
     case 'loading':
       return <CenteredSpinner className={className} />
@@ -287,10 +314,28 @@ export function EmbeddedAgentChat({
           onHomeHeader={onHomeHeader}
           onThreadGone={onThreadGone}
           onChatLost={reload}
+          onChatChanged={refreshChat}
           className={className}
         />
       )
   }
+}
+
+/**
+ * Runs `onChange` when the graph broadcast's version moves -- not on mount,
+ * and not for the version the component was born under. `onChange` should be
+ * stable; a new function per render would re-arm the effect but not fire it.
+ */
+function useOnGraphChange(onChange: () => void): void {
+  const { graphVersion } = useSSEEvents()
+  const seen = useRef(graphVersion)
+  useEffect(() => {
+    if (graphVersion === seen.current) {
+      return
+    }
+    seen.current = graphVersion
+    onChange()
+  }, [graphVersion, onChange])
 }
 
 /**
@@ -338,6 +383,7 @@ function EmbeddedThread({
   onHomeHeader,
   onThreadGone,
   onChatLost,
+  onChatChanged,
   className,
 }: {
   chat: GroupChatDetailView
@@ -352,6 +398,8 @@ function EmbeddedThread({
   /** The reader is no longer a member: resolve the chat again, whose own
    *  states say what access they have. */
   onChatLost: () => void
+  /** The chat's members changed under it: load the chat again, in place. */
+  onChatChanged: () => Promise<void>
   className?: string
 }) {
   // A choice made on the home screen goes to the host when it takes them --
@@ -547,7 +595,15 @@ function EmbeddedThread({
   // reader picks a thread or starts one from the home screen's composer,
   // which is what "New chat" used to be a bare stand-in for.
   if (home || !newId) {
-    return <EmbeddedChatHome chat={chat} onOpenThread={openThread} onHeader={onHomeHeader} className={className} />
+    return (
+      <EmbeddedChatHome
+        chat={chat}
+        onOpenThread={openThread}
+        onHeader={onHomeHeader}
+        onChatChanged={onChatChanged}
+        className={className}
+      />
+    )
   }
   // The explicit-new-id state: the same start composer the group-chat
   // screen's footer renders, in the same CommandBarFrame every chat footer
@@ -609,11 +665,16 @@ function EmbeddedChatHome({
   chat,
   onOpenThread,
   onHeader,
+  onChatChanged,
   className,
 }: {
   chat: GroupChatDetailView
   onOpenThread: (threadId: string) => void
   onHeader?: (header: GroupChatDetailHeader | null) => void
+  /** The panel's own copy of the chat, which the composer's agent picker
+   *  reads, is loaded separately from this screen's data; a write here has
+   *  to reach both. */
+  onChatChanged: () => Promise<void>
   className?: string
 }) {
   const [data, setData] = useState<GroupChatDetailData | null>(null)
@@ -642,6 +703,12 @@ function EmbeddedChatHome({
       cancelled = true
     }
   }, [load])
+  // The names and faces on this screen are the graph's; when it changes they
+  // are loaded again in place, the spinner staying out of it.
+  useOnGraphChange(useCallback(() => load().catch(() => {}), [load]))
+  const refresh = useCallback(async () => {
+    await Promise.all([load(), onChatChanged()])
+  }, [load, onChatChanged])
 
   if (error) {
     return (
@@ -657,7 +724,7 @@ function EmbeddedChatHome({
     return <CenteredSpinner className={className} />
   }
   return (
-    <GroupChatRefreshProvider refresh={load}>
+    <GroupChatRefreshProvider refresh={refresh}>
       <div className={cn('flex h-full min-h-0 flex-col', className)}>
         <GroupChatDetailScreen
           className='min-h-0 flex-1'

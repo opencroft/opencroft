@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 1037,
-  "total": 328,
+  "filesScanned": 1036,
+  "total": 320,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -62,9 +62,6 @@
     },
     "apps/opencroft/app/_authed/(dashboard)/_canvas/node-frame.tsx": {
       "lint/a11y/useValidAriaRole": 2
-    },
-    "apps/opencroft/app/_authed/(dashboard)/_canvas/node-inspector.tsx": {
-      "lint/correctness/useExhaustiveDependencies": 1
     },
     "apps/opencroft/app/_authed/(dashboard)/_canvas/node-palette.tsx": {
       "lint/a11y/useButtonType": 1,
@@ -147,10 +144,6 @@
       "assist/source/organizeImports": 1,
       "format": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/file-manager.tsx": {
-      "assist/source/organizeImports": 1,
-      "lint/correctness/noUnusedVariables": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/key-store.tsx": {
       "assist/source/organizeImports": 1,
       "format": 1,
@@ -167,10 +160,6 @@
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/log.tsx": {
       "assist/source/organizeImports": 1,
       "lint/suspicious/noArrayIndexKey": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/network.tsx": {
-      "assist/source/organizeImports": 1,
-      "lint/a11y/useButtonType": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/openai-assistant.tsx": {
       "assist/source/organizeImports": 1,
@@ -395,18 +384,11 @@
     "apps/opencroft/app/_authed/(settings)/_server/token-actions.test.ts": {
       "format": 1
     },
-    "apps/opencroft/app/_authed/(space)/_components/space-icon-settings.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(space)/_server/store.test.ts": {
       "lint/style/noNonNullAssertion": 1
     },
     "apps/opencroft/app/_authed/(space)/_server/store.ts": {
       "lint/style/noNonNullAssertion": 2
-    },
-    "apps/opencroft/app/_authed/(space)/api/spaces.$slug.export.ts": {
-      "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(space)/api/spaces.$slug.ts": {
       "assist/source/organizeImports": 1

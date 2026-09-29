@@ -1,4 +1,5 @@
 import { db, space, spaceApp, spaceGraph, spaceSlugAlias } from '@opencroft/db'
+import { randomSpaceIconValue } from '@opencroft/db/space-icon-presets'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 
 import { slugify } from '@/app/_authed/(space)/_server/slug'
@@ -43,7 +44,7 @@ interface SpaceRuntime {
   /** Which graph a bare `<space>` address resolves to. */
   defaultGraphSlug: string
   pinned: boolean
-  icon: string | null
+  icon: string
   createdAt: Date
   updatedAt: Date
 }
@@ -171,9 +172,6 @@ class SpacesRegistry {
     for (const alias of await db.query.spaceSlugAlias.findMany()) {
       this.aliasBySlug.set(alias.slug, alias.spaceId)
     }
-    if (this.spaces.size === 0) {
-      await this.createInternal(DEFAULT_SPACE_NAME, DEFAULT_SPACE_SLUG, EMPTY_GRAPH)
-    }
     this.loaded = true
   }
 
@@ -191,6 +189,7 @@ class SpacesRegistry {
       slug: DEFAULT_SPACE_SLUG,
       name: DEFAULT_SPACE_NAME,
       data: JSON.stringify(graph),
+      icon: randomSpaceIconValue(),
     })
   }
 
@@ -257,7 +256,7 @@ class SpacesRegistry {
     this.graphsByInstance.set(graph.instanceId, graph)
   }
 
-  private async createInternal(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
+  private async createInternal(name: string, slug: string, graph: GraphData, icon: string): Promise<SpaceRuntime> {
     // A live space outranks an alias, so taking this slug takes it outright.
     await this.dropAliases([slug])
     // The space, its default graph and the Graph App instance owning it are
@@ -266,7 +265,7 @@ class SpacesRegistry {
     const { row, graphRow } = await db.transaction(async (tx) => {
       const [spaceRow] = await tx
         .insert(space)
-        .values({ name, slug, data: JSON.stringify(EMPTY_GRAPH) })
+        .values({ name, slug, data: JSON.stringify(EMPTY_GRAPH), icon })
         .returning()
       const [instanceRow] = await tx
         .insert(spaceApp)
@@ -431,8 +430,9 @@ class SpacesRegistry {
     return null
   }
 
+  /** A new space, wearing a random preset icon. */
   async create(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
-    return this.createInternal(name, slug, graph)
+    return this.createInternal(name, slug, graph, randomSpaceIconValue())
   }
 
   /**
@@ -672,8 +672,8 @@ class SpacesRegistry {
     return runtime
   }
 
-  /** Set the space's icon (a small data URL), or clear it with `null`. */
-  async setIcon(slug: string, icon: string | null): Promise<SpaceRuntime | null> {
+  /** Set the space's icon: a preset value or a small data URL, checked by the caller. */
+  async setIcon(slug: string, icon: string): Promise<SpaceRuntime | null> {
     const id = this.idFor(slug)
     if (!id) {
       return null

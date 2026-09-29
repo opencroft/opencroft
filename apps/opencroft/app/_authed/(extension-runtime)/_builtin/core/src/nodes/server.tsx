@@ -140,7 +140,6 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
   )
 
   const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])
-  const openFiles = useCallback(() => openInspector('files'), [openInspector])
 
   const title = data.name || 'Server'
   const subtitle = `${data.username || 'root'}@${data.address || '?'}:${data.port || 22}`
@@ -169,14 +168,9 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
           )
         }
         output={
-          <>
-            <OutputHandle type='terminal-context' id='terminal'>
-              <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
-            </OutputHandle>
-            <OutputHandle type='filesystem-target' id='fs-out'>
-              <PinButton icon={icons.FolderOpen} label='Files' onClick={openFiles} />
-            </OutputHandle>
-          </>
+          <OutputHandle type='terminal-context' id='terminal'>
+            <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
+          </OutputHandle>
         }
       />
     </NodeFrame>

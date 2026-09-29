@@ -222,8 +222,10 @@ export interface InspectorIntent {
 export declare const inspectorIntent: {
   get: (nodeId: string) => InspectorIntent
   open: (nodeId: string, tab: string, instanceId?: string) => void
+  setTab: (nodeId: string, tab: string) => void
   setInstance: (nodeId: string, instanceId: string | undefined) => void
   subscribe: (cb: () => void) => () => void
+  onOpen: (cb: (nodeId: string) => void) => () => void
 }
 export declare const useInspectorIntent: (nodeId: string) => InspectorIntent
 

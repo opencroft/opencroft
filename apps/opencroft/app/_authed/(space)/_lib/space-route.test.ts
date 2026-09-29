@@ -25,7 +25,7 @@ function space(slug: string): SpaceSummary {
     slug,
     name: slug,
     pinned: false,
-    icon: null,
+    icon: 'preset:rocket:blue',
     createdAt: '2026-09-14T00:00:00.000Z',
     updatedAt: '2026-09-14T00:00:00.000Z',
   }

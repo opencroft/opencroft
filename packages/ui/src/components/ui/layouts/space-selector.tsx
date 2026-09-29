@@ -4,15 +4,16 @@ import { type MouseEvent, useState } from 'react'
 import { Button, buttonVariants } from 'ui/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import { cn } from 'ui/lib/utils'
+import { SpaceIcon } from '../spaces/space-icon'
+import { cn } from 'cn'
 
 import { TitleBarIconButton } from './title-bar'
 
 export interface SelectorSpace {
   slug: string
   name: string
-  /** A small square image URL; without one the space draws a grid glyph. */
-  icon?: string | null
+  /** The stored icon, drawn by Space Icon: `preset:<glyph>:<colour>` or an image URL. */
+  icon: string
   pinned?: boolean
 }
 
@@ -34,9 +35,10 @@ export interface SpaceSelectorProps {
   onNavigate?: (href: string) => void
 }
 
-export function SpaceSelectorIcon({ icon, className }: { icon?: string | null; className?: string }) {
+/** A space's icon, or the grid glyph that stands for all spaces while none is open. */
+export function SpaceSelectorIcon({ icon, className }: { icon?: string; className?: string }) {
   if (icon) {
-    return <img src={icon} alt='' className={cn('shrink-0 rounded-md object-cover', className)} />
+    return <SpaceIcon icon={icon} className={className} />
   }
   return (
     <span className={cn('flex shrink-0 items-center justify-center', className)}>

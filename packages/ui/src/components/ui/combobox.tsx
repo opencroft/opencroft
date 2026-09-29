@@ -1,8 +1,6 @@
-"use client"
-
 import * as React from "react"
 import { Combobox as ComboboxPrimitive } from "@base-ui/react"
-import { cn } from "ui/lib/utils"
+import { cn } from "cn"
 
 import { Button } from "ui/components/ui/button"
 import {

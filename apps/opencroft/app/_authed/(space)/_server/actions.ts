@@ -6,10 +6,8 @@ import type { GraphInstanceView, RenameSpaceResult } from '@/app/_authed/(space)
 import {
   createSpaceImpl,
   deleteSpaceImpl,
-  exportSpaceImpl,
   findTakenGraphIdsImpl,
   getGraphViewForInstanceImpl,
-  importSpaceImpl,
   listSpacesImpl,
   loadSpaceGraphImpl,
   renameSpaceImpl,
@@ -17,7 +15,7 @@ import {
   setSpaceIconImpl,
   setSpacePinnedImpl,
 } from '@/app/_authed/(space)/_server/actions-impl'
-import type { GraphData, SpaceExport, SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import type { GraphData, SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 // The HTTP boundary for every space operation: check the session, then hand
 // off to the plain implementation in actions-impl.ts.
@@ -104,40 +102,11 @@ export const setSpacePinned = createServerFn({ method: 'POST', strict: { output:
     return setSpacePinnedImpl(data)
   })
 
-// Same contract as an account avatar (packages/auth updateOwnAvatar): a small,
-// self-contained image data URL or null to clear. The client re-encodes to a
-// small square before sending; this cap is the server's own say, not a copy of
-// the client's.
-const MAX_ICON_CHARS = 64 * 1024
-const ICON_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
-
 export const setSpaceIcon = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { slug: string; icon: string | null }) => data)
+  .inputValidator((data: { slug: string; icon: string }) => data)
   .handler(async ({ data }): Promise<SpaceSummary | null> => {
     await requireSession()
-    if (data.icon !== null) {
-      if (!ICON_DATA_URL.test(data.icon)) {
-        throw new Error('A space icon must be a PNG, JPEG or WebP image.')
-      }
-      if (data.icon.length > MAX_ICON_CHARS) {
-        throw new Error('That image is too large to store. Choose a smaller one.')
-      }
-    }
     return setSpaceIconImpl(data)
-  })
-
-export const exportSpace = createServerFn({ strict: { output: false } })
-  .inputValidator((slug: string) => slug)
-  .handler(async ({ data: slug }): Promise<SpaceExport | null> => {
-    await requireSession()
-    return exportSpaceImpl(slug)
-  })
-
-export const importSpace = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((payload: SpaceExport) => payload)
-  .handler(async ({ data: payload }): Promise<SpaceSummary> => {
-    await requireSession()
-    return importSpaceImpl(payload)
   })
 
 export const getGraphViewForInstance = createServerFn({ strict: { output: false } })

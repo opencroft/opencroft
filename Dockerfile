@@ -33,6 +33,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# /app is root-owned and the server runs as node, so the data directory has to
+# exist and belong to node before anything writes to it. An empty named volume
+# mounted here inherits that ownership.
+RUN mkdir -p /app/data && chown node:node /app/data
+
 ENV NODE_ENV=production
 ENV PORT=9999
 ENV HOST=0.0.0.0
@@ -58,6 +63,14 @@ COPY --from=build --chown=node:node /repo/packages ./packages
 COPY --from=build --chown=node:node /repo/apps/opencroft/package.json ./package.json
 # Source is needed at runtime by the extension compiler (builtin extension lives in app/).
 COPY --from=build --chown=node:node /repo/apps/opencroft/app ./app
+
+# The commit and branch the image is built from, so /api/build-info can answer
+# without a git checkout in the image. Declared last, so a new commit does not
+# invalidate the layers above.
+ARG OPENCROFT_COMMIT=unknown
+ARG OPENCROFT_BRANCH=unknown
+ENV OPENCROFT_COMMIT=$OPENCROFT_COMMIT
+ENV OPENCROFT_BRANCH=$OPENCROFT_BRANCH
 
 USER node
 EXPOSE 9999

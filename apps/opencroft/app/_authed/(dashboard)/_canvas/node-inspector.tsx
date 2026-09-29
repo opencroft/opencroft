@@ -3,7 +3,7 @@
 import type { Node } from '@xyflow/react'
 import * as lucideIcons from 'lucide-react'
 import { Box, GripVertical, List, Maximize2, MessageCircleQuestion, Minimize2, Pencil, X } from 'lucide-react'
-import { type DragEvent, type ReactNode, useCallback, useEffect, useState } from 'react'
+import { type DragEvent, type ReactNode, useCallback } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
@@ -12,7 +12,7 @@ import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
 import { Separator } from 'ui/separator'
 
 import { McpRequestList } from '@/app/_authed/(approvals)/_components/mcp-request-list'
-import { useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
+import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
 import { extensionRegistry, type ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/registry'
 import type { NodeData } from '@/app/_authed/(extension-runtime)/_types'
 import { useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
@@ -64,7 +64,6 @@ export function NodeInspector({
   onEditExtension,
   onExpandedChange,
 }: NodeInspectorProps) {
-  const [activeTab, setActiveTab] = useState<string>('details')
   const intent = useInspectorIntent(node?.id ?? '')
 
   const copyNodeId = useCallback(() => {
@@ -75,12 +74,6 @@ export function NodeInspector({
       toast.success('Copied to clipboard', { description: node.id, duration: 2000 })
     })
   }, [node])
-
-  useEffect(() => {
-    if (intent.tab) {
-      setActiveTab(intent.tab)
-    }
-  }, [intent.tabRequestId, intent.tab])
 
   if (override) {
     return (
@@ -116,6 +109,11 @@ export function NodeInspector({
       ]
     : []
 
+  // The node's tab lives in the intent store, not in state here: the node's
+  // own buttons write it, the tab strip below writes it, and this reads it.
+  // A copy in state was what reopened the terminal on every reselection: the
+  // button's request outlived the user's later pick of Details.
+  const activeTab = hasTabs && tabs.some((t) => t.id === intent.tab) ? (intent.tab as string) : 'details'
   const activeEntry = hasTabs ? tabs.find((t) => t.id === activeTab) : null
   const ActiveComponent = activeEntry?.component ?? Inspector
   const fillHeight = activeEntry?.fullHeight ?? false
@@ -191,7 +189,7 @@ export function NodeInspector({
         <PanelTabStrip
           tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label, icon: resolveIcon(tab.icon) }))}
           activeId={activeTab}
-          onSelect={setActiveTab}
+          onSelect={(id) => inspectorIntent.setTab(node.id, id)}
         />
       )}
       {body}

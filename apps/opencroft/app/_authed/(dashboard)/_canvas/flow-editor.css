@@ -61,13 +61,11 @@
   height: 10px !important;
 }
 
-.dashboard-mvp-flow .react-flow__node-terminal,
-.dashboard-mvp-flow .react-flow__node-file-manager {
+.dashboard-mvp-flow .react-flow__node-terminal {
   height: 100%;
 }
 
-.dashboard-mvp-flow .react-flow__node-section,
-.dashboard-mvp-flow .react-flow__node-domain {
+.dashboard-mvp-flow .react-flow__node-section {
   z-index: -1 !important;
   height: 100%;
 }

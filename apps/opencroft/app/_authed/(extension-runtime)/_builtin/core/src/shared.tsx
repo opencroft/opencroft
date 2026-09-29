@@ -1,5 +1,5 @@
 import { legacy } from '@opencroft/client'
-const { Button, FileBrowser, FileManagerProvider, NodeCard, NodeResizer, OutputHandle, React, icons, useNodeAccent, useReactFlow, useUpdateNodeInternals } = legacy
+const { Button, FileBrowser, FileManagerProvider, NodeCard, NodeResizer, React, icons, useNodeAccent, useReactFlow, useUpdateNodeInternals } = legacy
 
 const { useCallback, useEffect, useState } = React
 
@@ -20,15 +20,10 @@ export type HandleDef = {
 
 export const TERMINAL_SOURCE: HandleDef[] = [
   { id: 'terminal', contextType: 'terminal-context', role: 'source', label: 'Terminal' },
-  { id: 'fs-out', contextType: 'filesystem-target', role: 'source', label: 'Files' },
 ]
 
 export const TERMINAL_CONSUMER: HandleDef[] = [
   { id: 'ssh-in', contextType: 'terminal-context', role: 'target', label: 'Terminal' },
-]
-
-export const FS_TARGET_CONSUMER: HandleDef[] = [
-  { id: 'fs-in', contextType: 'filesystem-target', role: 'target', label: 'FS' },
 ]
 
 export const SCRIPT_CONSUMER: HandleDef[] = [
@@ -91,23 +86,6 @@ export function PinnedBody({ input, output }: { input?: React.ReactNode; output?
       {input ? <div className='flex-1 min-w-0'>{input}</div> : null}
       {output ? <div className='flex flex-col gap-0.5'>{output}</div> : null}
     </div>
-  )
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// Output pin helpers — shared by Localhost, WSL, Server
-// ═════════════════════════════════════════════════════════════════════
-
-export function TerminalFileOutputs({ onTerminal, onFiles }: { onTerminal: () => void; onFiles: () => void }) {
-  return (
-    <>
-      <OutputHandle type='terminal-context' id='terminal'>
-        <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={onTerminal} />
-      </OutputHandle>
-      <OutputHandle type='filesystem-target' id='fs-out'>
-        <PinButton icon={icons.FolderOpen} label='Files' onClick={onFiles} />
-      </OutputHandle>
-    </>
   )
 }
 

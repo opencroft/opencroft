@@ -24,6 +24,7 @@ export function AgentSpeechRecognitionTab({
         <div className='flex flex-col gap-1'>
           <Label>API Base</Label>
           <Input
+            autoComplete='off'
             value={data.asrApiBase ?? ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrApiBase: e.target.value })}
             placeholder='http://localhost:8881/v1'
@@ -31,8 +32,10 @@ export function AgentSpeechRecognitionTab({
         </div>
         <div className='flex flex-col gap-1'>
           <Label>API Key</Label>
+          {/* Not a login: the browser is told so, or it offers saved passwords here. */}
           <Input
             type='password'
+            autoComplete='one-time-code'
             value={data.asrApiKey ?? ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrApiKey: e.target.value })}
             placeholder='not-needed'

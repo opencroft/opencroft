@@ -1,0 +1,5 @@
+-- Every space wears an icon from here on: the column defaults to a random
+-- preset, the spaces without one take that default, and then it is required.
+ALTER TABLE "Space" ALTER COLUMN "icon" SET DEFAULT 'preset:' || (ARRAY['rocket', 'orbit', 'telescope', 'stars', 'moon-star', 'sun', 'star', 'earth', 'globe', 'compass', 'binoculars', 'mountain', 'flag', 'atom', 'flask', 'microscope', 'lightbulb', 'target', 'briefcase', 'office', 'team', 'chat', 'calendar', 'board', 'checklist', 'notebook', 'book', 'pen', 'palette', 'growth', 'chart', 'puzzle', 'layers', 'package', 'workflow', 'code', 'branch', 'terminal', 'server', 'database', 'drive', 'container', 'cloud', 'cpu', 'router', 'shield', 'fence', 'wrench'])[1 + floor(random() * 48)::int] || ':' || (ARRAY['red', 'orange', 'amber', 'green', 'emerald', 'teal', 'sky', 'blue', 'indigo', 'violet', 'pink', 'slate'])[1 + floor(random() * 12)::int];--> statement-breakpoint
+UPDATE "Space" SET "icon" = DEFAULT WHERE "icon" IS NULL;--> statement-breakpoint
+ALTER TABLE "Space" ALTER COLUMN "icon" SET NOT NULL;

@@ -242,6 +242,29 @@ test('a stored row carrying a column the schema has since dropped still loads', 
   assert.equal(spaces[0].slug, 'old')
 })
 
+test('a stored space without an icon takes a random preset', async () => {
+  // Every space has had an icon since the column became required; a backup
+  // taken before then carries null, or no icon key at all.
+  const backup: Backup = {
+    formatVersion: 1,
+    createdAt: new Date().toISOString(),
+    tables: {
+      Space: [
+        { id: 's7', slug: 'null-icon', name: 'Null Icon', icon: null },
+        { id: 's8', slug: 'no-icon', name: 'No Icon' },
+      ],
+    },
+  }
+
+  await restoreBackup(db, backup)
+
+  const spaces = await db.select().from(schema.space)
+  assert.equal(spaces.length, 2)
+  for (const space of spaces) {
+    assert.match(space.icon, /^preset:[a-z-]+:[a-z]+$/)
+  }
+})
+
 test('a key naming no table is reported rather than restored', async () => {
   const summary = await restoreBackup(db, {
     formatVersion: 1,

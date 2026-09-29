@@ -21,17 +21,15 @@ import { AgentTokensTab } from './nodes/agent-tokens'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
 import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
 import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
-import { FileManagerWindowInspector, FileManagerWindowNode } from './nodes/file-manager'
 import { KeyStoreInspector, KeyStoreNode } from './nodes/key-store'
 import { LocalhostFilesTab, LocalhostInspector, LocalhostNode, LocalhostTerminalTab } from './nodes/localhost'
 import { LOG_HANDLES, LogInspector, LogNode } from './nodes/log'
-import { NetworkInspector, NetworkNode } from './nodes/network'
 import { OpenAIAssistantInspector, OpenAIAssistantNode } from './nodes/openai-assistant'
 import { OpenAIClientInspector, OpenAIClientNode } from './nodes/openai-client'
 import { PROMPT_HANDLES, PromptInspector, PromptNode, promptExposeOutput } from './nodes/prompt'
 import { makeBashNode, makeNodeJsNode, makePythonNode, scriptExposeOutput } from './nodes/script'
 import { SecretsStoreInspector, SecretsStoreNode } from './nodes/secrets-store'
-import { DomainNode, randomSectionColor, SectionInspector, SectionNode } from './nodes/section'
+import { randomSectionColor, SectionInspector, SectionNode } from './nodes/section'
 import { SEND_MESSAGE_HANDLES, SendMessageInspector, SendMessageNode } from './nodes/send-message'
 import { type ServerData, ServerFilesTab, ServerInspector, ServerNode, ServerTerminalTab } from './nodes/server'
 import { TerminalWindowInspector, TerminalWindowNode } from './nodes/terminal'
@@ -49,14 +47,7 @@ import {
   textGenerationExposeOutput,
 } from './nodes/text-generation'
 import { type WslData, WslFilesTab, WslInspector, WslNode, WslTerminalTab } from './nodes/wsl'
-import {
-  AGENT_HANDLES,
-  AGENT_INSTRUCTION_HANDLES,
-  FS_TARGET_CONSUMER,
-  SCRIPT_CONSUMER,
-  TERMINAL_CONSUMER,
-  TERMINAL_SOURCE,
-} from './shared'
+import { AGENT_HANDLES, AGENT_INSTRUCTION_HANDLES, SCRIPT_CONSUMER, TERMINAL_CONSUMER, TERMINAL_SOURCE } from './shared'
 
 export default defineExtension({
   manifest: {
@@ -119,9 +110,6 @@ export default defineExtension({
         if (handleId === 'terminal') {
           return { type: 'local' }
         }
-        if (handleId === 'fs-out') {
-          return { type: 'local' }
-        }
         return undefined
       },
     },
@@ -159,9 +147,6 @@ export default defineExtension({
         if (handleId === 'terminal') {
           return { type: 'wsl', distro: d.distro }
         }
-        if (handleId === 'fs-out') {
-          return { type: 'wsl', distro: d.distro }
-        }
         return undefined
       },
     },
@@ -197,16 +182,6 @@ export default defineExtension({
           return undefined
         }
         if (handleId === 'terminal') {
-          return {
-            type: 'ssh',
-            host: d.address,
-            port: d.port,
-            username: d.username,
-            password: d.password,
-            keyPath: d.keyPath,
-          }
-        }
-        if (handleId === 'fs-out') {
           return {
             type: 'ssh',
             host: d.address,
@@ -272,17 +247,6 @@ export default defineExtension({
       defaultData: { title: 'Terminal' },
       component: TerminalWindowNode as unknown as never,
       inspector: TerminalWindowInspector as unknown as never,
-    },
-    {
-      typeId: 'file-manager',
-      name: 'File Manager Window',
-      category: 'Windows',
-      icon: 'FolderOpen',
-      accent: 'oklch(0.7 0.17 140)',
-      handles: FS_TARGET_CONSUMER as unknown as never[],
-      defaultData: { title: 'File Manager' },
-      component: FileManagerWindowNode as unknown as never,
-      inspector: FileManagerWindowInspector as unknown as never,
     },
     {
       typeId: 'script-bash',
@@ -551,17 +515,6 @@ export default defineExtension({
       exposeOutput: eventExposeOutput as unknown as never,
     },
     {
-      typeId: 'network',
-      name: 'Network',
-      category: 'Organization',
-      icon: 'Network',
-      accent: 'oklch(0.6 0.18 200)',
-      handles: [],
-      defaultData: { label: '', networkName: '', driver: '', external: false, color: 'oklch(0.6 0.18 200)' },
-      component: NetworkNode as unknown as never,
-      inspector: NetworkInspector as unknown as never,
-    },
-    {
       typeId: 'section',
       name: 'Section',
       category: 'Organization',
@@ -570,17 +523,6 @@ export default defineExtension({
       handles: [],
       defaultData: { label: 'Section', color: randomSectionColor() },
       component: SectionNode as unknown as never,
-      inspector: SectionInspector as unknown as never,
-    },
-    {
-      typeId: 'domain',
-      name: 'Domain',
-      category: 'Organization',
-      icon: 'Globe',
-      accent: 'oklch(0.6 0.15 320)',
-      handles: [],
-      defaultData: { label: 'Domain', color: randomSectionColor() },
-      component: DomainNode as unknown as never,
       inspector: SectionInspector as unknown as never,
     },
   ],
