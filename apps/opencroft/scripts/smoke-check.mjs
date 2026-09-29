@@ -27,21 +27,30 @@ function collectOutput(child) {
   return () => Buffer.concat(chunks).toString('utf8')
 }
 
+// Vite's dev server accepts connections before its SSR environment is ready,
+// and a request in that window fails with this message instead of reaching
+// the app. It means "not up yet", not a broken module graph. The name is
+// quoted differently in a JSON body (\"ssr\") and an HTML overlay, hence \S+.
+const NOT_READY = /Vite environment \S+ is unavailable/
+
 async function waitForRoute(url, deadline) {
+  let last = null
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url)
-      if (res.ok) return res
-      // Got a response but not a healthy one (e.g. a 500 from the exact
-      // resolution failure this check exists to catch) -- that is a real
-      // answer, not "not up yet", so stop polling and report it.
-      return res
+      const body = await res.text().catch(() => '(no body)')
+      last = { ok: res.ok, status: res.status, body }
+      if (res.ok) return last
+      // Any other unhealthy answer (e.g. a 500 from the exact resolution
+      // failure this check exists to catch) is a real answer, so stop polling
+      // and report it.
+      if (!NOT_READY.test(body)) return last
     } catch {
       // Not listening yet -- keep polling until the deadline.
     }
     await sleep(POLL_INTERVAL_MS)
   }
-  return null
+  return last
 }
 
 async function main() {
@@ -84,7 +93,7 @@ async function main() {
       // real message is a few lines in, buried in a page of markup. The
       // server's own stdout/stderr (below) has the same failure as a plain
       // stack trace, so the response body only needs to prove one was sent.
-      const body = await res.text().catch(() => '(no body)')
+      const { body } = res
       console.error(body.length > 2000 ? `${body.slice(0, 2000)}\n... (${body.length} chars total, truncated)` : body)
       console.error(getOutput())
       process.exitCode = 1
