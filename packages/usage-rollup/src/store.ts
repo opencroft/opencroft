@@ -85,7 +85,7 @@ export interface UsageRollupConfig {
 const USAGE_ROLLUP_SETTING_ID = 'usage-rollup-schedule'
 
 const DEFAULT_USAGE_ROLLUP_CONFIG: UsageRollupConfig = {
-  enabled: true,
+  enabled: false,
   deliverAgentName: 'alice',
   deliverThreadRef: 'my-space:alice:usage-reports',
   deliverAfterHour: 12,
