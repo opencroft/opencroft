@@ -40,9 +40,9 @@ async function resolveSpaceId(spaceSlug: string): Promise<string> {
   return space.id
 }
 
-async function findApp(extensionId: string, appSlug: string): Promise<AppMeta | undefined> {
+async function findApp(type: string): Promise<AppMeta | undefined> {
   const provided = await providedApps()
-  const match = provided.find((p) => p.extensionId === extensionId && p.value.slug === appSlug)
+  const match = provided.find((p) => p.value.type === type)
   return match ? { ...match.value, extensionId: match.extensionId } : undefined
 }
 
@@ -64,11 +64,16 @@ function collectParams(app: AppMeta, input?: Record<string, string>): Record<str
   return params
 }
 
-function toInstance(row: typeof spaceApp.$inferSelect): SpaceAppInstance {
+/** The App types something provides right now; an instance of any other is in the missing-extension state. */
+async function providedTypes(): Promise<Set<string>> {
+  return new Set((await providedApps()).map((entry) => entry.value.type))
+}
+
+function toInstance(row: typeof spaceApp.$inferSelect, provided: Set<string>): SpaceAppInstance {
   return {
     id: row.id,
-    extensionId: row.extensionId,
-    appSlug: row.appSlug,
+    type: row.type,
+    provided: provided.has(row.type),
     name: row.name,
     slug: row.slug,
     params: JSON.parse(row.params) as Record<string, string>,
@@ -85,17 +90,17 @@ export const listApps = createServerFn({ strict: { output: false } }).handler(as
     provided.map(async ({ extensionId, value }) => ({
       ...value,
       extensionId,
-      updatesInPlace: await appUpdatesInPlace(extensionId, value.slug),
+      updatesInPlace: await appUpdatesInPlace(value.type),
     })),
   )
 })
 
 /** The App pages that draw without the host's chrome (`AppEntry.fullPageRoutes`), from the manifest. */
 export const appFullPageRoutes = createServerFn({ strict: { output: false } })
-  .inputValidator((input: { extensionId: string; appSlug: string }) => input)
+  .inputValidator((input: { type: string }) => input)
   .handler(async ({ data }): Promise<string[]> => {
     await requireSession()
-    return (await findApp(data.extensionId, data.appSlug))?.fullPageRoutes ?? []
+    return (await findApp(data.type))?.fullPageRoutes ?? []
   })
 
 /** The Apps added to one space, with the entered parameter values. */
@@ -108,7 +113,8 @@ export const listSpaceApps = createServerFn({ strict: { output: false } })
       where: eq(spaceApp.spaceId, spaceId),
       orderBy: asc(spaceApp.createdAt),
     })
-    return rows.map(toInstance)
+    const provided = await providedTypes()
+    return rows.map((row) => toInstance(row, provided))
   })
 
 /**
@@ -125,16 +131,16 @@ export const addSpaceApp = createServerFn({ method: 'POST', strict: { output: fa
   .inputValidator(
     (data: {
       spaceSlug: string
-      extensionId: string
-      appSlug: string
+      /** The App's qualified type. */
+      type: string
       name: string
       params?: Record<string, string>
     }) => data,
   )
   .handler(async ({ data }): Promise<SpaceAppInstance> => {
     await requireSession()
-    const row = await addSpaceAppImpl(data.spaceSlug, data.extensionId, data.appSlug, data.name, data.params)
-    return toInstance(row)
+    const row = await addSpaceAppImpl(data.spaceSlug, data.type, data.name, data.params)
+    return toInstance(row, await providedTypes())
   })
 
 /**
@@ -155,7 +161,7 @@ export const renameSpaceApp = createServerFn({ method: 'POST', strict: { output:
     if (!row) {
       throw new Error(`Unknown app instance: ${data.instanceId}`)
     }
-    return toInstance(await renameSpaceAppImpl(data.instanceId, data.name))
+    return toInstance(await renameSpaceAppImpl(data.instanceId, data.name), await providedTypes())
   })
 
 /**
@@ -175,13 +181,13 @@ export const updateSpaceApp = createServerFn({ method: 'POST', strict: { output:
     if (!row) {
       throw new Error(`Unknown app instance: ${data.instanceId}`)
     }
-    const app = await findApp(row.extensionId, row.appSlug)
+    const app = await findApp(row.type)
     if (!app) {
-      throw new Error(`No extension provides app: ${row.extensionId}/${row.appSlug}`)
+      throw new Error(`No extension provides the App type ${row.type}`)
     }
     const params = collectParams(app, data.params)
     const updated = await handleInstanceUpdated(row, JSON.stringify(params))
-    return toInstance(updated)
+    return toInstance(updated, await providedTypes())
   })
 
 /**

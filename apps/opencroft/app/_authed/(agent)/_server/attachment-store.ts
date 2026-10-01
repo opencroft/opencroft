@@ -16,6 +16,7 @@
 import { chatAttachment, db } from '@opencroft/db'
 import type { AttachmentRef, PromptAttachment } from 'agent-client/attachments'
 import { eq, inArray } from 'drizzle-orm'
+import sharp from 'sharp'
 
 /**
  * What a reader may attach.
@@ -48,6 +49,21 @@ export interface StoredAttachment {
 export class AttachmentRejected extends Error {}
 
 /**
+ * The size a picture displays at, read from its own header -- with a recorded
+ * orientation applied, since a browser draws a rotated photo rotated. For an
+ * animation, one frame. Null when the bytes do not say: the picture is still
+ * stored, and a surface falls back to a box of its own.
+ */
+async function readDisplaySize(data: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const { autoOrient } = await sharp(Buffer.from(data, 'base64')).metadata()
+    return autoOrient.width > 0 && autoOrient.height > 0 ? autoOrient : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Store one image and answer with what a composer needs to name it.
  *
  * The mime type is taken from the decoded payload's own declaration rather
@@ -74,14 +90,16 @@ export async function saveAttachment(input: {
     throw new AttachmentRejected('that image is empty')
   }
   if (byteSize > MAX_ATTACHMENT_BYTES) {
-    throw new AttachmentRejected(
-      `that image is ${Math.round(byteSize / (1024 * 1024))} MB, over the ${Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024))} MB limit`,
-    )
+    // One decimal, not whole megabytes: rounded, a 4.2 MB picture read "4 MB,
+    // over the 4 MB limit", which tells the reader nothing they can act on.
+    const mb = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1)
+    throw new AttachmentRejected(`that image is ${mb(byteSize)} MB, over the ${mb(MAX_ATTACHMENT_BYTES)} MB limit`)
   }
   const name = input.name.trim() || 'image'
+  const size = await readDisplaySize(input.data)
   const [row] = await db
     .insert(chatAttachment)
-    .values({ sessionKey: input.sessionKey, name, mimeType, data: input.data, byteSize })
+    .values({ sessionKey: input.sessionKey, name, mimeType, data: input.data, byteSize, ...size })
     .returning({ id: chatAttachment.id })
   return { id: row.id, name, mimeType, byteSize }
 }
@@ -104,6 +122,8 @@ export async function resolveAttachmentRefs(sessionKey: string, ids: readonly st
       id: chatAttachment.id,
       name: chatAttachment.name,
       mimeType: chatAttachment.mimeType,
+      width: chatAttachment.width,
+      height: chatAttachment.height,
       sessionKey: chatAttachment.sessionKey,
     })
     .from(chatAttachment)
@@ -114,7 +134,12 @@ export async function resolveAttachmentRefs(sessionKey: string, ids: readonly st
     if (!row) {
       throw new AttachmentRejected('an attached picture is not part of this conversation')
     }
-    return { id: row.id, name: row.name, mimeType: row.mimeType }
+    return {
+      id: row.id,
+      name: row.name,
+      mimeType: row.mimeType,
+      ...(row.width && row.height ? { width: row.width, height: row.height } : {}),
+    }
   })
 }
 
@@ -125,29 +150,28 @@ export async function resolveAttachmentRefs(sessionKey: string, ids: readonly st
  * another conversation's row must resolve to nothing rather than to its bytes.
  * Missing ids are simply absent from the answer — the engine reports the
  * shortfall in the transcript, which is the one place a reader would look.
+ *
+ * ONE ROW PER QUERY, never `where id in (…)` over the data column. Each row is
+ * up to MAX_ATTACHMENT_BYTES of image as base64, and the embedded PGlite
+ * builds a whole result in its wasm memory: measured 01.10.2026, three ~4 MiB
+ * rows in one query came back and four ran it out of memory ("memory access
+ * out of bounds"), after which every query on that database failed until the
+ * process restarted. One row at a time keeps any read at a single image
+ * however many a message carries. The engine asks for one id per call anyway
+ * (see promptBlocks in agent-client); this holds for any other caller too.
  */
 export async function loadAttachments(sessionKey: string, ids: readonly string[]): Promise<PromptAttachment[]> {
-  if (ids.length === 0) {
-    return []
+  // In the order the MESSAGE named them, not the order a database might
+  // answer in: the blocks travel in that order and a reader who attached two
+  // pictures meant the first one first.
+  const loaded: PromptAttachment[] = []
+  for (const id of ids) {
+    const row = await readAttachment(sessionKey, id)
+    if (row) {
+      loaded.push({ id, ...row })
+    }
   }
-  const rows = await db
-    .select({
-      id: chatAttachment.id,
-      name: chatAttachment.name,
-      mimeType: chatAttachment.mimeType,
-      data: chatAttachment.data,
-      sessionKey: chatAttachment.sessionKey,
-    })
-    .from(chatAttachment)
-    .where(inArray(chatAttachment.id, [...ids]))
-  const byId = new Map(rows.filter((row) => row.sessionKey === sessionKey).map((row) => [row.id, row]))
-  // Returned in the order the MESSAGE named them, not the order the database
-  // happened to answer in: the blocks travel in that order and a reader who
-  // attached two pictures meant the first one first.
-  return ids.flatMap((id) => {
-    const row = byId.get(id)
-    return row ? [{ id: row.id, name: row.name, mimeType: row.mimeType, data: row.data }] : []
-  })
+  return loaded
 }
 
 /**

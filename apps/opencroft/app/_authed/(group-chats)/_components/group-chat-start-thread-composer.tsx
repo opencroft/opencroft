@@ -11,6 +11,7 @@
 // title field disappears) and shares its agent selection with the live
 // thread's own picker through the controlled props.
 
+import { cn } from 'cn'
 import { useState } from 'react'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
@@ -22,7 +23,6 @@ import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { type MemberRef, startGroupChatThread } from '@/app/_authed/(group-chats)/_server/actions'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
-import { cn } from '@/lib/utils'
 
 // Hoisted so the element identity is stable across renders: it takes no props
 // -- it reads the selection scope itself -- so a fresh element every render

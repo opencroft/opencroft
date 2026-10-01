@@ -9,6 +9,7 @@ import { Scanner } from '@tailwindcss/oxide'
 import * as esbuild from 'esbuild'
 import * as lucideIcons from 'lucide-react'
 
+import { type ExtensionUrlKind, extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { EXTENSION_UTILITY_LAYER, hasVariant } from '@/app/_authed/(extension-runtime)/_server/css-cascade-layers'
 import {
@@ -49,6 +50,21 @@ async function readFileOrNull(file: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * Where one build reads its sources and writes its output, and the extension id
+ * the bundle is built for. Usually the folder serving that id (`locationOf`);
+ * an install builds a staged copy before it is moved into place.
+ */
+export interface BuildLocation {
+  extensionId: string
+  sourceDir: string
+  distDir: string
+}
+
+export function locationOf(extensionId: string): BuildLocation {
+  return { extensionId, sourceDir: extDir(extensionId), distDir: extDistDir(extensionId) }
 }
 
 const SERVER_EXTERNAL_PACKAGES = [
@@ -286,14 +302,18 @@ const RESERVED_WORDS = new Set([
 // than one name.
 export function extensionScopedExports(extensionId: string): { name: string; code: string }[] {
   const quoted = JSON.stringify(extensionId)
-  const under = (segment: string) => `(p) => {
-  const [scope, slug] = ${quoted}.split('/');
-  return '/api/ext/' + scope + '/' + slug + '/${segment}/' + String(p).replace(/^\\/+/, '');
-}`
+  const quotedBase = JSON.stringify(extensionUrlBase(extensionId))
+  // The URL shape is defined once, in _extension-id.ts; the host's `extensionUrl`
+  // applies it, so no path is spelled out in generated code.
+  const under = (kind: ExtensionUrlKind) => `(p) => __host.extensionUrl(${quoted}, '${kind}', p)`
   return [
     { name: 'extensionId', code: quoted },
+    { name: 'urlBase', code: quotedBase },
     { name: 'assetUrl', code: under('assets') },
     { name: 'routeUrl', code: under('http') },
+    // For a URL handed outside the instance. There is no instance-origin
+    // setting, so the origin is the page's own.
+    { name: 'absoluteUrl', code: `(url = ${quotedBase}) => new URL(url, location.origin).href` },
     { name: 'invoke', code: `(name, ...args) => __host.callAction(${quoted}, name, args)` },
     { name: 'dispatch', code: '(nodeId, actionId, params) => __host.callNodeAction(nodeId, actionId, params)' },
     { name: 'createStorage', code: `(key) => __host.createStorage(${quoted}, key)` },
@@ -447,7 +467,7 @@ export default __ui;
     }
   }
   if (specifier === '@opencroft/client') {
-    // `legacy` carries the same six extension-scoped names `@ext/host` exports,
+    // `legacy` carries the same extension-scoped names `@ext/host` exports,
     // as properties instead of exports -- from the one list, so the two
     // surfaces cannot come to disagree about what `createStorage` takes.
     //
@@ -550,14 +570,18 @@ export const groupChats = host.groupChats;
 export const users = host.users;
 export const events = host.events;
 export const extensionId = host.extensionId;
+export const urlBase = host.urlBase;
+export const assetUrl = host.assetUrl;
+export const routeUrl = host.routeUrl;
+export const absoluteUrl = host.absoluteUrl;
 `,
     loader: 'js',
   }
 }
 
-async function readDependencyNames(extensionId: string): Promise<string[]> {
+async function readDependencyNames(sourceDir: string): Promise<string[]> {
   try {
-    const raw = await fs.readFile(path.join(extDir(extensionId), 'package.json'), 'utf-8')
+    const raw = await fs.readFile(path.join(sourceDir, 'package.json'), 'utf-8')
     const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> }
     return Object.keys(pkg.dependencies ?? {})
   } catch {
@@ -713,11 +737,11 @@ async function publishClientBuild(stagingDir: string, outDir: string): Promise<v
 }
 
 async function compileServerSide(
-  extensionId: string,
+  location: BuildLocation,
   manifest: ExtensionManifest,
 ): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
-  const src = extDir(extensionId)
-  const outDir = extDistDir(extensionId)
+  const src = location.sourceDir
+  const outDir = location.distDir
   await fs.mkdir(outDir, { recursive: true })
 
   const entry = manifest.main ? path.join(src, manifest.main) : await pickEntry(src, SERVER_ENTRY_CANDIDATES)
@@ -732,11 +756,10 @@ async function compileServerSide(
   // own write to `outfile` is not atomic. Build under a name nothing serves,
   // then publish with a rename once the whole side is ready; rename is
   // atomic within a filesystem, so a concurrent reader always sees either the
-  // old bundle or the new one, never a partial one. The temp file sits beside
-  // the target to keep it on the same device. Unique per attempt so a
-  // leftover from a previous crashed build can never collide with this one.
+  // old bundle or the new one, never a partial one. See stagingName.
   buildAttemptCounter += 1
-  const outfile = stagingName(finalOutfile, buildAttemptCounter)
+  const stagingDir = stagingName(outDir, buildAttemptCounter)
+  const outfile = path.join(stagingDir, 'server.js')
 
   // Server bundles must not inline the extension's own dependencies: native
   // modules (sharp, ffmpeg-static) break when bundled, and bundling JS that is
@@ -745,7 +768,7 @@ async function compileServerSide(
   // resolved from the extension's node_modules by the loader.
   const serverExternals = [
     ...SERVER_EXTERNAL_PACKAGES,
-    ...(await readDependencyNames(extensionId)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name)),
+    ...(await readDependencyNames(src)).filter((name) => !ALWAYS_BUNDLED_PACKAGES.includes(name)),
   ]
 
   try {
@@ -765,7 +788,7 @@ async function compileServerSide(
       // more than the bytes minification saves.
       minify: false,
       jsx: 'automatic',
-      plugins: [hostVirtualPlugin('server', extensionId)],
+      plugins: [hostVirtualPlugin('server', location.extensionId)],
       external: serverExternals,
       logLevel: 'silent',
       write: true,
@@ -778,21 +801,22 @@ async function compileServerSide(
       warnings: toCompileErrors(result.warnings),
     }
   } catch (err) {
-    await fs.rm(outfile, { force: true }).catch(() => {})
     const buildErr = err as esbuild.BuildFailure
     return {
       errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
       warnings: buildErr.warnings ? toCompileErrors(buildErr.warnings) : [],
     }
+  } finally {
+    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
 async function compileClientSide(
-  extensionId: string,
+  location: BuildLocation,
   manifest: ExtensionManifest,
 ): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
-  const src = extDir(extensionId)
-  const outDir = extDistDir(extensionId)
+  const src = location.sourceDir
+  const outDir = location.distDir
   await fs.mkdir(outDir, { recursive: true })
 
   const entry = await pickEntry(src, CLIENT_ENTRY_CANDIDATES)
@@ -800,12 +824,9 @@ async function compileClientSide(
     return { errors: [], warnings: [] }
   }
 
-  // A whole directory this time, not a single file — splitting can emit any
-  // number of chunks alongside the entry, and none of them may become visible
-  // under a served name before every file it (transitively) needs is already
-  // there (see publishClientBuild). Staged as a sibling of `dist`, same
-  // reasoning as the server side's temp file: same device, unique per attempt
-  // so a leftover from a crashed build can never collide with this one.
+  // Splitting can emit any number of chunks alongside the entry, and none of
+  // them may become visible under a served name before every file it
+  // (transitively) needs is already there (see publishClientBuild).
   buildAttemptCounter += 1
   const stagingDir = stagingName(outDir, buildAttemptCounter)
 
@@ -838,7 +859,7 @@ async function compileClientSide(
       sourcemap: true,
       minify: true,
       jsx: 'automatic',
-      plugins: [hostVirtualPlugin('client', extensionId), clientStubPlugin(stubSpecifiers, matchedStubs)],
+      plugins: [hostVirtualPlugin('client', location.extensionId), clientStubPlugin(stubSpecifiers, matchedStubs)],
       // Only for findIconViolations below, read after the build has settled
       // — see its own comment for why that must not happen during the build.
       metafile: true,
@@ -882,11 +903,11 @@ async function compileClientSide(
 }
 
 async function compileSide(
-  extensionId: string,
+  location: BuildLocation,
   manifest: ExtensionManifest,
   side: 'client' | 'server',
 ): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
-  return side === 'client' ? compileClientSide(extensionId, manifest) : compileServerSide(extensionId, manifest)
+  return side === 'client' ? compileClientSide(location, manifest) : compileServerSide(location, manifest)
 }
 
 // Extensions compile at runtime, long after the host CSS was built — so each
@@ -946,23 +967,26 @@ export async function buildExtensionCss(srcDir: string): Promise<string> {
   return [plain, variants].filter(Boolean).join('\n')
 }
 
-async function compileClientCss(extensionId: string): Promise<CompileError[]> {
-  const srcDir = path.join(extDir(extensionId), 'src')
-  const finalOutfile = path.join(extDistDir(extensionId), 'client.css')
+async function compileClientCss(location: BuildLocation): Promise<CompileError[]> {
+  const srcDir = path.join(location.sourceDir, 'src')
+  const finalOutfile = path.join(location.distDir, 'client.css')
   // Same reasoning as compileSide's publish step: client.css is served by the
   // same route as client.js, and writing straight to the served path is not
-  // atomic — a reader can catch it mid-write. Build to a temp name beside the
-  // target and rename into place once ready.
+  // atomic — a reader can catch it mid-write. Build to a staged name and rename
+  // into place once ready.
   buildAttemptCounter += 1
-  const outfile = stagingName(finalOutfile, buildAttemptCounter)
+  const stagingDir = stagingName(location.distDir, buildAttemptCounter)
+  const outfile = path.join(stagingDir, 'client.css')
   try {
     const css = await buildExtensionCss(srcDir)
+    await fs.mkdir(stagingDir, { recursive: true })
     await fs.writeFile(outfile, css)
     await fs.rename(outfile, finalOutfile)
     return []
   } catch (err) {
-    await fs.rm(outfile, { force: true }).catch(() => {})
     return [{ file: 'client.css', message: String(err) }]
+  } finally {
+    await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -979,8 +1003,12 @@ async function compileClientCss(extensionId: string): Promise<CompileError[]> {
 // manual cleanup. --legacy-peer-deps keeps npm from resolving host-provided
 // @opencroft/* peer deps, which are declared as peers but not published to npm
 // (the host virtual plugin supplies them at build time).
-async function ensureDependencies(extensionId: string): Promise<CompileError[]> {
-  const dir = extDir(extensionId)
+//
+// This is the one place an extension's dependencies are installed, and it runs
+// inside the build slot, so no two installs ever share a node_modules. The
+// marker is cleared before an install and written only after one succeeds, so
+// an interrupted install never reads as complete.
+async function ensureDependencies(dir: string): Promise<CompileError[]> {
   const pkgRaw = await readFileOrNull(path.join(dir, 'package.json'))
   if (!pkgRaw) {
     return []
@@ -1009,6 +1037,7 @@ async function ensureDependencies(extensionId: string): Promise<CompileError[]> 
     return []
   }
 
+  await fs.rm(markerPath, { force: true })
   const flags = ['--legacy-peer-deps', '--no-audit', '--no-fund', '--loglevel=error']
   const npm = (args: string[]) =>
     execFileAsync('npm', args, {
@@ -1056,12 +1085,20 @@ interface BuildSlot {
   next: Promise<BuildResult> | null
 }
 
+// Keyed by source directory: a folder is built by one build at a time, whatever
+// id it is being built for.
 const inFlightBuilds = new Map<string, BuildSlot>()
 
+/** Build the folder serving `extensionId`. */
 export function buildExtension(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
-  const slot = inFlightBuilds.get(extensionId)
+  return buildExtensionAt(locationOf(extensionId), manifest)
+}
+
+/** Build the sources at `location` into its `distDir`. */
+export function buildExtensionAt(location: BuildLocation, manifest: ExtensionManifest): Promise<BuildResult> {
+  const slot = inFlightBuilds.get(location.sourceDir)
   if (!slot) {
-    return startBuild(extensionId, manifest)
+    return startBuild(location, manifest)
   }
   // A build for this extension is already running. Its result was read from
   // whatever the source looked like when IT started, which may already be
@@ -1075,16 +1112,16 @@ export function buildExtension(extensionId: string, manifest: ExtensionManifest)
   // one already running turns out), and answer this caller from that.
   if (!slot.next) {
     slot.next = slot.running.then(
-      () => startBuild(extensionId, manifest),
-      () => startBuild(extensionId, manifest),
+      () => startBuild(location, manifest),
+      () => startBuild(location, manifest),
     )
   }
   return slot.next
 }
 
-function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
-  const running = buildExtensionNow(extensionId, manifest)
-  inFlightBuilds.set(extensionId, { running, next: null })
+function startBuild(location: BuildLocation, manifest: ExtensionManifest): Promise<BuildResult> {
+  const running = buildExtensionNow(location, manifest)
+  inFlightBuilds.set(location.sourceDir, { running, next: null })
   // `running` itself is returned below and handled by the caller. `.finally`
   // derives a NEW promise that adopts running's rejection, and nothing here
   // awaits or handles that derived one — left alone, a rejected build would
@@ -1094,7 +1131,7 @@ function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<B
   // through `running`.
   void running
     .finally(() => {
-      const slot = inFlightBuilds.get(extensionId)
+      const slot = inFlightBuilds.get(location.sourceDir)
       // Only clear if nothing queued a follow-up while this build ran. If one
       // was queued, its own `.then` (above) is about to call startBuild and
       // overwrite this slot with the follow-up's own — clearing here first
@@ -1102,50 +1139,46 @@ function startBuild(extensionId: string, manifest: ExtensionManifest): Promise<B
       // all and starts a redundant third build instead of joining the one
       // already coalesced for it.
       if (slot?.running === running && !slot.next) {
-        inFlightBuilds.delete(extensionId)
+        inFlightBuilds.delete(location.sourceDir)
       }
     })
     .catch(() => {})
   return running
 }
 
-// A build finishes in seconds, so a staging entry this old belongs to an
-// attempt whose process died before its rename or cleanup could run. The dirty
-// classification already discounts it (see isStagingArtifactPath) so it blocks
-// nothing — but left in place it accumulates one directory per crashed attempt
-// and keeps the checkout reading as carrying build leftovers. Swept at the
-// start of the next build; anything younger is left alone, because it may be
-// another in-flight attempt's live staging.
+// A build finishes in seconds, so a staging directory this old belongs to an
+// attempt whose process died before its rename or cleanup could run. Swept at
+// the start of the next build so crashed attempts do not accumulate; anything
+// younger is left alone, because it may be another in-flight attempt's live
+// staging.
 const STALE_STAGING_MS = 10 * 60 * 1000
 
-async function sweepStaleStaging(extensionId: string): Promise<void> {
+async function sweepStaleStaging(distDir: string): Promise<void> {
   const cutoff = Date.now() - STALE_STAGING_MS
-  for (const parent of [extDir(extensionId), extDistDir(extensionId)]) {
-    let names: string[]
-    try {
-      names = await fs.readdir(parent)
-    } catch {
+  let names: string[]
+  try {
+    names = await fs.readdir(distDir)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!isStagingName(name)) {
       continue
     }
-    for (const name of names) {
-      if (!isStagingName(name)) {
-        continue
+    const full = path.join(distDir, name)
+    try {
+      if ((await fs.stat(full)).mtimeMs < cutoff) {
+        await fs.rm(full, { recursive: true, force: true })
       }
-      const full = path.join(parent, name)
-      try {
-        if ((await fs.stat(full)).mtimeMs < cutoff) {
-          await fs.rm(full, { recursive: true, force: true })
-        }
-      } catch {
-        // A racing rename or cleanup got to it first — fine either way.
-      }
+    } catch {
+      // A racing rename or cleanup got to it first — fine either way.
     }
   }
 }
 
-async function buildExtensionNow(extensionId: string, manifest: ExtensionManifest): Promise<BuildResult> {
-  await sweepStaleStaging(extensionId)
-  const installErrors = await ensureDependencies(extensionId)
+async function buildExtensionNow(location: BuildLocation, manifest: ExtensionManifest): Promise<BuildResult> {
+  await sweepStaleStaging(location.distDir)
+  const installErrors = await ensureDependencies(location.sourceDir)
   if (installErrors.length > 0) {
     return {
       success: false,
@@ -1156,13 +1189,13 @@ async function buildExtensionNow(extensionId: string, manifest: ExtensionManifes
     }
   }
   const [client, server] = await Promise.all([
-    compileSide(extensionId, manifest, 'client'),
-    compileSide(extensionId, manifest, 'server'),
+    compileSide(location, manifest, 'client'),
+    compileSide(location, manifest, 'server'),
   ])
   const errors = [...client.errors, ...server.errors]
   const warnings = [...client.warnings, ...server.warnings]
   if (errors.length === 0) {
-    errors.push(...(await compileClientCss(extensionId)))
+    errors.push(...(await compileClientCss(location)))
   }
   if (errors.length === 0) {
     // Record what this bundle was built from, so a reader can tell what the
@@ -1174,10 +1207,10 @@ async function buildExtensionNow(extensionId: string, manifest: ExtensionManifes
     // it, or the bundle would claim to be exactly a commit it is not. Read
     // straight from the checkout at build time; best-effort, and never a build
     // failure, because a directory that is not a git checkout still builds.
-    const state = await readCheckoutState(extDir(extensionId))
+    const state = await readCheckoutState(location.sourceDir)
     await fs
       .writeFile(
-        path.join(extDistDir(extensionId), BUILD_PROVENANCE_FILE),
+        path.join(location.distDir, BUILD_PROVENANCE_FILE),
         JSON.stringify({
           commit: state.sourceCommit,
           dirty: state.sourceDirty,

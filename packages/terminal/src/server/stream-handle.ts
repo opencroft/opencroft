@@ -28,14 +28,36 @@ export interface StreamHandle extends SessionHandle {
   finish(): void
 }
 
-export function makeStreamHandle(kill: () => void): StreamHandle {
+/**
+ * A stateful transform over a stream's output, for a caller that must change what a watcher sees
+ * — redacting it, for instance — before any of it is kept or sent.
+ *
+ * `push` receives the output as the transport delivers it, cut wherever the transport cut it, and
+ * returns what may be shown now; it may hold text back for a later call. `flush` returns whatever
+ * it still holds, and is called once, when the stream ends, before the end is reported.
+ *
+ * If either throws, the stream fails closed: nothing more of its output is shown, a fixed notice
+ * says so, and the command is stopped. A filter that cannot run must not become a filter that lets
+ * everything through.
+ */
+export interface OutputFilter {
+  push(text: string): string
+  flush(): string
+}
+
+/** What a watcher sees in place of the rest of the output when the filter throws. */
+export const FILTER_FAILED_NOTICE = '\noutput filter failed; job stopped\n'
+
+export function makeStreamHandle(kill: () => void, filter?: OutputFilter): StreamHandle {
   let alive = true
   let exited = false
+  let filterFailed = false
   const exitFns: (() => void)[] = []
   const dataFns: ((data: string) => void)[] = []
   let pending = ''
 
-  const emit = (text: string) => {
+  // After the filter: line endings for a terminal, and held until the first watcher subscribes.
+  const deliver = (text: string) => {
     const forTerminal = text.replace(/\r?\n/g, '\r\n')
     if (dataFns.length === 0) {
       pending += forTerminal
@@ -46,9 +68,51 @@ export function makeStreamHandle(kill: () => void): StreamHandle {
     }
   }
 
+  const failClosed = () => {
+    filterFailed = true
+    deliver(FILTER_FAILED_NOTICE)
+    try {
+      kill()
+    } catch {
+      /* the stream is being ended either way */
+    }
+    finish()
+  }
+
+  const runFilter = (step: () => string): string => {
+    try {
+      return step()
+    } catch {
+      failClosed()
+      return ''
+    }
+  }
+
+  // Output after the end is dropped: a filter has been flushed by then, and text it never saw
+  // cannot be shown unfiltered.
+  const emit = (text: string) => {
+    if (exited || filterFailed) {
+      return
+    }
+    const shown = filter ? runFilter(() => filter.push(text)) : text
+    if (shown) {
+      deliver(shown)
+    }
+  }
+
   const finish = () => {
     if (exited) {
       return
+    }
+    if (filter && !filterFailed) {
+      const tail = runFilter(() => filter.flush())
+      if (tail) {
+        deliver(tail)
+      }
+      // A flush that threw has already failed closed, and that finished the stream.
+      if (exited) {
+        return
+      }
     }
     exited = true
     alive = false
@@ -96,8 +160,8 @@ export function makeStreamHandle(kill: () => void): StreamHandle {
  * on PATH — or a cwd that does not exist — raises an unhandled exception and takes the process
  * down. The caller cannot install that itself: it is handed a key, not the child.
  */
-export function pipedProcessHandle(child: ChildProcess): StreamHandle {
-  const handle = makeStreamHandle(() => child.kill())
+export function pipedProcessHandle(child: ChildProcess, filter?: OutputFilter): StreamHandle {
+  const handle = makeStreamHandle(() => child.kill(), filter)
 
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')

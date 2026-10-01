@@ -4,15 +4,16 @@
  * Every tool that addresses a space takes its address, required: nothing
  * falls back to a default space. A graph's own operations are actions of its
  * Graph app, reached through `app_call`. Extension tools operate on v2
- * local extensions (folders under `data/extensions/local/<slug>/`). Source files are read and
+ * local extensions (the `local.<name>` folders of the data dir's `extensions/`). Source files are read and
  * edited via the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script)
- * against the static handle "extensions/<slug>" — see `resolveLocalExtensionContext` — rather
+ * against the static handle "extensions/local.<name>" — see `resolveLocalExtensionContext` — rather
  * than a dedicated per-file extension tool.
  * UI feedback (toasts, focus, comments) is broadcast via SSE.
  */
 
 import type { ExecutionMode } from '@opencroft/core'
 
+import { AGENT_TOOL_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { ApprovalRejectedError, awaitApproval, getApprovalMeta } from '@/app/_authed/(approvals)/_server/with-approval'
 import { hostAppCall } from '@/app/_authed/(apps)/_server/host-apps'
 import type { AgentToolData } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-tool-shared'
@@ -63,7 +64,6 @@ import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 // The families moved into their own modules; these names were part of this
 // module's surface before the split and stay reachable from it.
-export { localSlugFromExtensionId } from '@/app/_authed/(mcp)/_server/extension-management-tools'
 export {
   buildAtomicReplaceCommand,
   buildBase64WriteCommands,
@@ -73,7 +73,7 @@ export {
   buildScratchInitCommand,
   buildTempWritePath,
   capColumns,
-  extensionSlugFromTarget,
+  extensionFolderFromTarget,
   globPatternToEre,
   insideExcludedDir,
   parseCountedRead,
@@ -89,7 +89,7 @@ export {
   withTruncationNote,
   writeFileExactWith,
 } from '@/app/_authed/(mcp)/_server/remote-tools'
-export { isValidLocalExtensionSlug, replaceExact, requireCallingAgent } from '@/app/_authed/(mcp)/_server/tool-shared'
+export { replaceExact, requireCallingAgent } from '@/app/_authed/(mcp)/_server/tool-shared'
 
 /**
  * The tools that cannot change anything, declared rather than guessed.
@@ -296,7 +296,7 @@ export async function getAgentToolDefinitions(extraReservedNames: Set<string> = 
 
       const nodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes) as unknown as GraphNode[]
       for (const node of nodes) {
-        if (node.type !== 'agent-tool') {
+        if (node.type !== AGENT_TOOL_NODE_TYPE) {
           continue
         }
 
@@ -386,7 +386,7 @@ async function findAgentTool(toolName: string): Promise<FoundAgentTool> {
       continue
     }
     const nodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes) as unknown as GraphNode[]
-    const node = nodes.find((n) => n.type === 'agent-tool' && n.data?.name === toolName)
+    const node = nodes.find((n) => n.type === AGENT_TOOL_NODE_TYPE && n.data?.name === toolName)
     if (node) {
       return { node, data: (node.data ?? {}) as Partial<AgentToolData>, spaceSlug: space.slug }
     }

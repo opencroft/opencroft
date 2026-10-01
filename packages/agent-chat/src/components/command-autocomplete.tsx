@@ -3,7 +3,7 @@
 import type { AvailableCommand } from 'agent-client/types'
 import { useEffect, useRef } from 'react'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 /**
  * How a command is typed into the composer. A name the agent already spells

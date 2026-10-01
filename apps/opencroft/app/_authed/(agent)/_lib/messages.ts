@@ -1,5 +1,5 @@
 import type { DeliveredAttachment } from 'agent-client/attachments'
-import type { PlanItem } from 'agent-client/types'
+import type { SessionNotice, ToolDiff } from 'agent-client/types'
 
 import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 
@@ -16,7 +16,8 @@ export type ChatPart =
   // `name` is the agent's own phrasing for the call, which is what a reader
   // sees; `toolName` is the programmatic name behind it, which is what decides
   // HOW the call is drawn. See the kit's DetailItem for why they cannot be one
-  // field. Absent when the agent named no tool.
+  // field. Absent when the agent named no tool. `diffs` are the file changes
+  // the call reported (see ToolDiff), absent when it reported none.
   | {
       type: 'tool-call'
       id: string
@@ -24,6 +25,7 @@ export type ChatPart =
       toolName?: string
       args: unknown
       result?: { text: string; isError?: boolean }
+      diffs?: ToolDiff[]
     }
   // A subagent the harness spawned under this turn (see SubagentInfo). Its own
   // transcript is nested verbatim in `parts`, folded from the subagent's
@@ -55,12 +57,9 @@ export type ChatPart =
       showInTranscript: boolean
       summary?: string
     }
-  // The agent's execution plan (ACP `plan` session update) as ONE part that
-  // later plan events patch in place — every event replaces `entries`
-  // wholesale, so the part is keyed by the absolute index of the event that
-  // anchored it (`id`, same terms as ChatMessage.id) and a clear (empty
-  // entries) removes it rather than leaving an empty checklist behind.
-  | { type: 'plan'; id: number; entries: PlanItem[] }
+  // An advisory the agent addressed to the reader (see SessionNotice), at the
+  // position it arrived. Not text: it never merges with the reply around it.
+  | ({ type: 'notice' } & SessionNotice)
 
 export interface ChatMessage {
   // Stable across a "load older" prepend — the absolute index (in the

@@ -8,6 +8,60 @@
 import type { ElicitationSchema } from './types'
 
 /**
+ * What claude-agent-acp 0.84.0 sends for an AskUserQuestion with two questions,
+ * to a client that is not JetBrains AIR: each question is followed by its
+ * `question_<n>_custom` "Other" box, and nothing marks the box as belonging to
+ * its question — the `_meta` marker goes to AIR clients only. Printed from the
+ * package's own `askUserQuestionsToCreateRequest` over:
+ *
+ *   { question: 'Which approach?', header: 'Approach', multiSelect: false,
+ *     options: [{ label: 'Fast', description: 'Ship it today' },
+ *               { label: 'Thorough', description: '' }] }
+ *   { question: 'Which parts?', header: 'Scope', multiSelect: true,
+ *     options: [{ label: 'Engine', description: '' }, { label: 'UI', description: '' }] }
+ *
+ * The adapter reads the answer back from `question_<n>` and `question_<n>_custom`.
+ */
+export const CLAUDE_ASK_USER_QUESTION_FORM = {
+  message: 'Please answer the following questions.',
+  requestedSchema: {
+    type: 'object',
+    properties: {
+      question_0: {
+        type: 'string',
+        title: 'Approach',
+        description: 'Which approach?',
+        oneOf: [
+          { const: 'Fast', title: 'Fast', description: 'Ship it today' },
+          { const: 'Thorough', title: 'Thorough' },
+        ],
+      },
+      question_0_custom: {
+        type: 'string',
+        title: 'Other',
+        description: 'Type your own answer, or add a note to the option you chose above (optional).',
+      },
+      question_1: {
+        type: 'array',
+        title: 'Scope',
+        description: 'Which parts?',
+        items: {
+          anyOf: [
+            { const: 'Engine', title: 'Engine' },
+            { const: 'UI', title: 'UI' },
+          ],
+        },
+      },
+      question_1_custom: {
+        type: 'string',
+        title: 'Other',
+        description: 'Type your own answer to add to your selection above (optional).',
+      },
+    },
+  } satisfies ElicitationSchema,
+}
+
+/**
  * What codex-acp sends for a `request_user_input` with two questions: one with
  * options that also accepts an answer outside them, and one secret free-text
  * question. Built by hand from `buildUserInputRequest` in codex-acp's

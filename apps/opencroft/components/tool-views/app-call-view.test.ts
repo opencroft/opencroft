@@ -9,7 +9,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { appActionView, TOOL_VIEWS } from 'ui/tool-views/tool-views'
+import { appActionView } from 'ui/tool-views/graph-views'
+import { TOOL_VIEWS } from 'ui/tool-views/tool-views'
 
 test('app_call and the graph view keys are one spec, so both callers unwrap the same way', () => {
   for (const key of ['graph.updateNodes', 'graph.writeNodeProperty', 'graph.editNodeProperty']) {

@@ -138,10 +138,12 @@ rl.on('line', (line) => {
 })
 `
 
-test('initialize declares compaction and typed failures, and does NOT declare plan', async () => {
+test('initialize declares compaction, notices and typed failures, and does NOT declare plan', async () => {
   // Each declaration switches a codex-acp code path:
   // - session.compaction -> compaction_update instead of a synthetic tool call
   //   (clientSupportsCompaction, src/CodexSessionCompactions.ts);
+  // - session.notices -> advisories as `notice` updates rather than agent
+  //   text, for a bridge that implements them; one that does not ignores it;
   // - `_meta.jetbrains.air.capabilities` incl. `sessionFailure` -> a typed
   //   failure on the prompt response (clientSupportsTypedSessionFailures,
   //   src/CodexAcpServer.ts);
@@ -164,7 +166,7 @@ test('initialize declares compaction and typed failures, and does NOT declare pl
     const params = JSON.parse(readFileSync(captured, 'utf8')) as { clientCapabilities: Record<string, unknown> }
     const capabilities = params.clientCapabilities
     assert.equal(Object.hasOwn(capabilities, 'plan'), false, 'no plan capability: Codex must keep sending `plan`')
-    assert.deepEqual(capabilities.session, { compaction: {} })
+    assert.deepEqual(capabilities.session, { compaction: {}, notices: {} })
     assert.deepEqual(capabilities._meta, {
       jetbrains: { air: { version: 1, capabilities: ['asyncTasks', 'nativeSubagentSessions', 'sessionFailure'] } },
     })
@@ -282,7 +284,7 @@ test('a Codex session/load replays a completed compaction into the transcript wi
 
 // ── plan ───────────────────────────────────────────────────────────────────
 
-test('a Codex plan renders as the plan, and an empty one clears it', async () => {
+test('a Codex plan arrives as the plan, and an empty one clears it', async () => {
   const h = await codexSetup()
   // turn/plan/updated -> updatePlan: status inProgress -> in_progress, step ->
   // content, priority always 'medium' (src/CodexEventHandler.ts)
@@ -295,18 +297,11 @@ test('a Codex plan renders as the plan, and an empty one clears it', async () =>
 
   assert.deepEqual(ofKind(h.events, 'plan').at(-1), { kind: 'plan', entries })
   assert.deepEqual(storedSession(h.sessionId).plan, entries)
-  const shown = foldEvents(storedSession(h.sessionId).events).filter((message) => message.kind === 'plan')
-  assert.equal(shown.length, 1)
-  assert.deepEqual(shown[0].kind === 'plan' && shown[0].entries, entries)
 
   // The same updatePlan with an empty turn plan.
   push(h.sessionId, { sessionUpdate: 'plan', entries: [] })
+  assert.deepEqual(ofKind(h.events, 'plan').at(-1), { kind: 'plan', entries: [] })
   assert.deepEqual(storedSession(h.sessionId).plan, [])
-  assert.deepEqual(
-    foldEvents(storedSession(h.sessionId).events).filter((message) => message.kind === 'plan'),
-    [],
-    'an empty entries list retires the plan row',
-  )
   await h.client.reset()
 })
 

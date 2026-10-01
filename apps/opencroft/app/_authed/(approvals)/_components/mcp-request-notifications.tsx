@@ -1,9 +1,9 @@
 'use client'
 
+import { cn } from 'cn'
 import { Badge } from 'ui/badge'
 
 import { usePendingRequestEntries } from '@/app/_authed/(approvals)/_components/mcp-request-list'
-import { cn } from '@/lib/utils'
 
 // Floating bottom-corner notifications for pending MCP requests, visible on
 // every space. Clicking one selects the request and opens the MCP Requests tab.

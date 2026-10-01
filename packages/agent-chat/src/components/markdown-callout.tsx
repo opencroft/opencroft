@@ -10,7 +10,7 @@ import {
 import type { ReactNode } from 'react'
 import { Button } from 'ui/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/components/ui/dropdown-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export type MarkdownCalloutKind = 'note' | 'tip' | 'important' | 'warning' | 'caution'
 
@@ -78,6 +78,8 @@ export interface MarkdownCalloutProps {
   onTitleChange?: (title: string) => void
   /** Adds a switcher to the heading line that offers every kind. For an editor. */
   onKindChange?: (kind: MarkdownCalloutKind) => void
+  /** Merged over the frame's own classes: the default outer margin spaces it in prose. */
+  className?: string
 }
 
 /**
@@ -89,12 +91,19 @@ export interface MarkdownCalloutProps {
  * (`contentEditable={false}`), so a rich-text editor hosting the block treats
  * it as controls rather than as prose to type into.
  */
-export function MarkdownCallout({ kind, title, children, onTitleChange, onKindChange }: MarkdownCalloutProps) {
+export function MarkdownCallout({
+  kind,
+  title,
+  children,
+  onTitleChange,
+  onKindChange,
+  className,
+}: MarkdownCalloutProps) {
   const tone = TONES[kind]
   const Icon = tone.icon
   const editing = Boolean(onTitleChange || onKindChange)
   return (
-    <div role='note' className={cn('my-2 rounded-r-md border-l-4 px-3 py-2', tone.box)}>
+    <div role='note' className={cn('my-2 rounded-r-md border-l-4 px-3 py-2', tone.box, className)}>
       <div
         contentEditable={editing ? false : undefined}
         // The heading is the block's own line, not prose: it keeps the kit's

@@ -1,10 +1,10 @@
 'use client'
 
+import { cn } from 'cn'
 import { ChevronRight, Loader2 } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/components/ui/dialog'
 import { Flex } from 'ui/components/ui/layout/flex'
-import { cn } from 'ui/lib/utils'
 
 export interface ToolCallResult {
   text: string

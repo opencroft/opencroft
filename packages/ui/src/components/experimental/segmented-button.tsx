@@ -1,6 +1,6 @@
 'use client'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Track heights match the standard button heights (h-6, h-8, h-9, h-10) so this
 // sits in a toolbar beside a button without either looking wrong. The inner

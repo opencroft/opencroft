@@ -1,8 +1,8 @@
 'use client'
 
 import type { MarkdownEditorProps } from 'agent-chat/markdown-editor'
+import { cn } from 'cn'
 import { lazy, Suspense } from 'react'
-import { cn } from 'ui/lib/utils'
 
 export type { MarkdownEditorProps, MarkdownEditorToolbarGroup } from 'agent-chat/markdown-editor'
 

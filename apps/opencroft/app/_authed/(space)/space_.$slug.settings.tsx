@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { cn } from 'cn'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
-import { cn } from 'ui/lib/utils'
 
 import { SpaceApps } from '@/app/_authed/(apps)/_components/space-apps'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'

@@ -8,7 +8,7 @@ import type { Node, Type } from '@opencroft/core'
 
 /** Runtime context handed to an extension's lifecycle hooks. Grows over time. */
 export interface ExtensionContext {
-  /** Fully-qualified id of the extension, e.g. `local/git`. */
+  /** Fully-qualified id of the extension, e.g. `acme.git`. */
   extensionId: string
   /** Register a connection type that node handles can reference. */
   registerType(type: Type): void

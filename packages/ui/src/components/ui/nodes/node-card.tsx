@@ -2,10 +2,10 @@
 
 import type { LucideIcon } from 'lucide-react'
 import type { CSSProperties, HTMLAttributes, ReactElement, ReactNode } from 'react'
-import { isValidElement, useEffect, useRef, useState } from 'react'
+import { isValidElement } from 'react'
 
 import { StatusIndicator, type StatusVariant } from '../utils/status-indicator'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // The bounds a canvas node is drawn within.
 //
@@ -47,6 +47,13 @@ export interface NodeCardProps extends Omit<HTMLAttributes<HTMLDivElement>, 'cla
 // component ships source files only, so an imported .css would be dropped on
 // install and silently do nothing. Only a loading node renders this, so the
 // duplicate declarations are few and cost nothing -- identical rules collapse.
+//
+// The outline is sized by layout, not measured: the svg is inset half a pixel
+// from the card on every side and each rect fills it, so the stroke lands on the
+// card's inner pixel at whatever size the card has in the frame being painted.
+// A measured size is always the previous frame's, and on the canvas a
+// getBoundingClientRect() reading also carries the viewport zoom. `pathLength`
+// keeps the dash pattern the same fraction of the perimeter at any size.
 function TravelingDot({
   accent,
   dots = 8,
@@ -58,40 +65,22 @@ function TravelingDot({
   dotSize?: number
   className?: string
 }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ w: 0, h: 0 })
-
-  useEffect(() => {
-    if (!ref.current) {
-      return
-    }
-    const obs = new ResizeObserver(([entry]) => {
-      const rect = entry.target.getBoundingClientRect()
-      setSize({ w: Math.round(rect.width), h: Math.round(rect.height) })
-    })
-    obs.observe(ref.current)
-    return () => obs.disconnect()
-  }, [])
-
-  if (!size.w || !size.h) {
-    return <div ref={ref} className='absolute inset-0 pointer-events-none' />
-  }
-
   const r = 6
 
   return (
-    <div ref={ref} className={cn('absolute inset-0 pointer-events-none overflow-visible', className)}>
+    <div className={cn('absolute inset-0 pointer-events-none overflow-visible', className)}>
       <style>{'@keyframes node-card-dot-travel{from{stroke-dashoffset:0}to{stroke-dashoffset:-100}}'}</style>
-      <svg width={size.w} height={size.h} className='overflow-visible'>
+      <svg
+        className='absolute overflow-visible'
+        style={{ left: 0.5, top: 0.5, width: 'calc(100% - 1px)', height: 'calc(100% - 1px)' }}
+      >
         {Array.from({ length: dots }, (_, i) => {
           const delay = -(i * (4 / dots))
           return (
             <rect
               key={i}
-              x='0.5'
-              y='0.5'
-              width={size.w - 1}
-              height={size.h - 1}
+              width='100%'
+              height='100%'
               rx={r}
               ry={r}
               fill='none'

@@ -28,7 +28,7 @@ import {
 import { Separator } from 'ui/components/ui/separator'
 import { Switch } from 'ui/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from 'ui/components/ui/tabs'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // ── Public types ───────────────────────────────────────────────────
 // The component owns the editor UI state and the cron engine (build / validate

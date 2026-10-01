@@ -10,7 +10,8 @@ import { ThinkingBlock } from 'agent-chat/components/thinking-block'
 import type { AgentChatEdit, AgentChatSession } from 'agent-chat/session'
 import type { AvailableCommand } from 'agent-client/types'
 import type { ComponentType } from 'react'
-import { GenericToolView, lookupToolView } from 'ui/tool-views/tool-views'
+import { GenericToolView } from 'ui/tool-views/run-views'
+import { lookupToolView } from 'ui/tool-views/tool-views'
 
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
@@ -68,7 +69,14 @@ export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
     <RenderBoundary scope='tool-view' label={item.name} resetKey={item.id}>
       <AppToolViewHost>
         {ViewComponent ? (
-          <ViewComponent tool={item.name} args={args} requestId={item.id} mode='history' result={item.result} />
+          <ViewComponent
+            tool={item.name}
+            args={args}
+            requestId={item.id}
+            mode='history'
+            result={item.result}
+            diffs={item.diffs}
+          />
         ) : (
           <GenericToolView tool={item.name} args={args} result={item.result} />
         )}

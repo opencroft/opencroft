@@ -10,7 +10,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { LIST_ROW_SECONDARY_CLASS, LIST_ROW_TITLE_CLASS } from '../utils/list-row'
 

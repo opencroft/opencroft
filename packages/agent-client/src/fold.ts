@@ -1,4 +1,4 @@
-import type { ChatEvent, CompactionState, ElicitationSchema, PermissionOpt, PlanItem } from './types'
+import type { ChatEvent, CompactionState, ElicitationSchema, PermissionOpt, SessionNotice, ToolDiff } from './types'
 
 export type ChatMessage =
   | { id: string; kind: 'user'; text: string }
@@ -12,8 +12,8 @@ export type ChatMessage =
       status: string
       input?: unknown
       output?: unknown
+      diffs?: ToolDiff[]
     }
-  | { id: string; kind: 'plan'; entries: PlanItem[] }
   | {
       id: string
       kind: 'permission'
@@ -34,10 +34,10 @@ export type ChatMessage =
       url?: string
       resolved: boolean
     }
+  | ({ id: string; kind: 'notice' } & SessionNotice)
   | { id: string; kind: 'error'; text: string }
 
 type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
-type PlanMessage = Extract<ChatMessage, { kind: 'plan' }>
 type TextMessage = Extract<ChatMessage, { kind: 'assistant' | 'thought' }>
 
 // A tool call is settled once it reaches one of these statuses — every other
@@ -87,9 +87,8 @@ const SNAPSHOT_KINDS = new Set<ChatEvent['kind']>([
   // checklist, replaced wholesale by every event and interleaved mid-message
   // (claude-agent-acp fires TodoWrite between text chunks). It must not split
   // a message run, and a windowed subscriber whose cut fell before every plan
-  // event is handed the live one by withSnapshotPrefix. Unlike the kinds above
-  // it still FOLDS to a message — an upserted checklist row in the transcript,
-  // see foldEvents — but its arrival is state, not a step of the conversation.
+  // event is handed the live one by withSnapshotPrefix. It folds to nothing:
+  // a host reads the latest plan as session state, outside the transcript.
   'plan',
 ])
 
@@ -164,12 +163,6 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
   const tools = new Map<string, ToolMessage>()
   const permissions = new Map<string, PermissionMessage>()
   const asks = new Map<string, AskMessage>()
-  // The plan is one entity for the whole transcript, not a step: its first
-  // event fixes the row's position, later ones patch that row in place, and an
-  // empty list retires it (claude-agent-acp publishes one when a conversation
-  // reset clears the task store). Held here so the next non-empty plan after a
-  // clear anchors a NEW row at its own position.
-  let plan: PlanMessage | null = null
   let counter = 0
   const nextId = () => {
     counter += 1
@@ -245,6 +238,7 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
           title: event.title,
           status: event.status,
           input: event.input,
+          ...(event.diffs ? { diffs: event.diffs } : {}),
         }
         tools.set(event.toolCallId, message)
         messages.push(message)
@@ -257,22 +251,9 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
           message.status = event.status ?? message.status
           message.input = event.input ?? message.input
           message.output = event.output ?? message.output
-        }
-        break
-      }
-      case 'plan': {
-        if (event.entries.length === 0) {
-          if (plan) {
-            messages.splice(messages.indexOf(plan), 1)
-            plan = null
+          if (event.diffs) {
+            message.diffs = event.diffs
           }
-          break
-        }
-        if (plan) {
-          plan.entries = event.entries
-        } else {
-          plan = { id: nextId(), kind: 'plan', entries: event.entries }
-          messages.push(plan)
         }
         break
       }
@@ -343,6 +324,10 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
         if (message) {
           message.resolved = true
         }
+        break
+      }
+      case 'notice': {
+        messages.push({ id: nextId(), kind: 'notice', ...event.notice })
         break
       }
       case 'error': {

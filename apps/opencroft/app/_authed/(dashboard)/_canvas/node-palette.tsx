@@ -5,13 +5,13 @@ import type { DragEvent } from 'react'
 import { Button } from 'ui/button'
 import { ScrollArea } from 'ui/layout/scroll-area'
 
-import type { ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { editableFolderOf, type ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 interface NodePaletteProps {
   extensions: ResolvedNode[]
-  onAdd: (typeId: string) => void
+  onAdd: (type: string) => void
   onNewExtension: () => void
-  onEditExtension: (extensionId: string) => void
+  onEditExtension: (folder: string) => void
 }
 
 function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
@@ -25,8 +25,8 @@ function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
   return map
 }
 
-function handleDragStart(e: DragEvent<HTMLButtonElement>, typeId: string) {
-  e.dataTransfer.setData('application/dashboard-extension', typeId)
+function handleDragStart(e: DragEvent<HTMLButtonElement>, type: string) {
+  e.dataTransfer.setData('application/dashboard-extension', type)
   e.dataTransfer.effectAllowed = 'move'
 }
 
@@ -50,26 +50,26 @@ export function NodePalette({ extensions, onAdd, onNewExtension, onEditExtension
             <div>
               {items.map((node) => {
                 const Icon = node.icon
-                const isLocal = node.extension.manifest.id.startsWith('local/')
+                const editableFolder = editableFolderOf(node)
                 return (
-                  <div key={node.typeId} className='group relative flex items-center hover:bg-accent/50'>
+                  <div key={node.type} className='group relative flex items-center hover:bg-accent/50'>
                     <button
                       title={node.description ?? node.name}
                       draggable
-                      onDragStart={(e) => handleDragStart(e, node.typeId)}
-                      onClick={() => onAdd(node.typeId)}
+                      onDragStart={(e) => handleDragStart(e, node.type)}
+                      onClick={() => onAdd(node.type)}
                       className='flex-1 flex items-center gap-2 px-3 py-1.5 text-xs text-left'
                     >
                       <Icon className='size-3.5 shrink-0' style={{ color: node.accent }} />
                       <span className='truncate'>{node.name}</span>
                     </button>
-                    {isLocal && (
+                    {editableFolder && (
                       <Button
                         size='icon'
                         variant='ghost'
                         className='size-5 mr-1 opacity-0 group-hover:opacity-100'
                         title='Edit extension'
-                        onClick={() => onEditExtension(node.extension.manifest.id)}
+                        onClick={() => onEditExtension(editableFolder)}
                       >
                         <Pencil className='size-3' />
                       </Button>

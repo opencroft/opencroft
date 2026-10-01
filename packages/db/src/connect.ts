@@ -23,6 +23,10 @@ function isRemote(url: string | undefined): url is string {
  * persists to the data volume. `close` flushes + releases the driver — call it
  * in one-shot scripts so an embedded PGlite persists before the process exits.
  *
+ * If the embedded database's WebAssembly runtime crashes, it is reopened on
+ * the same datadir behind the same `db` (see RecoveringPGlite); the process
+ * exits non-zero only if that reopen fails.
+ *
  * The embedded branch takes an advisory lock on the datadir first and throws
  * `DatadirBusyError` if another process holds it, rather than opening a stale
  * copy of the database. Only the embedded branch: a real Postgres server does
@@ -56,8 +60,21 @@ export async function openDb(): Promise<{ db: DB; close: () => Promise<void> }> 
   const { lockDatadir } = await import('./datadir-lock')
   const lock = await lockDatadir(dataDir)
   try {
-    const client = new PGlite(dataDir)
-    const db = drizzle(client, { schema })
+    const { RecoveringPGlite } = await import('./recovering-pglite')
+    const client = new RecoveringPGlite({
+      open: async () => {
+        const instance = new PGlite(dataDir)
+        await instance.waitReady
+        return instance
+      },
+      // The crash and the reopen failure are already logged. Exiting is what
+      // is left: a process whose database cannot open serves nothing but
+      // errors, and a supervisor that restarts it is the only way back.
+      onReopenFailed: () => process.exit(1),
+    })
+    // The drizzle driver calls only `query` and `transaction` on its client,
+    // which is exactly what RecoveringPGlite provides.
+    const db = drizzle(client as unknown as InstanceType<typeof PGlite>, { schema })
     const { migrate } = await import('drizzle-orm/pglite/migrator')
     await migrate(db, { migrationsFolder })
     return {

@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 
+import { API_ROUTE_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
@@ -69,7 +70,7 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
 
     const spaceNodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes)
     for (const node of spaceNodes as unknown as GraphNode[]) {
-      if (node.type !== 'api-route') {
+      if (node.type !== API_ROUTE_NODE_TYPE) {
         continue
       }
 

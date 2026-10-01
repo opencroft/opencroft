@@ -31,7 +31,7 @@ async function spaceWithAgents(names: string[]): Promise<void> {
   await registry.saveGraph(space.slug, {
     nodes: names.map((name, i) => ({
       id: `bridge-agent-${i}-${crypto.randomUUID()}`,
-      type: 'agent',
+      type: 'builtin.core.agent',
       position: { x: 0, y: 0 },
       data: { name },
     })),
@@ -191,7 +191,7 @@ test('a bridged agent-tool node marked awaitable offers background; one marked a
   const schema = JSON.stringify({ type: 'object', properties: { q: { type: 'string' } } })
   const tool = (name: string, execution: string) => ({
     id: `bridge-tool-${name}`,
-    type: 'agent-tool',
+    type: 'builtin.core.agent-tool',
     position: { x: 0, y: 0 },
     data: { name, description: 'Look it up.', inputSchema: schema, requireApproval: false, execution },
   })

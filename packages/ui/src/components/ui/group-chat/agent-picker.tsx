@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Three structural fields. Declared here because this is the component that
 // renders them, so anything else needing the shape imports it from here rather

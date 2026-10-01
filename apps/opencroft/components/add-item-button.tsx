@@ -3,6 +3,7 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from 'ui/button'
+import { ControlledTextarea } from 'ui/components/ui/input/controlled-textarea'
 import {
   Dialog,
   DialogContent,
@@ -15,7 +16,6 @@ import {
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 
-import { ControlledTextarea } from '@/components/ui/input/controlled-textarea'
 import type { BasePrompt } from '@/lib/ai-utils'
 
 interface AddItemButtonProps {

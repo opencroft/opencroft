@@ -1,52 +1,9 @@
 import path from 'node:path'
 
+import { BUILTIN_OWNER, isBuiltinFolder, parseExtensionId } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { dataDir } from '@/server/data-dir'
+
 const PROJECT_ROOT = process.cwd()
-
-/** Sidecar an install writes into the extension folder to record where it came from. */
-export const SIDECAR_FILE = 'installed.json'
-
-/**
- * Files the install/build machinery writes into an extension's working tree by
- * design, relative to the checkout root.
- *
- * These are generated, not authored, and the extension repositories do not
- * ignore them — so a plain "does this tree have uncommitted changes" reads true
- * for most checkouts most of the time. Anything deciding whether someone has
- * work in progress in a checkout has to discount these first, or it is only
- * ever reporting that a build has run.
- */
-export const BUILD_ARTIFACT_FILES = [SIDECAR_FILE, 'package-lock.json']
-
-/**
- * The name a build output is staged under while a compile is writing it —
- * beside its final path (same device, so publishing is an atomic rename),
- * unique per attempt so a leftover from a crashed build can never collide with
- * a running one.
- */
-export function stagingName(finalPath: string, attempt: number): string {
-  return `${finalPath}.building-${process.pid}-${attempt}`
-}
-
-const STAGING_SUFFIX = /\.building-\d+-\d+$/
-
-/** Whether a directory entry is one of `stagingName`'s per-attempt outputs. */
-export function isStagingName(name: string): boolean {
-  return STAGING_SUFFIX.test(name)
-}
-
-/**
- * Whether a `git status` path is the client build's staging DIRECTORY — the one
- * staging name that lands outside `dist/`, as its sibling at the checkout root.
- * Extension repos ignore `dist/` but cannot ignore this (the name varies per
- * attempt), so the dirty classification discounts it by shape: it is the build
- * machinery's own write, visible for as long as a build runs — or forever, if
- * that build was killed — and never authored work. Anchored to the root; a
- * deeper path of the same shape stays an authored change.
- */
-export function isStagingArtifactPath(statusPath: string): boolean {
-  const value = statusPath.endsWith('/') ? statusPath.slice(0, -1) : statusPath
-  return value.startsWith('dist.building-') && isStagingName(value)
-}
 
 /**
  * Written into `dist/` by a successful build to record the commit the bundle was
@@ -57,31 +14,71 @@ export function isStagingArtifactPath(statusPath: string): boolean {
  */
 export const BUILD_PROVENANCE_FILE = 'built.json'
 
-export function localExtRoot(): string {
-  return process.env.OPENCROFT_LOCAL_EXTENSIONS ?? path.join(PROJECT_ROOT, 'data', 'extensions', 'local')
+/** Where every extension folder lives: `<data dir>/extensions/<extensionFolder>/`. */
+export function extensionsRoot(): string {
+  return dataDir('extensions')
 }
 
-export function installedExtRoot(): string {
-  return process.env.OPENCROFT_INSTALLED_EXT_ROOT ?? path.join(PROJECT_ROOT, 'data', 'extensions', 'installed')
-}
-
-export function builtinExtRoot(): string {
+/** Where builtin extensions' sources live: inside the app, which imports them directly. */
+export function builtinSourceRoot(): string {
   return path.join(PROJECT_ROOT, 'app', '_authed', '(extension-runtime)', '_builtin')
 }
 
+/** The source directory of an extension folder: `builtin.core` is `_builtin/core` in the app. */
+export function folderDir(folder: string): string {
+  const parsed = parseExtensionId(folder)
+  if (parsed?.owner === BUILTIN_OWNER) {
+    return path.join(builtinSourceRoot(), parsed.extension)
+  }
+  return path.join(extensionsRoot(), folder)
+}
+
+/**
+ * An extension folder's build output: `dist/` inside it. A builtin's sources are
+ * in the app tree, so its build goes to the folder of the same name under the
+ * extensions root instead, which holds nothing but that `dist/`.
+ */
+export function folderDistDir(folder: string): string {
+  if (isBuiltinFolder(folder)) {
+    return path.join(extensionsRoot(), folder, 'dist')
+  }
+  return path.join(folderDir(folder), 'dist')
+}
+
+declare global {
+  var __EXT_FOLDER_BY_ID__: Map<string, string> | undefined
+}
+
+// extensionId → extensionFolder, as the extension index last resolved it (see
+// extension-folders.ts). On globalThis so a dev-server module reload keeps it.
+// Absent until the first scan: `folderOf` answers the same for "not overridden"
+// and "never scanned", so only this being unset tells them apart.
+
+/** Replace the resolved extensionId → extensionFolder map. Called by the extension index only. */
+export function setResolvedFolders(resolved: Map<string, string>): void {
+  globalThis.__EXT_FOLDER_BY_ID__ = new Map(resolved)
+}
+
+/** Whether the extension index has run in this process, so `folderOf` reflects the folders on disk. */
+export function hasResolvedFolders(): boolean {
+  return globalThis.__EXT_FOLDER_BY_ID__ !== undefined
+}
+
+/**
+ * The folder an extension runs from. An id the index has not resolved differently
+ * is its own folder: every extension lives in the folder named by its id, except
+ * a local copy standing in for another extension.
+ */
+export function folderOf(extensionId: string): string {
+  return globalThis.__EXT_FOLDER_BY_ID__?.get(extensionId) ?? extensionId
+}
+
 export function extDir(extensionId: string): string {
-  const [scope, slug] = extensionId.split('/')
-  if (scope === 'builtin') {
-    return path.join(builtinExtRoot(), slug)
-  }
-  if (scope === 'installed') {
-    return path.join(installedExtRoot(), slug)
-  }
-  return path.join(localExtRoot(), slug)
+  return folderDir(folderOf(extensionId))
 }
 
 export function extDistDir(extensionId: string): string {
-  return path.join(extDir(extensionId), 'dist')
+  return folderDistDir(folderOf(extensionId))
 }
 
 export function extDistFile(extensionId: string, name: string): string {
@@ -90,4 +87,21 @@ export function extDistFile(extensionId: string, name: string): string {
 
 export function projectRoot(): string {
   return PROJECT_ROOT
+}
+
+/**
+ * Where one build attempt stages its output before publishing it: a directory
+ * inside `dist/`, so publishing is a rename on the same device and the checkout
+ * never sees it (extension repos ignore `dist/`). Unique per attempt, so a
+ * leftover from a crashed build can never collide with a running one.
+ */
+export function stagingName(distDir: string, attempt: number): string {
+  return path.join(distDir, `.building-${process.pid}-${attempt}`)
+}
+
+const STAGING_NAME = /^\.building-\d+-\d+$/
+
+/** Whether an entry of `dist/` is one of `stagingName`'s per-attempt directories. */
+export function isStagingName(name: string): boolean {
+  return STAGING_NAME.test(name)
 }

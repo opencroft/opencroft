@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface AccountProfileProps {
   // The avatar setting. The host passes a wired AccountAvatar (or its own

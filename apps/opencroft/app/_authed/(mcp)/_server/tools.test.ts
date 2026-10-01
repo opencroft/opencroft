@@ -26,11 +26,9 @@ import {
   buildScratchInitCommand,
   buildTempWritePath,
   capColumns,
-  extensionSlugFromTarget,
+  extensionFolderFromTarget,
   globPatternToEre,
   insideExcludedDir,
-  isValidLocalExtensionSlug,
-  localSlugFromExtensionId,
   parseCountedRead,
   parseResolveTarget,
   renderReadResult,
@@ -42,64 +40,50 @@ import {
   writeFileExactWith,
 } from './tools'
 
-// ── extensionSlugFromTarget / localSlugFromExtensionId ─────────────────────
+// ── extensionFolderFromTarget ──────────────────────────────────────────────
 //
 // Which folder a call is about, decided before any lookup or filesystem access.
-// Both answer null for anything that is not a local extension, so a guard built
-// on them can never attach itself to an unrelated target.
+// It answers null for anything that is not a local extension folder, so a guard
+// built on it can never attach itself to an unrelated target, and a handle that
+// would not be safe as a path segment never reaches a path.
 
-test('extensionSlugFromTarget recognises the extension handle', () => {
-  assert.equal(extensionSlugFromTarget('extensions/my-ext'), 'my-ext')
+test('extensionFolderFromTarget recognises the local extension handle', () => {
+  assert.equal(extensionFolderFromTarget('extensions/local.my-ext'), 'local.my-ext')
 })
 
-test('extensionSlugFromTarget ignores ordinary node targets', () => {
+test('extensionFolderFromTarget ignores ordinary node targets', () => {
   for (const target of ['mynode_abc/terminal', 'extensions', '', undefined, null, 42]) {
-    assert.equal(extensionSlugFromTarget(target), null, `expected ${String(target)} to be ignored`)
+    assert.equal(extensionFolderFromTarget(target), null, `expected ${String(target)} to be ignored`)
   }
 })
 
-test('extensionSlugFromTarget refuses a slug it would not accept as a path segment', () => {
-  // The guard must not be reachable with a handle the path validation rejects.
-  for (const target of ['extensions/../secrets', 'extensions/a b', 'extensions/.hidden']) {
-    assert.equal(extensionSlugFromTarget(target), null, `expected "${target}" to be refused`)
-  }
-})
-
-test('localSlugFromExtensionId accepts only the local scope', () => {
-  assert.equal(localSlugFromExtensionId('local/my-ext'), 'my-ext')
-  assert.equal(localSlugFromExtensionId('installed/my-ext'), null)
-  assert.equal(localSlugFromExtensionId('builtin/core'), null)
-  assert.equal(localSlugFromExtensionId('my-ext'), null)
-  assert.equal(localSlugFromExtensionId(undefined), null)
-})
-
-// ── isValidLocalExtensionSlug ──────────────────────────────────────────────
-
-test('isValidLocalExtensionSlug accepts conservative slugs', () => {
-  for (const slug of ['git', 'terraform', 'my-ext', 'my_ext', 'ext.v2', 'a1', 'A1']) {
-    assert.equal(isValidLocalExtensionSlug(slug), true, `expected "${slug}" to be valid`)
-  }
-})
-
-test('isValidLocalExtensionSlug rejects empty string', () => {
-  assert.equal(isValidLocalExtensionSlug(''), false)
-})
-
-test('isValidLocalExtensionSlug rejects path traversal and separators', () => {
-  for (const slug of ['..', '../etc', '../../etc/passwd', 'a/b', 'a\\b', 'a..b/c', '/etc/passwd', 'a/..']) {
-    assert.equal(isValidLocalExtensionSlug(slug), false, `expected "${slug}" to be rejected`)
-  }
-})
-
-test('isValidLocalExtensionSlug rejects slugs starting with a non-alphanumeric', () => {
-  for (const slug of ['.git', '-ext', '_ext', '.hidden']) {
-    assert.equal(isValidLocalExtensionSlug(slug), false, `expected "${slug}" to be rejected`)
-  }
-})
-
-test('isValidLocalExtensionSlug rejects whitespace and shell metacharacters', () => {
-  for (const slug of ['my ext', 'ext;rm -rf', 'ext$(whoami)', 'ext`whoami`', 'ext|ls']) {
-    assert.equal(isValidLocalExtensionSlug(slug), false, `expected "${slug}" to be rejected`)
+test('extensionFolderFromTarget refuses a handle that is not a local folder', () => {
+  const refused = [
+    // Path traversal and separators.
+    'extensions/../secrets',
+    'extensions/local.a/b',
+    'extensions/local.a\\b',
+    'extensions//etc/passwd',
+    // Whitespace and shell metacharacters.
+    'extensions/local.my ext',
+    'extensions/local.ext;rm -rf',
+    'extensions/local.ext$(whoami)',
+    'extensions/local.ext`whoami`',
+    'extensions/local.ext|ls',
+    // Not two slugs.
+    'extensions/local',
+    'extensions/local.a.b',
+    'extensions/local.My-Ext',
+    'extensions/local.my_ext',
+    // Two slugs, but not a local owner: only local folders are editable.
+    'extensions/acme.widgets',
+    'extensions/builtin.core',
+    // Debris of an install in flight.
+    'extensions/.hidden',
+    'extensions/.staging-local.widgets-1-1',
+  ]
+  for (const target of refused) {
+    assert.equal(extensionFolderFromTarget(target), null, `expected "${target}" to be refused`)
   }
 })
 
@@ -107,13 +91,13 @@ test('isValidLocalExtensionSlug rejects whitespace and shell metacharacters', ()
 
 test('resolveRemoteFilePath joins a relative path onto cwd', () => {
   assert.equal(
-    resolveRemoteFilePath('server/git.ts', '/data/extensions/local/git'),
-    '/data/extensions/local/git/server/git.ts',
+    resolveRemoteFilePath('server/git.ts', '/data/extensions/local.git'),
+    '/data/extensions/local.git/server/git.ts',
   )
 })
 
 test('resolveRemoteFilePath leaves an absolute path unchanged even with a cwd', () => {
-  assert.equal(resolveRemoteFilePath('/etc/passwd', '/data/extensions/local/git'), '/etc/passwd')
+  assert.equal(resolveRemoteFilePath('/etc/passwd', '/data/extensions/local.git'), '/etc/passwd')
 })
 
 test('resolveRemoteFilePath leaves a relative path unchanged when there is no cwd', () => {
@@ -122,29 +106,31 @@ test('resolveRemoteFilePath leaves a relative path unchanged when there is no cw
 
 test('resolveRemoteFilePath normalizes "." segments when joining', () => {
   assert.equal(
-    resolveRemoteFilePath('./server/git.ts', '/data/extensions/local/git'),
-    '/data/extensions/local/git/server/git.ts',
+    resolveRemoteFilePath('./server/git.ts', '/data/extensions/local.git'),
+    '/data/extensions/local.git/server/git.ts',
   )
 })
 
 // ── buildLocalExtensionCtx (pure: existence check + ctx shape) ─────────────
 
-test('buildLocalExtensionCtx returns a local ctx rooted at the extension folder for a known slug', () => {
-  const ctx = buildLocalExtensionCtx('git', ['git', 'terraform'], '/data/extensions/local')
-  assert.deepEqual(ctx, { type: 'local', cwd: path.join('/data/extensions/local', 'git') })
+const extensionsCwd = (folder: string) => path.join('/data/extensions', folder)
+
+test('buildLocalExtensionCtx returns a local ctx rooted at the extension folder for a known folder', () => {
+  const ctx = buildLocalExtensionCtx('local.git', ['local.git', 'local.terraform'], extensionsCwd)
+  assert.deepEqual(ctx, { type: 'local', cwd: path.join('/data/extensions', 'local.git') })
 })
 
-test('buildLocalExtensionCtx throws a clear error for an unknown slug', () => {
+test('buildLocalExtensionCtx throws a clear error for an unknown folder', () => {
   assert.throws(
-    () => buildLocalExtensionCtx('does-not-exist', ['git', 'terraform'], '/data/extensions/local'),
+    () => buildLocalExtensionCtx('local.does-not-exist', ['local.git', 'local.terraform'], extensionsCwd),
     (err: { message?: string }) => {
-      assert.match(err.message ?? '', /Unknown local extension: does-not-exist/)
+      assert.match(err.message ?? '', /Unknown local extension: local\.does-not-exist/)
       return true
     },
   )
 })
 
-// ── resolveTerminalContext: "extensions/<slug>" static handle input validation ─
+// ── resolveTerminalContext: "extensions/<folder>" static handle input validation ─
 // (Syntactic rejection happens before any I/O, so these run without the MCP/server runtime;
 // the filesystem-backed happy path is covered indirectly via buildLocalExtensionCtx above plus
 // manual verification against a real sandbox extension — see PR description.)
@@ -158,7 +144,7 @@ test('resolveTerminalContext rejects a traversal attempt in the extension handle
 
 test('resolveTerminalContext rejects a slash-smuggling extension handle', async () => {
   // parseEndpoint splits on the FIRST "/", so "extensions/a/b" yields nodeId="extensions",
-  // handle="a/b" — the slug validator must still reject the embedded separator.
+  // handle="a/b" — the folder check must still reject the embedded separator.
   await assert.rejects(resolveTerminalContext({ target: 'extensions/a/b' }), (err: { message?: string }) => {
     assert.match(err.message ?? '', /Invalid local extension handle/)
     return true

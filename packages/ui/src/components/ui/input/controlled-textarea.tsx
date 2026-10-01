@@ -55,11 +55,18 @@ export function ControlledTextarea({ value, onValueChanged, onAccepted, ...props
     }
   };
 
+  // Pressing a button moves focus before its click fires, so flushing here
+  // hands the parent the typed value before any submit handler reads it.
+  const handleBlur = () => {
+    debouncedChange.flush();
+  };
+
   return (
     <Textarea
       value={text}
       onChange={handleChange}
       onKeyDown={handleKeyDown}
+      onBlur={handleBlur}
       {...props}
     />
   );

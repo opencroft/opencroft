@@ -6,7 +6,7 @@ import { BackButton } from 'ui/components/ui/utils/back-button'
 import { CommandBarFrame } from 'ui/components/ui/agent-chat/command-bar-frame'
 import { ListEmpty } from 'ui/components/ui/utils/list-empty'
 import { StickySection } from 'ui/components/ui/layouts/sticky-section'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface GroupChatDetailProps {
   /** Back out of this group chat -- to the group-chat list, or to whatever

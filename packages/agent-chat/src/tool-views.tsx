@@ -1,4 +1,5 @@
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
+import type { ToolDiff } from 'agent-client/types'
 import type { ComponentType, ReactNode } from 'react'
 
 export type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
@@ -36,6 +37,10 @@ export interface ToolViewProps {
   mode: ToolViewMode
   // Undefined for a call that hasn't produced output yet.
   result?: ToolViewResult
+  // The file changes the call reported, when it reported any (see ToolDiff).
+  // A view of a file-changing tool reads these before its own arguments: a
+  // harness may leave the changed text out of the arguments.
+  diffs?: ToolDiff[]
 }
 
 export interface ToolViewSpec {
@@ -87,6 +92,7 @@ export function toolViewProps(message: ToolMessage, mode: ToolViewMode): ToolVie
     requestId: message.toolCallId,
     mode,
     result,
+    ...(message.diffs ? { diffs: message.diffs } : {}),
   }
 }
 
@@ -136,13 +142,16 @@ function ImageToolView({ args, result }: ToolViewProps): ReactNode {
   const url = extractUrl(result?.output)
   if (!url) return null
   const prompt = (args as { prompt?: unknown }).prompt
+  // A result names only a URL, so the size is unknown until the image loads:
+  // a fixed-height box keeps that late arrival from moving the transcript, and
+  // the image is fitted inside it, never enlarged.
   return (
     <a href={url} target='_blank' rel='noreferrer' className='block w-full overflow-hidden'>
       <img
         src={url}
         alt={typeof prompt === 'string' ? prompt : 'Generated image'}
         decoding='async'
-        className='w-full max-w-full rounded-lg border shadow-sm'
+        className='block h-64 w-full rounded-lg border object-scale-down object-left shadow-sm'
       />
     </a>
   )

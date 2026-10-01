@@ -5,7 +5,7 @@ import { createContext, type PointerEvent, type ReactNode, useContext, useRef } 
 import { toast } from 'sonner'
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/components/ui/context-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { selectedTextWithin } from './message-selection'
 

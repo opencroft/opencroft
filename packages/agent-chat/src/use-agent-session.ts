@@ -4,7 +4,14 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { buildBlocks, type ChatBlock, foldEvents } from 'agent-client/fold'
 import type { AgentProfile } from 'agent-client/profiles'
 import type { TurnEdit } from 'agent-client/queue-tags'
-import type { AgentSelection, AvailableCommand, ChatEvent, QueuedPrompt, SessionMode } from 'agent-client/types'
+import type {
+  AgentSelection,
+  AvailableCommand,
+  ChatEvent,
+  PlanItem,
+  QueuedPrompt,
+  SessionMode,
+} from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -75,6 +82,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
   const [commands, setCommands] = useState<AvailableCommand[]>([])
   const [queue, setQueue] = useState<QueuedPrompt[]>([])
   const [usage, setUsage] = useState<AgentUsage | null>(null)
+  // The agent's current plan — the last `plan` event wins, an empty one
+  // clears it. Session state for a control of its own, never a transcript row.
+  const [plan, setPlan] = useState<PlanItem[]>([])
   const [starting, setStarting] = useState(false)
   const [loadedModels, setLoadedModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
@@ -128,6 +138,7 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     source.onopen = () => {
       setEvents([])
       setUsage(null)
+      setPlan([])
     }
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as ChatEvent
@@ -151,6 +162,9 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
           break
         case 'queue':
           setQueue(event.items)
+          break
+        case 'plan':
+          setPlan(event.entries)
           break
         case 'user':
           setTurnActive(true)
@@ -594,6 +608,8 @@ export function useAgentSession({ eventsUrl = '/api/acp/events' }: UseAgentSessi
     // agent-advertised slash commands (composer autocomplete)
     commands,
     usage,
+    // the agent's current plan, for AgentPlanControl
+    plan,
     starting,
     canStart,
     start,

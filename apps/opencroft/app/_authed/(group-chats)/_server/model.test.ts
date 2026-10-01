@@ -111,9 +111,9 @@ await db.insert(space).values({
   name: 'Test Space',
   data: JSON.stringify({
     nodes: [
-      { id: 'agent-a', type: 'agent', data: { name: 'Agent A' } },
-      { id: 'agent-b', type: 'agent', data: { name: 'Agent B' } },
-      { id: 'agent-solo', type: 'agent', data: { name: 'Agent Solo' } },
+      { id: 'agent-a', type: 'builtin.core.agent', data: { name: 'Agent A' } },
+      { id: 'agent-b', type: 'builtin.core.agent', data: { name: 'Agent B' } },
+      { id: 'agent-solo', type: 'builtin.core.agent', data: { name: 'Agent Solo' } },
       // These two carry a full provider/adapter/model triple, unlike the three
       // above, so `ensureLocalSessionImpl` can build a real AgentSelection for
       // them and the tests below can open actual sessions against seeded mock
@@ -122,12 +122,12 @@ await db.insert(space).values({
       // apart from "an agent received it" needs two separate inboxes.
       {
         id: 'agent-session',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Agent Session', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
       {
         id: 'agent-session-2',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Agent Session Two', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
       // TWO NODES, ONE NAME. Nothing makes agent node names unique, and a
@@ -136,19 +136,23 @@ await db.insert(space).values({
       // (chat, agent, slug) and still target a key another thread holds.
       {
         id: 'agent-twin-a',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Twin Agent', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
       {
         id: 'agent-twin-b',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Twin Agent', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
       // Wired into `agent-a` below. A thread's standing context has to carry
       // the agent's OWN instruction nodes, not just the chat's topic and
       // pins — that is the whole point of the edge existing.
-      { id: 'instr-a', type: 'agent-instruction', data: { name: 'Tone', instruction: 'Answer in English.' } },
-      { id: 'instr-blank', type: 'agent-instruction', data: { name: 'Blank', instruction: '   ' } },
+      {
+        id: 'instr-a',
+        type: 'builtin.core.agent-instruction',
+        data: { name: 'Tone', instruction: 'Answer in English.' },
+      },
+      { id: 'instr-blank', type: 'builtin.core.agent-instruction', data: { name: 'Blank', instruction: '   ' } },
     ],
     edges: [
       { id: 'e-instr-a', source: 'instr-a', target: 'agent-a', targetHandle: 'instructions-in' },
@@ -5105,11 +5109,11 @@ test('a thread whose agent is mid-turn is refused, and is deletable once the tur
 const { groupChatsForCaller } = await import('@/app/_authed/(extension-runtime)/_server/host')
 const { extensionSystemSender, isKnownSystemSender, listSystemSenderIds } = await import('@/app/_server/message-author')
 
-const TEST_EXTENSION = 'local/sender-test'
-const EXTENSION_PRINCIPAL = { kind: 'system', systemId: 'system.ext.local.sender-test' } as const
+const TEST_EXTENSION = 'acme.sender-test'
+const EXTENSION_PRINCIPAL = { kind: 'system', systemId: 'system.ext.acme.sender-test' } as const
 
 test('an extension system sender exists once its host is built, and is grantable only then', async () => {
-  assert.equal(extensionSystemSender('local/task-pipelines'), 'system.ext.local.task-pipelines')
+  assert.equal(extensionSystemSender('acme.task-pipelines'), 'system.ext.acme.task-pipelines')
   assert.equal(isKnownSystemSender('system.ext.never-built'), false)
   const owner = await makeUser('ext-sender-grant@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'ext sender grant')
@@ -5118,7 +5122,7 @@ test('an extension system sender exists once its host is built, and is grantable
     /No such system sender/,
   )
   groupChatsForCaller(TEST_EXTENSION, undefined).api
-  assert.ok(listSystemSenderIds().includes('system.ext.local.sender-test'), 'offered in the members dialog')
+  assert.ok(listSystemSenderIds().includes('system.ext.acme.sender-test'), 'offered in the members dialog')
   await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
 })
 
@@ -5188,17 +5192,17 @@ test('an extension reads the usage of the threads it opened, and of no other thr
   const owner = await makeUser('ext-sender-usage@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'ext sender usage')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
-  const other = 'local/usage-other-test'
+  const other = 'acme.usage-other-test'
   groupChatsForCaller(TEST_EXTENSION, undefined).api
   groupChatsForCaller(other, undefined).api
   await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
-  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.ext.local.usage-other-test' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.ext.acme.usage-other-test' })
   seedMockConnection([])
   const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
 
   const { thread } = await api.startThread({ chat: chat.slug, agentNodeId: 'agent-session', message: 'TASK-2: go' })
   const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.threadId))
-  assert.equal(row?.createdBySystemId, 'system.ext.local.sender-test', 'the opener is on record')
+  assert.equal(row?.createdBySystemId, 'system.ext.acme.sender-test', 'the opener is on record')
   const sessionKey = row?.sessionKey ?? ''
   await recordChatUsageTurn({
     sessionId: 'usage-read-1',
@@ -5344,16 +5348,15 @@ test('an agent-bound copy stops working when the action it was handed to ends', 
   await assert.rejects(() => bound.api.list(), /action call that has ended/)
 })
 
-test("two extensions whose ids end alike are two identities, and neither holds the other's grant", async () => {
-  const local = extensionSystemSender('local/same-name')
-  const installed = extensionSystemSender('installed/same-name')
-  assert.notEqual(local, installed)
+test("two extensions of the same name under different owners are two identities, and neither holds the other's grant", async () => {
+  const granted = extensionSystemSender('acme.same-name')
+  assert.notEqual(granted, extensionSystemSender('other.same-name'))
   const owner = await makeUser('ext-sender-same-slug@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'ext sender same slug')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
-  groupChatsForCaller('local/same-name', undefined)
-  const other = groupChatsForCaller('installed/same-name', undefined).api
-  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: local })
+  groupChatsForCaller('acme.same-name', undefined)
+  const other = groupChatsForCaller('other.same-name', undefined).api
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: granted })
   assert.equal(
     (await other.list()).some((c) => c.ref === chat.id),
     false,

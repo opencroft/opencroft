@@ -8,12 +8,17 @@ import { toast } from 'sonner'
 import { clampPosition } from '@/app/_authed/(dashboard)/_canvas/clamp-position'
 import { useEscapeKey } from '@/app/_authed/(dashboard)/_canvas/use-escape-key'
 import { useOutsideDismiss } from '@/app/_authed/(dashboard)/_canvas/use-outside-dismiss'
+import type { NodeContextMenuContext } from '@/app/_authed/(extension-runtime)/_client/host'
 import { type ResolvedNode, resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import type { ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 
 interface NodeContextMenuProps {
   position: { x: number; y: number }
   node: Node
   resolvedNode?: ResolvedNode
+  /** The node's wired inputs as the canvas has them, keyed by target handle id. */
+  contexts: Record<string, ResolvedContext>
   onCopy: () => void
   onDelete: () => void
   /** Mobile-only: opens the node inspector (desktop already shows it docked). */
@@ -30,14 +35,17 @@ const DESTRUCTIVE_CLASS = 'text-destructive hover:bg-destructive/10'
 const MENU_WIDTH = 200
 const MENU_MAX_HEIGHT = 400
 
-function menuContext(node: Node): { nodeId: string; typeId: string; data: Record<string, unknown> } {
-  return { nodeId: node.id, typeId: node.type ?? '', data: (node.data ?? {}) as Record<string, unknown> }
+// The items belong to the node's own extension, so they are told its bare type.
+function menuContext(node: Node, contexts: Record<string, ResolvedContext>): NodeContextMenuContext {
+  const type = parseType(node.type ?? '')?.bare ?? ''
+  return { nodeId: node.id, type, typeId: type, data: (node.data ?? {}) as Record<string, unknown>, contexts }
 }
 
 export function NodeContextMenu({
   position,
   node,
   resolvedNode,
+  contexts,
   onCopy,
   onDelete,
   onDetails,
@@ -52,13 +60,13 @@ export function NodeContextMenu({
   useOutsideDismiss(ref, onClose)
 
   const nodeId = node.id
-  const typeId = node.type
+  const type = node.type
   const data = node.data
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run only when the node's identity/type/data actually change, not on every render's fresh `node`/`items` object reference
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run only when the node's identity/type/data actually change, not on every render's fresh `node`/`items`/`contexts` object reference; `contexts` is read when the menu mounts, and each open mounts a new menu
   useEffect(() => {
     let cancelled = false
-    const ctx = menuContext(node)
+    const ctx = menuContext(node, contexts)
     Promise.all(
       items.map(async (item) => {
         if (!item.isEnabled) {
@@ -79,12 +87,12 @@ export function NodeContextMenu({
     return () => {
       cancelled = true
     }
-  }, [resolvedNode, nodeId, typeId, data])
+  }, [resolvedNode, nodeId, type, data])
 
   const runExtensionItem = async (item: (typeof items)[number]) => {
     onClose()
     try {
-      await item.onSelect(menuContext(node))
+      await item.onSelect(menuContext(node, contexts))
     } catch (err) {
       console.error(`[node-context-menu] "${item.id}" failed:`, err)
       toast.error(`"${item.label}" failed`, { description: err instanceof Error ? err.message : String(err) })

@@ -5,7 +5,7 @@ import { Hash } from 'lucide-react'
 
 import { AgentCommandBar } from 'agent-chat/components/agent-command-bar'
 import { AgentPicker, type AgentRef } from 'ui/components/ui/group-chat/agent-picker'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // The command bar comes from the agent-chat PACKAGE rather than from a
 // registry dependency, because it is not a sibling in this kit: it lives in

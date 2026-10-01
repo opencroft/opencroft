@@ -19,6 +19,7 @@ import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
+import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import * as uiKit from 'ui/ext'
 import { useIsMobile } from 'ui/hooks/use-mobile'
 import { TitleBarPortal, TitleBarTitle, TitleBarToolbar } from 'ui/layouts/title-bar'
@@ -56,9 +57,11 @@ import {
 } from '@/app/_authed/(extension-runtime)/_client/stream'
 import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-ref'
 import { TerminalSelector } from '@/app/_authed/(extension-runtime)/_client/terminal-selector'
+import { resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
+import { extensionIdOfType, extensionUrl } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { invokeExtensionAction } from '@/app/_authed/(extension-runtime)/_server/actions'
 import { dispatchNodeAction } from '@/app/_authed/(extension-runtime)/_server/node-actions'
-import type { ExtensionContextType, ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
+import type { ExtensionHandle, ExtensionHandleType, ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 import { FileBrowser } from '@/app/_authed/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/_authed/(filemanager)/_components/filemanager-provider'
 import { SecretSelector } from '@/app/_authed/(secrets-store)/_components/secret-selector'
@@ -71,7 +74,6 @@ import { useUrlParam } from '@/app/_lib/use-url-param'
 import { AppSidebar } from '@/app/_shell/app-sidebar'
 import { CodeEditor } from '@/components/code-editor'
 import { MarkdownEditor } from '@/components/markdown-editor'
-import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 // What extension code actually receives as `icons` -- see safe-icons.ts for
 // why this has to be the namespace's source, not something callers opt into.
@@ -105,8 +107,18 @@ export interface InspectorTab<D = Record<string, unknown>> {
 /** Context passed to a node context-menu item's `isEnabled`/`onSelect`. */
 export interface NodeContextMenuContext<D = Record<string, unknown>> {
   nodeId: string
+  /** The node's BARE type — the name the declaring extension gave it. */
+  type: string
+  /** @deprecated Read `type`, which holds the same bare value. */
   typeId: string
   data: D
+  /**
+   * The node's wired inputs as the open canvas has them, keyed by target
+   * handle id — what `useNodeContext` returns per handle. Prefer it over
+   * `data.__resolvedContexts`, which the server writes on save and which lags
+   * wiring done in the open page.
+   */
+  contexts: Record<string, ResolvedContext>
 }
 
 export interface NodeContextMenuItem<D = Record<string, unknown>> {
@@ -124,14 +136,24 @@ export interface NodeContextMenuItem<D = Record<string, unknown>> {
   onSelect: (ctx: NodeContextMenuContext<D>) => void | Promise<void>
 }
 
+/** A handle as a declaration may spell it: `handleType`, or the deprecated `contextType` in its place. */
+export type DeclaredHandle = Omit<ExtensionHandle, 'handleType'> & { handleType?: string }
+
 export interface NodeDefinition<D = Record<string, unknown>> {
-  typeId: string
+  /**
+   * The node's type, bare: a slug unique among the extension's nodes, which
+   * the runtime qualifies with the extension's id. Required unless the
+   * deprecated `typeId` stands in for it.
+   */
+  type?: string
+  /** @deprecated Declare `type`. Read only when `type` is absent. */
+  typeId?: string
   name: string
   category?: string
   description?: string
   icon?: string
   accent?: string
-  handles?: ExtensionHandle[]
+  handles?: DeclaredHandle[]
   defaultData?: D
   component: React.ComponentType<ExtensionComponentProps<D>>
   inspector?: React.ComponentType<ExtensionInspectorProps<D>>
@@ -139,11 +161,41 @@ export interface NodeDefinition<D = Record<string, unknown>> {
   inspectorTabs?: InspectorTab<D>[]
   /** Entries this node type contributes to its right-click context menu, after the built-in Copy/Delete actions. */
   contextMenuItems?: NodeContextMenuItem<D>[]
-  exposeOutput?: (handleId: string, data: D, typeId: string, nodeId: string) => unknown
+  /**
+   * Told the node's BARE type, the name declared here, and the node's wired
+   * inputs as the open canvas has them (`contexts`, keyed by target handle id,
+   * as in `NodeContextMenuContext`). An output built from an input reads it
+   * there, not from `data.__resolvedContexts`, which lags wiring done in the
+   * open page. The value must be JSON-serialisable: consumers on the canvas
+   * are handed a structural copy of it.
+   */
+  exposeOutput?: (
+    handleId: string,
+    data: D,
+    type: string,
+    nodeId: string,
+    contexts: Record<string, ResolvedContext>,
+  ) => unknown
+}
+
+/** A node as the client registry holds it: its type and handle types qualified, under their current keys only. */
+export interface LoadedNodeDefinition<D = Record<string, unknown>> extends Omit<NodeDefinition<D>, 'typeId'> {
+  type: string
+  handles?: ExtensionHandle[]
 }
 
 export interface ExtensionDeclarationManifest {
-  id: string
+  /**
+   * @deprecated The runtime supplies the extension's id when it loads the
+   * bundle, and files everything the bundle declares under that. Leave it out;
+   * a different value is ignored, with a console warning.
+   */
+  id?: string
+  /**
+   * Set by the loader, never by the bundle: the folder the extension runs
+   * from, whose owner says whether it is editable here.
+   */
+  folder?: string
   name?: string
   version?: string
   description?: string
@@ -205,13 +257,26 @@ export interface SettingsPageDefinition {
 
 export interface ExtensionDeclaration {
   manifest: ExtensionDeclarationManifest
-  contexts?: ExtensionContextType[]
+  /** The handle types this extension declares, bare; the runtime qualifies them with its id. */
+  handleTypes?: ExtensionHandleType[]
+  /** @deprecated Declare `handleTypes`. Read only when `handleTypes` is absent. */
+  contexts?: ExtensionHandleType[]
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
   /** Generic, feature-defined provider points (e.g. `apps`). The runtime
-   *  forwards these to the provider registry untouched. */
+   *  forwards these to the provider registry untouched — except `apps`, whose
+   *  bare `type` it qualifies as it does a node's. */
   provides?: Record<string, unknown[]>
+}
+
+/**
+ * A declaration as the client registry holds it: filed under the id the server
+ * gave the extension, with every type it declares qualified with that id.
+ */
+export interface LoadedExtensionDeclaration extends Omit<ExtensionDeclaration, 'contexts' | 'nodes'> {
+  manifest: ExtensionDeclarationManifest & { id: string }
+  nodes?: LoadedNodeDefinition[]
 }
 
 export function defineExtension(decl: ExtensionDeclaration): ExtensionDeclaration {
@@ -222,7 +287,7 @@ export function defineExtension(decl: ExtensionDeclaration): ExtensionDeclaratio
   const hasProvided = Object.values(provides).some((items) => items.length > 0)
   if (nodes.length === 0 && modes.length === 0 && settings.length === 0 && !hasProvided) {
     throw new Error(
-      `Extension ${decl.manifest.id}: defineExtension requires at least one node, command mode, settings page, or provided entry`,
+      `Extension ${decl.manifest.name ?? decl.manifest.id ?? '(unnamed)'}: defineExtension requires at least one node, command mode, settings page, or provided entry`,
     )
   }
   return { ...decl, nodes, commandModes: modes, settings, provides }
@@ -233,6 +298,7 @@ export function defineExtension(decl: ExtensionDeclaration): ExtensionDeclaratio
 // node edge plus optional inline content (label, button, anything).
 
 export interface HandlePinProps {
+  /** The handle type: bare for one of the node's own extension's, qualified for another's. Also the default `id`. */
   type: string
   id?: string
   color?: string
@@ -274,10 +340,23 @@ function useHandleDisconnect(handleId: string, role: 'source' | 'target') {
   )
 }
 
+// The colour of the handle type a node's component names, resolved against the
+// extension of the node the pin is drawn on.
+function useHandleTypeColor(type: string): string | undefined {
+  const nodeId = useNodeId()
+  const { getNode } = useReactFlow()
+  const nodeType = nodeId ? getNode(nodeId)?.type : undefined
+  const extensionId = nodeType ? extensionIdOfType(nodeType) : null
+  const resolved = extensionId
+    ? resolveCodeTypeRef(extensionId, type, (handleType) => extensionRegistry.getHandleType(handleType) !== undefined)
+    : type
+  return extensionRegistry.getHandleType(resolved)?.color
+}
+
 export function OutputHandle({ type, id, color, children }: HandlePinProps) {
   const handleId = id ?? type
-  const ctxColor = color ?? extensionRegistry.getContextType(type)?.color
-  const fill = ctxColor ?? 'var(--primary)'
+  const typeColor = useHandleTypeColor(type)
+  const fill = color ?? typeColor ?? 'var(--primary)'
   const onDoubleClick = useHandleDisconnect(handleId, 'source')
   return React.createElement(
     'div',
@@ -296,8 +375,8 @@ export function OutputHandle({ type, id, color, children }: HandlePinProps) {
 
 export function InputHandle({ type, id, color, children }: HandlePinProps) {
   const handleId = id ?? type
-  const ctxColor = color ?? extensionRegistry.getContextType(type)?.color
-  const fill = ctxColor ?? 'var(--primary)'
+  const typeColor = useHandleTypeColor(type)
+  const fill = color ?? typeColor ?? 'var(--primary)'
   const onDoubleClick = useHandleDisconnect(handleId, 'target')
   return React.createElement(
     'div',
@@ -475,6 +554,9 @@ export const extensionHostApi = {
   Position,
   callAction,
   callNodeAction,
+  // The raw form of `assetUrl` and `routeUrl`, which the shim binds to the
+  // extension being built. It is where the URL shape is applied on the client.
+  extensionUrl,
   // An App instance's own actions, run as the signed-in person — see
   // `callAppActionFromUi`.
   callAppAction,

@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'u
 import { Spinner } from 'ui/components/ui/spinner'
 import { Switch } from 'ui/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/components/ui/table'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export type AuditStatus = 'auto-approved' | 'approved' | 'rejected' | 'error'
 export type AuditStatusFilter = AuditStatus | 'all'

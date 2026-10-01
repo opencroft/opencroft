@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { useEffect, useState } from 'react'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { highlight, resolveLanguage } from './code-highlight'
 

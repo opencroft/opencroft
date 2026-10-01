@@ -51,6 +51,7 @@
 //                           the chat itself gets the chat's states above
 //                           instead; any other failure offers Try again.
 
+import { cn } from 'cn'
 import { MessageCirclePlus, UserPlus } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -59,10 +60,9 @@ import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from 'ui/empty'
 import { AddMemberPicker, type MemberCandidate } from 'ui/group-chat/add-member-picker'
-import type { ThreadWork } from 'ui/group-chat/thread-work-control'
 import { LogoLoader } from 'ui/logo-loader'
 
-import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   type ThreadArtifacts,
@@ -79,7 +79,10 @@ import {
   GroupChatThreadLoadFailed,
 } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
-import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
+import {
+  GroupChatThreadChat,
+  type ThreadHeaderControls,
+} from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { GroupChatRefreshProvider } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
@@ -106,7 +109,6 @@ import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 import { useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
-import { cn } from '@/lib/utils'
 
 /**
  * Which conversation an embedded surface shows, when not its default thread:
@@ -128,14 +130,13 @@ export type EmbeddedChatSelection = { threadId: string } | { newId: string } | {
  * Identity-stable per change of its parts (the surface memoizes it), so a host
  * may hold it in state or hang an effect off it without a render loop.
  */
-export interface EmbeddedThreadContext {
+export interface EmbeddedThreadContext extends ThreadHeaderControls {
   agent: { name: string; avatarUrl?: string | null }
   /** The chat's display NAME -- a breadcrumb names a place, and the slug this
    *  surface is addressed by is not what a place is called. */
   groupChatName: string
   threadTitle: string
   status: SessionStatus
-  work: ThreadWork
   /** The thread's notes: for the host's header to list, and the open one for
    *  the host to show. Both are the host's because an open note replaces or
    *  continues the header the host draws -- this surface has none to offer. */
@@ -516,20 +517,14 @@ function EmbeddedThread({
 
   // The same shared session activity (and the same derivation) the
   // group-chat screens read — one status vocabulary, one source.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
-  const status = thread
-    ? deriveSessionStatus(thread.sessionKey, {
-        pending: pendingKeys,
-        active: activeKeys,
-        background: backgroundKeys,
-        alive: aliveKeys,
-      })
-    : undefined
+  const activity = useSessionActivity()
+  const status = thread ? deriveSessionStatus(thread.sessionKey, activity) : undefined
 
-  // The open thread's delegated work, as the shared assembly reports it. Null
-  // until the assembly has folded once; the header facts below wait for it so
-  // a host never sees a context with nothing to count.
-  const [work, setWork] = useState<ThreadWork | null>(null)
+  // The open thread's header controls (delegated work, the agent's plan), as
+  // the shared assembly reports them. Null until the assembly has folded once;
+  // the header facts below wait for them so a host never sees a context with
+  // nothing to count.
+  const [controls, setControls] = useState<ThreadHeaderControls | null>(null)
   const { artifacts, refresh: refreshArtifacts } = useThreadArtifacts(thread?.id)
   // The header facts the host draws, memoized so a host holding them in state
   // is told once per real change. The chat's NAME leads the breadcrumb: the
@@ -538,17 +533,17 @@ function EmbeddedThread({
   // addressed by.
   const context = useMemo<EmbeddedThreadContext | null>(
     () =>
-      thread && status && work
+      thread && status && controls
         ? {
             agent: thread.agent,
             groupChatName: title ?? chat.name,
             threadTitle: thread.title || id,
             status,
-            work,
+            ...controls,
             artifacts,
           }
         : null,
-    [thread, status, work, artifacts, title, chat.name, id],
+    [thread, status, controls, artifacts, title, chat.name, id],
   )
   // Reported through a ref so an inline callback never re-arms this, and
   // cleared on the way out: a host that heard about a thread must hear that it
@@ -575,7 +570,7 @@ function EmbeddedThread({
             them from `onThreadContext` -- because a header inside a window
             that already has one read as two headers. The open note goes
             there too: it replaces or continues that header. */}
-        <GroupChatThreadChat thread={thread} onWorkChange={setWork} onTurnSettled={refreshArtifacts} />
+        <GroupChatThreadChat thread={thread} onHeaderChange={setControls} onTurnSettled={refreshArtifacts} />
       </div>
     )
   }

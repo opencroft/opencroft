@@ -40,7 +40,7 @@ export interface PendingAsk {
   form?: ElicitationSchema
   // ACP url elicitation: the link the reader is asked to visit. Usually
   // resolved by the agent's own completion notification; the UI offers Done
-  // (accept) and Dismiss (cancel) regardless.
+  // (accept) and Dismiss (decline) regardless.
   url?: string
 }
 
@@ -189,8 +189,8 @@ export interface AgentChatSession {
   // answers a form ask with content keyed by its schema's properties (an
   // empty object is accept-with-nothing, the URL ask's "Done"). Omitting
   // `answer` (or passing an empty string) declines it: the elicitation
-  // resolves as cancelled, so the agent receives no content at all rather
-  // than an empty answer.
+  // resolves as declined, so the agent learns the reader chose not to answer
+  // and receives no content at all rather than an empty answer.
   resolveAsk: (requestId: string, answer?: string | Record<string, ElicitationContentValue>) => void
   // Discards this session and opens a fresh one under the same tab/entry.
   // Pending permission requests and the queue die with the old session; the

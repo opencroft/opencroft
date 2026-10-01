@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 1036,
-  "total": 320,
+  "filesScanned": 1073,
+  "total": 313,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -79,15 +79,6 @@
     },
     "apps/opencroft/app/_authed/(docker)/_server/context-actions.ts": {
       "lint/style/useNodejsImportProtocol": 1
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_actions/installed-extensions-actions.test.ts": {
-      "format": 1
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl.ts": {
-      "lint/suspicious/noExplicitAny": 1
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_actions/registry-actions.ts": {
-      "format": 1
     },
     "apps/opencroft/app/_authed/(extension-editor)/_components/code-panel.tsx": {
       "format": 1
@@ -185,9 +176,6 @@
       "assist/source/organizeImports": 1,
       "format": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/secrets.ts": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/section.tsx": {
       "assist/source/organizeImports": 1,
       "lint/a11y/useButtonType": 1
@@ -220,15 +208,11 @@
       "lint/style/noNonNullAssertion": 2
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/host.ts": {
-      "lint/complexity/useOptionalChain": 2
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_server/manifest.ts": {
-      "lint/style/useTemplate": 1
+      "lint/complexity/useOptionalChain": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/node-actions-impl.ts": {
       "lint/complexity/useLiteralKeys": 3,
-      "lint/complexity/useOptionalChain": 1,
-      "lint/suspicious/noAssignInExpressions": 1
+      "lint/complexity/useOptionalChain": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/node-actions.ts": {
       "assist/source/organizeImports": 1
@@ -453,13 +437,13 @@
     "apps/opencroft/scripts/collect-extension-deps.mjs": {
       "format": 1
     },
-    "apps/opencroft/server/routes/api/ext/[scope]/[slug]/[file].ts": {
+    "apps/opencroft/server/routes/api/ext/[extensionId]/[file].ts": {
       "assist/source/organizeImports": 1
     },
-    "apps/opencroft/server/routes/api/ext/[scope]/[slug]/assets/[...path].ts": {
+    "apps/opencroft/server/routes/api/ext/[extensionId]/assets/[...path].ts": {
       "assist/source/organizeImports": 1
     },
-    "apps/opencroft/server/routes/api/ext/[scope]/[slug]/http/[...path].ts": {
+    "apps/opencroft/server/routes/api/ext/[extensionId]/http/[...path].ts": {
       "lint/suspicious/noImplicitAnyLet": 1
     },
     "apps/opencroft/server/scheduler/event-scheduler.test.ts": {

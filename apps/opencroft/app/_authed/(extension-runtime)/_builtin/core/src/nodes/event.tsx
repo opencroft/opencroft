@@ -191,7 +191,7 @@ export function EventInspector({ data, updateData }: InspectorProps) {
 }
 
 export const EVENT_HANDLES = [
-  { id: 'exec-out', contextType: 'execution-context', role: 'source' as const, label: 'Handler' },
+  { id: 'exec-out', handleType: 'execution-context', role: 'source' as const, label: 'Handler' },
 ]
 
 export function eventExposeOutput(handleId: string): Record<string, never> | undefined {

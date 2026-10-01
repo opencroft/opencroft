@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils';
+import { cn } from 'cn';
 
 import { FixedArea } from 'ui/components/ui/layout/fixed-area';
 

@@ -20,6 +20,7 @@ import {
 import { SelectionMode } from '@xyflow/system'
 import '@xyflow/react/dist/style.css'
 
+import { cn } from 'cn'
 import { Box, Move } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -54,6 +55,7 @@ import { useBackIntercept, useOverlay } from '@/app/_authed/(dashboard)/_canvas/
 import { coalesceReload, type ReloadCoalesceState } from '@/app/_authed/(dashboard)/_canvas/reload-coalesce'
 import { useClipboard } from '@/app/_authed/(dashboard)/_canvas/use-clipboard'
 import { useGraphEvents } from '@/app/_authed/(dashboard)/_canvas/use-graph-events'
+import { resolveInputContexts } from '@/app/_authed/(dashboard)/_extension-system/context-resolver'
 import { installExtensionApi } from '@/app/_authed/(dashboard)/_extension-system/extension-api'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -65,15 +67,15 @@ import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse
 import { useRememberedLayout } from '@/app/_lib/layout-storage'
 import { AppSidebar } from '@/app/_shell/app-sidebar'
 import { newGraphId } from '@/lib/graph-id'
-import { cn } from '@/lib/utils'
 
 installExtensionApi()
 
 interface PendingConnection {
   fromNodeId: string
   fromHandleId: string
-  fromHandleType: 'source' | 'target'
-  contextType: string
+  fromRole: 'source' | 'target'
+  /** The qualified handle type the dragged handle carries. */
+  handleType: string
 }
 
 interface MenuState {
@@ -623,7 +625,9 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       if (!srcHandle || !tgtHandle) {
         return false
       }
-      return srcHandle.contextType === tgtHandle.contextType
+      // Qualified on both ends, so two extensions' same-named handle types
+      // never connect by accident.
+      return srcHandle.handleType === tgtHandle.handleType
     },
     [nodes],
   )
@@ -647,8 +651,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         tgtResolved && edge.targetHandle
           ? findExtensionHandle(tgtResolved.handles, edge.targetHandle, 'target')
           : undefined
-      const ctxType = tgtHandle?.contextType ? extensionRegistry.getContextType(tgtHandle.contextType) : undefined
-      const stroke = ctxType?.color ?? 'var(--muted-foreground)'
+      const handleType = tgtHandle ? extensionRegistry.getHandleType(tgtHandle.handleType) : undefined
+      const stroke = handleType?.color ?? 'var(--muted-foreground)'
       return {
         ...edge,
         animated: true,
@@ -658,14 +662,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   }, [edges, nodes])
 
   const addNodeAt = useCallback(
-    (typeId: string, flow: { x: number; y: number }) => {
-      const resolved = extensionRegistry.resolveNode(typeId)
+    (type: string, flow: { x: number; y: number }) => {
+      const resolved = extensionRegistry.resolveNode(type)
       if (!resolved) {
         return
       }
       const node: Node = {
         id: newGraphId(),
-        type: typeId,
+        type,
         position: { x: snap(flow.x), y: snap(flow.y) },
         data: { ...resolved.defaultData },
         ...nodeFrameDefaults(resolved.category),
@@ -680,29 +684,29 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   )
 
   const addNodeWithConnection = useCallback(
-    (typeId: string, flow: { x: number; y: number }, pending: PendingConnection) => {
-      const resolved = extensionRegistry.resolveNode(typeId)
+    (type: string, flow: { x: number; y: number }, pending: PendingConnection) => {
+      const resolved = extensionRegistry.resolveNode(type)
       if (!resolved) {
         return
       }
-      const oppositeRole = pending.fromHandleType === 'source' ? 'target' : 'source'
+      const oppositeRole = pending.fromRole === 'source' ? 'target' : 'source'
       const matchingHandle = resolved.handles.find(
-        (h) => h.role === oppositeRole && h.contextType === pending.contextType,
+        (h) => h.role === oppositeRole && h.handleType === pending.handleType,
       )
       if (!matchingHandle) {
-        addNodeAt(typeId, flow)
+        addNodeAt(type, flow)
         return
       }
       const nodeId = newGraphId()
       const node: Node = {
         id: nodeId,
-        type: typeId,
+        type,
         position: { x: snap(flow.x), y: snap(flow.y) },
         data: { ...resolved.defaultData },
         ...nodeFrameDefaults(resolved.category),
       }
       const newEdge: Edge =
-        pending.fromHandleType === 'source'
+        pending.fromRole === 'source'
           ? {
               id: newGraphId(),
               source: pending.fromNodeId,
@@ -734,11 +738,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      const typeId = e.dataTransfer.getData('application/dashboard-extension')
-      if (!typeId) {
+      const type = e.dataTransfer.getData('application/dashboard-extension')
+      if (!type) {
         return
       }
-      addNodeAt(typeId, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
+      addNodeAt(type, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
     },
     [addNodeAt, screenToFlowPosition],
   )
@@ -862,8 +866,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         pending: {
           fromNodeId: fromNode.id,
           fromHandleId: fromHandle.id,
-          fromHandleType: fromHandle.type,
-          contextType: handle.contextType,
+          fromRole: fromHandle.type,
+          handleType: handle.handleType,
         },
       })
     },
@@ -873,14 +877,14 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const closeMenu = useCallback(() => setMenu(null), [])
 
   const onMenuSelect = useCallback(
-    (typeId: string) => {
+    (type: string) => {
       if (!menu) {
         return
       }
       if (menu.pending) {
-        addNodeWithConnection(typeId, menu.flow, menu.pending)
+        addNodeWithConnection(type, menu.flow, menu.pending)
       } else {
-        addNodeAt(typeId, menu.flow)
+        addNodeAt(type, menu.flow)
       }
       setMenu(null)
     },
@@ -900,13 +904,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       return allNodes
     }
     const pending = menu.pending
-    const oppositeRole = pending.fromHandleType === 'source' ? 'target' : 'source'
-    return allNodes.filter((n) =>
-      n.handles.some((h) => h.role === oppositeRole && h.contextType === pending.contextType),
-    )
+    const oppositeRole = pending.fromRole === 'source' ? 'target' : 'source'
+    return allNodes.filter((n) => n.handles.some((h) => h.role === oppositeRole && h.handleType === pending.handleType))
   }, [allNodes, menu])
 
-  const openEditor = useCallback((_extensionId: string | null) => {
+  const openEditor = useCallback((_folder: string | null) => {
     // Navigate to /extensions page
     window.location.href = '/extensions'
   }, [])
@@ -1136,6 +1138,7 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
                       position={nodeMenu.screen}
                       node={target}
                       resolvedNode={target.type ? extensionRegistry.resolveNode(target.type) : undefined}
+                      contexts={resolveInputContexts(target.id, { nodes, edges })}
                       onCopy={() => copySelectedNodes()}
                       onDelete={onDeleteSelected}
                       onDetails={

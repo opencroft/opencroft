@@ -21,10 +21,16 @@ export interface GraphNodeRecord {
   data: Record<string, unknown>
 }
 
+/**
+ * The graph, across every space. Nodes come back with the type graphs store:
+ * qualified with the declaring extension's id, `<owner>.<extension>.<type>`. A
+ * type passed in is either one of this extension's own, bare, or any
+ * extension's, qualified.
+ */
 export interface HostGraphApi {
   listNodes(): Promise<GraphNodeRecord[]>
   getNode(nodeId: string): Promise<GraphNodeRecord | null>
-  listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
+  listNodesByType(type: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<unknown[]>
   updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
   /**
@@ -33,7 +39,7 @@ export interface HostGraphApi {
    */
   createNode(
     address: string,
-    typeId: string,
+    type: string,
     data: Record<string, unknown>,
     position: { x: number; y: number },
   ): Promise<GraphNodeRecord>
@@ -144,7 +150,7 @@ export interface HostThreadTurnsPage {
  * invoked by an agent (`ctx.groupChats`), that agent; everywhere else
  * (`host.groupChats`, or an action nobody's agent called), the extension's own
  * system identity `system.ext.<extension id, dotted>` — e.g.
- * `system.ext.local.task-pipelines`. There is no way to name another sender.
+ * `system.ext.acme.task-pipelines`. There is no way to name another sender.
  *
  * Every call is gated on that sender's membership of the chat, exactly as an
  * agent's group-chat tools are; a system identity is a member once a person
@@ -316,7 +322,30 @@ export interface HostSecretsApi {
 }
 
 export interface ExtensionServerHost {
+  /** The extension's own id, `<owner>.<extension>`. Never hard-code it. */
   extensionId: string
+  /**
+   * Where the host serves this extension: `/api/ext/<extensionId>`. Extensions
+   * never build their own URLs — use this, `assetUrl`, `routeUrl` and
+   * `absoluteUrl`, so a link stays right when the extension is served under
+   * another folder or the URL scheme changes.
+   */
+  urlBase: string
+  /** The URL of a static file under the extension's `assets/` folder. */
+  assetUrl(path: string): string
+  /** The URL of one of the extension's declared HTTP `routes` (see `ExtensionRoute`). */
+  routeUrl(path: string): string
+  /**
+   * An instance-relative URL (`urlBase`, or what `assetUrl` / `routeUrl`
+   * return) in absolute form, for a link handed outside the instance: a
+   * webhook target, a registry entry in another project's config.
+   *
+   * There is no instance-origin setting, so the origin is the one `request`
+   * arrived on — pass the request the handler is answering. From code with no
+   * request in hand, keep the relative URL and let the client make it
+   * absolute (the client's `absoluteUrl` uses the page's origin).
+   */
+  absoluteUrl(request: Request, url?: string): string
   fs: typeof nodeFs.promises
   os: typeof nodeOs
   path: typeof nodePath
@@ -389,6 +418,9 @@ export interface ExtensionServerHost {
 /** One added App instance, as reported to the providing extension. */
 export interface HostAppInstance {
   instanceId: string
+  /** The App this is an instance of, by the bare type this extension declared it under — its key in `apps`. */
+  type: string
+  /** @deprecated Read `type`, which holds the same bare value. */
   appSlug: string
   spaceSlug: string
   /** The instance's display name — the host's field, required at add time. */
@@ -401,8 +433,8 @@ export interface HostAppInstance {
 }
 
 export interface HostAppsApi {
-  /** The calling extension's added App instances, oldest first; optionally one App's only. */
-  listInstances(appSlug?: string): Promise<HostAppInstance[]>
+  /** The calling extension's added App instances, oldest first; optionally one App's only, named by its bare type. */
+  listInstances(type?: string): Promise<HostAppInstance[]>
 }
 
 declare const host: ExtensionServerHost
@@ -429,4 +461,8 @@ export declare const events: ExtensionServerHost['events']
 export declare const openclaw: ExtensionServerHost['openclaw']
 export declare const terminal: ExtensionServerHost['terminal']
 export declare const ssh: ExtensionServerHost['ssh']
-export declare const extensionId: string
+export declare const extensionId: ExtensionServerHost['extensionId']
+export declare const urlBase: ExtensionServerHost['urlBase']
+export declare const assetUrl: ExtensionServerHost['assetUrl']
+export declare const routeUrl: ExtensionServerHost['routeUrl']
+export declare const absoluteUrl: ExtensionServerHost['absoluteUrl']

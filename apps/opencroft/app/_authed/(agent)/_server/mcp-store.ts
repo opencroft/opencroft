@@ -1,6 +1,7 @@
 import type { McpServerConfig } from 'agent-client/mcp-types'
 import type { AgentSelection } from 'agent-client/types'
 
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { getSetting, upsertSetting } from '@/server/data'
 
@@ -48,7 +49,9 @@ async function allConnectionNodeConfigs(): Promise<McpServerConfig[]> {
     }
     const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
     for (const node of spaceNodes as McpConnectionNodeShape[]) {
-      if (node.type !== 'mcp-connection' || !node.data?.name) {
+      // By the bare name the providing extension declares: the host does not
+      // know which owner that extension is installed under.
+      if (parseType(node.type ?? '')?.bare !== 'mcp-connection' || !node.data?.name) {
         continue
       }
       out.push({

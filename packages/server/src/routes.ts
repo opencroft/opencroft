@@ -1,7 +1,8 @@
 import type { HostUser } from './host'
 
 /**
- * A public HTTP handler, served at `/api/ext/<scope>/<slug>/http/<path>`. It
+ * A public HTTP handler, served at `<urlBase>/http/<path>`, where `urlBase`
+ * is `/api/ext/<extensionId>` (build a link to it with `routeUrl`). It
  * receives the raw Request and returns a (possibly streaming) Response, which
  * suits proxies, webhooks and SSE. Anyone who can reach the server can call it.
  */

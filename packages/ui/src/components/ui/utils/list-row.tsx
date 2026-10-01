@@ -2,7 +2,7 @@
 
 import type { ComponentPropsWithRef, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Everything a plain `<div>` takes, on top of the row's own props. That is not
 // convenience. This row gets handed to Base UI triggers as their `render`

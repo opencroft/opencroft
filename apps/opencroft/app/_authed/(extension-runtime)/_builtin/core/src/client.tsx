@@ -51,12 +51,11 @@ import { AGENT_HANDLES, AGENT_INSTRUCTION_HANDLES, SCRIPT_CONSUMER, TERMINAL_CON
 
 export default defineExtension({
   manifest: {
-    id: 'builtin/core',
     name: 'Core',
     version: '1.0.0',
     description: 'Core node catalog — infrastructure + storage + windows',
   },
-  contexts: [
+  handleTypes: [
     { id: 'terminal-context', label: 'Terminal Context', color: 'oklch(0.7 0.18 300)' },
     { id: 'filesystem-target', label: 'Filesystem Target', color: 'oklch(0.7 0.17 140)' },
     { id: 'text-stream', label: 'Text Stream', color: 'oklch(0.75 0.17 100)' },
@@ -70,7 +69,7 @@ export default defineExtension({
   provides: {
     apps: [
       {
-        slug: 'graph',
+        type: 'graph',
         title: 'Graph',
         description: 'A node graph canvas — one instance per graph in a space.',
         icon: 'Workflow',
@@ -81,7 +80,7 @@ export default defineExtension({
   },
   nodes: [
     {
-      typeId: 'localhost',
+      type: 'localhost',
       name: 'Localhost',
       category: 'Infrastructure',
       icon: 'Monitor',
@@ -114,7 +113,7 @@ export default defineExtension({
       },
     },
     {
-      typeId: 'wsl',
+      type: 'wsl',
       name: 'WSL',
       category: 'Infrastructure',
       icon: 'SquareTerminal',
@@ -151,7 +150,7 @@ export default defineExtension({
       },
     },
     {
-      typeId: 'server',
+      type: 'server',
       name: 'Server',
       category: 'Infrastructure',
       icon: 'Server',
@@ -195,7 +194,7 @@ export default defineExtension({
       },
     },
     {
-      typeId: 'terminal-router',
+      type: 'terminal-router',
       name: 'Terminal Router',
       category: 'Infrastructure',
       icon: 'Split',
@@ -216,7 +215,7 @@ export default defineExtension({
       exposeOutput: terminalRouterExposeOutput as unknown as never,
     },
     {
-      typeId: 'core-key-store',
+      type: 'core-key-store',
       name: 'Key Store',
       category: 'Storage',
       icon: 'KeyRound',
@@ -227,7 +226,7 @@ export default defineExtension({
       inspector: KeyStoreInspector as unknown as never,
     },
     {
-      typeId: 'core-secrets-store',
+      type: 'core-secrets-store',
       name: 'Secrets Store',
       category: 'Storage',
       icon: 'ShieldCheck',
@@ -238,7 +237,7 @@ export default defineExtension({
       inspector: SecretsStoreInspector as unknown as never,
     },
     {
-      typeId: 'terminal',
+      type: 'terminal',
       name: 'Terminal Window',
       category: 'Windows',
       icon: 'TerminalSquare',
@@ -249,7 +248,7 @@ export default defineExtension({
       inspector: TerminalWindowInspector as unknown as never,
     },
     {
-      typeId: 'script-bash',
+      type: 'script-bash',
       name: 'Bash Script',
       category: 'Scripts',
       icon: 'TerminalSquare',
@@ -277,7 +276,7 @@ export default defineExtension({
       exposeOutput: scriptExposeOutput as unknown as never,
     },
     {
-      typeId: 'script-python',
+      type: 'script-python',
       name: 'Python Script',
       category: 'Scripts',
       icon: 'Code',
@@ -305,7 +304,7 @@ export default defineExtension({
       exposeOutput: scriptExposeOutput as unknown as never,
     },
     {
-      typeId: 'script-node',
+      type: 'script-node',
       name: 'Node.js Script',
       category: 'Scripts',
       icon: 'Braces',
@@ -333,7 +332,7 @@ export default defineExtension({
       exposeOutput: scriptExposeOutput as unknown as never,
     },
     {
-      typeId: 'agent',
+      type: 'agent',
       name: 'Agent',
       category: 'AI',
       icon: 'User',
@@ -382,7 +381,7 @@ export default defineExtension({
       ],
     },
     {
-      typeId: 'agent-instruction',
+      type: 'agent-instruction',
       name: 'Agent Instruction',
       category: 'AI',
       icon: 'BookOpen',
@@ -393,7 +392,7 @@ export default defineExtension({
       inspector: AgentInstructionInspector as unknown as never,
     },
     {
-      typeId: 'openai-client',
+      type: 'openai-client',
       name: 'OpenAI Client',
       category: 'Text',
       icon: 'Sparkles',
@@ -408,7 +407,7 @@ export default defineExtension({
       inspector: OpenAIClientInspector as unknown as never,
     },
     {
-      typeId: 'openai-assistant',
+      type: 'openai-assistant',
       name: 'AI Assistant',
       category: 'AI',
       icon: 'UserRound',
@@ -425,7 +424,7 @@ export default defineExtension({
       inspector: OpenAIAssistantInspector as unknown as never,
     },
     {
-      typeId: 'prompt',
+      type: 'prompt',
       name: 'Prompt',
       category: 'Text',
       icon: 'MessageCircle',
@@ -437,7 +436,7 @@ export default defineExtension({
       exposeOutput: promptExposeOutput as unknown as never,
     },
     {
-      typeId: 'text-generation',
+      type: 'text-generation',
       name: 'Text Generation',
       category: 'Text',
       icon: 'Sparkles',
@@ -449,7 +448,7 @@ export default defineExtension({
       exposeOutput: textGenerationExposeOutput as unknown as never,
     },
     {
-      typeId: 'log',
+      type: 'log',
       name: 'Log',
       category: 'Text',
       icon: 'ScrollText',
@@ -460,7 +459,7 @@ export default defineExtension({
       inspector: LogInspector as unknown as never,
     },
     {
-      typeId: 'send-message',
+      type: 'send-message',
       name: 'Send Message',
       category: 'Text',
       icon: 'Send',
@@ -471,7 +470,7 @@ export default defineExtension({
       inspector: SendMessageInspector as unknown as never,
     },
     {
-      typeId: 'api-route',
+      type: 'api-route',
       name: 'API Route',
       category: 'Infrastructure',
       icon: 'Route',
@@ -483,7 +482,7 @@ export default defineExtension({
       exposeOutput: apiRouteExposeOutput as unknown as never,
     },
     {
-      typeId: 'agent-tool',
+      type: 'agent-tool',
       name: 'Agent Tool',
       category: 'Integration',
       icon: 'Wrench',
@@ -500,7 +499,7 @@ export default defineExtension({
       exposeOutput: agentToolExposeOutput as unknown as never,
     },
     {
-      typeId: 'event',
+      type: 'event',
       name: 'Event',
       category: 'Integration',
       icon: 'AlarmClock',
@@ -515,7 +514,7 @@ export default defineExtension({
       exposeOutput: eventExposeOutput as unknown as never,
     },
     {
-      typeId: 'section',
+      type: 'section',
       name: 'Section',
       category: 'Organization',
       icon: 'Boxes',

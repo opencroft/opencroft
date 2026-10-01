@@ -2,7 +2,7 @@
 
 import { Button } from 'ui/components/ui/button'
 import { Switch } from 'ui/components/ui/switch'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface AdminUserAccessProps {
   // Whose account this is. Runs through every label so the admin can never act

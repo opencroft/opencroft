@@ -1,6 +1,6 @@
 import type { ChatListLeaf, ChatListNode } from 'ui/chat/chat-list'
-import type { ChatStatus } from 'ui/chat/chat-list-item'
 
+import type { ThreadRowState, ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/read-model'
 import type {
   ThreadLayout,
@@ -14,9 +14,6 @@ import type {
 // threads arrive from the server on every load. Everything interesting here is
 // what happens where the two disagree: a thread the layout has never seen, and
 // a layout entry whose thread is gone.
-
-/** A thread's live process state, keyed by thread id. */
-export type ThreadStatusById = ReadonlyMap<string, ChatStatus>
 
 /**
  * A chat nobody has arranged, at the version a first write expects.
@@ -33,7 +30,7 @@ export const EMPTY_THREAD_LAYOUT: VersionedThreadLayout = { layout: { entries: [
  * thread list this replaces, and they are carried across deliberately rather
  * than re-derived.
  */
-export function threadLeaf(thread: GroupChatThreadEntry, status: ChatStatus | undefined): ChatListLeaf {
+export function threadLeaf(thread: GroupChatThreadEntry, state: ThreadRowState | undefined): ChatListLeaf {
   // The server states membership; turning that into a dimmed row is the
   // screen's business, which is why the entry carries `agentIsMember` and not
   // `disabled`.
@@ -42,12 +39,13 @@ export function threadLeaf(thread: GroupChatThreadEntry, status: ChatStatus | un
     id: thread.id,
     title: thread.title ?? 'Untitled',
     description: removed ? `${thread.agent.name} · agent removed` : thread.agent.name,
-    // A removed agent's thread is never given a state, whatever its session is
-    // doing. The row is dimmed already, sending is blocked regardless of what a
-    // dot would say, and "agent removed" is the fact that governs what the
-    // reader can do next -- a second state beside it would only make the row
-    // argue with itself.
-    status: removed ? undefined : status,
+    // A removed agent's thread is never given a state or a reading, whatever
+    // its session is doing. The row is dimmed already, sending is blocked
+    // regardless of what a dot would say, and "agent removed" is the fact that
+    // governs what the reader can do next -- a second state beside it would
+    // only make the row argue with itself.
+    status: removed ? undefined : state?.status,
+    context: removed ? undefined : state?.context,
     avatarUrl: thread.agent.avatarUrl,
     hasDraft: thread.hasDraft,
     disabled: removed,
@@ -66,7 +64,7 @@ export function threadLeaf(thread: GroupChatThreadEntry, status: ChatStatus | un
 export function layoutToNodes(
   layout: ThreadLayout,
   threads: GroupChatThreadEntry[],
-  statusById: ThreadStatusById,
+  stateById: ThreadRowStateById,
 ): ChatListNode[] {
   const byId = new Map(threads.map((t) => [t.id, t]))
   const placed = new Set<string>()
@@ -78,7 +76,7 @@ export function layoutToNodes(
       return null
     }
     placed.add(threadId)
-    return threadLeaf(thread, statusById.get(threadId))
+    return threadLeaf(thread, stateById.get(threadId))
   }
 
   for (const entry of layout.entries) {
@@ -101,7 +99,7 @@ export function layoutToNodes(
 
   for (const thread of threads) {
     if (!placed.has(thread.id)) {
-      nodes.push({ type: 'item', item: threadLeaf(thread, statusById.get(thread.id)) })
+      nodes.push({ type: 'item', item: threadLeaf(thread, stateById.get(thread.id)) })
     }
   }
   return nodes

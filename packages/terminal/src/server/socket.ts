@@ -125,7 +125,8 @@ function beginSession(peer: SocketPeer, sessionKey: string | undefined, cols: nu
     send(peer, 'error', { message: decision.message })
     return false
   }
-  return true
+  // An ended job: the manager has sent its output and its end, and nothing is spawned in its place.
+  return decision.kind === 'create'
 }
 
 async function handleConnect(peer: SocketPeer, payload: ConnectPayload) {
@@ -212,6 +213,11 @@ function handleWsl(peer: SocketPeer, payload: WslPayload) {
 
 function handleAttach(peer: SocketPeer, payload: AttachPayload) {
   const result = manager.attach(peer, payload)
+  // An ended job has already been answered with its output and its end; `connected` after that
+  // would tell the client a finished job is live again.
+  if (result.ok && result.ended) {
+    return
+  }
   if (result.ok) {
     sendConnectedOrReconcile(peer, result.session.id, true)
     return

@@ -51,12 +51,12 @@ function NodeWrapperImpl(props: NodeWrapperProps) {
 // node on the canvas is never looked up. Building from the graph's types alone
 // means this map does not change when extensions settle — which is what stops
 // the flow library discarding and recreating every node at that moment.
-export function buildNodeTypes(typeIds: readonly string[]) {
+export function buildNodeTypes(types: readonly string[]) {
   const entries: Record<string, React.ComponentType<NodeProps<Node<NodeData>>>> = {}
-  for (const typeId of typeIds) {
-    const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={typeId} />
-    Wrapped.displayName = `ExtensionNode(${typeId})`
-    entries[typeId] = memo(Wrapped)
+  for (const type of types) {
+    const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={type} />
+    Wrapped.displayName = `ExtensionNode(${type})`
+    entries[type] = memo(Wrapped)
   }
   return entries
 }

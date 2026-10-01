@@ -58,12 +58,12 @@ export function PromptInspector() {
   return null
 }
 
-export const PROMPT_HANDLES = [{ id: 'text-out', contextType: 'text-stream', role: 'source' as const, label: 'Text' }]
+export const PROMPT_HANDLES = [{ id: 'text-out', handleType: 'text-stream', role: 'source' as const, label: 'Text' }]
 
 export function promptExposeOutput(
   handleId: string,
   _data: unknown,
-  _typeId: string,
+  _type: string,
   nodeId: string,
 ): Stream<TextChunk> | undefined {
   if (handleId === 'text-out') {

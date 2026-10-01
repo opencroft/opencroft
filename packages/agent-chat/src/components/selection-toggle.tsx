@@ -18,7 +18,7 @@ import type { ComponentPropsWithoutRef } from 'react'
 import { commandBarControlClass } from './agent-command-bar'
 
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Without-ref on purpose: `forwardRef` below already contributes the ref to the
 // public props, and carrying it in both places is how the two definitions get

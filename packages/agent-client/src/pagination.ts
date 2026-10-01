@@ -107,12 +107,13 @@ function isChunkEvent(event: ChatEvent): boolean {
 }
 
 // Events that say what the session IS -- its usage, options, commands, mode,
-// title, queue, cadence -- rather than adding anything the transcript draws.
-// They arrive constantly (a usage reading per step, a burst of snapshots every
-// time a session opens) and they are not records: counted, they spent the
-// budget on nothing visible, so a chat reopened after a restart could open on
-// its last few messages with everything before them "not loaded", and a page
-// of older history could be all snapshots and add nothing to the screen.
+// title, queue, cadence, the agent's plan -- rather than adding anything the
+// transcript draws. They arrive constantly (a usage reading per step, a burst
+// of snapshots every time a session opens) and they are not records: counted,
+// they spent the budget on nothing visible, so a chat reopened after a restart
+// could open on its last few messages with everything before them "not
+// loaded", and a page of older history could be all snapshots and add nothing
+// to the screen.
 // They are transparent here instead: no boundary of their own, no break in the
 // run of chunks around them, no cost. A reader cut above one loses nothing --
 // the live stream prepends the current value of each (see withSnapshotPrefix).
@@ -126,23 +127,21 @@ function isStateEvent(event: ChatEvent): boolean {
     case 'session_info':
     case 'queue':
     case 'presence':
+    case 'plan':
       return true
     default:
       return false
   }
 }
 
-// The things the transcript draws ONCE and then patches where they stand: the
-// plan, each subagent, each background task, each compaction. Every event of
-// one carries its whole current state, and only the first places it -- the
-// rest update the same block (see the client's fold). So only a first sighting
-// is a record; an update is transparent, like a state event. Counted, a plan
-// built one item at a time spent a record per item: three list entries cost
-// six records of a budget meant for six things on screen.
+// The things the transcript draws ONCE and then patches where they stand: each
+// subagent, each background task, each compaction. Every event of one carries
+// its whole current state, and only the first places it -- the rest update the
+// same block (see the client's fold). So only a first sighting is a record; an
+// update is transparent, like a state event. Counted, a task reporting its
+// progress would spend a record per report on a block that is already there.
 function entityOf(event: ChatEvent): string | null {
   switch (event.kind) {
-    case 'plan':
-      return 'plan'
     case 'subagent':
       return `subagent:${event.subagent.subagentSessionId}`
     case 'async_task':
@@ -181,12 +180,6 @@ function recordBoundaries(events: ChatEvent[], start: number, end: number): numb
     }
     const entity = entityOf(event)
     if (entity !== null) {
-      // An empty plan retires the one on screen and draws nothing; the next
-      // plan after it is a new block, and a record again.
-      if (event.kind === 'plan' && event.entries.length === 0) {
-        drawn.delete(entity)
-        continue
-      }
       if (drawn.has(entity)) {
         continue
       }

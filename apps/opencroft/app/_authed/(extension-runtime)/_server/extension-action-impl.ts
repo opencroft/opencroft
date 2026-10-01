@@ -2,10 +2,12 @@ import {
   type ActionAccess,
   activateLifecycleExtensions,
   clientBundleVersion,
+  ensureExtensionBuilt,
   extensionHasClient,
   getExtensionModule,
   loadAllManifests,
 } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { folderOf } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
 // Plain (non-server-fn) implementation, callable directly from other server-side
@@ -55,14 +57,46 @@ export async function getActionAccess(extensionId: string, actionName: string): 
 // called from an extension's Nitro HTTP route handler, which never establishes that
 // context (see this module's own doc comment above for why the plain/server-fn split
 // exists at all).
-export async function listExtensionManifestsImpl(): Promise<ExtensionManifestInfo[]> {
-  await activateLifecycleExtensions()
+//
+// Starts activating the lifecycle extensions (and reloading any whose sources
+// changed) without waiting for it. Nothing this returns depends on it — the
+// manifests, `hasClient` and the bundle version are read from disk — and a
+// caller that needs an extension's module gets it from `getExtensionModule`,
+// which joins an activation already in flight. Waiting would put a source
+// freshness check per lifecycle extension in front of every listing, and the
+// listing is on the path to every App page's first render. The trade, unless
+// `rebuildStaleClients` is set: the first listing after a lifecycle
+// extension's sources change can still carry its previous bundle version. That
+// listing started the rebuild, so the next one carries the new version.
+//
+// `rebuildStaleClients` rebuilds a client bundle whose sources changed before
+// its version is read, so the version names a current build. It is for the
+// browser, which caches each bundle immutably under that version: without it,
+// a browser holding the previous bundle would never ask again. An extension
+// that fails to build is logged and listed with whatever it has.
+export async function listExtensionManifestsImpl({
+  rebuildStaleClients = false,
+}: {
+  rebuildStaleClients?: boolean
+} = {}): Promise<ExtensionManifestInfo[]> {
+  activateLifecycleExtensions().catch((err) => {
+    console.error('[ext] lifecycle activation failed', err)
+  })
   const manifests = await loadAllManifests()
   return Promise.all(
-    manifests.map(async (manifest) => ({
-      ...manifest,
-      hasClient: await extensionHasClient(manifest.id),
-      clientVersion: await clientBundleVersion(manifest.id),
-    })),
+    manifests.map(async (manifest) => {
+      const hasClient = await extensionHasClient(manifest.id)
+      if (hasClient && rebuildStaleClients) {
+        await ensureExtensionBuilt(manifest.id).catch((err) => {
+          console.error(`[ext] ${manifest.id} client bundle not built`, err)
+        })
+      }
+      return {
+        ...manifest,
+        folder: folderOf(manifest.id),
+        hasClient,
+        clientVersion: await clientBundleVersion(manifest.id),
+      }
+    }),
   )
 }

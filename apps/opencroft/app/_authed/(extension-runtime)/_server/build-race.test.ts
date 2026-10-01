@@ -8,12 +8,18 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-build-race-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
+import { buildExtension } from './compiler'
 
-const { buildExtension } = await import('./compiler')
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-build-race-'))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -31,20 +37,19 @@ async function makeFixture(
   clientSource: string,
 ): Promise<{ id: string; manifest: { id: string; name: string; version: string } }> {
   seq += 1
-  const slug = `sample-${seq}`
-  const dir = path.join(root, slug)
+  const id = `local.sample-${seq}`
+  const dir = path.join(root, 'extensions', id)
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.mkdir(path.join(dir, 'server'), { recursive: true })
   await fs.writeFile(path.join(dir, 'src', 'client.tsx'), clientSource)
   await fs.writeFile(path.join(dir, 'server', 'index.ts'), 'export const actions = {}\n')
-  const manifest = { id: `local/${slug}`, name: slug, version: '0.0.0' }
+  const manifest = { id, name: id, version: '0.0.0' }
   await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
-  return { id: `local/${slug}`, manifest }
+  return { id, manifest }
 }
 
 function distFile(extensionId: string, name: string): string {
-  const slug = extensionId.split('/')[1]
-  return path.join(root, slug, 'dist', name)
+  return path.join(root, 'extensions', extensionId, 'dist', name)
 }
 
 // Resolves once a build of this extension has reached the point of staging its
@@ -61,7 +66,7 @@ function distFile(extensionId: string, name: string): string {
 // behaviour under load. A delay between reads would cost less and reintroduce
 // a guess about how long the window is, which is the thing being removed.
 async function stagedOrSettled(extensionId: string, build: Promise<unknown>): Promise<'staged' | 'settled'> {
-  const parent = path.dirname(path.dirname(distFile(extensionId, 'client.js')))
+  const dist = path.dirname(distFile(extensionId, 'client.js'))
   let settled = false
   const done = build.then(
     () => {
@@ -72,8 +77,8 @@ async function stagedOrSettled(extensionId: string, build: Promise<unknown>): Pr
     },
   )
   while (!settled) {
-    const siblings = await fs.readdir(parent).catch(() => [] as string[])
-    if (siblings.some((entry) => entry.includes('.building-'))) {
+    const entries = await fs.readdir(dist).catch(() => [] as string[])
+    if (entries.some((entry) => entry.includes('.building-'))) {
       return 'staged'
     }
   }
@@ -109,7 +114,7 @@ test('a burst of late arrivals shares one follow-up build, not one each', async 
 
 test('a source edit that lands mid-build is not lost to a late caller', async () => {
   const { id, manifest } = await makeFixture(largeClientSource('before-'))
-  const srcFile = path.join(root, id.split('/')[1], 'src', 'client.tsx')
+  const srcFile = path.join(root, 'extensions', id, 'src', 'client.tsx')
 
   // `late` arrives synchronously behind `first`, so it is guaranteed to join
   // the same in-flight slot rather than race it — this test is about what
@@ -150,13 +155,10 @@ test('a concurrent reader never sees a partial client bundle or map', async () =
   const clientFile = distFile(id, 'client.js')
   const mapFile = distFile(id, 'client.js.map')
 
-  // The client bundle is built into a staging directory beside `dist` and
-  // published by renaming out of it, so a build in progress is visible in
-  // dist's PARENT. Watching `dist` itself only ever catches the server
-  // bundle's and the stylesheet's own temp files, which are published by a
-  // different code path and say nothing about whether this test overlapped
-  // the client publish it exists to police.
-  const stagingParent = path.dirname(path.dirname(clientFile))
+  // Every side of a build stages inside `dist` under a `.building-` name and is
+  // published by renaming out of it, so a build in progress is visible as a
+  // staging entry of `dist` itself.
+  const stagingParent = path.dirname(clientFile)
 
   // Published once first, for the same reason the split suite's version does
   // it: on a fresh fixture neither file exists until the build's last act, so
@@ -222,7 +224,7 @@ test('a build with a syntax error leaves no temp files and does not touch a prev
   const clientFile = distFile(id, 'client.js')
   const before = await fs.readFile(clientFile, 'utf-8')
 
-  await fs.writeFile(path.join(root, id.split('/')[1], 'src', 'client.tsx'), 'export default {\n')
+  await fs.writeFile(path.join(root, 'extensions', id, 'src', 'client.tsx'), 'export default {\n')
   const broken = await buildExtension(id, manifest)
   assert.equal(broken.success, false)
 

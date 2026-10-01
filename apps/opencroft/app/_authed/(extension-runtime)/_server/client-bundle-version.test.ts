@@ -4,21 +4,27 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
-// extDir reads this at call time, so pointing it at a scratch dir before
-// importing the module under test keeps the test off the real extension tree.
+import { clientBundleVersion } from './loader'
+
+// extDir reads the data dir at call time, so pointing it at a scratch dir keeps
+// the test off the real extension tree.
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-version-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
-const { clientBundleVersion } = await import('./loader')
-
-const EXTENSION_ID = 'local/sample'
+const EXTENSION_ID = 'local.sample'
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
 async function writeBundle(name: string, contents: string, mtimeMs?: number): Promise<void> {
-  const dist = path.join(root, 'sample', 'dist')
+  const dist = path.join(root, 'extensions', EXTENSION_ID, 'dist')
   await fs.mkdir(dist, { recursive: true })
   const file = path.join(dist, name)
   await fs.writeFile(file, contents)
@@ -31,7 +37,7 @@ async function writeBundle(name: string, contents: string, mtimeMs?: number): Pr
 test('an unbuilt extension has no version, so its URL cannot be cached', async () => {
   // 0 is the signal the caller turns into a unique cache-busting value — an
   // extension with nothing built must never be served under a cacheable URL.
-  assert.equal(await clientBundleVersion('local/never-built'), 0)
+  assert.equal(await clientBundleVersion('local.never-built'), 0)
 })
 
 test('the version is stable while the built bundle is unchanged', async () => {

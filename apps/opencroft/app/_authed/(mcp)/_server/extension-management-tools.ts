@@ -1,15 +1,13 @@
 /**
  * The extension family: local extension CRUD and compile, install/update/remove of
- * fetched extensions, the shared-folder write lease, and registry search/install.
+ * fetched extensions, the folder write lock, and registry search/install.
+ *
+ * Tools that act on an extension's files take its folder under `extensions/`
+ * (`extensionFolder`); tools that install take a source. An extension folder is
+ * `<owner>.<extension>`; local ones (`local.<name>`) are the editable ones.
  */
 
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
-import {
-  type InstallAuth,
-  installExtensionFromUrl,
-  uninstallExtension,
-  updateInstalledExtension,
-} from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import {
   compileLocalExtensionImpl,
   createLocalExtensionImpl,
@@ -17,54 +15,70 @@ import {
   getLocalExtensionImpl,
   listLocalExtensionsImpl,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
+import { isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { COMPILE_OVERRIDE_PARAM } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import {
-  claimExtensionLease,
-  leaseRefusalMessage,
-  readActiveLeases,
-  releaseExtensionLease,
-} from '@/app/_authed/(extension-runtime)/_server/extension-lease'
-import { resolveExtensionRepo, searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
+  claimExtensionLock,
+  extensionLockRefusalMessage,
+  readActiveExtensionLocks,
+  releaseExtensionLock,
+} from '@/app/_authed/(extension-runtime)/_server/extension-lock'
+import type { ExtensionRow, InstallAuth } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
+import {
+  installFromRegistry,
+  installFromUrl,
+  uninstallExtension,
+  updateExtension,
+} from '@/app/_authed/(extension-runtime)/_server/install'
+import { searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import {
-  claimSlugForWrite,
+  claimFolderForWrite,
   fail,
-  isValidLocalExtensionSlug,
   jsonResult,
-  LEASE_TOOL_NAME,
   LOCAL_EXTENSION_HANDLE_NODE_ID,
+  LOCK_TOOL_NAME,
   requireCallingAgent,
   textResult,
 } from '@/app/_authed/(mcp)/_server/tool-shared'
 import { agentRefName } from '@/app/_authed/(space)/_server/agents-impl'
 import { toastStore } from '@/lib/toast-store'
 
+const LOCAL_FOLDER_PARAM = {
+  extensionFolder: {
+    type: 'string',
+    description: 'The local extension folder, "local.<name>" — see list_extensions.',
+  },
+}
+
+const INSTALLED_FOLDER_PARAM = {
+  extensionFolder: {
+    type: 'string',
+    description: 'The extension folder under extensions/, "<owner>.<extension>" (for an install, its extension id).',
+  },
+}
+
 export const definitions = [
   {
     name: 'list_extensions',
     description:
-      'List all local extensions as lightweight summaries (id, name, version, description, node/file counts, target). Use get_extension for the full manifest and source file list. Each extension is a folder under data/extensions/local/<slug>/ containing extension.json and source files — read and edit those files with the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script) against the static handle given as `target` (format "extensions/<slug>"); paths passed to those tools are relative to the extension folder. Built-in extensions are bundled with the app and not listed here.',
+      'List the local extensions — the editable ones, each a folder "local.<name>" under the extensions folder — as lightweight summaries: folder, the extension id it runs under, name, version, description, node/file counts and a `target`. A local folder whose manifest names another extension\'s id (e.g. "acme.widgets") is a development copy that stands in for that extension. Use get_extension for the full manifest and source file list. Read and edit the files with the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script) against `target` ("extensions/<folder>"); paths are relative to the extension folder. Built-in and installed extensions are not listed here.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
     name: 'get_extension',
     description:
-      'Get a single local extension by its id (e.g. "local/my-node"). Returns the parsed manifest, the list of source file paths, and a `target` field ("extensions/<slug>"). Read and edit file contents with the remote_* tools (remote_read/remote_write/remote_edit/remote_exec/remote_script) against that target — paths are relative to the extension folder.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
-      },
-      required: ['extensionId'],
-    },
+      'Get one local extension by its folder (e.g. "local.my-node"). Returns the parsed manifest, the extension id it runs under, the list of source file paths, and a `target` field ("extensions/<folder>"). Read and edit file contents with the remote_* tools against that target — paths are relative to the extension folder.',
+    inputSchema: { type: 'object' as const, properties: LOCAL_FOLDER_PARAM, required: ['extensionFolder'] },
   },
   {
     name: 'create_extension',
     description:
-      'Create a new local extension on disk. Writes files under data/extensions/local/<slug>/. At minimum must include extension.json and src/client.tsx. The manifest.id must be "local/<slug>" and match the slug used in the folder. Client source must use `export default defineExtension({ manifest: { id }, nodes: [...] })`, taking `defineExtension` and the rest of the client surface from the `legacy` namespace of "@opencroft/client" — that spelling is the one carrying type declarations.',
+      'Create a new local extension in the folder "local.<name>". At minimum `files` must include extension.json and src/client.tsx. The manifest needs no `id`: the extension runs under its folder name. Client source must use `export default defineExtension({ manifest: { name }, nodes: [...] })`, taking `defineExtension` and the rest of the client surface from the `legacy` namespace of "@opencroft/client" — that spelling is the one carrying type declarations.',
     inputSchema: {
       type: 'object' as const,
       properties: {
+        ...LOCAL_FOLDER_PARAM,
         files: {
           type: 'object',
           description:
@@ -72,20 +86,14 @@ export const definitions = [
           additionalProperties: { type: 'string' },
         },
       },
-      required: ['files'],
+      required: ['extensionFolder', 'files'],
     },
   },
   {
     name: 'delete_extension',
     description:
-      'Uninstall a local extension by removing its folder under data/extensions/local/. Nodes on the canvas that reference its typeId will render as "Unknown extension" until refreshed.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        extensionId: { type: 'string', description: 'The local extension id to delete (must start with "local/")' },
-      },
-      required: ['extensionId'],
-    },
+      'Delete a local extension: its folder, then its record. Nodes and apps using its types are kept and show as belonging to a missing extension; if it was a development copy standing in for an installed extension, that installed one comes back into effect.',
+    inputSchema: { type: 'object' as const, properties: LOCAL_FOLDER_PARAM, required: ['extensionFolder'] },
   },
   {
     name: 'compile_extension',
@@ -94,36 +102,36 @@ export const definitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
+        ...LOCAL_FOLDER_PARAM,
         [COMPILE_OVERRIDE_PARAM]: {
           type: 'boolean',
           description:
             'Compile the folder in whatever state it is in, including uncommitted changes or a non-default branch. Use deliberately: whatever is on disk becomes what this instance runs.',
         },
       },
-      required: ['extensionId'],
+      required: ['extensionFolder'],
     },
   },
   {
-    name: LEASE_TOOL_NAME,
+    name: LOCK_TOOL_NAME,
     description:
-      'See or change who is currently working in a local extension folder. Those folders are shared — every session editing one extension edits the same files — so a write claims the folder for its caller and other callers are told rather than silently writing over it. Call with no arguments to list active claims; with extensionId to take one over or release your own. Claims lapse on their own after a period with no writes.',
+      'See or change who holds the lock on a local extension folder. Those folders are shared — every session editing one extension edits the same files — so a write locks the folder for its caller and other callers are told rather than silently writing over it. Call with no arguments to list active locks; with extensionFolder to take one over or release your own. Locks lapse on their own after a period with no writes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        extensionId: { type: 'string', description: 'The local extension id (must start with "local/")' },
+        ...LOCAL_FOLDER_PARAM,
         takeover: {
           type: 'boolean',
-          description: 'Take the folder even though someone else holds it. Always permitted — this is advisory.',
+          description: 'Take the folder even though someone else holds it. Always permitted — the lock is advisory.',
         },
-        release: { type: 'boolean', description: 'Give up a claim you hold, so nobody has to wait for it to lapse.' },
+        release: { type: 'boolean', description: 'Give up a lock you hold, so nobody has to wait for it to lapse.' },
       },
     },
   },
   {
     name: 'extension_install',
     description:
-      'Install an extension from a public Git repository (GitHub, GitLab, Gitea, Bitbucket, any git remote). Clones at the latest tag by default (falls back to default branch HEAD if no tags). Runs `npm install` if the repo has a package.json. Stored under data/extensions/installed/<slug>/. Resulting id is "installed/<slug>" — unless asLocal is set, which stores it under data/extensions/local/<slug>/ as "local/<slug>" (live-editable, managed like any local extension: compile_extension, delete_extension).',
+      'Install an extension from a Git repository (GitHub, GitLab, Gitea, Bitbucket, any git remote): a snapshot of one commit, without .git, read-only on this instance. Installs the latest version tag by default (the default branch when there are none) into the folder "<owner>.<repo>" taken from the URL, which is also its extension id; a URL whose path is not exactly owner/repo needs `id`. With asLocal it is instead a full git checkout in "local.<repo>" — editable, compiled with compile_extension, updated by pulling — that stands in for the extension its manifest names.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -132,9 +140,14 @@ export const definitions = [
           description:
             'Repository: "owner/repo" (assumes github.com) or full URL (e.g. https://gitlab.com/group/repo).',
         },
+        id: {
+          type: 'string',
+          description:
+            'The extension id to install under, "<owner>.<extension>". Required when the URL path has more than two segments.',
+        },
         ref: {
           type: 'string',
-          description: 'Optional tag or branch to install. Defaults to latest semver tag, or default branch HEAD.',
+          description: 'Optional tag or branch to install. Defaults to the latest version tag, or the default branch.',
         },
         auth: {
           type: 'object',
@@ -150,7 +163,7 @@ export const definitions = [
         asLocal: {
           type: 'boolean',
           description:
-            'Clone as a local, live-editable extension (data/extensions/local/<slug>/, id "local/<slug>") instead of the default data/extensions/installed/<slug>/. Not managed by extension_update/extension_remove afterward — use compile_extension/delete_extension instead.',
+            'Install as a local extension: a full git checkout in "local.<repo>", editable and managed with compile_extension/delete_extension.',
         },
       },
       required: ['url'],
@@ -159,37 +172,28 @@ export const definitions = [
   {
     name: 'extension_update',
     description:
-      'Re-install an installed extension at a new (or same) ref. Pulls the latest tag from the remote unless a ref is given. Reuses the auth originally configured at install time.',
+      'Re-install an installed extension from its source at a new (or the same) ref, replacing its folder only once the new one has built. Defaults to the latest version tag. Reuses the auth recorded at install time. A local extension is updated by pulling instead.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
-        ref: {
-          type: 'string',
-          description: 'Optional tag or branch. Defaults to the latest semver tag from the remote.',
-        },
+        ...INSTALLED_FOLDER_PARAM,
+        ref: { type: 'string', description: 'Optional tag or branch. Defaults to the latest version tag.' },
       },
-      required: ['extensionId'],
+      required: ['extensionFolder'],
     },
   },
   {
     name: 'extension_remove',
     description:
-      'Uninstall an installed extension. Removes the entire data/extensions/installed/<slug>/ folder including source, sidecar, and bundle. Cannot be undone — re-install via extension_install to restore.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
-      },
-      required: ['extensionId'],
-    },
+      'Uninstall an extension: removes its folder, then its record. Nodes and apps using its types are kept and show as belonging to a missing extension. Re-install to restore.',
+    inputSchema: { type: 'object' as const, properties: INSTALLED_FOLDER_PARAM, required: ['extensionFolder'] },
   },
 
   // ── Registry ─────────────────────────────────────────────────────
   {
     name: 'registry_list',
     description:
-      'List extensions from all connected extension registries. Registries are Git repos with a registry.json file listing available extensions.',
+      'List extensions from all connected extension registries. Registries are Git repos with a registry.json file listing available extensions by id ("<owner>.<extension>").',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -203,30 +207,27 @@ export const definitions = [
   {
     name: 'registry_install',
     description:
-      'Install an extension by its registry ID. Resolves the repository URL from connected registries, then installs it. Use registry_list to discover available extensions.',
+      'Install an extension by its registry id into the folder of that id. Use registry_list to discover available extensions. With asLocal it is a development checkout in "local.<extension>" instead, standing in for the registry extension.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         extensionId: {
           type: 'string',
-          description: 'Extension ID from the registry (e.g. "opencroft/demo-extension").',
+          description: 'Extension id from the registry (e.g. "acme.demo-extension").',
         },
-        ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to latest semver tag.' },
+        ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to the latest version tag.' },
+        asLocal: {
+          type: 'boolean',
+          description: 'Install as an editable development checkout in "local.<extension>".',
+        },
       },
       required: ['extensionId'],
     },
   },
   {
     name: 'registry_uninstall',
-    description:
-      'Uninstall a previously installed extension that was installed from a registry. Removes the extension folder and clears caches.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        extensionId: { type: 'string', description: 'The installed extension id (must start with "installed/").' },
-      },
-      required: ['extensionId'],
-    },
+    description: 'Uninstall an extension installed from a registry: removes its folder, then its record.',
+    inputSchema: { type: 'object' as const, properties: INSTALLED_FOLDER_PARAM, required: ['extensionFolder'] },
   },
 ]
 
@@ -234,16 +235,25 @@ function broadcastExtensionsUpdated(): void {
   toastStore.broadcast({ type: 'extensions_updated' })
 }
 
-/** The slug in a local extension id, or null for any other scope or a malformed one. */
-export function localSlugFromExtensionId(extensionId: unknown): string | null {
-  if (typeof extensionId !== 'string') {
-    return null
+function requireFolder(args: Record<string, unknown>): string {
+  const folder = args.extensionFolder
+  if (typeof folder !== 'string' || !folder) {
+    fail(-32602, 'Missing required param: extensionFolder')
   }
-  const [scope, slug] = extensionId.split('/')
-  if (scope !== 'local' || !slug || !isValidLocalExtensionSlug(slug)) {
-    return null
+  return folder
+}
+
+/** A local folder from the arguments, or a refusal: only local folders are editable. */
+function requireLocalFolder(args: Record<string, unknown>): string {
+  const folder = requireFolder(args)
+  if (!isLocalFolder(folder)) {
+    fail(-32602, `Expected a local extension folder ("local.<name>"), got "${folder}"`)
   }
-  return slug
+  return folder
+}
+
+function installedLine(row: ExtensionRow): string {
+  return `Installed ${row.folder} at ${row.ref ?? 'HEAD'} (${row.commit?.slice(0, 12) ?? 'unknown commit'}) from ${row.sourceUrl}.`
 }
 
 export const handlers: Record<string, ToolHandler> = {
@@ -253,6 +263,7 @@ export const handlers: Record<string, ToolHandler> = {
     // Identity + counts only. Use get_extension for the manifest and source file list; read/edit
     // file contents via the remote_* tools against `target`.
     const summaries = records.map((record) => ({
+      folder: record.folder,
       id: record.id,
       name: record.manifest.name,
       version: record.manifest.version,
@@ -262,32 +273,30 @@ export const handlers: Record<string, ToolHandler> = {
       updatedAt: record.updatedAt,
       sourceCommit: record.sourceCommit,
       sourceDirty: record.sourceDirty,
-      target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}`,
+      target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.folder}`,
     }))
     return jsonResult(summaries)
   },
 
   // ── get_extension ───────────────────────────────────────────────
   get_extension: async (args) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      fail(-32602, 'Missing required param: extensionId')
-    }
-    const record = await getLocalExtensionImpl(extensionId)
+    const folder = requireLocalFolder(args)
+    const record = await getLocalExtensionImpl(folder)
     if (!record) {
-      fail(-32602, `Extension not found: ${extensionId}`)
+      fail(-32602, `Extension not found: ${folder}`)
     }
     // Manifest + file paths only. Read/edit file contents via the remote_* tools against `target`.
     const { files, ...rest } = record
     return jsonResult({
       ...rest,
       files: Object.keys(files),
-      target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.slug}`,
+      target: `${LOCAL_EXTENSION_HANDLE_NODE_ID}/${record.folder}`,
     })
   },
 
   // ── create_extension ────────────────────────────────────────────
   create_extension: withApprovalRequired(async (args) => {
+    const folder = requireLocalFolder(args)
     const filesRaw = args.files as Record<string, unknown> | undefined
     if (!filesRaw || typeof filesRaw !== 'object') {
       fail(-32602, 'Missing required param: files')
@@ -302,20 +311,17 @@ export const handlers: Record<string, ToolHandler> = {
     if (!files['extension.json']) {
       fail(-32602, 'files must include "extension.json"')
     }
-    const record = await createLocalExtensionImpl(files)
+    const record = await createLocalExtensionImpl(folder, files)
     broadcastExtensionsUpdated()
-    return textResult(`Extension ${record.id} installed with ${Object.keys(files).length} files.`)
+    return textResult(`Extension ${record.folder} (id ${record.id}) created with ${Object.keys(files).length} files.`)
   }),
 
-  // ── delete_extension ───────────────────�����────────────────────────
+  // ── delete_extension ────────────────────────────────────────────
   delete_extension: withApprovalRequired(async (args) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      fail(-32602, 'Missing required param: extensionId')
-    }
-    await deleteLocalExtensionImpl(extensionId)
+    const folder = requireLocalFolder(args)
+    await deleteLocalExtensionImpl(folder)
     broadcastExtensionsUpdated()
-    return textResult(`Extension ${extensionId} uninstalled.`)
+    return textResult(`Extension ${folder} deleted.`)
   }),
 
   // ── extension_install ────────────────────────────────────────────
@@ -324,8 +330,6 @@ export const handlers: Record<string, ToolHandler> = {
     if (!url) {
       fail(-32602, 'Missing required param: url')
     }
-    const ref = args.ref as string | undefined
-    const asLocal = args.asLocal === true
     const authRaw = args.auth as { storeId?: string; tokenKey?: string; usernameKey?: string } | undefined
     let auth: InstallAuth | undefined
     if (authRaw) {
@@ -339,48 +343,40 @@ export const handlers: Record<string, ToolHandler> = {
         usernameKey: authRaw.usernameKey,
       }
     }
-    const record = await installExtensionFromUrl({ data: { url, ref, auth, asLocal } })
-    broadcastExtensionsUpdated()
-    return textResult(`Installed ${record.id} at ${record.sidecar.ref} from ${record.sidecar.source.url}.`)
+    const row = await installFromUrl({
+      url,
+      id: args.id as string | undefined,
+      ref: args.ref as string | undefined,
+      auth,
+      asLocal: args.asLocal === true,
+    })
+    return textResult(installedLine(row))
   }),
 
   // ── extension_update ─────────────────────────────────────────────
   extension_update: withApprovalRequired(async (args) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      fail(-32602, 'Missing required param: extensionId')
-    }
-    const ref = args.ref as string | undefined
-    const record = await updateInstalledExtension({ data: { extensionId, ref } })
-    broadcastExtensionsUpdated()
-    return textResult(`Updated ${record.id} to ${record.sidecar.ref}.`)
+    const folder = requireFolder(args)
+    const row = await updateExtension(folder, args.ref as string | undefined)
+    return textResult(
+      `Updated ${row.folder} to ${row.ref ?? 'HEAD'} (${row.commit?.slice(0, 12) ?? 'unknown commit'}).`,
+    )
   }),
 
   // ── extension_remove ─────────────────────────────────────────────
   extension_remove: withApprovalRequired(async (args) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      fail(-32602, 'Missing required param: extensionId')
-    }
-    await uninstallExtension({ data: extensionId })
-    broadcastExtensionsUpdated()
-    return textResult(`Uninstalled ${extensionId}.`)
+    const folder = requireFolder(args)
+    await uninstallExtension(folder)
+    return textResult(`Uninstalled ${folder}.`)
   }),
 
   // ── compile_extension ────────────────────────────────────────────
   compile_extension: withApprovalRequired(async (args, caller) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      fail(-32602, 'Missing required param: extensionId')
-    }
+    const folder = requireLocalFolder(args)
     // Compiling publishes the folder to this instance, so it is a write to
     // the shared thing even when no file changes.
-    const compileSlug = localSlugFromExtensionId(extensionId)
-    if (compileSlug) {
-      await claimSlugForWrite(compileSlug, caller)
-    }
+    await claimFolderForWrite(folder, caller)
     try {
-      const result = await compileLocalExtensionImpl(extensionId, {
+      const result = await compileLocalExtensionImpl(folder, {
         allowUnclean: args[COMPILE_OVERRIDE_PARAM] === true,
       })
       if (result.refusal) {
@@ -411,39 +407,33 @@ export const handlers: Record<string, ToolHandler> = {
     }
   }),
 
-  // ── extension_lease ──────────────────────────────────────────────
-  [LEASE_TOOL_NAME]: async (args, caller) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      const active = await readActiveLeases()
+  // ── extension_lock ───────────────────────────────────────────────
+  [LOCK_TOOL_NAME]: async (args, caller) => {
+    if (args.extensionFolder === undefined) {
+      const active = await readActiveExtensionLocks()
       const lines = Object.entries(active).map(
-        ([slug, lease]) =>
-          `local/${slug} — held by ${lease.agent}, last write ${Math.max(0, Math.round((Date.now() - lease.lastTouched) / 60_000))} min ago`,
+        ([folder, lock]) =>
+          `${folder} — locked by ${lock.agent}, last write ${Math.max(0, Math.round((Date.now() - lock.lastTouched) / 60_000))} min ago`,
       )
-      return textResult(lines.length > 0 ? lines.join('\n') : 'No extension folders are currently claimed.')
+      return textResult(lines.length > 0 ? lines.join('\n') : 'No extension folders are currently locked.')
     }
-    const slug = localSlugFromExtensionId(extensionId)
-    if (!slug) {
-      fail(-32602, `Expected a local extension id ("local/<slug>"), got "${extensionId}"`)
-    }
-    // Taking or releasing a folder is done AS someone: an unattributable
-    // claim would name a holder nobody can be asked about.
-    // Leases are held under a name, because a name is what the next agent to
-    // hit the folder is told to go and ask.
+    const folder = requireLocalFolder(args)
+    // Taking or releasing a lock is done AS someone: an unattributable lock
+    // would name a holder nobody can be asked about. Locks are held under a
+    // name, because a name is what the next agent to hit the folder is told
+    // to go and ask.
     const agent = agentRefName(requireCallingAgent(caller))
     if (args.release === true) {
-      const released = await releaseExtensionLease(slug, agent)
-      return textResult(
-        released ? `Released local/${slug}.` : `local/${slug} was not held by you — nothing to release.`,
-      )
+      const released = await releaseExtensionLock(folder, agent)
+      return textResult(released ? `Released ${folder}.` : `${folder} was not locked by you — nothing to release.`)
     }
-    const decision = await claimExtensionLease(slug, agent, { takeover: args.takeover === true })
+    const decision = await claimExtensionLock(folder, agent, { takeover: args.takeover === true })
     if (decision.outcome === 'refused') {
       return textResult(
-        leaseRefusalMessage(slug, decision.lease, Date.now(), `call ${LEASE_TOOL_NAME} with takeover: true`),
+        extensionLockRefusalMessage(folder, decision.lock, Date.now(), `call ${LOCK_TOOL_NAME} with takeover: true`),
       )
     }
-    return textResult(`local/${slug} is yours (${decision.outcome}).`)
+    return textResult(`${folder} is locked by you (${decision.outcome}).`)
   },
 
   // ── registry_list ────────────────────────────────────────────────
@@ -474,26 +464,17 @@ export const handlers: Record<string, ToolHandler> = {
     if (!extensionId) {
       fail(-32602, 'Missing required param: extensionId')
     }
-    const ref = args.ref as string | undefined
-    const resolved = await resolveExtensionRepo({ id: extensionId })
-    if (!resolved) {
-      return textResult(`Extension "${extensionId}" not found in any connected registry.`)
-    }
-    const record = await installExtensionFromUrl({ data: { url: resolved.repository, ref, auth: resolved.auth } })
-    broadcastExtensionsUpdated()
-    return textResult(
-      `Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref}) from ${resolved.repository}`,
-    )
+    const row = await installFromRegistry(extensionId, {
+      ref: args.ref as string | undefined,
+      asLocal: args.asLocal === true,
+    })
+    return textResult(installedLine(row))
   }),
 
   // ── registry_uninstall ──────────────────────────────────────────
   registry_uninstall: withApprovalRequired(async (args) => {
-    const extensionId = args.extensionId as string | undefined
-    if (!extensionId) {
-      fail(-32602, 'Missing required param: extensionId')
-    }
-    await uninstallExtension({ data: extensionId })
-    broadcastExtensionsUpdated()
-    return textResult(`Uninstalled ${extensionId}.`)
+    const folder = requireFolder(args)
+    await uninstallExtension(folder)
+    return textResult(`Uninstalled ${folder}.`)
   }),
 }

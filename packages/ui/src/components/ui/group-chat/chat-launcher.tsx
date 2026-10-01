@@ -4,7 +4,7 @@ import { MessagesSquare } from 'lucide-react'
 import type * as React from 'react'
 
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface ChatLauncherProps extends Omit<React.ComponentProps<'button'>, 'children'> {
   /** How many of the chat's threads are waiting on someone -- a permission to

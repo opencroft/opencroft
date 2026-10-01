@@ -127,6 +127,29 @@ export const spaceSlugAlias = pgTable(
 // uuid does. A rename onto a taken slug is refused outright, changing
 // nothing, not even the name. A transfer may re-slug on collision in the target
 // space, through the same resolution graphs established.
+// One row per extension folder under `extensions/`, builtin ones aside. The
+// disk says which extensions exist; this says where each came from and since
+// when. `createdAt` is when the extension first appeared on the instance, and
+// it orders claims: of two local folders claiming one extension id, the older
+// is served. Source columns are null for an extension created on the instance.
+export const extension = pgTable('Extension', {
+  folder: text().primaryKey().notNull(),
+  /** The repository the extension was installed from. */
+  sourceUrl: text(),
+  /** The registry it was installed through, by name; null for an install from a URL. */
+  registryName: text(),
+  /** Credentials for the source, as a Secrets Store reference. Never a secret value. */
+  authStoreId: text(),
+  authUsernameKey: text(),
+  authTokenKey: text(),
+  /** The ref installed: a tag, or HEAD. */
+  ref: text(),
+  /** The full sha of the commit installed. */
+  commit: text(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+})
+
 export const spaceApp = pgTable(
   'SpaceApp',
   {
@@ -134,8 +157,12 @@ export const spaceApp = pgTable(
     spaceId: text()
       .notNull()
       .references(() => space.id, { onDelete: 'cascade' }),
-    extensionId: text().notNull(),
-    appSlug: text().notNull(),
+    /**
+     * The App this is an instance of: its qualified type,
+     * `<owner>.<extension>.<type>`, which names the providing extension. Not
+     * to be confused with `slug`, the instance's own address in its space.
+     */
+    type: text().notNull(),
     name: text().default('').notNull(),
     slug: text().default('').notNull(),
     /** JSON object: parameter id -> value the user entered. */
@@ -1023,6 +1050,11 @@ export const chatAttachment = pgTable(
     // The decoded size, so a reader and a limit can both be told the truth
     // about the picture without decoding the column to find out.
     byteSize: integer().notNull(),
+    // The picture's size as it displays, read from the bytes when stored, so a
+    // transcript can reserve its box before the picture loads. NULL where the
+    // bytes did not say.
+    width: integer(),
+    height: integer(),
     createdAt: createdAt(),
   },
   (t) => [index('ChatAttachment_sessionKey_idx').on(t.sessionKey)],
@@ -1093,6 +1125,7 @@ export const schema = {
   setting,
   secret,
   space,
+  extension,
   spaceApp,
   spaceGraph,
   spaceSlugAlias,

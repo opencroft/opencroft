@@ -1,6 +1,7 @@
 'use client'
 
 import { type Editor, useEditorState } from '@tiptap/react'
+import { cn } from 'cn'
 import {
   Blocks,
   Bold,
@@ -34,7 +35,6 @@ import {
 } from 'ui/components/ui/dropdown-menu'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { Separator } from 'ui/components/ui/separator'
-import { cn } from 'ui/lib/utils'
 
 import { BLOCK_INSERTS } from './markdown-editor-block-inserts'
 

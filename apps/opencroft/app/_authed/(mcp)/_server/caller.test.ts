@@ -32,7 +32,12 @@ async function agentNodes(names: string[]): Promise<string[]> {
   const space = await registry.create(slug, slug, { nodes: [], edges: [] })
   const ids = names.map((_, i) => `caller-agent-${i}-${crypto.randomUUID()}`)
   await registry.saveGraph(space.slug, {
-    nodes: names.map((name, i) => ({ id: ids[i], type: 'agent', position: { x: 0, y: 0 }, data: { name } })),
+    nodes: names.map((name, i) => ({
+      id: ids[i],
+      type: 'builtin.core.agent',
+      position: { x: 0, y: 0 },
+      data: { name },
+    })),
     edges: [],
   })
   return ids
@@ -171,7 +176,7 @@ test('a token whose agent node no longer exists resolves to nobody', async () =>
   const space = await registry.create(slug, slug, { nodes: [], edges: [] })
   const nodeId = `caller-agent-gone-${crypto.randomUUID()}`
   await registry.saveGraph(space.slug, {
-    nodes: [{ id: nodeId, type: 'agent', position: { x: 0, y: 0 }, data: { name: 'Caller Gone' } }],
+    nodes: [{ id: nodeId, type: 'builtin.core.agent', position: { x: 0, y: 0 }, data: { name: 'Caller Gone' } }],
     edges: [],
   })
   const token = await mint(nodeId)

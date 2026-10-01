@@ -1,9 +1,9 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import { readSidecar } from '@/app/_authed/(extension-editor)/_actions/extension-checkout'
+import { isBuiltinFolder, isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { scanExtensionFolders } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
+import { ensureExtensionRows, listExtensionRows } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import { getManifest } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { listAllExtensionIds } from '@/app/_authed/(extension-runtime)/_server/manifest'
-import { extDir } from '@/app/_authed/(extension-runtime)/_server/paths'
 import { requireSessionServerFn } from '@/app/_server/require-session'
 
 /**
@@ -15,32 +15,34 @@ import { requireSessionServerFn } from '@/app/_server/require-session'
  * can draw.
  */
 export interface ExtensionIndexEntry {
-  id: string
-  slug: string
+  /** The folder under `extensions/`: what is opened, edited and removed. */
+  folder: string
+  /** The extension id the folder runs under; null when its manifest claims one it may not use. */
+  id: string | null
   name: string
   version: string
-  /** A local extension is a checkout on this instance; an installed one is a
-   *  copy of a repository, kept in step by reinstalling it. */
+  /** A local extension is editable on this instance; an installed one is a copy of a repository, kept in step by updating it. */
   kind: 'local' | 'installed'
-  /** For an installed extension: the ref it was installed at. */
+  /** Whether this folder serves its id. False for one whose id another folder serves, or that cannot run. */
+  active: boolean
+  /** Why the folder is not served, or why the install is broken. */
+  error?: string
+  /** A recorded install whose folder is gone. It can be reinstalled or removed. */
+  missing?: true
+  /** The ref it was installed at, for one installed from a repository. */
   ref?: string
-  /** For an installed extension: the repository it came from. Carried so a
-   *  registry search can mark what this instance already holds. */
+  /** The repository it came from. Carried so a registry search can mark what this instance already holds. */
   sourceUrl?: string
+  registryName?: string
 }
 
 /**
  * The extensions this instance holds, from what the server already knows.
  *
- * `getManifest` reads the loader's manifest cache — the same one every
- * extension surface in the product resolves through, populated as the instance
- * starts and re-read only when a manifest's mtime moves. So this costs a
- * directory listing and a stat per extension, and no git at all.
- *
- * It exists because the list used to be built from full records: every file of
- * every extension, then a `git status`, a `rev-parse` and a branch read each,
- * for a panel that draws names. That work still happens — for the one
- * extension somebody opens.
+ * `getManifest` reads the loader's manifest cache — re-read only when a
+ * manifest's mtime moves — so this costs a directory listing, a stat per
+ * extension and one table read, and no git at all. A folder with no row gets one
+ * here, the first time it is listed (see ensureExtensionRows).
  *
  * Called from the route's loader, so the list arrives with the document rather
  * than one round trip after the page has finished booting.
@@ -52,36 +54,55 @@ export const listExtensionsIndex = createServerFn({ strict: { output: false } })
     // does, and what tells an unauthenticated caller nothing about what this
     // instance runs.
     await requireSessionServerFn()
-    const ids = await listAllExtensionIds()
+    // Builtins are part of the product rather than something anyone installs,
+    // edits or deletes — this page does not list them.
+    const folders = (await scanExtensionFolders()).filter((entry) => !isBuiltinFolder(entry.folder))
+    const rows = await ensureExtensionRows(folders.map((entry) => entry.folder))
     const entries: ExtensionIndexEntry[] = []
-    for (const id of ids) {
-      const [scope, slug] = id.split('/')
-      // Builtins are part of the product rather than something anyone installs,
-      // edits or deletes — this page has never listed them.
-      if ((scope !== 'local' && scope !== 'installed') || !slug) {
-        continue
+    for (const entry of folders) {
+      let name = entry.folder
+      let version = '—'
+      if (entry.active && entry.extensionId) {
+        try {
+          const manifest = await getManifest(entry.extensionId)
+          name = manifest.name || entry.folder
+          version = manifest.version
+        } catch {
+          // A manifest that cannot be read is still an extension on disk, and
+          // leaving it out of the list is how it becomes impossible to delete.
+        }
       }
-      let name: string
-      let version: string
-      try {
-        const manifest = await getManifest(id)
-        name = manifest.name || slug
-        version = manifest.version
-      } catch {
-        // A manifest that cannot be read is still an extension on disk, and
-        // leaving it out of the list is how it becomes impossible to delete.
-        name = slug
-        version = '—'
-      }
-      const sidecar = scope === 'installed' ? await readSidecar(extDir(id)) : null
+      const row = rows.get(entry.folder)
       entries.push({
-        id,
-        slug,
+        folder: entry.folder,
+        id: entry.extensionId,
         name,
         version,
-        kind: scope,
-        ref: sidecar?.ref,
-        sourceUrl: sidecar?.source.url,
+        kind: isLocalFolder(entry.folder) ? 'local' : 'installed',
+        active: entry.active,
+        ...(entry.error ? { error: entry.error } : {}),
+        ...(row?.ref ? { ref: row.ref } : {}),
+        ...(row?.sourceUrl ? { sourceUrl: row.sourceUrl } : {}),
+        ...(row?.registryName ? { registryName: row.registryName } : {}),
+      })
+    }
+    const present = new Set(folders.map((entry) => entry.folder))
+    for (const row of await listExtensionRows()) {
+      if (present.has(row.folder)) {
+        continue
+      }
+      entries.push({
+        folder: row.folder,
+        id: null,
+        name: row.folder,
+        version: '—',
+        kind: isLocalFolder(row.folder) ? 'local' : 'installed',
+        active: false,
+        missing: true,
+        error: 'The folder is missing: reinstall or remove it.',
+        ...(row.ref ? { ref: row.ref } : {}),
+        ...(row.sourceUrl ? { sourceUrl: row.sourceUrl } : {}),
+        ...(row.registryName ? { registryName: row.registryName } : {}),
       })
     }
     return entries

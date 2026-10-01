@@ -16,18 +16,18 @@ interface Stream<T> {
 
 interface ActionCtx {
   nodeId: string
-  typeId: string
+  type: string
   data: Record<string, unknown>
   params: Record<string, unknown>
   input<T = unknown>(handleId: string): T | undefined
   inputSource<T = unknown>(
     handleId: string,
-  ): { sourceNodeId: string; sourceHandleId: string; contextType: string; value: T } | undefined
+  ): { sourceNodeId: string; sourceHandleId: string; handleType: string; value: T } | undefined
   connectedSources(
     handleId: string,
   ): { nodeId: string; handleId: string; type?: string; data: Record<string, unknown> }[]
   containingNodes(
-    typeId?: string,
+    type?: string,
   ): { id: string; type?: string; position: { x: number; y: number }; data: Record<string, unknown> }[]
   output<T = unknown>(handleId: string): Stream<T>
   updateData(patch: Record<string, unknown>): void

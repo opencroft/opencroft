@@ -29,7 +29,7 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
     if (!instance) {
       throw notFound()
     }
-    const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
+    const meta = apps.find((app) => app.type === instance.type)
     return { space, instance, meta, spaces }
   },
   head: ({ loaderData, params }) => ({

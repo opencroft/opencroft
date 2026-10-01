@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 
+import type { ContentBlock } from '@agentclientprotocol/sdk'
+
 import {
   type AgentClientOptions,
   buildClient,
@@ -16,6 +18,7 @@ import type { AgentConnection } from './connection'
 import { deliveryNoteBlock, isDeliveryNote } from './delivery-note'
 import { CODEX_USER_INPUT_FORM } from './elicitation-form.fixtures'
 import { COMPACTION_TITLE, foldEvents, isTerminalToolStatus } from './fold'
+import { blockBytes, PROMPT_BLOCK_BUDGET } from './prompt-size'
 import { decodeBatch } from './queue-tags'
 import { buildSpawnConfig, findAdapter } from './resolve'
 import type { AgentSelection, AsyncTaskInfo, ChatEvent, CompactionState, Presence, QueuedPrompt } from './types'
@@ -310,6 +313,165 @@ test('an attachment travels as an image block beside the text, and the user even
     attachments: [{ ...SHOT, message: 0 }],
   })
   assert.equal(kinds(h.events).includes('error'), false)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test("an attachment's size travels with it onto the user event, and a half-known size does not", async () => {
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loadOne })
+  await h.client.prompt(h.sessionId, 'look at these', {
+    queue: 'push',
+    origin: { kind: 'system' },
+    attachments: [
+      { ...SHOT, width: 640, height: 480 },
+      { ...SHOT, id: 'att-2', width: 640 },
+    ],
+  })
+  await settle()
+  assert.deepEqual(userEvents(h.events).at(-1)?.attachments, [
+    { ...SHOT, width: 640, height: 480, message: 0 },
+    { ...SHOT, id: 'att-2', message: 0 },
+  ])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+// The bridge's ACP SDK closes the connection on any line over its limit, so a
+// delivery is measured before it goes: images past the budget stay behind and
+// say so, and the rest of the message still travels. Sized off the budget
+// itself, so each case sits exactly at it or one byte over.
+const WIDE = { id: 'att-2', name: 'wide.gif', mimeType: 'image/gif' }
+
+function imagesFilling(text: string, extra: number) {
+  const room = PROMPT_BLOCK_BUDGET - blockBytes({ type: 'text', text })
+  const overhead = blockBytes({ type: 'image', data: '', mimeType: 'image/png' })
+  const first = Math.floor(room / 2) - overhead
+  const second = room - (first + overhead) - overhead + extra
+  return [
+    { ...SHOT, data: 'A'.repeat(first) },
+    { ...WIDE, data: 'B'.repeat(second) },
+  ]
+}
+
+// A store as the host keeps one: it answers the ids it is asked for, and
+// records every read so a test can see what was asked and when.
+function loaderOf(rows: Array<{ id: string; name: string; mimeType: string; data: string }>, reads: string[][] = []) {
+  return async ({ ids }: { ids: readonly string[] }) => {
+    reads.push([...ids])
+    return rows.filter((row) => ids.includes(row.id))
+  }
+}
+
+test('attachments are read one at a time, and none past the image that crosses the budget', async () => {
+  const [first, second] = imagesFilling('look at these', 1)
+  const third = { id: 'att-3', name: 'tall.png', mimeType: 'image/png', data: 'CCCC' }
+  const reads: string[][] = []
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loaderOf([first, second, third], reads) })
+  await h.client.prompt(h.sessionId, 'look at these', {
+    queue: 'push',
+    origin: { kind: 'system' },
+    attachments: [SHOT, WIDE, { id: third.id, name: third.name, mimeType: third.mimeType }],
+  })
+  await settle()
+  assert.deepEqual(reads, [['att-1'], ['att-2']], 'one id per read, and the third never read')
+  assert.equal(h.promptBlockCalls[0].length, 2)
+  const errors = h.events.filter((event): event is Extract<ChatEvent, { kind: 'error' }> => event.kind === 'error')
+  assert.deepEqual(
+    errors.map((event) => event.message),
+    [
+      '2 attachments did not travel: too large to send together, one prompt carries at most 31.0 MiB (wide.gif, tall.png).',
+    ],
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a read that fails part-way keeps the images already read and reports the rest', async () => {
+  let reads = 0
+  const h = await setup('claude', {
+    imagePrompt: true,
+    loadAttachments: async ({ ids }) => {
+      reads += 1
+      if (reads > 1) {
+        throw new Error('store unavailable')
+      }
+      return [{ ...SHOT, id: ids[0], data: 'AAAA' }]
+    },
+  })
+  await h.client.prompt(h.sessionId, 'look at these', {
+    queue: 'push',
+    origin: { kind: 'system' },
+    attachments: [SHOT, WIDE, { ...WIDE, id: 'att-3' }],
+  })
+  await settle()
+  assert.equal(reads, 2, 'reading stops at the failure')
+  assert.equal(h.promptBlockCalls[0].length, 2, 'the text and the image read before it')
+  const errors = h.events.filter((event): event is Extract<ChatEvent, { kind: 'error' }> => event.kind === 'error')
+  assert.deepEqual(
+    errors.map((event) => event.message),
+    ['2 attachments could not be read and did not travel: store unavailable'],
+  )
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a prompt exactly at the size budget travels with every image and no problem', async () => {
+  const loaded = imagesFilling('look at these', 0)
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loaderOf(loaded) })
+  await h.client.prompt(h.sessionId, 'look at these', {
+    queue: 'push',
+    origin: { kind: 'system' },
+    attachments: [SHOT, WIDE],
+  })
+  await settle()
+  const blocks = h.promptBlockCalls[0]
+  assert.equal(blocks.length, 3)
+  assert.equal(
+    blocks.reduce((sum, block) => sum + blockBytes(block as ContentBlock), 0),
+    PROMPT_BLOCK_BUDGET,
+  )
+  assert.equal(kinds(h.events).includes('error'), false)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a prompt one byte over the size budget holds back the image that crosses it, and says which', async () => {
+  const loaded = imagesFilling('look at these', 1)
+  const h = await setup('claude', { imagePrompt: true, loadAttachments: loaderOf(loaded) })
+  await h.client.prompt(h.sessionId, 'look at these', {
+    queue: 'push',
+    origin: { kind: 'system' },
+    attachments: [SHOT, WIDE],
+  })
+  await settle()
+  assert.deepEqual(
+    h.promptBlockCalls[0].map((block) => [block.type, block.mimeType]),
+    [
+      ['text', undefined],
+      ['image', 'image/png'],
+    ],
+    'the text and the image that fits still go',
+  )
+  const errors = h.events.filter((event): event is Extract<ChatEvent, { kind: 'error' }> => event.kind === 'error')
+  assert.equal(errors.length, 1)
+  assert.match(errors[0].message, /^1 attachment did not travel: too large to send together/)
+  assert.match(errors[0].message, /\(wide\.gif\)\.$/)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a message too large on its own sends nothing, says so, and leaves the session able to take the next', async () => {
+  const h = await setup('claude')
+  const huge = 'x'.repeat(PROMPT_BLOCK_BUDGET)
+  await h.client.prompt(h.sessionId, huge, { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.equal(h.promptCalls.length, 0, 'nothing reached the wire')
+  const errors = h.events.filter((event): event is Extract<ChatEvent, { kind: 'error' }> => event.kind === 'error')
+  assert.equal(errors.length, 1)
+  assert.match(errors[0].message, /over the 31\.0 MiB one prompt can carry, so it did not go out\.$/)
+  await h.client.prompt(h.sessionId, 'smaller', { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  assert.deepEqual(h.promptCalls, ['smaller'])
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
@@ -1636,13 +1798,10 @@ const pushPlan = (sessionId: string, entries: Array<{ content: string; status: s
   handleUpdate({ sessionId, update: planUpdate(entries) } as Parameters<typeof handleUpdate>[0])
 }
 
-const planMessages = (sessionId: string) =>
-  foldEvents(sessionEvents(sessionId)).filter((message) => message.kind === 'plan')
-
 const storedPlan = (sessionId: string) =>
   (acpStore().sessions.get(sessionId) as { plan?: Array<Record<string, string>> } | undefined)?.plan
 
-test('plan updates fold to one checklist row patched in place', async () => {
+test('plan updates are session state: stored whole, drawing no transcript row', async () => {
   const h = await setup('openclaw')
   const first = [{ content: 'read the code', status: 'in_progress', priority: 'high' }]
   const second = [
@@ -1656,41 +1815,28 @@ test('plan updates fold to one checklist row patched in place', async () => {
   } as Parameters<typeof handleUpdate>[0])
   pushPlan(h.sessionId, second)
 
-  // One row, carrying the LAST update's entries — the first update fixed its
-  // place, this one patched it.
-  const plans = planMessages(h.sessionId)
-  assert.equal(plans.length, 1)
-  assert.ok(plans[0]?.kind === 'plan')
-  assert.deepEqual(plans[0].entries, second)
-  // The checklist sits in the transcript at the position of the FIRST plan
-  // event — before the reply chunk that arrived between the updates.
+  // The transcript holds the reply alone: the plan is read as state, and its
+  // updates interleaving mid-reply must not split the message run.
   const messages = foldEvents(sessionEvents(h.sessionId))
-  assert.equal(messages.at(-2)?.kind, 'plan')
-  // The plan update interleaving mid-reply must not split the message run:
-  // the reply is one assistant message, the way SNAPSHOT_KINDS classifies the
-  // plan as state rather than conversation.
-  const assistant = messages.filter((message) => message.kind === 'assistant')
-  assert.equal(assistant.length, 1)
-  assert.ok(assistant[0]?.kind === 'assistant' && assistant[0].text === 'starting')
-  // Mirrored onto the session so a windowed subscribe can synthesize it.
+  assert.deepEqual(
+    messages.map((message) => message.kind),
+    ['assistant'],
+  )
+  assert.ok(messages[0]?.kind === 'assistant' && messages[0].text === 'starting')
+  // The LAST update's entries, mirrored onto the session so a windowed
+  // subscribe can synthesize it.
   assert.deepEqual(storedPlan(h.sessionId), second)
   await h.client.deleteSession(h.sessionId)
 })
 
-test('an empty plan clears the row, and the next plan anchors fresh', async () => {
+test('an empty plan clears the stored plan, and the next plan replaces it', async () => {
   const h = await setup('openclaw')
   pushPlan(h.sessionId, [{ content: 'only step', status: 'pending', priority: 'medium' }])
   pushPlan(h.sessionId, [])
-  // Cleared, not emptied: an empty checklist renders as nothing.
-  assert.equal(planMessages(h.sessionId).length, 0)
   assert.deepEqual(storedPlan(h.sessionId), [])
-  // And the next non-empty plan is a NEW row, not a patch of the removed one.
   const fresh = [{ content: 'fresh plan', status: 'in_progress', priority: 'high' }]
   pushPlan(h.sessionId, fresh)
-  const plans = planMessages(h.sessionId)
-  assert.equal(plans.length, 1)
-  assert.ok(plans[0]?.kind === 'plan')
-  assert.deepEqual(plans[0].entries, fresh)
+  assert.deepEqual(storedPlan(h.sessionId), fresh)
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -1817,7 +1963,10 @@ test('a host-raised askUser renders as the same ask_user event and answers with 
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a plain-message elicitation still takes a free-text answer, and no answer still cancels', async () => {
+// The reader dismissing an ask is their answer: decline. `cancel` is for an
+// ask whose turn went away (see the turn-end tests below), and an agent may
+// read it as an aborted call instead of an answer.
+test('a plain-message elicitation takes a free-text answer, and no answer declines it', async () => {
   const h = await setup('openclaw')
   const { createElicitation } = buildClient(() => h.sessionId, 'local')
   assert.ok(createElicitation)
@@ -1831,7 +1980,7 @@ test('a plain-message elicitation still takes a free-text answer, and no answer 
   const secondAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
   assert.ok(secondAsk && secondAsk.kind === 'ask_user')
   h.client.resolveElicitation(secondAsk.requestId)
-  assert.deepEqual(await second, { action: 'cancel' })
+  assert.deepEqual(await second, { action: 'decline' })
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -1865,7 +2014,7 @@ test('an elicitation goes to the session it names, not the one last prompted on 
   const guessed = lastPrompted.events.find((event) => event.kind === 'ask_user')
   assert.ok(guessed && guessed.kind === 'ask_user', 'a request-scoped one still reaches a chat')
   lastPrompted.client.resolveElicitation(guessed.requestId)
-  assert.deepEqual(await unscoped, { action: 'cancel' })
+  assert.deepEqual(await unscoped, { action: 'decline' })
   await asking.client.deleteSession(asking.sessionId)
   await lastPrompted.client.deleteSession(lastPrompted.sessionId)
 })
@@ -6076,6 +6225,22 @@ test('a spawned subagent routes its own transcript into the parent and closes on
   await h.client.deleteSession(h.sessionId)
 })
 
+test("a subagent's notice lands in the session itself, not inside the subagent's transcript", async () => {
+  const h = await setup('openclaw')
+  const childId = 'child-sess-notice'
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'subagent_spawned',
+    subagentSessionId: childId,
+    name: 'Researcher',
+    task: 'dig',
+    capabilities: {},
+  })
+  sendUpdate(childId, { sessionUpdate: 'notice', severity: 'warning', title: 'Model fallback' })
+  assert.deepEqual(h.events.at(-1), { kind: 'notice', notice: { severity: 'warning', title: 'Model fallback' } })
+  assert.ok(!h.events.some((event) => event.kind === 'subagent_event'), 'nothing was nested under the subagent')
+  await h.client.deleteSession(h.sessionId)
+})
+
 test("a subagent's permission request is asked in the parent chat and answered from there", async () => {
   // The harness raises the request under the SUBAGENT's session id — a session
   // nobody subscribes to. Before routing, the event was emitted into the void
@@ -6109,6 +6274,81 @@ test("a subagent's permission request is asked in the parent chat and answered f
     h.events.some((event) => event.kind === 'permission_resolved' && event.requestId === asked.requestId),
     'the answer is recorded in the parent session too',
   )
+  await h.client.deleteSession(h.sessionId)
+})
+
+// ── the file changes a tool call reports (ACP `diff` content)
+
+// The shape claude-agent-acp 0.84.0 sends an Edit in for a client that
+// declares the AIR extension: the replaced text is out of `rawInput`, and the
+// change is only in `content`.
+test("a tool call's diff content travels as its diffs, and a later text result does not retract them", async () => {
+  const h = await setup('openclaw')
+  const change = { type: 'diff', path: '/tmp/a.txt', oldText: 'one\ntwo', newText: 'one\nTWO' }
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'e1', title: 'Edit', status: 'pending' })
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'e1',
+    rawInput: { file_path: '/tmp/a.txt', replace_all: false },
+    content: [change],
+  })
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'e1',
+    status: 'completed',
+    content: [{ type: 'content', content: { type: 'text', text: 'updated' } }],
+  })
+  const updates = h.events.filter((event) => event.kind === 'tool_update')
+  assert.deepEqual(
+    updates.map((event) => (event.kind === 'tool_update' ? event.diffs : null)),
+    [[{ path: '/tmp/a.txt', oldText: 'one\ntwo', newText: 'one\nTWO' }], undefined],
+  )
+  const [tool] = foldEvents(h.events).filter((message) => message.kind === 'tool')
+  assert.ok(tool && tool.kind === 'tool')
+  assert.deepEqual(tool.diffs, [{ path: '/tmp/a.txt', oldText: 'one\ntwo', newText: 'one\nTWO' }])
+  assert.equal(tool.status, 'completed')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a created file reports a null oldText, and a tool call with no diff content carries no diffs', async () => {
+  const h = await setup('openclaw')
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'tool_call',
+    toolCallId: 'w1',
+    title: 'Write /tmp/new.txt',
+    status: 'pending',
+    content: [{ type: 'diff', path: '/tmp/new.txt', newText: 'hello' }],
+  })
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'b1', title: 'ls', status: 'pending' })
+  const calls = h.events.filter((event) => event.kind === 'tool_call')
+  assert.deepEqual(calls[0].kind === 'tool_call' && calls[0].diffs, [
+    { path: '/tmp/new.txt', oldText: null, newText: 'hello' },
+  ])
+  assert.ok(calls[1].kind === 'tool_call' && !('diffs' in calls[1]))
+  await h.client.deleteSession(h.sessionId)
+})
+
+test("a permission request's diff content lands on the tool call it names", async () => {
+  const h = await setup('openclaw')
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'e2', title: 'Edit', status: 'pending' })
+  const client = buildClient(() => h.sessionId, 'local')
+  const response = client.requestPermission({
+    sessionId: h.sessionId,
+    toolCall: {
+      toolCallId: 'e2',
+      title: 'Edit /tmp/b.txt',
+      content: [{ type: 'diff', path: '/tmp/b.txt', oldText: 'a', newText: 'b' }],
+    },
+    options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }],
+  })
+  const [tool] = foldEvents(h.events).filter((message) => message.kind === 'tool')
+  assert.ok(tool && tool.kind === 'tool')
+  assert.deepEqual(tool.diffs, [{ path: '/tmp/b.txt', oldText: 'a', newText: 'b' }])
+  assert.equal(tool.title, 'Edit', "the request's title is the prompt's, not the call's")
+  const asked = h.events.find((event) => event.kind === 'permission_request')
+  assert.ok(asked && asked.kind === 'permission_request')
+  h.client.resolvePermission(asked.requestId, 'yes')
+  await response
   await h.client.deleteSession(h.sessionId)
 })
 

@@ -82,13 +82,16 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
             isTerminalToolStatus(message.status) || message.output !== undefined
               ? { text: formatToolValue(message.output), isError: message.status === 'failed' }
               : undefined,
+          ...(message.diffs ? { diffs: message.diffs } : {}),
         })
         break
-      case 'plan':
-        // One checklist per session: foldEvents already upserted the plan
-        // message in place, so this only translates it — `id` is the React
-        // key, the plan being an entity like a tool call rather than a step.
-        details.push({ kind: 'plan', id: `plan:${message.id}`, entries: message.entries })
+      case 'notice':
+        details.push({
+          kind: 'notice',
+          severity: message.severity,
+          title: message.title,
+          ...(message.description ? { description: message.description } : {}),
+        })
         break
       case 'error':
         // The kit turn has no error item of its own. Dropping it would lose the

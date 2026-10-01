@@ -10,7 +10,7 @@ import type { Components, ExtraProps } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkDirective from 'remark-directive'
 import remarkGfm from 'remark-gfm'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { CodeBlock } from './code-block'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
@@ -37,6 +37,16 @@ import { MermaidDiagram } from './mermaid-diagram'
 // gets it by depending on this, not by copying it.
 function MarkdownLink({ node: _node, ...props }: ComponentProps<'a'> & ExtraProps) {
   return <a {...props} target='_blank' rel='noopener noreferrer' />
+}
+
+// A picture in the text takes a fixed-height box before it loads. Markdown
+// says nothing about a picture's size, so without one the picture is nothing
+// until its bytes land and then suddenly its full height, moving every line
+// under it -- long after the reader has settled on them. Fitted inside the box,
+// never enlarged, so a small badge stays small; only the width follows the
+// picture, and a change in width moves nothing below.
+function MarkdownImage({ node: _node, alt = '', className, ...props }: ComponentProps<'img'> & ExtraProps) {
+  return <img {...props} alt={alt} className={cn('block h-64 w-full object-scale-down object-left', className)} />
 }
 
 /**
@@ -154,6 +164,7 @@ export const markdownDirectiveBlocks = {
 
 const markdownComponents: Components = {
   a: MarkdownLink,
+  img: MarkdownImage,
   pre: MarkdownPre,
   ...markdownDirectiveBlocks.components,
 }

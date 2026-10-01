@@ -1,12 +1,12 @@
 {
-  "id": "builtin/core",
+  "id": "builtin.core",
   "name": "Core",
   "version": "1.4.0",
   "description": "Core node catalog — infrastructure + storage + windows + scripts + api routes",
   "provides": {
     "apps": [
       {
-        "slug": "graph",
+        "type": "graph",
         "title": "Graph",
         "description": "A node graph canvas. Every graph in a space is one instance of this app; each is addressed as <space>.<graph>, and the space's own page shows its default graph. Removing the instance removes the graph and everything on it.",
         "icon": "Workflow"
@@ -15,25 +15,25 @@
   },
   "nodes": [
     {
-      "typeId": "localhost",
+      "type": "localhost",
       "name": "Localhost",
       "category": "Infrastructure",
       "icon": "Monitor",
-      "handles": [{ "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" }]
+      "handles": [{ "id": "terminal", "handleType": "terminal-context", "role": "source", "label": "Terminal" }]
     },
     {
-      "typeId": "wsl",
+      "type": "wsl",
       "name": "WSL",
       "category": "Infrastructure",
       "icon": "SquareTerminal",
-      "handles": [{ "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" }]
+      "handles": [{ "id": "terminal", "handleType": "terminal-context", "role": "source", "label": "Terminal" }]
     },
     {
-      "typeId": "server",
+      "type": "server",
       "name": "Server",
       "category": "Infrastructure",
       "icon": "Server",
-      "handles": [{ "id": "terminal", "contextType": "terminal-context", "role": "source", "label": "Terminal" }],
+      "handles": [{ "id": "terminal", "handleType": "terminal-context", "role": "source", "label": "Terminal" }],
       "actions": [
         {
           "id": "setKey",
@@ -62,16 +62,16 @@
       ]
     },
     {
-      "typeId": "terminal-router",
+      "type": "terminal-router",
       "name": "Terminal Router",
       "category": "Infrastructure",
       "icon": "Split",
       "handles": [
-        { "id": "route-", "contextType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
+        { "id": "route-", "handleType": "terminal-context", "role": "source", "label": "Terminal", "dynamic": true }
       ]
     },
     {
-      "typeId": "core-key-store",
+      "type": "core-key-store",
       "name": "Key Store",
       "category": "Storage",
       "icon": "KeyRound",
@@ -115,7 +115,7 @@
       ]
     },
     {
-      "typeId": "core-secrets-store",
+      "type": "core-secrets-store",
       "name": "Secrets Store",
       "category": "Storage",
       "icon": "ShieldCheck",
@@ -166,21 +166,21 @@
       ]
     },
     {
-      "typeId": "terminal",
+      "type": "terminal",
       "name": "Terminal Window",
       "category": "Windows",
       "icon": "TerminalSquare",
-      "handles": [{ "id": "ssh-in", "contextType": "terminal-context", "role": "target", "label": "Terminal" }]
+      "handles": [{ "id": "ssh-in", "handleType": "terminal-context", "role": "target", "label": "Terminal" }]
     },
     {
-      "typeId": "script-bash",
+      "type": "script-bash",
       "name": "Bash Script",
       "category": "Scripts",
       "icon": "TerminalSquare",
       "handles": [
-        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" },
-        { "id": "exec-in", "contextType": "execution-context", "role": "target", "label": "Handler" },
-        { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
+        { "id": "ctx-in", "handleType": "terminal-context", "role": "target", "label": "Target" },
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler" },
+        { "id": "stdout-out", "handleType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
         {
@@ -192,14 +192,14 @@
       ]
     },
     {
-      "typeId": "script-python",
+      "type": "script-python",
       "name": "Python Script",
       "category": "Scripts",
       "icon": "Code",
       "handles": [
-        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" },
-        { "id": "exec-in", "contextType": "execution-context", "role": "target", "label": "Handler" },
-        { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
+        { "id": "ctx-in", "handleType": "terminal-context", "role": "target", "label": "Target" },
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler" },
+        { "id": "stdout-out", "handleType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
         {
@@ -211,14 +211,14 @@
       ]
     },
     {
-      "typeId": "script-node",
+      "type": "script-node",
       "name": "Node.js Script",
       "category": "Scripts",
       "icon": "Braces",
       "handles": [
-        { "id": "ctx-in", "contextType": "terminal-context", "role": "target", "label": "Target" },
-        { "id": "exec-in", "contextType": "execution-context", "role": "target", "label": "Handler" },
-        { "id": "stdout-out", "contextType": "text-stream", "role": "source", "label": "Output" }
+        { "id": "ctx-in", "handleType": "terminal-context", "role": "target", "label": "Target" },
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler" },
+        { "id": "stdout-out", "handleType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
         {
@@ -230,11 +230,11 @@
       ]
     },
     {
-      "typeId": "send-message",
+      "type": "send-message",
       "name": "Send Message",
       "category": "Integration",
       "icon": "Send",
-      "handles": [{ "id": "text-in", "contextType": "text-stream", "role": "target", "label": "Text" }],
+      "handles": [{ "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Text" }],
       "actions": [
         {
           "id": "send",
@@ -261,42 +261,74 @@
       ]
     },
     {
-      "typeId": "api-route",
+      "type": "api-route",
       "name": "API Route",
       "category": "Integration",
       "icon": "Route",
-      "handles": [{ "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }]
+      "handles": [{ "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" }]
     },
     {
-      "typeId": "event",
+      "type": "event",
       "name": "Event",
       "category": "Integration",
       "icon": "AlarmClock",
-      "handles": [{ "id": "exec-out", "contextType": "execution-context", "role": "source", "label": "Handler" }],
+      "handles": [{ "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" }],
       "actions": [
         { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
       ]
     },
     {
-      "typeId": "prompt",
+      "type": "prompt",
       "name": "Prompt",
       "category": "Text",
       "icon": "MessageCircle",
-      "handles": [{ "id": "text-out", "contextType": "text-stream", "role": "source", "label": "Text" }]
+      "handles": [{ "id": "text-out", "handleType": "text-stream", "role": "source", "label": "Text" }]
     },
     {
-      "typeId": "text-generation",
+      "type": "text-generation",
       "name": "Text Generation",
       "category": "Text",
       "icon": "Sparkles",
       "handles": [
-        { "id": "text-in", "contextType": "text-stream", "role": "target", "label": "Prompt", "streamAction": "run" },
-        { "id": "text-out", "contextType": "text-stream", "role": "source", "label": "Text" }
+        { "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Prompt", "streamAction": "run" },
+        { "id": "text-out", "handleType": "text-stream", "role": "source", "label": "Text" }
       ]
     },
-    { "typeId": "section", "name": "Section", "category": "Organization", "icon": "Boxes" }
+    {
+      "type": "log",
+      "name": "Log",
+      "category": "Text",
+      "icon": "ScrollText",
+      "handles": [{ "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Text" }]
+    },
+    {
+      "type": "agent",
+      "name": "Agent",
+      "category": "AI",
+      "icon": "User",
+      "handles": [
+        { "id": "instructions-in", "handleType": "agent-instruction", "role": "target", "label": "Instructions" }
+      ]
+    },
+    {
+      "type": "agent-instruction",
+      "name": "Agent Instruction",
+      "category": "AI",
+      "icon": "BookOpen",
+      "handles": [{ "id": "instruction-out", "handleType": "agent-instruction", "role": "source", "label": "Agent" }]
+    },
+    {
+      "type": "agent-tool",
+      "name": "Agent Tool",
+      "category": "Integration",
+      "icon": "Wrench",
+      "handles": [{ "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" }]
+    },
+    { "type": "openai-client", "name": "OpenAI Client", "category": "Text", "icon": "Sparkles" },
+    { "type": "openai-assistant", "name": "AI Assistant", "category": "AI", "icon": "UserRound" },
+    { "type": "section", "name": "Section", "category": "Organization", "icon": "Boxes" }
   ],
-  "contexts": [
+  "handleTypes": [
     {
       "id": "terminal-context",
       "label": "Terminal Context",
@@ -304,6 +336,8 @@
       "description": "Terminal execution context (local, WSL, or SSH)"
     },
     { "id": "filesystem-target", "label": "Filesystem Target", "color": "oklch(0.7 0.17 140)" },
+    { "id": "text-stream", "label": "Text Stream", "color": "oklch(0.75 0.17 100)" },
+    { "id": "agent-instruction", "label": "Agent Instruction", "color": "oklch(0.72 0.16 180)" },
     {
       "id": "execution-context",
       "label": "Execution Context",

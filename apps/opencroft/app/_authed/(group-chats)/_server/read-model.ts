@@ -16,11 +16,13 @@
 import { db, groupChatMember, groupChatThread, user } from '@opencroft/db'
 import { and, inArray, isNull } from 'drizzle-orm'
 
+import type { ContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type { GroupChatThreadSummary } from '@/app/_authed/(group-chats)/_server/model'
 import {
   findThreadBySlug,
   findThreadInGroupChat,
   getGroupChat,
+  lastKnownContextUsage,
   listGroupChatsForUser,
   listMembers,
   listThreadsInGroupChat,
@@ -97,6 +99,18 @@ export interface GroupChatThreadEntry {
    * its thread list, opens read-only, and refuses every send until unarchived.
    */
   archived: boolean
+}
+
+/** A thread as a list row carries it: the entry, plus what the list shows while its session is not running. */
+export interface GroupChatThreadListEntry extends GroupChatThreadEntry {
+  /**
+   * The context this thread's session held at its last turn end, with `asOf`
+   * set; null when it never reported any. A running session's current reading
+   * is pushed with the session activity instead, so this is the figure for a
+   * session that is not running -- which is why it is read for every thread,
+   * loaded or not, rather than only for the ones offline at load.
+   */
+  lastContextUsage: ContextUsage | null
 }
 
 // A reference that no longer resolves is shown, not hidden. `agentNodeId` is
@@ -248,14 +262,16 @@ export async function getGroupChatDetailView(request: Request, groupChatId: stri
 export async function listThreadsInGroupChatView(
   request: Request,
   groupChatId: string,
-): Promise<GroupChatThreadEntry[]> {
+): Promise<GroupChatThreadListEntry[]> {
   const threads = await listThreadsInGroupChat(request, groupChatId)
   if (threads.length === 0) {
     return []
   }
   const agents = await agentsByNodeId()
   const agentMembers = await agentMemberIds(request, groupChatId)
+  const lastContextByKey = await lastKnownContextUsage(threads)
   return threads.map((t) => ({
+    lastContextUsage: lastContextByKey.get(t.sessionKey) ?? null,
     id: t.id,
     groupChatId: t.groupChatId,
     title: t.title,

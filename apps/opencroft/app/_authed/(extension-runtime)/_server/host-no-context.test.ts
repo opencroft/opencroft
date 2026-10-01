@@ -1,4 +1,4 @@
-// Exercises the real database (embedded PGlite by default) and the real builtin/core
+// Exercises the real database (embedded PGlite by default) and the real builtin.core
 // extension bundle — see @opencroft/db's test-env for how this stays off the shared
 // dev/production database regardless of the ambient environment.
 //
@@ -41,7 +41,7 @@ test('host.terminal.getContext resolves a node output with no Start context at a
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   await registry.create(slug, slug, {
-    nodes: [{ id: nodeId, type: 'localhost', position: { x: 0, y: 0 }, data: {} }],
+    nodes: [{ id: nodeId, type: 'builtin.core.localhost', position: { x: 0, y: 0 }, data: {} }],
     edges: [],
   })
 
@@ -61,19 +61,30 @@ test('host.graph.listHandles enumerates with no Start context, and its ids resol
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   await registry.create(slug, slug, {
-    nodes: [{ id: nodeId, type: 'localhost', position: { x: 0, y: 0 }, data: { name: 'my-machine' } }],
+    nodes: [{ id: nodeId, type: 'builtin.core.localhost', position: { x: 0, y: 0 }, data: { name: 'my-machine' } }],
     edges: [],
   })
 
-  const host = createHost('host-no-context-handles-ext')
-  const handles = await host.graph.listHandles({ role: 'source', contextType: 'terminal-context' })
+  const host = createHost('acme.handles-ext')
+  const handles = await host.graph.listHandles({ role: 'source', handleType: 'builtin.core.terminal-context' })
 
   const mine = handles.filter((handle) => handle.nodeId === nodeId)
   assert.ok(mine.length > 0, 'the localhost node must expose at least one terminal source')
   assert.equal(mine[0].spaceSlug, slug, 'the space is reported rather than flattened away')
   assert.equal(mine[0].nodeName, 'my-machine')
   assert.equal(mine[0].role, 'source')
-  assert.equal(mine[0].contextType, 'terminal-context')
+  assert.equal(mine[0].type, 'builtin.core.localhost', 'the node type as the graph stores it')
+  assert.equal(mine[0].handleType, 'builtin.core.terminal-context')
+
+  // A bare handle type is core's to core, and to an extension that does not
+  // declare one by that name, as extension code written before types were
+  // qualified means it. (This replaces an assertion that a bare name is only
+  // ever the caller's own; that still holds for a name the caller declares,
+  // pinned in _declared-types.test.ts.)
+  const ownToCore = await createHost('builtin.core').graph.listHandles({ handleType: 'terminal-context' })
+  assert.ok(ownToCore.some((handle) => handle.nodeId === nodeId))
+  const coreToAnother = await host.graph.listHandles({ handleType: 'terminal-context' })
+  assert.ok(coreToAnother.some((handle) => handle.nodeId === nodeId))
 
   // The pairing that makes the API useful: every id it hands back is one
   // getContext can actually resolve.

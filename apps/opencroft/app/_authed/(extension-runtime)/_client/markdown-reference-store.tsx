@@ -10,10 +10,10 @@ import {
   REFERENCE_CHIP_UNKNOWN_CLASS,
   referenceChipToneClass,
 } from 'agent-chat/components/reference-chip'
+import { cn } from 'cn'
 import type { ReactNode } from 'react'
 
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { cn } from '@/lib/utils'
 
 /*
  * The extensions' markdown resolvers, turned into the one reference source

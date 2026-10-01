@@ -1,14 +1,13 @@
-import path from 'node:path'
-
-import { installNodeDeps, readSidecar, resolveAuth } from '@/app/_authed/(extension-editor)/_actions/extension-checkout'
 import {
   compileLocalExtensionImpl,
   getLocalExtensionImpl,
   type LocalExtensionRecord,
+  localFolderDir,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
+import { authOf, getExtensionRow } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import { runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
-import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { resolveAuth } from '@/app/_authed/(extension-runtime)/_server/source-repository'
 import type { BuildResult } from '@/app/_authed/(extension-runtime)/_types'
 
 // A local extension is a git checkout on this instance, and its branch moves
@@ -56,20 +55,12 @@ export interface LocalPullResult {
   build: BuildResult
 }
 
-function slugFromId(extensionId: string): string {
-  const [scope, slug] = extensionId.split('/')
-  if (scope !== 'local' || !slug) {
-    throw new Error(`Expected local/<slug>, got "${extensionId}"`)
-  }
-  return slug
-}
-
-/** The remote a checkout updates from: the URL the install recorded, falling
+/** The remote a checkout updates from: the URL its install recorded, falling
  *  back to whatever `origin` points at for one that was cloned by hand. */
-async function remoteUrl(dir: string): Promise<string | null> {
-  const sidecar = await readSidecar(dir)
-  if (sidecar?.source.url) {
-    return sidecar.source.url
+async function remoteUrl(folder: string, dir: string): Promise<string | null> {
+  const row = await getExtensionRow(folder)
+  if (row?.sourceUrl) {
+    return row.sourceUrl
   }
   try {
     const { stdout } = await runGit(['-C', dir, 'remote', 'get-url', 'origin'])
@@ -79,9 +70,9 @@ async function remoteUrl(dir: string): Promise<string | null> {
   }
 }
 
-async function credentialsFor(dir: string) {
-  const sidecar = await readSidecar(dir)
-  return resolveAuth(sidecar?.auth)
+async function credentialsFor(folder: string) {
+  const row = await getExtensionRow(folder)
+  return resolveAuth(row ? authOf(row) : undefined)
 }
 
 /**
@@ -114,8 +105,8 @@ function blockedReason(branch: string | null, dirty: boolean | null, dirtyPaths:
   return null
 }
 
-export async function checkLocalExtensionRemoteImpl(extensionId: string): Promise<LocalRemoteState> {
-  const dir = path.join(localExtRoot(), slugFromId(extensionId))
+export async function checkLocalExtensionRemoteImpl(folder: string): Promise<LocalRemoteState> {
+  const dir = localFolderDir(folder)
   const state = await readCheckoutState(dir)
   const base: LocalRemoteState = {
     branch: state.branch,
@@ -131,13 +122,13 @@ export async function checkLocalExtensionRemoteImpl(extensionId: string): Promis
   if (!state.branch || state.branch === 'HEAD') {
     return base
   }
-  const url = await remoteUrl(dir)
+  const url = await remoteUrl(folder, dir)
   if (!url) {
     return { ...base, error: 'This checkout has no remote to check.' }
   }
   let creds: Awaited<ReturnType<typeof credentialsFor>>
   try {
-    creds = await credentialsFor(dir)
+    creds = await credentialsFor(folder)
   } catch (err) {
     return { ...base, error: err instanceof Error ? err.message : String(err) }
   }
@@ -174,22 +165,21 @@ export async function checkLocalExtensionRemoteImpl(extensionId: string): Promis
   return { ...base, remoteCommit, behind: !has }
 }
 
-export async function pullLocalExtensionImpl(extensionId: string): Promise<LocalPullResult> {
-  const slug = slugFromId(extensionId)
-  const dir = path.join(localExtRoot(), slug)
+export async function pullLocalExtensionImpl(folder: string): Promise<LocalPullResult> {
+  const dir = localFolderDir(folder)
   // Re-read rather than trust what the page was showing: the tree may have
   // been dirtied since it asked, and this is the check that actually decides.
   const state = await readCheckoutState(dir)
   const blocked = blockedReason(state.branch, state.sourceDirty, state.sourceDirtyPaths)
   if (blocked) {
-    throw new Error(`Refusing to update ${extensionId}. ${blocked}`)
+    throw new Error(`Refusing to update ${folder}. ${blocked}`)
   }
   const branch = state.branch as string
-  const url = await remoteUrl(dir)
+  const url = await remoteUrl(folder, dir)
   if (!url) {
-    throw new Error(`${extensionId} has no remote to update from.`)
+    throw new Error(`${folder} has no remote to update from.`)
   }
-  const creds = await credentialsFor(dir)
+  const creds = await credentialsFor(folder)
   const { url: authedUrl, env, cleanup } = await withGitAuth(url, creds)
   try {
     await runGit(['-C', dir, 'fetch', authedUrl, branch], { maxBuffer: 64 * 1024 * 1024, env: gitEnvFor(env) })
@@ -205,25 +195,16 @@ export async function pullLocalExtensionImpl(extensionId: string): Promise<Local
   const after = head.trim()
   const moved = before !== after
 
-  if (moved && before) {
-    // Only when the pull actually touched them: npm install on every update
-    // would spend a minute to discover it had nothing to do.
-    const { stdout: changed } = await runGit(['-C', dir, 'diff', '--name-only', `${before}..${after}`])
-    const paths = changed.split('\n').map((line) => line.trim())
-    if (paths.includes('package.json') || paths.includes('package-lock.json')) {
-      await installNodeDeps(dir)
-    }
-  }
-
   // The bundle this instance is running still comes from the old commit until
-  // this happens, so the update is not finished without it. A build that fails
-  // is reported rather than thrown: the files have already moved, and saying
-  // "update failed" about a checkout that did update is worse than saying what
-  // the compiler said.
-  const build = await compileLocalExtensionImpl(extensionId)
-  const record = await getLocalExtensionImpl(extensionId)
+  // this happens, so the update is not finished without it. The build brings
+  // node_modules into line itself when package.json or the lockfile moved. A
+  // build that fails is reported rather than thrown: the files have already
+  // moved, and saying "update failed" about a checkout that did update is worse
+  // than saying what the compiler said.
+  const build = await compileLocalExtensionImpl(folder)
+  const record = await getLocalExtensionImpl(folder)
   if (!record) {
-    throw new Error(`Failed to read ${extensionId} after updating it.`)
+    throw new Error(`Failed to read ${folder} after updating it.`)
   }
   return { record, from: before, to: after, moved, build }
 }

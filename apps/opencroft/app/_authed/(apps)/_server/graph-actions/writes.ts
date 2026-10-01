@@ -19,6 +19,7 @@ import {
   resolveForWrite,
 } from '@/app/_authed/(apps)/_server/graph-actions/property-path'
 import type { HostAppAction } from '@/app/_authed/(apps)/_server/host-apps'
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { parseEndpoint } from '@/app/_authed/(mcp)/_server/endpoint'
 import { replaceExact } from '@/app/_authed/(mcp)/_server/exact-replace'
 import { fail } from '@/app/_authed/(mcp)/_server/tool-refusal'
@@ -55,7 +56,7 @@ export const writeActions: HostAppAction[] = [
   {
     id: 'createNodes',
     description:
-      'Create one or more nodes in this graph. Each `type` must match a registered extension typeId (e.g. "server", "docker-service", "application").',
+      'Create one or more nodes in this graph. Each `type` is a node type an installed extension provides, qualified with that extension\'s id: `<owner>.<extension>.<type>` (e.g. "acme.widgets.gauge").',
     inputSchema: {
       type: 'object',
       properties: {
@@ -65,7 +66,7 @@ export const writeActions: HostAppAction[] = [
           items: {
             type: 'object',
             properties: {
-              type: { type: 'string', description: 'Extension typeId' },
+              type: { type: 'string', description: 'Qualified node type, <owner>.<extension>.<type>' },
               position: POSITION_SCHEMA,
               data: {
                 type: 'object',
@@ -86,6 +87,10 @@ export const writeActions: HostAppAction[] = [
       for (const it of items) {
         if (!it.type || typeof it.type !== 'string') {
           fail(-32602, 'Each node must include a string "type"')
+        }
+        // A bare name would be stored as a type no extension can claim.
+        if (!parseType(it.type)) {
+          fail(-32602, `"${it.type}" is not a qualified node type: expected <owner>.<extension>.<type>`)
         }
       }
       const { address } = await graphTarget(ctx)
@@ -352,7 +357,7 @@ export const writeActions: HostAppAction[] = [
   {
     id: 'connectNodes',
     description:
-      'Connect nodes of this graph with one or more edges. Source and target handles must share the same contextType.',
+      'Connect nodes of this graph with one or more edges. Source and target handles must carry the same handle type (e.g. both "builtin.core.terminal-context").',
     inputSchema: { type: 'object', properties: { edges: EDGES_SCHEMA }, required: ['edges'] },
     requireApproval: true,
     approvalSpace,

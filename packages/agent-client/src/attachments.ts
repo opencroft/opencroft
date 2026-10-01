@@ -22,6 +22,14 @@ export interface AttachmentRef {
   id: string
   name: string
   mimeType: string
+  /**
+   * The picture's size in pixels as it displays (any orientation it records
+   * already applied), when the host knows it. Present lets a surface lay the
+   * picture out at its final size before the bytes arrive, so a late image
+   * moves nothing. Both or neither.
+   */
+  width?: number
+  height?: number
 }
 
 /**

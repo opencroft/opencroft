@@ -21,7 +21,7 @@ import {
 import { ScrollArea } from "ui/components/ui/layout/scroll-area"
 import { RecyclingView } from "ui/components/ui/layout/recycling-view"
 import { GridSize, gridSizeClasses } from "ui/components/ui/layout/grid"
-import { cn } from "ui/lib/utils"
+import { cn } from "cn"
 
 // ---------------------------------------------------------------------------
 // PopupRecyclingContent internal renderer

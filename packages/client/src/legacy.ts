@@ -10,17 +10,29 @@ import type { ComponentType, FC, ReactNode } from 'react'
 
 export interface ExtensionHandle {
   id: string
-  contextType: string
+  /**
+   * What a connection on this handle carries: one of this extension's own
+   * handle types bare (`signal`), another extension's qualified
+   * (`builtin.core.terminal-context`). Required unless the deprecated
+   * `contextType` stands in for it.
+   */
+  handleType?: string
+  /** @deprecated Declare `handleType`. Read only when `handleType` is absent. */
+  contextType?: string
   role: 'source' | 'target'
   label?: string
   dynamic?: boolean
 }
 
-export interface ExtensionContextType {
+/** A handle type this extension declares, by its bare id; the host qualifies it with the extension's id. */
+export interface ExtensionHandleType {
   id: string
   label: string
   color: string
 }
+
+/** @deprecated Renamed `ExtensionHandleType`. */
+export type ExtensionContextType = ExtensionHandleType
 
 export interface ExtensionComponentProps<D = Record<string, unknown>> {
   id: string
@@ -45,8 +57,18 @@ export interface InspectorTab<D = Record<string, unknown>> {
 /** Context passed to a node context-menu item's `isEnabled`/`onSelect`. */
 export interface NodeContextMenuContext<D = Record<string, unknown>> {
   nodeId: string
+  /** The node's type as this extension declared it: bare. */
+  type: string
+  /** @deprecated Read `type`, which holds the same bare value. */
   typeId: string
   data: D
+  /**
+   * The node's wired inputs as the open canvas has them, keyed by target
+   * handle id — what `useNodeContext` returns per handle. Prefer it over
+   * `data.__resolvedContexts`, which the server writes on save and which lags
+   * wiring done in the open page.
+   */
+  contexts: Record<string, ResolvedContext>
 }
 
 export interface NodeContextMenuItem<D = Record<string, unknown>> {
@@ -65,7 +87,15 @@ export interface NodeContextMenuItem<D = Record<string, unknown>> {
 }
 
 export interface NodeDefinition<D = Record<string, unknown>> {
-  typeId: string
+  /**
+   * The node's type, bare: a slug unique among this extension's nodes. The
+   * host qualifies it with the extension's id (`<owner>.<extension>.<type>`),
+   * which is the form graph data carries. Required unless the deprecated
+   * `typeId` stands in for it.
+   */
+  type?: string
+  /** @deprecated Declare `type`. Read only when `type` is absent. */
+  typeId?: string
   name: string
   category?: string
   description?: string
@@ -78,11 +108,30 @@ export interface NodeDefinition<D = Record<string, unknown>> {
   inspectorTabs?: InspectorTab<D>[]
   /** Entries this node type contributes to its right-click context menu, after the built-in Copy/Delete actions. */
   contextMenuItems?: NodeContextMenuItem<D>[]
-  exposeOutput?: (handleId: string, data: D, typeId: string, nodeId: string) => unknown
+  /**
+   * Told the node's type as declared here (bare), and the node's wired inputs
+   * as the open canvas has them (`contexts`, keyed by target handle id, as in
+   * `NodeContextMenuContext`). An output built from an input reads it there,
+   * not from `data.__resolvedContexts`, which lags wiring done in the open page.
+   * The value must be JSON-serialisable: consumers on the canvas are handed a
+   * structural copy of it.
+   */
+  exposeOutput?: (
+    handleId: string,
+    data: D,
+    type: string,
+    nodeId: string,
+    contexts: Record<string, ResolvedContext>,
+  ) => unknown
 }
 
 export interface ExtensionDeclarationManifest {
-  id: string
+  /**
+   * @deprecated The runtime supplies the extension's id when it loads the
+   * bundle, and files everything the bundle declares under that. Leave it out;
+   * a different value is ignored, with a console warning.
+   */
+  id?: string
   name?: string
   version?: string
   description?: string
@@ -142,7 +191,10 @@ export interface SettingsPageDefinition {
 
 export interface ExtensionDeclaration {
   manifest: ExtensionDeclarationManifest
-  contexts?: ExtensionContextType[]
+  /** The handle types this extension declares, bare. */
+  handleTypes?: ExtensionHandleType[]
+  /** @deprecated Declare `handleTypes`. Read only when `handleTypes` is absent. */
+  contexts?: ExtensionHandleType[]
   nodes?: NodeDefinition[]
   commandModes?: CommandModeDefinition[]
   settings?: SettingsPageDefinition[]
@@ -151,6 +203,7 @@ export interface ExtensionDeclaration {
 }
 
 export interface HandlePinProps {
+  /** The handle type: bare for one of this extension's own, qualified for another's. Also the default `id`. */
   type: string
   id?: string
   color?: string
@@ -168,12 +221,27 @@ export interface ExtensionStorage {
 // ── Extension authoring ─────────────────────────────────────────────────────
 
 export declare const defineExtension: (decl: ExtensionDeclaration) => ExtensionDeclaration
+/** The extension's own id, `<owner>.<extension>`. Never hard-code it. */
 export declare const extensionId: string
+/**
+ * Where the host serves this extension: `/api/ext/<extensionId>`. Extensions
+ * never build their own URLs — use this, `assetUrl`, `routeUrl` and
+ * `absoluteUrl`.
+ */
+export declare const urlBase: string
+/** The URL of a static file under the extension's `assets/` folder. */
+export declare const assetUrl: (path: string) => string
+/** The URL of one of the extension's declared HTTP `routes`. */
+export declare const routeUrl: (path: string) => string
+/**
+ * An instance-relative URL (`urlBase`, or what `assetUrl` / `routeUrl` return)
+ * in absolute form, resolved against the page's origin — for a link handed
+ * outside the instance. Defaults to `urlBase`.
+ */
+export declare const absoluteUrl: (url?: string) => string
 export declare const invoke: <T = unknown>(name: string, ...args: unknown[]) => Promise<T>
 export declare const dispatch: (nodeId: string, actionId: string, params?: Record<string, unknown>) => Promise<unknown>
 export declare const createStorage: (namespace?: string) => ExtensionStorage
-export declare const assetUrl: (path: string) => string
-export declare const routeUrl: (path: string) => string
 
 // ── React + canvas runtime (host-provided) ──────────────────────────────────
 

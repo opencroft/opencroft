@@ -1,9 +1,9 @@
 // The resolution itself, kept free of the extension runtime so its ORDER can
 // be tested with a fake exposeOutput. Loading the runtime opens the database.
-import {
-  TERMINAL_ROUTER_TYPE,
-  type TerminalRoute,
-} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
+import type { TerminalRoute } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
+import { TERMINAL_ROUTER_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { feedingEdges } from '@/app/_authed/(extension-runtime)/_input-edges'
 import type { GraphEdgeRecord, GraphNodeRecord, GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import type { NodeTypeHandles } from '@/app/_authed/(extension-runtime)/_server/node-handles'
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
@@ -11,16 +11,18 @@ import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 interface ResolvedContextEntry {
   sourceNodeId: string
   sourceHandleId: string
-  contextType: string
+  /** The source handle's qualified handle type. */
+  handleType: string
   value: unknown
 }
 
 const CONTEXT_KEY = '__resolvedContexts'
 
+/** An extension's `exposeOutput`, told the source node's BARE type — the name the extension declared. */
 export type ExposeOutput = (
   handleId: string,
   nodeData: Record<string, unknown>,
-  typeId: string,
+  type: string,
   nodeId: string,
 ) => unknown
 
@@ -42,6 +44,9 @@ export interface ContextResolverDeps {
  * which need not be dependency order, so one pass over them resolves such an
  * edge only by luck. Passes repeat over the edges still unresolved until a pass
  * resolves nothing new; each pass reads the data the previous one wrote.
+ *
+ * Only the edge that feeds each handle is resolved (see `feedingEdges`), so
+ * pass order never decides which of several edges a handle ends up with.
  */
 export async function resolveContexts(graph: GraphSnapshot, deps: ContextResolverDeps): Promise<GraphSnapshot> {
   const nodesById = new Map<string, GraphNodeRecord>()
@@ -50,20 +55,20 @@ export async function resolveContexts(graph: GraphSnapshot, deps: ContextResolve
     nodesById.set(node.id, { ...node, data })
   }
   for (const node of nodesById.values()) {
-    if (node.type === TERMINAL_ROUTER_TYPE) {
+    if (node.type === TERMINAL_ROUTER_NODE_TYPE) {
       nodesById.set(node.id, { ...node, data: await refreshRoutes(node.data, deps) })
     }
   }
 
-  let pending = graph.edges
+  let pending = feedingEdges(graph.edges)
   let progressed = true
   while (progressed && pending.length > 0) {
     progressed = false
-    const unresolved: GraphEdgeRecord[] = []
+    const unresolved: typeof pending = []
     for (const edge of pending) {
       const target = nodesById.get(edge.target)
       const targetHandle = edge.targetHandle
-      if (!target || !targetHandle) {
+      if (!target) {
         continue
       }
       const outcome = await resolveEdge(edge, nodesById, deps)
@@ -129,7 +134,8 @@ async function resolveEdge(
     return 'skipped'
   }
   const extInfo = deps.nodeTypeToExtension.get(sourceNode.type)
-  if (!extInfo) {
+  const bare = parseType(sourceNode.type)?.bare
+  if (!extInfo || !bare) {
     return 'skipped'
   }
   const sourceHandle = findExtensionHandle(extInfo.handles, sourceHandleId, 'source')
@@ -141,11 +147,11 @@ async function resolveEdge(
     if (!exposeOutput) {
       return 'skipped'
     }
-    const value = exposeOutput(sourceHandleId, sourceNode.data, sourceNode.type, sourceNode.id)
+    const value = exposeOutput(sourceHandleId, sourceNode.data, bare, sourceNode.id)
     if (value === undefined || value === null) {
       return 'unresolved'
     }
-    return { sourceNodeId: sourceNode.id, sourceHandleId, contextType: sourceHandle.contextType, value }
+    return { sourceNodeId: sourceNode.id, sourceHandleId, handleType: sourceHandle.handleType, value }
   } catch (err) {
     console.error(`[graph-resolver] failed to resolve context for edge ${edge.source}->${edge.target}:`, err)
     return 'skipped'

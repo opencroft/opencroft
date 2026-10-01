@@ -13,36 +13,53 @@ import path from 'node:path'
 import test, { after } from 'node:test'
 
 import { extensionTemplate } from '@/app/_authed/(extension-editor)/_templates/template'
+import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import { extensionsRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-template-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
-
-// Imported after the environment is set: the compiler reads the extensions
-// root when the module loads, so a static import would bind the real one.
-const { buildExtension } = await import('@/app/_authed/(extension-runtime)/_server/compiler')
+const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-template-'))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = scratch
 
 after(async () => {
-  await fs.rm(root, { recursive: true, force: true })
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
+  await fs.rm(scratch, { recursive: true, force: true })
 })
 
 test('the extension a new project starts from compiles', async () => {
   const slug = 'probe-extension'
   const files = extensionTemplate(slug)
-  const dir = path.join(root, slug)
+  const folder = `local.${slug}`
+  const dir = path.join(extensionsRoot(), folder)
 
   for (const [relPath, contents] of Object.entries(files)) {
     await fs.mkdir(path.join(dir, path.dirname(relPath)), { recursive: true })
     await fs.writeFile(path.join(dir, relPath), contents)
   }
 
-  const manifest = JSON.parse(files['extension.json']) as ExtensionManifest
-  const result = await buildExtension(`local/${slug}`, manifest)
+  // Read back from the folder rather than from `files`: what is built is what
+  // a person would open in the editor.
+  const declared = JSON.parse(await fs.readFile(path.join(dir, 'extension.json'), 'utf-8')) as ExtensionManifest
+  const result = await buildExtension(folder, { ...declared, id: folder })
 
   // The errors go into the message rather than a bare `ok`: a template that
   // stops compiling is read by whoever changed the client surface, and the
   // reason is the only part of this that helps them.
   assert.ok(result.success, JSON.stringify(result.errors))
+})
+
+test('the template names no extension id: the folder it is created in is the id', () => {
+  const files = extensionTemplate('probe-extension')
+
+  assert.equal('id' in JSON.parse(files['extension.json']), false)
+  // The client declares its name and nothing that identifies it; the loader
+  // files it under the id the runtime resolved for its folder.
+  assert.match(files['src/client.tsx'], /manifest: \{ name: 'Probe Extension' \}/)
+  assert.doesNotMatch(files['src/client.tsx'], /local[./]probe-extension/)
 })
 
 test('the template hands out the spelling that carries type declarations', () => {

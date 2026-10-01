@@ -280,6 +280,22 @@ export interface CompactionState {
 }
 
 /**
+ * An advisory the agent addressed to the user rather than said in the
+ * conversation (ACP `notice`, sent only to a client advertising
+ * `clientCapabilities.session.notices`): a model fallback, a mode the harness
+ * had to leave, a hook that blocked a turn.
+ *
+ * `severity` is open-ended by protocol; 'info' | 'warning' | 'error' are the
+ * defined values, and a renderer should treat any other as 'info'. `title` and
+ * `description` are plain text.
+ */
+export interface SessionNotice {
+  severity: string
+  title: string
+  description?: string
+}
+
+/**
  * A subagent session the harness spawned under a parent session (ACP draft
  * `subagent_spawned` / `subagent_state_update`, gated on the client declaring
  * the `subagents` capability). `state` is absent while the subagent is live;
@@ -331,6 +347,29 @@ export interface AsyncTaskInfo {
   subagentSessionId?: string
 }
 
+// A file change a tool call reports in its `content` (ACP `diff` blocks): the
+// text before and after, of the whole file or of one region of it. `oldText`
+// is null when no before side was reported. ACP means a new file by it, but a
+// harness may send it for a file whose prior content it simply did not read:
+// claude-agent-acp 0.84.0 reports every Write that way, overwrites included,
+// until its post-write hook sends the real diff — and a replayed session
+// never runs that hook. So null says "before unknown", not "created".
+//
+// Its own field rather than something a view digs out of `input`: a harness
+// is free to report a change here and nowhere else. claude-agent-acp 0.84.0
+// leaves the replaced and the written text out of `rawInput` for a client that
+// declares the JetBrains AIR extension, which this one does — so for an Edit
+// or a Write the change is only here.
+//
+// A report replaces the previous one as a whole, as ACP replaces `content`: a
+// harness first sends the change as the call describes it, then the change as
+// it landed.
+export interface ToolDiff {
+  path: string
+  oldText: string | null
+  newText: string
+}
+
 export type ChatEvent =
   // `messageId` on the chunk-born conversation events is the harness's own
   // message boundary (stamped per model message): two chunks with DIFFERENT
@@ -362,6 +401,7 @@ export type ChatEvent =
       // Absent when the agent did not send one — an older bridge, or an update
       // that only refines a call already announced.
       name?: string
+      diffs?: ToolDiff[]
     }
   | {
       kind: 'tool_update'
@@ -370,6 +410,7 @@ export type ChatEvent =
       status?: string
       input?: unknown
       output?: unknown
+      diffs?: ToolDiff[]
     }
   | { kind: 'plan'; entries: PlanItem[] }
   | {
@@ -401,6 +442,10 @@ export type ChatEvent =
   // on every status transition, in timeline position. An entity is upserted by
   // `compactionId`: the first event places it, later ones replace its fields.
   | { kind: 'compaction'; compaction: CompactionState }
+  // An advisory the agent addressed to the user (see SessionNotice), in
+  // timeline position. A step of its own: it is neither agent text nor
+  // session state, and each one is shown once where it arrived.
+  | { kind: 'notice'; notice: SessionNotice }
   // A subagent's full current state — upserted by `subagentSessionId`, same
   // shape of contract as `compaction`: the first event fixes its place in the
   // parent transcript, later ones replace its fields.

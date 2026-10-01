@@ -23,7 +23,7 @@ async function buildTypeNameMap(): Promise<Map<string, string>> {
   const map = new Map<string, string>()
   for (const manifest of manifests) {
     for (const node of manifest.nodes ?? []) {
-      map.set(node.typeId, node.name)
+      map.set(node.type, node.name)
     }
   }
   return map
@@ -39,7 +39,7 @@ async function buildTypeHandlesMap(): Promise<TypeHandlesContext> {
   const manifests = await loadAllManifests()
   const byType = buildNodeTypeHandles(manifests)
   return {
-    typeHandles: new Map(Array.from(byType, ([typeId, entry]) => [typeId, entry.handles])),
+    typeHandles: new Map(Array.from(byType, ([type, entry]) => [type, entry.handles])),
     dockerExtensionId: findDockerExtensionId(manifests),
   }
 }
@@ -155,7 +155,7 @@ export const readActions: HostAppAction[] = [
   {
     id: 'findNodes',
     description:
-      'Find nodes in this graph whose name, type, or data fields match any of the given glob patterns (case-insensitive). Use `*` and `?` wildcards.',
+      'Find nodes in this graph whose name, type, or data fields match any of the given glob patterns (case-insensitive). Use `*` and `?` wildcards. A type is `<owner>.<extension>.<type>`, e.g. "acme.widgets.gauge", so "*.gauge" finds that type from any extension.',
     inputSchema: {
       type: 'object',
       properties: {

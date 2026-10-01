@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils';
+import { cn } from 'cn';
 
 export interface FixedAreaProps {
   children: React.ReactNode;

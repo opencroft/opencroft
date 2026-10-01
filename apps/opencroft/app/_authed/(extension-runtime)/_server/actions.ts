@@ -6,7 +6,7 @@
 // in extension-action-impl.ts instead.
 import { createServerFn } from '@tanstack/react-start'
 
-import { TERMINAL_ROUTER_TYPE } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
+import { TERMINAL_CONTEXT_HANDLE_TYPE, TERMINAL_ROUTER_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import {
   getActionAccess,
   invokeExtensionActionImpl,
@@ -15,6 +15,7 @@ import {
 import { describeGraphRefsImpl, type GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
 import { listGraphHandles } from '@/app/_authed/(extension-runtime)/_server/host'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { findRegistryExtension } from '@/app/_authed/(extension-runtime)/_server/registry'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 
@@ -39,7 +40,9 @@ export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { 
 export const listExtensionManifests = createServerFn({ strict: { output: false } }).handler(
   async (): Promise<ExtensionManifestInfo[]> => {
     await requireSessionServerFn()
-    return listExtensionManifestsImpl()
+    // The browser caches each client bundle immutably under the version handed
+    // out here, so a stale one is rebuilt before its version is read.
+    return listExtensionManifestsImpl({ rebuildStaleClients: true })
   },
 )
 
@@ -63,14 +66,14 @@ export const listTerminalTargets = createServerFn({ strict: { output: false } })
   .inputValidator((data: { spaceSlug?: string }) => data)
   .handler(async ({ data }): Promise<TerminalTargetOption[]> => {
     await requireSessionServerFn()
-    const handles = await listGraphHandles({ role: 'source', contextType: 'terminal-context' })
+    const handles = await listGraphHandles({ role: 'source', handleType: TERMINAL_CONTEXT_HANDLE_TYPE })
     return (
       handles
         .filter((handle) => !data.spaceSlug || handle.spaceSlug === data.spaceSlug)
         // A router's outputs are terminals already on this list under their own
         // name; offering them again would list each routed terminal once per
         // router that carries it.
-        .filter((handle) => handle.typeId !== TERMINAL_ROUTER_TYPE)
+        .filter((handle) => handle.type !== TERMINAL_ROUTER_NODE_TYPE)
         .map((handle) => {
           // A dynamic handle's declared id is a prefix; the expanded remainder
           // (a container name, a worktree) is what tells its siblings apart.
@@ -82,6 +85,20 @@ export const listTerminalTargets = createServerFn({ strict: { output: false } })
           }
         })
     )
+  })
+
+/**
+ * The registry that lists `extensionId`, for offering to install the extension
+ * a node or app instance on this instance belongs to; null when no connected
+ * registry lists it. The first registry listing the id is the one an install
+ * takes it from.
+ */
+export const registryListingOf = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((extensionId: string) => extensionId)
+  .handler(async ({ data: extensionId }): Promise<{ registryName: string } | null> => {
+    await requireSessionServerFn()
+    const listed = await findRegistryExtension(String(extensionId))
+    return listed ? { registryName: listed.registryName } : null
   })
 
 /** Names for node / App instance ids, for NodeRef and TerminalRef. */

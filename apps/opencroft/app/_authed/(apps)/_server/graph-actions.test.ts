@@ -25,6 +25,7 @@ import { db, spaceApp } from '@opencroft/db'
 
 import { hostAppCall } from '@/app/_authed/(apps)/_server/host-apps'
 import { listAppCatalog } from '@/app/_authed/(apps)/_server/runtime'
+import { parseType, qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { loadSpaceGraphImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
@@ -38,22 +39,30 @@ const suffix = crypto.randomUUID().slice(0, 8)
 
 // A fixture extension providing an App NAMED `graph`, declaring `listNodes` —
 // the strongest lookalike there is: same type name, same action id, different
-// provider. Written into a scratch root that both extension roots point at, so
+// provider. Written into a scratch data dir that the extension root follows, so
 // nothing installed on the machine running this joins the population.
 const root = mkdtempSync(join(tmpdir(), 'graph-actions-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = join(root, 'local')
-process.env.OPENCROFT_INSTALLED_EXT_ROOT = join(root, 'installed')
-after(() => rmSync(root, { recursive: true, force: true }))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
+after(() => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
+  rmSync(root, { recursive: true, force: true })
+})
 
 const LOOKALIKE_EXTENSION = `lookalike-${suffix}`
-mkdirSync(join(root, 'local', LOOKALIKE_EXTENSION), { recursive: true })
+const LOOKALIKE_FOLDER = `local.${LOOKALIKE_EXTENSION}`
+mkdirSync(join(root, 'extensions', LOOKALIKE_FOLDER), { recursive: true })
 writeFileSync(
-  join(root, 'local', LOOKALIKE_EXTENSION, 'extension.json'),
+  join(root, 'extensions', LOOKALIKE_FOLDER, 'extension.json'),
   JSON.stringify({
-    id: `local/${LOOKALIKE_EXTENSION}`,
+    id: LOOKALIKE_FOLDER,
     name: 'Graph lookalike',
     version: '0.0.0',
-    provides: { apps: [{ slug: 'graph', title: 'Not the graph', actions: [{ id: 'listNodes' }] }] },
+    provides: { apps: [{ type: 'graph', title: 'Not the graph', actions: [{ id: 'listNodes' }] }] },
   }),
 )
 
@@ -77,14 +86,13 @@ const x = await spaceWithNode('x', X_NODE)
 const y = await spaceWithNode('y', Y_NODE)
 
 const catalog = await listAppCatalog()
-const lookalikeEntry = catalog.find((entry) => entry.extensionId.endsWith(LOOKALIKE_EXTENSION))
+const lookalikeEntry = catalog.find((entry) => entry.type === qualifyType(LOOKALIKE_FOLDER, 'graph'))
 const [lookalikeRow] = lookalikeEntry
   ? await db
       .insert(spaceApp)
       .values({
         spaceId: registry.getBySlug(x.slug)?.id ?? '',
-        extensionId: lookalikeEntry.extensionId,
-        appSlug: 'graph',
+        type: lookalikeEntry.type,
         name: 'Lookalike',
         slug: 'lookalike',
       })
@@ -119,7 +127,7 @@ test('CONTROL: both graphs resolve as host graph apps, and the lookalike as an e
   assert.equal((await hostAppCall(x.address, 'listNodes'))?.key, 'graph.listNodes')
   assert.equal((await hostAppCall(y.address, 'listNodes'))?.key, 'graph.listNodes')
   assert.ok(lookalikeRow, 'the catalog lists the lookalike extension, so its app row exists')
-  assert.equal(lookalikeRow.appSlug, 'graph', 'and it is an App named `graph`')
+  assert.equal(parseType(lookalikeRow.type)?.bare, 'graph', 'and it is an App named `graph`')
   assert.equal(await hostAppCall(lookalikeAddress, 'listNodes'), undefined, 'which the host does not implement')
   assert.equal(isYoloMode(), false, 'the gate tests below mean nothing with YOLO on')
 })
@@ -155,7 +163,11 @@ test('a write to X lands in X and leaves Y’s graph unchanged', async () => {
     text(
       await handleToolCall(
         'app_call',
-        { app: x.address, action: 'createNodes', params: { nodes: [{ type: 'note', data: { text: 'new' } }] } },
+        {
+          app: x.address,
+          action: 'createNodes',
+          params: { nodes: [{ type: 'acme.notes.note', data: { text: 'new' } }] },
+        },
         { internal: true },
       ),
     ),
@@ -163,6 +175,22 @@ test('a write to X lands in X and leaves Y’s graph unchanged', async () => {
   assert.equal(created.length, 1)
   assert.ok((await graphNodeIds(x.address)).includes(created[0].id), 'the node is in X')
   assert.deepEqual(await loadSpaceGraphImpl(y.address), yBefore, 'Y is untouched, byte for byte')
+})
+
+test('createNodes refuses a bare type, which no extension could ever claim', async () => {
+  const before = await graphNodeIds(x.address)
+  await assert.rejects(
+    handleToolCall(
+      'app_call',
+      { app: x.address, action: 'createNodes', params: { nodes: [{ type: 'note' }] } },
+      { internal: true },
+    ),
+    (err: { message?: string }) => {
+      assert.match(err.message ?? '', /"note" is not a qualified node type/)
+      return true
+    },
+  )
+  assert.deepEqual(await graphNodeIds(x.address), before, 'and nothing was created')
 })
 
 test('focusNode on X does not find a node that exists only in Y', async () => {

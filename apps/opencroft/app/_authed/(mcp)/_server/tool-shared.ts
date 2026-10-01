@@ -5,7 +5,10 @@
  * is taken on.
  */
 
-import { claimExtensionLease, leaseRefusalMessage } from '@/app/_authed/(extension-runtime)/_server/extension-lease'
+import {
+  claimExtensionLock,
+  extensionLockRefusalMessage,
+} from '@/app/_authed/(extension-runtime)/_server/extension-lock'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail } from '@/app/_authed/(mcp)/_server/tool-refusal'
 // MCP tool calls carry no session cookie by design (a bearer-token surface),
@@ -35,7 +38,7 @@ export const SPACE_PARAM = {
 }
 
 /** Named once so a refusal's copy and the tool it points at cannot drift apart. */
-export const LEASE_TOOL_NAME = 'extension_lease'
+export const LOCK_TOOL_NAME = 'extension_lock'
 
 export interface GraphNode {
   id: string
@@ -128,28 +131,12 @@ export async function resolveSpaceSlug(args: Record<string, unknown>): Promise<s
 }
 
 // The node-id sentinel used by the static per-extension terminal-context handle
-// ("extensions/<slug>"), resolved by `resolveLocalExtensionContext` below instead of a real
-// graph node lookup.
+// ("extensions/<extensionFolder>"), resolved by `resolveLocalExtensionContext` instead of a
+// real graph node lookup. Only local folders have one: they are the editable ones.
 export const LOCAL_EXTENSION_HANDLE_NODE_ID = 'extensions'
 
-// Conservative allow-list for a local extension folder name: must start alphanumeric, then only
-// alphanumeric/dot/underscore/hyphen. This can never contain "/", "\", or "..", but both are also
-// rejected explicitly in `isValidLocalExtensionSlug` for defense in depth.
-const LOCAL_EXTENSION_SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
-
 /**
- * True for slugs that are safe to join onto `localExtRoot()` with no path-traversal risk. Pure
- * and side-effect free, so it's unit-testable on its own.
- */
-export function isValidLocalExtensionSlug(slug: string): boolean {
-  if (!slug || slug.includes('/') || slug.includes('\\') || slug.includes('..')) {
-    return false
-  }
-  return LOCAL_EXTENSION_SLUG_RE.test(slug)
-}
-
-/**
- * Refuse a write into an extension directory somebody else is working in.
+ * Refuse a write into an extension folder somebody else is working in.
  *
  * These directories are shared: unlike a per-task checkout, every session
  * working on one extension edits the same tree, and two writers there produce
@@ -164,12 +151,15 @@ export function isValidLocalExtensionSlug(slug: string): boolean {
  * every anonymous write would break surfaces that never had an identity), and
  * a held directory is always available to whoever explicitly takes it over.
  */
-export async function claimSlugForWrite(slug: string, caller: ToolCallerContext): Promise<void> {
+export async function claimFolderForWrite(folder: string, caller: ToolCallerContext): Promise<void> {
   if (!caller.agent) {
     return
   }
-  const decision = await claimExtensionLease(slug, caller.agent)
+  const decision = await claimExtensionLock(folder, caller.agent)
   if (decision.outcome === 'refused') {
-    fail(-32000, leaseRefusalMessage(slug, decision.lease, Date.now(), `call ${LEASE_TOOL_NAME} with takeover: true`))
+    fail(
+      -32000,
+      extensionLockRefusalMessage(folder, decision.lock, Date.now(), `call ${LOCK_TOOL_NAME} with takeover: true`),
+    )
   }
 }

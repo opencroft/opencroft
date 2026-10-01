@@ -5,8 +5,8 @@ import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 export interface GraphRefInfo {
   id: string
   kind: 'node' | 'app'
-  /** Node type id, or `app:<app-slug>` for an App instance. */
-  typeId: string
+  /** The node's stored, qualified type, or `app:<type>` with the App's for an App instance. */
+  type: string
   /** The name its owner gave it; '' when it has none (the caller falls back to the type's name). */
   name: string
   spaceSlug: string
@@ -31,7 +31,7 @@ export async function describeGraphRefsImpl(ids: string[]): Promise<Record<strin
       result[id] = {
         id,
         kind: 'node',
-        typeId: node.type ?? '',
+        type: node.type ?? '',
         name: (data.name as string) || (data.title as string) || '',
         spaceSlug: ref.space.slug,
       }
@@ -43,8 +43,8 @@ export async function describeGraphRefsImpl(ids: string[]): Promise<Record<strin
       result[id] = {
         id,
         kind: 'app',
-        typeId: `app:${row.appSlug}`,
-        name: row.name || row.appSlug,
+        type: `app:${row.type}`,
+        name: row.name || row.type,
         spaceSlug: spaceSlugById.get(row.spaceId) ?? '',
       }
       continue

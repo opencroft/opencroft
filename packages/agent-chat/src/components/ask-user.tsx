@@ -83,22 +83,22 @@ export function askFields(schema: ElicitationSchema): AskUserField[] {
   const required = new Set(schema.required ?? [])
   const properties = schema.properties ?? {}
   const entries = Object.entries(properties)
-  const pairedTarget = (property: unknown): string | null => {
-    const target = customAnswerTarget(property)
+  const pairedTarget = (key: string, property: unknown): string | null => {
+    const target = customAnswerTarget(key, property)
     return target !== null && Object.hasOwn(properties, target) ? target : null
   }
   // A plain record, not a Map: the design kit's live preview resolves bare
   // identifiers by name, and an icon called Map shadows the global there.
   const customFor: Record<string, string> = {}
   for (const [key, property] of entries) {
-    const target = pairedTarget(property)
+    const target = pairedTarget(key, property)
     if (target) {
       customFor[target] = key
     }
   }
   const fields: AskUserField[] = []
   for (const [key, property] of entries) {
-    if (pairedTarget(property)) {
+    if (pairedTarget(key, property)) {
       continue
     }
     const record = property as PropertyRecord

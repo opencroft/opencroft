@@ -12,7 +12,7 @@ import { db, spaceApp } from '@opencroft/db'
 import { eq } from 'drizzle-orm'
 
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
+import { GRAPH_APP_TYPE } from '@/app/_authed/(space)/_server/types'
 import { isAppAddress, resolveAppAddress, unresolvedAppTarget } from './app-address'
 import { transferSpaceAppImpl } from './runtime'
 
@@ -33,8 +33,7 @@ async function spaceHolding(spaceSlug: string, appSlug: string) {
     .insert(spaceApp)
     .values({
       spaceId: space.id,
-      extensionId: GRAPH_APP_EXTENSION_ID,
-      appSlug: GRAPH_APP_SLUG,
+      type: GRAPH_APP_TYPE,
       name: appSlug,
       slug: appSlug,
     })

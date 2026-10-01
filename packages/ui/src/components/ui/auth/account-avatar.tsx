@@ -2,7 +2,7 @@
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface AccountAvatarProps {
   // Current avatar image; null/undefined or an empty string falls back to a

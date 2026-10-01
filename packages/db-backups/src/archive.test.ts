@@ -33,7 +33,7 @@ import {
   TRAILER_MEMBER,
   writeBackupArchive,
 } from './archive'
-import type { FileRoot } from './file-tree'
+import { BACKUP_FILE_ROOTS, type FileRoot } from './file-tree'
 import { readZip, writeZip, type ZipMember } from './zip'
 
 /** Every member of an archive, in order. Six call sites wrote this inline. */
@@ -64,7 +64,7 @@ const hasGit = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 
 
 const ROOTS: readonly FileRoot[] = [
   { name: 'app-data', policy: 'all' },
-  { name: 'extensions/local', policy: 'git-aware' },
+  { name: 'extensions', policy: 'git-aware' },
 ]
 
 function sampleBackup(): Backup {
@@ -90,19 +90,25 @@ function buildDataDirectory(): void {
   // still has one, and a restore that loses it loses that fact.
   mkdirSync(join(dataDirectory, 'app-data', 'local', 'git', 'inst-2'), { recursive: true })
 
-  const checkout = join(dataDirectory, 'extensions', 'local', 'sample-ext')
-  mkdirSync(join(checkout, 'src'), { recursive: true })
-  mkdirSync(join(checkout, 'node_modules', 'left-pad'), { recursive: true })
-  mkdirSync(join(checkout, 'dist'), { recursive: true })
-  mkdirSync(join(checkout, 'assets', 'vad'), { recursive: true })
-  writeFileSync(join(checkout, '.gitignore'), 'node_modules/\ndist/\nassets/vad/\ninstalled.json\n')
-  writeFileSync(join(checkout, 'package.json'), '{"name":"sample-ext"}\n')
-  writeFileSync(join(checkout, 'src', 'index.ts'), 'export const x = 1\n')
-  writeFileSync(join(checkout, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1\n')
-  writeFileSync(join(checkout, 'dist', 'server.js'), 'built\n')
-  writeFileSync(join(checkout, 'assets', 'vad', 'model.onnx'), 'x'.repeat(4096))
-  // The host's own install record, which this checkout gitignores.
-  writeFileSync(join(checkout, 'installed.json'), '{"source":{"type":"git"}}\n')
+  writeExtensionFolder(join(dataDirectory, 'extensions', 'local.sample-ext'), '.gitignore')
+  // A registry install: a snapshot of one commit, so no .git and no .gitignore.
+  writeExtensionFolder(join(dataDirectory, 'extensions', 'acme.snapshot'))
+}
+
+/** The shape of an extension folder: sources, a vendored binary, and what a build leaves behind. */
+function writeExtensionFolder(folder: string, ignoreFile?: string): void {
+  mkdirSync(join(folder, 'src'), { recursive: true })
+  mkdirSync(join(folder, 'node_modules', 'left-pad'), { recursive: true })
+  mkdirSync(join(folder, 'dist'), { recursive: true })
+  mkdirSync(join(folder, 'assets', 'vad'), { recursive: true })
+  if (ignoreFile) {
+    writeFileSync(join(folder, ignoreFile), 'node_modules/\ndist/\nassets/vad/\n')
+  }
+  writeFileSync(join(folder, 'package.json'), '{"name":"sample-ext"}\n')
+  writeFileSync(join(folder, 'src', 'index.ts'), 'export const x = 1\n')
+  writeFileSync(join(folder, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1\n')
+  writeFileSync(join(folder, 'dist', 'server.js'), 'built\n')
+  writeFileSync(join(folder, 'assets', 'vad', 'model.onnx'), 'x'.repeat(4096))
 }
 
 beforeEach(() => {
@@ -124,7 +130,7 @@ test('the manifest is the first member and reads on its own', async () => {
   assert.equal(manifest.formatVersion, ARCHIVE_FORMAT_VERSION)
   assert.deepEqual(manifest.database.tables, { Space: 1, SpaceGraph: 1 })
   assert.equal(manifest.database.totalRows, 2)
-  assert.deepEqual(manifest.fileRoots, ['app-data', 'extensions/local'])
+  assert.deepEqual(manifest.fileRoots, ['app-data', 'extensions'])
   // Dependency order, not alphabetical: `session` points at `user` and
   // `verification` points at nothing, so the dump's order puts the second first.
   assert.deepEqual(manifest.database.excludedTables.slice().sort(), ['session', 'verification'])
@@ -155,7 +161,7 @@ test('an empty App instance directory is carried', async () => {
 test('a git checkout carries its source and skips what a clone rebuilds', {
   skip: hasGit ? false : 'git unavailable',
 }, async () => {
-  const checkout = join(dataDirectory, 'extensions', 'local', 'sample-ext')
+  const checkout = join(dataDirectory, 'extensions', 'local.sample-ext')
   git(checkout, 'init', '-q')
   git(checkout, 'add', '.')
   git(checkout, 'commit', '-qm', 'first')
@@ -167,10 +173,9 @@ test('a git checkout carries its source and skips what a clone rebuilds', {
 
   const paths = new Set(await pathsIn(archive))
 
-  const base = 'files/extensions/local/sample-ext/'
+  const base = 'files/extensions/local.sample-ext/'
   assert.ok(paths.has(`${base}src/index.ts`), 'a tracked file was dropped')
   assert.ok(paths.has(`${base}src/wip.ts`), 'uncommitted work was dropped')
-  assert.ok(paths.has(`${base}installed.json`), "the host's install record was dropped because the checkout ignores it")
   assert.ok(
     [...paths].some((p) => p.startsWith(`${base}.git/`)),
     '.git was dropped, losing unpushed commits',
@@ -188,14 +193,65 @@ test('a checkout that is not a git repository falls back to a static exclude lis
 
   const paths = new Set(await pathsIn(archive))
 
-  const base = 'files/extensions/local/sample-ext/'
+  const base = 'files/extensions/local.sample-ext/'
   assert.ok(paths.has(`${base}src/index.ts`))
-  assert.ok(paths.has(`${base}installed.json`))
   assert.ok(!paths.has(`${base}node_modules/left-pad/index.js`))
   assert.ok(!paths.has(`${base}dist/server.js`))
   // Not gitignored here, because there is no git — the static list is narrower
   // on purpose, and the trade is stated rather than hidden.
   assert.ok(paths.has(`${base}assets/vad/model.onnx`))
+})
+
+test('one root carries a checkout and a registry snapshot each by its own rule', {
+  skip: hasGit ? false : 'git unavailable',
+}, async () => {
+  const checkout = join(dataDirectory, 'extensions', 'local.sample-ext')
+  git(checkout, 'init', '-q')
+  git(checkout, 'add', '.')
+  git(checkout, 'commit', '-qm', 'first')
+  const archive = join(workdir, 'mixed-extensions.zip')
+  await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
+
+  const paths = new Set(await pathsIn(archive))
+
+  // The checkout: git decides, and its history comes along.
+  assert.ok([...paths].some((p) => p.startsWith('files/extensions/local.sample-ext/.git/')))
+  assert.ok(!paths.has('files/extensions/local.sample-ext/assets/vad/model.onnx'), 'git ignores the binary')
+  // The snapshot has no .git to ask, so only the rebuildable directories go;
+  // what its source does not ignore, a backup keeps because nothing else can
+  // say whether the source is still there to fetch it from.
+  const snapshot = 'files/extensions/acme.snapshot/'
+  assert.ok(paths.has(`${snapshot}src/index.ts`))
+  assert.ok(paths.has(`${snapshot}package.json`))
+  assert.ok(paths.has(`${snapshot}assets/vad/model.onnx`))
+  assert.ok(!paths.has(`${snapshot}node_modules/left-pad/index.js`), 'node_modules was carried')
+  assert.ok(!paths.has(`${snapshot}dist/server.js`), 'build output was carried')
+})
+
+test('a folder an install is staging or has parked is not carried', async () => {
+  // Copies of an extension that also exists under its real name; one may be
+  // half-written when the backup runs.
+  for (const transient of ['.staging-acme.snapshot-1-1', '.old-acme.snapshot-1-1']) {
+    mkdirSync(join(dataDirectory, 'extensions', transient, 'src'), { recursive: true })
+    writeFileSync(join(dataDirectory, 'extensions', transient, 'src', 'index.ts'), 'export const x = 2\n')
+  }
+  const archive = join(workdir, 'transient.zip')
+
+  const { trailer } = await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
+
+  const paths = await pathsIn(archive)
+  assert.ok(!paths.some((p) => p.includes('.staging-') || p.includes('.old-')), 'a transient folder was carried')
+  assert.ok(paths.includes('files/extensions/acme.snapshot/src/index.ts'), 'the real folder is still carried')
+  assert.deepEqual(
+    trailer.skipped.filter((entry) => entry.reason === 'transient').map((entry) => entry.path),
+    ['.old-acme.snapshot-1-1', '.staging-acme.snapshot-1-1'],
+  )
+})
+
+test('the roots a real backup takes are the single extensions root, not a local subtree', () => {
+  const extensions = BACKUP_FILE_ROOTS.filter((root) => root.name.startsWith('extensions'))
+
+  assert.deepEqual(extensions, [{ name: 'extensions', policy: 'git-aware' }])
 })
 
 test('a symlink is recorded as skipped rather than followed', async () => {
@@ -305,7 +361,7 @@ test('restoring touches only the roots the archive declares', async () => {
 
   assert.ok(existsSync(join(dataDirectory, 'pglite', 'PG_VERSION')), 'the restore reached outside its roots')
   assert.ok(
-    existsSync(join(dataDirectory, 'extensions', 'local', 'sample-ext', 'package.json')),
+    existsSync(join(dataDirectory, 'extensions', 'local.sample-ext', 'package.json')),
     'a root the archive did not declare was cleared anyway',
   )
 })
@@ -355,9 +411,9 @@ test('a root that does not exist is carried as nothing rather than failing', asy
 
   const { trailer } = await writeBackupArchive(archive, { backup: sampleBackup(), dataDirectory, roots: ROOTS })
 
-  assert.deepEqual(trailer.files['extensions/local'], { files: 0, directories: 0, bytes: 0 })
+  assert.deepEqual(trailer.files.extensions, { files: 0, directories: 0, bytes: 0 })
   const manifest = await readArchiveManifest(archive)
-  assert.ok(manifest.fileRoots.includes('extensions/local'))
+  assert.ok(manifest.fileRoots.includes('extensions'))
 })
 
 test('restoring an archive whose root is empty clears that root', async () => {
@@ -372,5 +428,5 @@ test('restoring an archive whose root is empty clears that root', async () => {
 
   await extractBackupFiles(archive, dataDirectory, { manifest, trailer })
 
-  assert.deepEqual(readdirSync(join(dataDirectory, 'extensions', 'local')), [])
+  assert.deepEqual(readdirSync(join(dataDirectory, 'extensions')), [])
 })

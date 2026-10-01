@@ -10,12 +10,18 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-code-splitting-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
+import { buildExtension } from './compiler'
 
-const { buildExtension } = await import('./compiler')
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-code-splitting-'))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -34,8 +40,8 @@ async function makeFixture(marker: string): Promise<{
   dir: string
 }> {
   seq += 1
-  const slug = `split-${seq}`
-  const dir = path.join(root, slug)
+  const id = `local.split-${seq}`
+  const dir = path.join(root, 'extensions', id)
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.mkdir(path.join(dir, 'server'), { recursive: true })
   await fs.writeFile(
@@ -44,9 +50,9 @@ async function makeFixture(marker: string): Promise<{
   )
   await fs.writeFile(path.join(dir, 'src', 'big-module.ts'), bigModuleSource(marker))
   await fs.writeFile(path.join(dir, 'server', 'index.ts'), 'export const actions = {}\n')
-  const manifest = { id: `local/${slug}`, name: slug, version: '0.0.0' }
+  const manifest = { id, name: id, version: '0.0.0' }
   await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
-  return { id: `local/${slug}`, manifest, dir }
+  return { id, manifest, dir }
 }
 
 function distDir(dir: string): string {
@@ -86,8 +92,8 @@ test('a concurrent reader of client.js can always resolve every chunk it imports
   let sawStaging = false
   let checks = 0
   const inspect = async () => {
-    const siblings = await fs.readdir(path.dirname(dist)).catch(() => [] as string[])
-    if (siblings.some((f) => f.includes('.building-'))) {
+    const entries = await fs.readdir(dist).catch(() => [] as string[])
+    if (entries.some((f) => f.includes('.building-'))) {
       sawStaging = true
     }
     const code = await fs.readFile(path.join(dist, 'client.js'), 'utf-8').catch(() => null)
@@ -121,7 +127,7 @@ test('a concurrent reader of client.js can always resolve every chunk it imports
   assert.ok(result.success, JSON.stringify(result.errors))
   assert.ok(checks > 0, 'the poller must have actually read client.js at least once for this test to mean anything')
   assert.ok(sawStaging, 'the poller must have observed the build in progress (staging dir present)')
-  const leftovers = (await fs.readdir(path.dirname(dist))).filter((f) => f.includes('.building-'))
+  const leftovers = (await fs.readdir(dist)).filter((f) => f.includes('.building-'))
   assert.deepEqual(leftovers, [], 'no staging directory may remain after a successful publish')
 })
 

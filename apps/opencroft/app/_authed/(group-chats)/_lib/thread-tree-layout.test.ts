@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ChatListNode } from 'ui/chat/chat-list'
-import type { ChatStatus } from 'ui/chat/chat-list-item'
 
+import type { ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/read-model'
 import type { ThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 import { layoutToNodes, nodesToLayout, threadLeaf } from './thread-tree-layout'
@@ -23,7 +23,8 @@ function thread(id: string, over: Partial<GroupChatThreadEntry> = {}): GroupChat
   }
 }
 
-const NO_STATUS: ReadonlyMap<string, ChatStatus> = new Map()
+const NO_STATUS: ThreadRowStateById = new Map()
+const HALF_FULL = { usedTokens: 100_000, contextLimit: 200_000 }
 
 /** The ids a rendered tree contains, folders written as `name[a,b]`. */
 function shape(nodes: ChatListNode[]): string[] {
@@ -84,21 +85,23 @@ test('a folder left empty by deletions is kept', () => {
   assert.deepEqual(shape(nodes), ['Reviews[]', 't1'])
 })
 
-test('a live thread carries its agent and its polled status', () => {
-  const leaf = threadLeaf(thread('t1', { hasDraft: true }), 'working')
+test('a live thread carries its agent, its pushed status and its context reading', () => {
+  const leaf = threadLeaf(thread('t1', { hasDraft: true }), { status: 'working', context: HALF_FULL })
   assert.equal(leaf.description, 'Anna')
   assert.equal(leaf.status, 'working')
+  assert.deepEqual(leaf.context, HALF_FULL)
   assert.equal(leaf.disabled, false)
   assert.equal(leaf.hasDraft, true)
 })
 
 // All three of these were decided for the list this replaces, and are carried
 // over rather than re-derived. The status one is the discriminating case: the
-// poll still reports a state for the session, and the row must not show it.
-test('a removed agent dims the row, says so, and shows no status even when one is polled', () => {
-  const leaf = threadLeaf(thread('t1', { agentIsMember: false }), 'working')
+// activity still reports a state for the session, and the row must not show it.
+test('a removed agent dims the row, says so, and shows no status or reading even when one is pushed', () => {
+  const leaf = threadLeaf(thread('t1', { agentIsMember: false }), { status: 'working', context: HALF_FULL })
   assert.equal(leaf.description, 'Anna · agent removed')
   assert.equal(leaf.status, undefined)
+  assert.equal(leaf.context, undefined)
   assert.equal(leaf.disabled, true)
 })
 
@@ -107,8 +110,12 @@ test('an untitled thread still gets a title', () => {
 })
 
 // What makes the store's "nothing here can go stale" claim true.
-test('the tree is stored as a skeleton, with no titles, avatars, status or drafts in it', () => {
-  const nodes = layoutToNodes(EMPTY, [thread('t1', { hasDraft: true }), thread('t2')], new Map([['t1', 'waiting']]))
+test('the tree is stored as a skeleton, with no titles, avatars, status, readings or drafts in it', () => {
+  const nodes = layoutToNodes(
+    EMPTY,
+    [thread('t1', { hasDraft: true }), thread('t2')],
+    new Map([['t1', { status: 'waiting' as const, context: HALF_FULL }]]),
+  )
   const saved = nodesToLayout(nodes)
   assert.deepEqual(saved, {
     entries: [

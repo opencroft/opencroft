@@ -9,16 +9,16 @@ import path from 'node:path'
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import { isAppAddress, unresolvedAppTarget } from '@/app/_authed/(apps)/_server/app-address'
 import { resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
-import { listLocalExtensionsImpl } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
+import { CORE_EXTENSION_ID, isLocalFolder, parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { scanExtensionFolders } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { localExtRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { folderDir } from '@/app/_authed/(extension-runtime)/_server/paths'
 import { type BackgroundRunnerAdapter, taskSummary } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import {
-  claimSlugForWrite,
+  claimFolderForWrite,
   fail,
   type GraphNode,
-  isValidLocalExtensionSlug,
   LOCAL_EXTENSION_HANDLE_NODE_ID,
   type ParsedEndpoint,
   parseEndpoint,
@@ -56,14 +56,14 @@ export const definitions = [
   {
     name: 'remote_read',
     description:
-      'Read a file from a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>" (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line. A file too large for one read comes back cut, with an unnumbered "(truncated …)" note as the last line — when you see it, the file continues past what you were shown, so do not conclude anything from where it appears to end.',
+      'Read a file from a remote node. The target is an output handle carrying a terminal (handle type builtin.core.terminal-context), "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>" (e.g. "localhost_abc/terminal"). Output is line-numbered (cat -n style). Optional offset/limit slice by 1-indexed line. A file too large for one read comes back cut, with an unnumbered "(truncated …)" note as the last line — when you see it, the file continues past what you were shown, so do not conclude anything from where it appears to end.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         path: {
           type: 'string',
@@ -79,14 +79,14 @@ export const definitions = [
   {
     name: 'remote_glob',
     description:
-      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Read-only. Returns one matching path per line, relative to `path`. Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+      'Find file paths by glob on a remote node\'s filesystem (`**` spans directories, `*` doesn\'t, `?` = one char), e.g. "src/**/*.tsx". The target is an output handle carrying a terminal (handle type builtin.core.terminal-context), "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Read-only. Returns one matching path per line, relative to `path`. Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one. No matches (or a missing `path`) return "(no matches)" rather than an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         pattern: {
           type: 'string',
@@ -113,14 +113,14 @@ export const definitions = [
   {
     name: 'remote_grep',
     description:
-      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Read-only. Returns matching lines as "path:line:text", one per line, with paths echoed in the same form `path` was given (relative when omitted). Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one; overlong lines are column-truncated. No matches (or a missing `path`) return "(no matches)" rather than an error.',
+      'Search file contents by regular expression (POSIX extended, i.e. `grep -E`) on a remote node\'s filesystem, recursively under `path`. The target is an output handle carrying a terminal (handle type builtin.core.terminal-context), "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Read-only. Returns matching lines as "path:line:text", one per line, with paths echoed in the same form `path` was given (relative when omitted). Dependency/VCS/build directories (node_modules, .git, dist, …) are skipped unless `includeIgnored` is set or `path` points inside one; overlong lines are column-truncated. No matches (or a missing `path`) return "(no matches)" rather than an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         pattern: {
           type: 'string',
@@ -159,14 +159,14 @@ export const definitions = [
   {
     name: 'remote_write',
     description:
-      'Write or overwrite a file on a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>".',
+      'Write or overwrite a file on a remote node. The target is an output handle carrying a terminal (handle type builtin.core.terminal-context), "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>".',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         path: {
           type: 'string',
@@ -188,7 +188,7 @@ export const definitions = [
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         path: {
           type: 'string',
@@ -208,14 +208,14 @@ export const definitions = [
     // outlasts the ~2 minutes a call can wait, so the caller may detach it.
     execution: 'awaitable' as const,
     description:
-      'Execute a shell command on a remote node. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the command\'s full output.',
+      'Execute a shell command on a remote node. The target is an output handle carrying a terminal (handle type builtin.core.terminal-context), "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the command via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the command\'s full output.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         command: { type: 'string', description: 'Shell command to execute.' },
         cwd: {
@@ -242,14 +242,14 @@ export const definitions = [
     name: 'remote_script',
     execution: 'awaitable' as const,
     description:
-      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is a terminal-context output handle, "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the script\'s full output.',
+      'Execute a multiline bash script on a remote node. Unlike remote_exec, the script body is written to a temp file first, so it avoids quoting/escaping issues with heredocs, loops, and nested quotes. The target is an output handle carrying a terminal (handle type builtin.core.terminal-context), "<node-id>/<handle-id>" or an App instance\'s "<space>.<app-slug>/<handle-id>". Optionally inject secret values from any Secrets Store as env vars (reference them in the script via "$NAME"). Very large output is cut, with a "(truncated …)" note as the last line — treat the result as incomplete rather than as the script\'s full output.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         target: {
           type: 'string',
           description:
-            'Terminal-context output handle: "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
+            'Output handle carrying a terminal (builtin.core.terminal-context): "<node-id>/<handle-id>", or an App instance\'s "<space>.<app-slug>/<handle-id>" — see app_list for addresses.',
         },
         script: { type: 'string', description: 'Multiline bash script body to execute.' },
         args: {
@@ -279,8 +279,6 @@ export const definitions = [
   },
 ]
 
-const CORE_EXTENSION_ID = 'builtin/core'
-
 async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; slug: string }> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
@@ -298,8 +296,8 @@ async function findNodeAcrossSpaces(nodeId: string): Promise<{ node: GraphNode; 
  * Resolve a non-absolute `filePath` against `cwd` (when the resolved terminal context has one).
  * Absolute paths, and any path when there's no cwd, pass through unchanged. Pure and side-effect
  * free (no network/filesystem calls), so it's unit-testable on its own — this is what lets
- * `remote_read target=extensions/git path=server/git.ts` resolve to
- * `<localExtRoot>/git/server/git.ts` before it ever reaches a shell command.
+ * `remote_read target=extensions/local.git path=server/git.ts` resolve to
+ * `<extensions root>/local.git/server/git.ts` before it ever reaches a shell command.
  */
 export function resolveRemoteFilePath(filePath: string, cwd?: string): string {
   if (!cwd || path.isAbsolute(filePath)) {
@@ -309,55 +307,53 @@ export function resolveRemoteFilePath(filePath: string, cwd?: string): string {
 }
 
 /**
- * Build the `local` terminal context for an already-syntax-validated extension `slug`, given the
- * set of currently-installed local extension slugs and the local extensions root. Pure and
- * side-effect free (no I/O, no listLocalExtensions() call, no MCP/server runtime needed), so
- * it's unit-testable on its own — this is the part of extension-handle resolution that isn't
- * just string validation.
+ * Build the `local` terminal context for a local extension `folder`, given the local
+ * folders that exist. Pure (no I/O), so it's unit-testable on its own — this is the part of
+ * extension-handle resolution that isn't just string validation.
  */
 export function buildLocalExtensionCtx(
-  slug: string,
-  knownSlugs: string[],
-  extensionsRoot: string,
+  folder: string,
+  knownFolders: string[],
+  cwdOf: (folder: string) => string,
 ): Record<string, unknown> {
-  if (!knownSlugs.includes(slug)) {
-    fail(-32602, `Unknown local extension: ${slug}`)
+  if (!knownFolders.includes(folder)) {
+    fail(-32602, `Unknown local extension: ${folder}`)
   }
-  return { type: 'local', cwd: path.join(extensionsRoot, slug) }
+  return { type: 'local', cwd: cwdOf(folder) }
 }
 
 /**
- * Resolve the static "extensions/<slug>" handle to a `local` terminal context rooted at that
- * local extension's folder on disk (`data/extensions/local/<slug>/`). Returns undefined when
- * `ep.nodeId` isn't the "extensions" sentinel, so the caller falls back to normal node-graph
- * resolution. The slug is validated both syntactically (no traversal — before any I/O happens)
- * and against the actual set of installed local extensions (the same loader
- * `list_extensions`/`get_extension` use) before ever being joined onto a filesystem path.
+ * Resolve the static "extensions/<extensionFolder>" handle to a `local` terminal context rooted
+ * at that local extension's folder on disk. Returns undefined when `ep.nodeId` isn't the
+ * "extensions" sentinel, so the caller falls back to normal node-graph resolution. The folder is
+ * checked to be a local one — two slugs, so no traversal is possible — before any I/O, and
+ * against the folders that exist before it is joined onto a path. Only local folders are
+ * editable, so only they have a handle.
  */
 async function resolveLocalExtensionContext(ep: ParsedEndpoint): Promise<Record<string, unknown> | undefined> {
   if (ep.nodeId !== LOCAL_EXTENSION_HANDLE_NODE_ID) {
     return undefined
   }
-  const slug = ep.handle
-  if (!slug || !isValidLocalExtensionSlug(slug)) {
-    fail(-32602, `Invalid local extension handle: "${ep.handle ?? ''}"`)
+  const folder = ep.handle
+  if (!folder || !isLocalFolder(folder)) {
+    fail(-32602, `Invalid local extension handle: "${ep.handle ?? ''}" — expected extensions/local.<name>`)
   }
-  const records = await listLocalExtensionsImpl()
+  const folders = await scanExtensionFolders()
   return buildLocalExtensionCtx(
-    slug,
-    records.map((r) => r.slug),
-    localExtRoot(),
+    folder,
+    folders.map((entry) => entry.folder),
+    folderDir,
   )
 }
 
 /**
- * The local extension a terminal target addresses, or null when it addresses an
+ * The local extension folder a terminal target addresses, or null when it addresses an
  * ordinary graph node.
  *
  * Pure string work on the caller's own `target` argument, so a guard can decide
  * whether it applies before any lookup, filesystem access or approval happens.
  */
-export function extensionSlugFromTarget(target: unknown): string | null {
+export function extensionFolderFromTarget(target: unknown): string | null {
   if (typeof target !== 'string' || target.length === 0) {
     return null
   }
@@ -365,13 +361,13 @@ export function extensionSlugFromTarget(target: unknown): string | null {
   if (ep.nodeId !== LOCAL_EXTENSION_HANDLE_NODE_ID || !ep.handle) {
     return null
   }
-  return isValidLocalExtensionSlug(ep.handle) ? ep.handle : null
+  return isLocalFolder(ep.handle) ? ep.handle : null
 }
 
 async function claimForWrite(args: Record<string, unknown>, caller: ToolCallerContext): Promise<void> {
-  const slug = extensionSlugFromTarget(args.target)
-  if (slug) {
-    await claimSlugForWrite(slug, caller)
+  const folder = extensionFolderFromTarget(args.target)
+  if (folder) {
+    await claimFolderForWrite(folder, caller)
   }
 }
 
@@ -416,8 +412,9 @@ export async function resolveTerminalContext(
   }
 
   const manifests = await loadAllManifests()
-  const manifest = manifests.find((m) => m.nodes?.some((n) => n.typeId === node.type))
-  if (!manifest) {
+  const manifest = manifests.find((m) => m.nodes?.some((n) => n.type === node.type))
+  const bare = parseType(node.type)?.bare
+  if (!manifest || !bare) {
     fail(-32602, `No extension provides node type: ${node.type}`)
   }
 
@@ -426,7 +423,7 @@ export async function resolveTerminalContext(
     fail(-32602, `Extension ${manifest.id} has no exposeOutput`)
   }
 
-  const ctx = mod.exposeOutput(ep.handle, node.data ?? {}, node.type)
+  const ctx = mod.exposeOutput(ep.handle, node.data ?? {}, bare)
   if (ctx === undefined || ctx === null) {
     fail(-32602, `No context value for ${target}`)
   }

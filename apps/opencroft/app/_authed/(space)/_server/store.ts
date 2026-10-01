@@ -8,8 +8,7 @@ import {
   DEFAULT_GRAPH_SLUG,
   DEFAULT_SPACE_NAME,
   DEFAULT_SPACE_SLUG,
-  GRAPH_APP_EXTENSION_ID,
-  GRAPH_APP_SLUG,
+  GRAPH_APP_TYPE,
   type GraphData,
   LEGACY_GRAPH_SETTING_ID,
   parseGraphAddress,
@@ -220,8 +219,7 @@ class SpacesRegistry {
           .insert(spaceApp)
           .values({
             spaceId: row.id,
-            extensionId: GRAPH_APP_EXTENSION_ID,
-            appSlug: GRAPH_APP_SLUG,
+            type: GRAPH_APP_TYPE,
             name: DEFAULT_GRAPH_NAME,
             slug: DEFAULT_GRAPH_SLUG,
           })
@@ -271,8 +269,7 @@ class SpacesRegistry {
         .insert(spaceApp)
         .values({
           spaceId: spaceRow.id,
-          extensionId: GRAPH_APP_EXTENSION_ID,
-          appSlug: GRAPH_APP_SLUG,
+          type: GRAPH_APP_TYPE,
           name: DEFAULT_GRAPH_NAME,
           slug: DEFAULT_GRAPH_SLUG,
         })
@@ -608,8 +605,7 @@ class SpacesRegistry {
         .insert(spaceApp)
         .values({
           spaceId: source.id,
-          extensionId: GRAPH_APP_EXTENSION_ID,
-          appSlug: GRAPH_APP_SLUG,
+          type: GRAPH_APP_TYPE,
           name: DEFAULT_GRAPH_NAME,
           slug: DEFAULT_GRAPH_SLUG,
         })

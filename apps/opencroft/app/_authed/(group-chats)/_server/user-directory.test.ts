@@ -95,7 +95,7 @@ test('it returns id, name and avatar — and nothing else', async () => {
 test("an extension's host.users returns the same three fields and nothing else", async () => {
   await makeUser('dir-host@example.test', 'Host Example')
   const { createHost } = await import('@/app/_authed/(extension-runtime)/_server/host')
-  const people = await createHost('local/directory-probe').users.list()
+  const people = await createHost('acme.directory-probe').users.list()
   const row = people.find((p) => p.name === 'Host Example')
   assert.ok(row)
   assert.deepEqual(Object.keys(row).sort(), ['avatarUrl', 'id', 'name'])

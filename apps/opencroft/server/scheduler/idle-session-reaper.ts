@@ -133,6 +133,9 @@ async function reapOne(sessionKey: string): Promise<void> {
     // `background` is part of the status itself (live background work reads as
     // `working` — see deriveSessionStatus), so a session mid-delegation can
     // never classify as idle here: unloading it would kill that work silently.
+    // A session holding a queue is `queued`, not idle, for the same kind of
+    // reason: its in-memory reading timer is what delivers that queue when the
+    // cadence comes round, and an unloaded session has no timer.
     const fresh = deriveSessionStatus(sessionKey, sessionActivitySets())
     if (fresh !== 'idle') {
       return

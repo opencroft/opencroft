@@ -4,7 +4,7 @@ import type React from 'react'
 
 import { MenuLayout } from '../layout/menulayout'
 import { ScrollContent, ScrollPage } from '../layout/scrollpage'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface SettingsSection {
   id: string

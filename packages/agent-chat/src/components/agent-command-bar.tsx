@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
 import { Textarea } from 'ui/components/ui/textarea'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { CommandAutocomplete, commandInvocation, commandToken, matchCommands } from './command-autocomplete'
 

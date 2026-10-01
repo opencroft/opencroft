@@ -21,7 +21,8 @@ import { getRequest } from '@tanstack/react-start/server'
 //   /api/route/$                a user's own "API Route" canvas node: the
 //                                whole feature is being a webhook target for
 //                                whatever external caller the user configured
-//   /api/ext/.../http/[...path] an extension's own declared HTTP handler —
+//   /api/ext/<extensionId>/http/*
+//                               an extension's own declared HTTP handler —
 //                                "proxies, webhooks, SSE all work" is that
 //                                file's own description of its job. A route
 //                                the extension declares as a session route

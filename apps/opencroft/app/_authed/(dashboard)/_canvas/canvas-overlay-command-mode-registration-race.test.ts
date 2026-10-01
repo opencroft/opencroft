@@ -23,7 +23,7 @@ after(() => dom.cleanup())
 
 function fakeCommandModeDecl(id: string) {
   return {
-    manifest: { id: `test/${id}` },
+    manifest: { id: `test.${id}` },
     commandModes: [{ id, label: id, component: () => null }],
   } as Parameters<typeof extensionRegistry.register>[0]
 }

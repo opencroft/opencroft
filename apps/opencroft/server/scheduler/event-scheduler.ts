@@ -13,6 +13,7 @@
 
 import { CronExpressionParser } from 'cron-parser'
 
+import { EVENT_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import { dispatchExecutionContext } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import {
   loadGraphPlain,
@@ -137,7 +138,7 @@ function collectEventNodesByGraph(): Map<string, GraphNode[]> {
   const registry = getSpacesRegistry()
   const byGraph = new Map<string, GraphNode[]>()
   for (const ref of registry.listGraphs()) {
-    const events = (ref.graph.graph.nodes as unknown as GraphNode[]).filter((n) => n.type === 'event')
+    const events = (ref.graph.graph.nodes as unknown as GraphNode[]).filter((n) => n.type === EVENT_NODE_TYPE)
     if (events.length > 0) {
       byGraph.set(registry.addressOf(ref), events)
     }

@@ -34,7 +34,7 @@ export function Approvals({ session }: { session: ApprovalsSession }) {
     return null
   }
   return (
-    <div className='flex flex-col gap-2 px-4 pb-2'>
+    <div data-slot='approvals' className='flex flex-col gap-2 px-4 pb-2'>
       {session.permissions.map((p) => (
         <AppearGuard key={p.requestId}>
           <PermissionRequest

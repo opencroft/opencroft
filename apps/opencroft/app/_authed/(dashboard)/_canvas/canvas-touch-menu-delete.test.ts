@@ -88,6 +88,7 @@ async function mountHarness(): Promise<Harness> {
       createElement(NodeContextMenu, {
         position: { x: 0, y: 0 },
         node: { id: 'n1', type: 'default', position: { x: 0, y: 0 }, data: {}, selected },
+        contexts: {},
         onCopy: () => {},
         onDelete: () => {
           deletedSelectionSize = selected ? 1 : 0

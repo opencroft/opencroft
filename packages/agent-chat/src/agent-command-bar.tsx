@@ -53,7 +53,13 @@ import {
 } from './edit-drafts'
 import type { AgentChatSession } from './session'
 import type { CompactRenderState } from './use-compact-control'
-import { COMPOSE_SLOT, storedIds, type UploadPicture, useComposerPictures } from './use-composer-pictures'
+import {
+  COMPOSE_SLOT,
+  failedPicturesNotice,
+  storedIds,
+  type UploadPicture,
+  useComposerPictures,
+} from './use-composer-pictures'
 
 export type { ApprovalTitles, UsageTokens }
 
@@ -668,6 +674,28 @@ export function useAgentCommandBar({
   // words as one thing.
   const composerPictures = useComposerPictures(pictures && !pictures.unavailableReason ? pictures.upload : undefined)
   const { seed: seedPictures, settled: settledPictures } = composerPictures
+  // Which pictures of the message (or of every message of an open edit) could
+  // not be attached, and why (see failedPicturesNotice). Shown where a send
+  // error is from the moment a picture fails, not only once a send or commit
+  // is refused over it: a reader who never presses the button, or whose press
+  // never reaches the composer, is told all the same. Derived from the slots,
+  // so it goes with the last failed picture.
+  //
+  // Dismissing hides this notice until a send is refused over it again.
+  const failedNotice = failedPicturesNotice(
+    edit
+      ? edit.parts.map((part) => composerPictures.slots[editSlot(part.index)])
+      : [composerPictures.slots[COMPOSE_SLOT]],
+  )
+  const [dismissedNotice, setDismissedNotice] = useState<string | undefined>(undefined)
+  const pictureNotice = failedNotice !== dismissedNotice ? failedNotice : undefined
+  const dismissPictureNotice = useCallback(() => setDismissedNotice(failedNotice), [failedNotice])
+  const showPictureNotice = useCallback(() => setDismissedNotice(undefined), [])
+  useEffect(() => {
+    if (!failedNotice) {
+      setDismissedNotice(undefined)
+    }
+  }, [failedNotice])
 
   const loadEditPart = useCallback(
     (text: string) => {
@@ -767,9 +795,21 @@ export function useAgentCommandBar({
       if (editRef.current?.eventIndex !== current.eventIndex) {
         return
       }
+      // A failed picture refuses the commit, as it refuses a send. The edit
+      // stays open, and the open message's words go back into the composer the
+      // kit bar cleared on press; the stored draft is not touched, since an
+      // edit never becomes it.
+      if (failedPicturesNotice(current.parts.map((part) => slots[editSlot(part.index)]))) {
+        showPictureNotice()
+        if (textRef.current === '') {
+          textRef.current = open
+          setValue(open)
+        }
+        return
+      }
       commitEditRef.current?.(changedEdits(current.parts, drafts, slots))
     },
-    [settledPictures],
+    [settledPictures, setValue, showPictureNotice],
   )
 
   // Clamped rather than trusted: `parts` comes from the session and the
@@ -856,14 +896,40 @@ export function useAgentCommandBar({
 
   // The new message's pictures, waited for and taken off the row: they belong
   // to the message that just went, and the next one must not carry them again.
+  //
+  // A picture that failed to attach refuses the send rather than being left
+  // out of it (see failedPicturesNotice), and the words go back into the
+  // composer, which the kit bar cleared on press. Only into an empty one: a
+  // reader who started typing again meanwhile keeps what they typed.
+  const refuseSend = useCallback(
+    (text: string) => {
+      showPictureNotice()
+      if (textRef.current !== '') {
+        return
+      }
+      if (draftDebounceRef.current) {
+        clearTimeout(draftDebounceRef.current)
+        draftDebounceRef.current = null
+      }
+      pendingDraftRef.current = null
+      textRef.current = text
+      setValue(text)
+      onDraftChangeRef.current?.(sessionKeyRef.current, text)
+    },
+    [setValue, showPictureNotice],
+  )
   const sendWithPictures = useCallback(
     async (text: string) => {
       const slots = await settledPictures()
+      if (failedPicturesNotice([slots[COMPOSE_SLOT]])) {
+        refuseSend(text)
+        return
+      }
       const ids = storedIds(slots[COMPOSE_SLOT])
       seedPictures(COMPOSE_SLOT, {})
       sendRef.current(text, ids.length > 0 ? { attachments: ids } : undefined)
     },
-    [settledPictures, seedPictures],
+    [settledPictures, seedPictures, refuseSend],
   )
 
   const onSend = useCallback(
@@ -880,6 +946,12 @@ export function useAgentCommandBar({
         void commitOpenEdit(text)
         return
       }
+      // Refused before this hook clears anything when a picture has already
+      // failed; the words the kit bar cleared are put back.
+      if (failedPicturesNotice([composerPictures.slots[COMPOSE_SLOT]])) {
+        refuseSend(text)
+        return
+      }
       void sendWithPictures(text)
       if (draftDebounceRef.current) {
         clearTimeout(draftDebounceRef.current)
@@ -890,7 +962,7 @@ export function useAgentCommandBar({
       textRef.current = ''
       setValue('')
     },
-    [commitOpenEdit, sendWithPictures, setValue],
+    [commitOpenEdit, sendWithPictures, setValue, composerPictures.slots, refuseSend],
   )
 
   const onSetConfigOptionRef = useRef(onSetConfigOption)
@@ -973,8 +1045,8 @@ export function useAgentCommandBar({
         onConfigChange={handleConfigChange}
         configExtra={configExtra}
         trailingControls={hostControls}
-        sendError={sendError}
-        onDismissSendError={onDismissSendError}
+        sendError={sendError ?? pictureNotice}
+        onDismissSendError={sendError ? onDismissSendError : pictureNotice ? dismissPictureNotice : undefined}
         editBar={editBarNode}
         attachments={attachmentsRow}
         onFiles={canAttach ? addToOpenSlot : onFiles}
@@ -1015,6 +1087,8 @@ export function useAgentCommandBar({
       hostControls,
       sendError,
       onDismissSendError,
+      pictureNotice,
+      dismissPictureNotice,
       editBarNode,
       attachmentsRow,
       canAttach,

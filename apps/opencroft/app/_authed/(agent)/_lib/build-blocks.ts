@@ -139,6 +139,7 @@ function attachmentsReader(pictures: readonly DeliveredAttachment[] = [], sessio
           label: attachmentLabel(picture.name),
           detail: picture.name,
           ...(sessionKey ? { src: attachmentSrc(sessionKey, picture.id) } : {}),
+          ...(picture.width && picture.height ? { width: picture.width, height: picture.height } : {}),
         })
       }
     }
@@ -394,10 +395,21 @@ function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId
       onStop: onStopTask && p.canStop ? () => onStopTask(p.asyncTaskId) : undefined,
     }
   }
-  if (p.type === 'plan') {
-    // The plan is an entity like a tool call: named by its anchor so React
-    // keeps the checklist node while entries change around it.
-    return { kind: 'plan', id: `plan:${p.id}`, entries: p.entries }
+  if (p.type === 'notice') {
+    return {
+      kind: 'notice',
+      severity: p.severity,
+      title: p.title,
+      ...(p.description ? { description: p.description } : {}),
+    }
   }
-  return { kind: 'tool', id: p.id, name: p.name, toolName: p.toolName, args: p.args, result: p.result }
+  return {
+    kind: 'tool',
+    id: p.id,
+    name: p.name,
+    toolName: p.toolName,
+    args: p.args,
+    result: p.result,
+    ...(p.diffs ? { diffs: p.diffs } : {}),
+  }
 }

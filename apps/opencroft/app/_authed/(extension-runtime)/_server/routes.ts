@@ -10,7 +10,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 /**
  * Answer one request for an extension's declared route: `routes[<path>]` of its
- * server module, served at `/api/ext/<scope>/<slug>/http/<path>`.
+ * server module, served at `/api/ext/<extensionId>/http/<path>`.
  *
  * A plain handler is public, as every extension route was before session
  * routes existed: webhooks and proxies depend on it.

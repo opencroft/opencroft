@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { Button } from 'ui/components/ui/button'
 import { Input } from 'ui/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // How often an agent reads what has been sent to it.
 //

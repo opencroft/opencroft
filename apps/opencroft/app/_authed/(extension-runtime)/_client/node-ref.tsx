@@ -1,10 +1,10 @@
 'use client'
 
+import { cn } from 'cn'
 import { AppWindow, Box, type LucideIcon } from 'lucide-react'
 
 import { describeGraphRef, type GraphRefState, useGraphRef } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { cn } from '@/lib/utils'
 
 export interface NodeRefProps {
   /** A graph node id, or an App instance's id / `<space>.<app-slug>` address. */

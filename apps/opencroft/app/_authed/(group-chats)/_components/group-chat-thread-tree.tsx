@@ -2,13 +2,14 @@
 
 import { ChatList, type ChatListNode } from 'ui/chat/chat-list'
 
-import { layoutToNodes, type ThreadStatusById } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
+import type { ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
+import { layoutToNodes } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
 import type { GroupChatThreadEntry, ThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
 
 interface GroupChatThreadTreeProps {
   threads: GroupChatThreadEntry[]
-  /** Live process state per thread, from the shared session activity. */
-  statusById: ThreadStatusById
+  /** Live process state and context reading per thread -- see useThreadRowStates. */
+  stateById: ThreadRowStateById
   /** The arrangement to draw. Owned by the caller -- see `useThreadLayout`. */
   layout: ThreadLayout
   onChange: (nodes: ChatListNode[]) => void
@@ -39,7 +40,7 @@ interface GroupChatThreadTreeProps {
 // copy in each would drift apart the first time either was dragged.
 export function GroupChatThreadTree({
   threads,
-  statusById,
+  stateById,
   layout,
   onChange,
   activeId,
@@ -53,7 +54,7 @@ export function GroupChatThreadTree({
 }: GroupChatThreadTreeProps) {
   return (
     <ChatList
-      nodes={layoutToNodes(layout, threads, statusById)}
+      nodes={layoutToNodes(layout, threads, stateById)}
       activeId={activeId}
       onSelect={onSelect}
       onRename={onRename}

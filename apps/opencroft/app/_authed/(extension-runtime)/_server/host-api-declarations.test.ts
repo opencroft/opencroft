@@ -81,7 +81,7 @@ function surfaceNames(): Set<string> {
     ...bindableNames(extensionHostApi),
     ...bindableNames(extensionUiApi),
     // The id is arbitrary — only the names are read, and they do not vary.
-    ...extensionScopedExports('local/probe').map((entry) => entry.name),
+    ...extensionScopedExports('acme.probe').map((entry) => entry.name),
   ])
 }
 
@@ -96,6 +96,10 @@ const UNDECLARED_BY_DESIGN = new Map<string, string>([
     'The raw form of `invoke`, taking the extension id as its first argument. The shim declares `invoke` itself, bound to the extension being built, precisely so an extension never names itself — declaring this would advertise the unbound one beside it.',
   ],
   ['callNodeAction', 'The raw form of `dispatch`, and bound the same way for the same reason.'],
+  [
+    'extensionUrl',
+    'The raw form of `assetUrl` and `routeUrl`, taking the extension id as its first argument. The shim binds those two to the extension being built, so an extension never spells its own id or path prefix.',
+  ],
 ])
 
 const declared = declaredNames()

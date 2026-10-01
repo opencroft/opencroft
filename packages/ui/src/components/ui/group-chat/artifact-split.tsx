@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/components/ui/resizable'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { BackButton } from '../utils/back-button'
 import { type Artifact, ArtifactBody, ArtifactTitle } from './thread-artifacts'

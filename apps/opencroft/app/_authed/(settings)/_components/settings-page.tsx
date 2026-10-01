@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouteContext } from '@tanstack/react-router'
-import { Archive, ScrollText, User, Users } from 'lucide-react'
+import { Archive, PackageSearch, ScrollText, User, Users } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { ExtensionSettingsMenu } from 'ui/settings/extension-settings-menu'
@@ -15,6 +15,7 @@ import {
   findExtensionPage,
   useExtensionSettings,
 } from '@/app/_authed/(settings)/_components/extension-settings'
+import UnknownTypesSettings from '@/app/_authed/(settings)/_components/unknown-types-settings'
 import UsersSettings from '@/app/_authed/(settings)/_components/users-settings'
 import { useUrlState } from '@/components/hooks/use-url-state'
 
@@ -32,6 +33,13 @@ const BUILTIN_PAGES: BuiltinPage[] = [
   { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
   { id: 'backup', label: 'Backup & Restore', icon: Archive, component: BackupSettings },
   { id: 'users', label: 'Users', icon: Users, component: UsersSettings, adminOnly: true },
+  {
+    id: 'unknown-types',
+    label: 'Unknown Types',
+    icon: PackageSearch,
+    component: UnknownTypesSettings,
+    adminOnly: true,
+  },
 ]
 
 function SettingsContent() {

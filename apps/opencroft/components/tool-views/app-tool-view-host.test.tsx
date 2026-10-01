@@ -31,25 +31,16 @@ after(() => dom.cleanup())
 
 const FILE = 'const greeting = "hello world"\n'
 
-// The application's host with two members replaced: reading a remote file needs
-// a server and the editor needs a browser, and what is under test here is the
-// application's approval panel, which is kept.
-function StubDiffEditor() {
-  return null
-}
-
+// The application's host with one member replaced: reading a remote file needs
+// a server, and what is under test here is the application's approval panel,
+// which is kept.
 function WithFile({ children }: { children: ReactNode }) {
   const host = useToolViewHost()
-  return createElement(
-    ToolViewHostProvider,
-    { host: { ...host, readFile: async () => FILE, DiffEditor: StubDiffEditor } },
-    children,
-  )
+  return createElement(ToolViewHostProvider, { host: { ...host, readFile: async () => FILE } }, children)
 }
 
 // The props of the first element in a published tree that has `key` among them.
-// The tree is read as published, not rendered: the diff editor itself is never
-// mounted here.
+// The tree is read as published, not rendered.
 function findProps(node: unknown, key: string): Record<string, unknown> | null {
   if (!isValidElement(node)) {
     return null
@@ -106,12 +97,10 @@ test('remote_edit: the approval diff is published once the file is read, and cle
   const mounted = await mount()
   try {
     await mounted.render(view)
-    const diff = findProps(mounted.painted(), 'original')
-    assert.deepEqual(diff && { original: diff.original, value: diff.value, path: diff.path }, {
-      original: FILE,
-      value: FILE.replace('world', 'there'),
-      path: 'greeting.ts',
-    })
+    assert.deepEqual(findProps(mounted.painted(), 'diff')?.diff, [
+      { kind: 'removed', text: 'const greeting = "hello world"' },
+      { kind: 'added', text: 'const greeting = "hello there"' },
+    ])
 
     await mounted.render(null)
     assert.equal(mounted.painted(), null, 'the view unmounted and its diff is still in the overlay')
@@ -148,14 +137,17 @@ test('graph.updateNodes: the overlay follows the open node, and is cleared on un
     await mounted.render(updateNodes('approval'))
     assert.equal(mounted.painted(), null, 'nothing is open yet, so nothing is published')
 
+    // There is no canvas here, so the node has no current values: the update
+    // is all additions.
+    const published = [{ kind: 'added', text: 'name: Renamed' }]
     await toggleFirstNode()
-    assert.deepEqual(findProps(mounted.painted(), 'update')?.update, NODE_UPDATE, 'opening the node publishes it')
+    assert.deepEqual(findProps(mounted.painted(), 'diff')?.diff, published, 'opening the node publishes it')
 
     await toggleFirstNode()
     assert.equal(mounted.painted(), null, 'closing the node withdraws it')
 
     await toggleFirstNode()
-    assert.ok(findProps(mounted.painted(), 'update'), 'reopening the node publishes it again')
+    assert.deepEqual(findProps(mounted.painted(), 'diff')?.diff, published, 'reopening the node publishes it again')
     await mounted.render(null)
     assert.equal(mounted.painted(), null, 'the view unmounted and its diff is still in the overlay')
   } finally {
@@ -163,12 +155,12 @@ test('graph.updateNodes: the overlay follows the open node, and is cleared on un
   }
 })
 
-test('history mode publishes nothing: the transcript shows its diff inline', async () => {
+test('history mode publishes nothing: the transcript shows the update inline', async () => {
   const mounted = await mount()
   try {
     await mounted.render(updateNodes('history'))
-    await toggleFirstNode()
     assert.equal(mounted.painted(), null)
+    assert.ok(dom.container.textContent?.includes('Renamed'), 'the update is drawn in the transcript')
   } finally {
     mounted.unmount()
   }

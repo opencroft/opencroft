@@ -29,10 +29,10 @@ test('a node whose type no installed extension owns resolves to signed-in', asyn
 
 test('a node of a real extension that declares no nodeActionAccess resolves to signed-in', async () => {
   const slug = `node-access-undeclared-${crypto.randomUUID()}`
-  // `text-generation` is a builtin/core node type, and builtin/core declares no
+  // `text-generation` is a builtin.core node type, and builtin.core declares no
   // nodeActionAccess, so any of its actions defaults to signed-in.
   await getSpacesRegistry().create(slug, slug, {
-    nodes: [{ id: 'tg1', type: 'text-generation', position: { x: 0, y: 0 }, data: {} }],
+    nodes: [{ id: 'tg1', type: 'builtin.core.text-generation', position: { x: 0, y: 0 }, data: {} }],
     edges: [],
   })
   assert.equal(await getNodeActionAccess('tg1', 'run'), 'signed-in')

@@ -42,6 +42,16 @@ import { sessionManager } from './manager'
 export interface JobSessionOptions extends StreamOptions {
   command: string
   args?: string[]
+  /**
+   * Stop the command once nobody has watched it for this long. The clock starts when the job
+   * starts (nobody is watching yet) and again whenever its last watcher leaves.
+   *
+   * For a job that exists only to be looked at, such as following a log. Such a job never ends
+   * on its own, and without a bound, abandoned viewers hold job slots until the lifetime limit,
+   * so the next job that does real work is refused. Leave it unset for a job whose work matters
+   * whether or not anyone watches, such as a deploy.
+   */
+  stopWhenUnwatchedMs?: number
 }
 
 export interface JobSession {
@@ -78,7 +88,7 @@ export async function startJobSession(ctx: TerminalContext, opts: JobSessionOpti
     throw new Error(slot.message)
   }
 
-  const { command, args, ...streamOpts } = opts
+  const { command, args, stopWhenUnwatchedMs, ...streamOpts } = opts
   // Refusals from an unsupported context, and transport failures (host unreachable, auth), come
   // back as a rejection here — before a key exists. A caller that gets one has nothing to clean
   // up and nothing to tell a watcher about, which is why the slot is the only thing reserved
@@ -88,7 +98,7 @@ export async function startJobSession(ctx: TerminalContext, opts: JobSessionOpti
   // 32 hex characters. The key is the whole authorisation to attach, so it is generated here and
   // never derived from anything a caller could also compute (a node id, a service name).
   const sessionKey = `job:${randomBytes(16).toString('hex')}`
-  const session = sessionManager.create(null, handle, { sessionKey, kind: 'job' })
+  const session = sessionManager.create(null, handle, { sessionKey, kind: 'job', stopWhenUnwatchedMs })
 
   const bound = setTimeout(() => {
     handle.emit(`\nStopped after ${MAX_JOB_LIFETIME_MS / 60000} minutes: this job reached its time limit.\n`)

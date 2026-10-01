@@ -3,7 +3,7 @@
 import type { MouseEvent, ReactNode, SyntheticEvent } from 'react'
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/components/ui/context-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export type ReferenceChipTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
 

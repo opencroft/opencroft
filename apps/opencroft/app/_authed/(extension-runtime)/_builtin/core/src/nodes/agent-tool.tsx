@@ -141,7 +141,7 @@ export function AgentToolInspector({
 }
 
 export const AGENT_TOOL_HANDLES = [
-  { id: 'exec-out', contextType: 'execution-context', role: 'source' as const, label: 'Handler' },
+  { id: 'exec-out', handleType: 'execution-context', role: 'source' as const, label: 'Handler' },
 ]
 
 export function agentToolExposeOutput(

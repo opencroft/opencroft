@@ -1,8 +1,9 @@
 'use client'
 
 import { useSession } from '@opencroft/auth/client'
+import { THEME_PREFERENCES, type ThemePreference } from '@opencroft/auth/theme'
 import { Link, useLocation, useRouter } from '@tanstack/react-router'
-import { LogOut, MessagesSquare, Puzzle, SettingsIcon } from 'lucide-react'
+import { Heart, LogOut, type LucideIcon, MessagesSquare, Monitor, Moon, Puzzle, SettingsIcon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from 'ui/avatar'
 import {
@@ -11,6 +12,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'ui/dropdown-menu'
@@ -25,13 +28,10 @@ import { appBasePath } from '@/app/_authed/(apps)/_lib/app-routes'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
-import {
-  DEFAULT_GRAPH_SLUG,
-  GRAPH_APP_EXTENSION_ID,
-  GRAPH_APP_SLUG,
-  type SpaceSummary,
-} from '@/app/_authed/(space)/_server/types'
+import { DEFAULT_GRAPH_SLUG, GRAPH_APP_TYPE, type SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { useBuildLabel } from '@/app/_components/dev-build-badge'
+import { SPONSOR_URL } from '@/app/_shell/sponsor'
+import { useThemePreference } from '@/app/_shell/theme-preference'
 import { useSignOut } from '@/app/(auth)/_components/sign-out-item'
 
 /**
@@ -45,11 +45,7 @@ function slugFromPath(pathname: string): string | null {
 }
 
 function isDefaultGraph(instance: SpaceAppInstance) {
-  return (
-    instance.extensionId === GRAPH_APP_EXTENSION_ID &&
-    instance.appSlug === GRAPH_APP_SLUG &&
-    instance.slug === DEFAULT_GRAPH_SLUG
-  )
+  return instance.type === GRAPH_APP_TYPE && instance.slug === DEFAULT_GRAPH_SLUG
 }
 
 /**
@@ -93,13 +89,13 @@ function useSpaceApps(slug: string | null, pathname: string): SwitcherApp[] {
     return []
   }
   return instances.map((instance) => {
-    const meta = apps.find((app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug)
+    const meta = apps.find((app) => app.type === instance.type)
     return {
       id: instance.id,
-      label: instance.name || meta?.title || instance.appSlug,
+      label: instance.name || meta?.title || instance.type,
       href: isDefaultGraph(instance) ? `/space/${slug}` : `/space/${slug}/app/${instance.slug}`,
       icon: resolveIcon(meta?.icon),
-      type: meta?.title ?? instance.appSlug,
+      type: meta?.title ?? instance.type,
     }
   })
 }
@@ -111,6 +107,32 @@ function initials(name: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join('')
+}
+
+const THEME_CHOICES: Record<ThemePreference, { label: string; icon: LucideIcon }> = {
+  light: { label: 'Light', icon: Sun },
+  dark: { label: 'Dark', icon: Moon },
+  system: { label: 'System', icon: Monitor },
+}
+
+function ThemeChoices() {
+  const { theme, choose } = useThemePreference()
+  return (
+    <DropdownMenuGroup>
+      <DropdownMenuLabel>Theme</DropdownMenuLabel>
+      <DropdownMenuRadioGroup value={theme} onValueChange={choose}>
+        {THEME_PREFERENCES.map((value) => {
+          const { label, icon: Icon } = THEME_CHOICES[value]
+          return (
+            <DropdownMenuRadioItem key={value} value={value}>
+              <Icon />
+              {label}
+            </DropdownMenuRadioItem>
+          )
+        })}
+      </DropdownMenuRadioGroup>
+    </DropdownMenuGroup>
+  )
 }
 
 function AccountMenu() {
@@ -142,6 +164,13 @@ function AccountMenu() {
           <Puzzle />
           Extensions
         </DropdownMenuItem>
+        {/* biome-ignore lint/a11y/useAnchorContent: the label is the item's children, placed inside the anchor at render */}
+        <DropdownMenuItem render={<a href={SPONSOR_URL} target='_blank' rel='noopener noreferrer' />}>
+          <Heart />
+          Sponsor
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <ThemeChoices />
         {signOut && (
           <>
             <DropdownMenuSeparator />

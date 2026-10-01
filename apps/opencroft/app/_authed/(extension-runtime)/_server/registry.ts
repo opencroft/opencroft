@@ -1,13 +1,14 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
-import type { InstallAuth } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
+import type { InstallAuth } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 import { runGit, withGitAuth } from './git-exec'
 
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface RegistryExtension {
+  /** `<owner>.<extension>`: the extension id it installs as, and its folder. Already two slugs. */
   id: string
   name: string
   description?: string
@@ -331,17 +332,18 @@ export function clearRegistryCache(): void {
   registryCache().clear()
 }
 
-// ── Auto-install (EXTENSIONS env) ───────────────────────────────────
+// ── Lookup ──────────────────────────────────────────────────────────
 
 export interface ExtensionSpec {
-  /** Full extension identifier, e.g. "opencroft/my-extension" */
+  /** The extension id, e.g. "acme.my-extension". */
   id: string
   /** Optional version/ref to pin */
   version?: string
 }
 
 /**
- * Parse EXTENSIONS env: "opencroft/extension-a:1.0.0,author/extension-b"
+ * Parse the EXTENSIONS env var, the extensions installed at boot:
+ * "acme.extension-a:1.0.0,author.extension-b"
  */
 export function parseExtensionsEnv(): ExtensionSpec[] {
   const raw = process.env.EXTENSIONS?.trim()
@@ -371,81 +373,20 @@ function sourceInstallAuth(source: RegistrySource): InstallAuth | undefined {
 }
 
 /**
- * Resolve extension spec to repository URL using registries.
- * Returns the repository URL and the owning registry's auth if found, or null.
+ * The first registry entry with this extension id, with the registry it came
+ * from and that registry's credentials, which the extension's repository
+ * reuses. Ids may repeat across registries; the first registry wins.
  */
-export async function resolveExtensionRepo(
-  spec: ExtensionSpec,
-): Promise<{ repository: string; auth?: InstallAuth } | null> {
+export async function findRegistryExtension(
+  extensionId: string,
+): Promise<{ repository: string; registryName: string; auth?: InstallAuth } | null> {
   const registries = await fetchAllRegistries()
   for (const reg of registries) {
     for (const ext of reg.manifest.extensions) {
-      if (ext.id === spec.id) {
-        return { repository: ext.repository, auth: sourceInstallAuth(reg.source) }
+      if (ext.id === extensionId) {
+        return { repository: ext.repository, registryName: reg.source.name, auth: sourceInstallAuth(reg.source) }
       }
     }
   }
   return null
-}
-
-/**
- * Auto-install extensions listed in EXTENSIONS env at boot.
- * Logs progress and errors, does not throw.
- */
-export async function autoInstallExtensions(): Promise<void> {
-  const specs = parseExtensionsEnv()
-  if (specs.length === 0) {
-    return
-  }
-
-  console.log(`[extensions] auto-install: ${specs.length} extension(s) to check`)
-
-  const { listInstalledExtensions } = await import(
-    '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
-  )
-  const { installExtensionFromUrl } = await import(
-    '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
-  )
-  const { updateInstalledExtension } = await import(
-    '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
-  )
-
-  const installed = await listInstalledExtensions()
-  const installedMap = new Map(installed.map((r) => [r.id, r]))
-
-  for (const spec of specs) {
-    try {
-      // Resolve repo URL from registries
-      const resolved = await resolveExtensionRepo(spec)
-      if (!resolved) {
-        console.error(`[extensions] auto-install: "${spec.id}" not found in any registry`)
-        continue
-      }
-
-      const existing = installedMap.get(spec.id)
-      if (existing) {
-        // Already installed — optionally update
-        if (spec.version) {
-          console.log(`[extensions] auto-install: updating ${spec.id} to ${spec.version}`)
-          await updateInstalledExtension({ data: { extensionId: spec.id, ref: spec.version } })
-        } else {
-          console.log(`[extensions] auto-install: ${spec.id} already installed`)
-        }
-        continue
-      }
-
-      // Install fresh
-      console.log(`[extensions] auto-install: installing ${spec.id}${spec.version ? `@${spec.version}` : ''}`)
-      await installExtensionFromUrl({
-        data: {
-          url: resolved.repository,
-          ref: spec.version,
-          auth: resolved.auth,
-        },
-      })
-      console.log(`[extensions] auto-install: ${spec.id} installed successfully`)
-    } catch (err) {
-      console.error(`[extensions] auto-install: failed to install ${spec.id}:`, err)
-    }
-  }
 }

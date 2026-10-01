@@ -59,14 +59,14 @@ export function TextGenerationInspector({
 }
 
 export const TEXT_GENERATION_HANDLES = [
-  { id: 'text-in', contextType: 'text-stream', role: 'target' as const, label: 'Prompt', streamAction: 'run' },
-  { id: 'text-out', contextType: 'text-stream', role: 'source' as const, label: 'Text' },
+  { id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Prompt', streamAction: 'run' },
+  { id: 'text-out', handleType: 'text-stream', role: 'source' as const, label: 'Text' },
 ]
 
 export function textGenerationExposeOutput(
   handleId: string,
   _data: unknown,
-  _typeId: string,
+  _type: string,
   nodeId: string,
 ): Stream<TextChunk> | undefined {
   if (handleId === 'text-out') {

@@ -18,40 +18,19 @@ function parseKeyRef(keyPath?: string): { storeId: string; name: string } | null
   return { storeId: keyPath.slice(0, colon), name: keyPath.slice(colon + 1) }
 }
 
+// A Key Store node writes its keys under its extension's cache directory, which
+// is `<cache>/extensions/<extensionId>/`. This package does not know which
+// extension owns the node, so it looks in each one's `key-store` folder; a
+// store id is a node id, so at most one of them holds it.
 async function readStoreKey(ref: { storeId: string; name: string }): Promise<string> {
   const base = extensionsCacheDir()
-  const candidates = [
-    path.join(base, 'local', 'core', 'key-store', ref.storeId, ref.name),
-    path.join(base, 'builtin', 'core', 'key-store', ref.storeId, ref.name),
-  ]
-  for (const candidate of candidates) {
+  const extensionIds = await fs.readdir(base).catch(() => [])
+  for (const extensionId of extensionIds.sort()) {
     try {
-      return await fs.readFile(candidate, 'utf-8')
+      return await fs.readFile(path.join(base, extensionId, 'key-store', ref.storeId, ref.name), 'utf-8')
     } catch {
-      /* try next */
+      /* not in this extension's cache */
     }
-  }
-  // Brute-force scan across all extension cache dirs
-  try {
-    const scopes = await fs.readdir(base)
-    for (const scope of scopes) {
-      const scopeDir = path.join(base, scope)
-      const stat = await fs.stat(scopeDir).catch(() => null)
-      if (!stat?.isDirectory()) {
-        continue
-      }
-      const exts = await fs.readdir(scopeDir).catch(() => [])
-      for (const ext of exts) {
-        const candidate = path.join(scopeDir, ext, 'key-store', ref.storeId, ref.name)
-        try {
-          return await fs.readFile(candidate, 'utf-8')
-        } catch {
-          /* try next */
-        }
-      }
-    }
-  } catch {
-    /* ignore */
   }
   throw new Error(`SSH key not found: ${ref.name} (store: ${ref.storeId})`)
 }

@@ -181,11 +181,17 @@ process.env.CLAUDE_AGENT_LOGS ??= join(process.cwd(), 'data', 'claude-acp-logs')
 // back — the same cycle-avoidance as SessionOpener above.
 const engineActivityListeners = new Set<() => void>()
 
-/** Called after each change the engine reports to a session's activity. Returns the unsubscribe. */
+/** Called after each change the engine reports to a session's activity, queue or usage reading. Returns the unsubscribe. */
 export function subscribeEngineActivity(listener: () => void): () => void {
   engineActivityListeners.add(listener)
   return () => {
     engineActivityListeners.delete(listener)
+  }
+}
+
+function notifyEngineActivity(): void {
+  for (const listener of engineActivityListeners) {
+    listener()
   }
 }
 
@@ -235,12 +241,14 @@ export const agentClient = createAgentClient({
   onEvent: (sessionId, event, sessionKey) => {
     persistSessionEvent(event, sessionKey)
     persistUsageOnTurnEnd(sessionId, event, sessionKey)
-  },
-  onActivityChange: () => {
-    for (const listener of engineActivityListeners) {
-      listener()
+    // The queue and the usage reading are part of what the activity readers
+    // publish, and the engine reports their changes as these two events rather
+    // than as an activity change.
+    if (event.kind === 'queue' || event.kind === 'usage') {
+      notifyEngineActivity()
     }
   },
+  onActivityChange: notifyEngineActivity,
   // Live compaction transitions (never replay — the engine gates that). The
   // registered handler re-delivers the session's standing context once a
   // compaction completes; see stream.ts's restoreAfterCompaction.

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { questionsToElicitation } from 'agent-client/elicitation-form'
+import { CLAUDE_ASK_USER_QUESTION_FORM } from 'agent-client/elicitation-form.fixtures'
 import type { ElicitationSchema } from 'agent-client/types'
 
 import { askFields, buildAskContent } from './ask-user'
@@ -62,6 +63,36 @@ test('a custom-answer field folds into its question tab instead of becoming one'
   )
   assert.equal(fields[0].kind.type, 'select')
   assert.equal(fields[1].kind.type, 'multi')
+})
+
+test('an unmarked question_<n>_custom box from claude-agent-acp folds into its question tab', () => {
+  const fields = askFields(CLAUDE_ASK_USER_QUESTION_FORM.requestedSchema)
+  assert.deepEqual(
+    fields.map((field) => [field.key, field.kind.type, field.customKey]),
+    [
+      ['question_0', 'select', 'question_0_custom'],
+      ['question_1', 'multi', 'question_1_custom'],
+    ],
+  )
+  // The typed text answers under the box's own key, where the adapter reads it.
+  assert.deepEqual(
+    buildAskContent(fields, {
+      values: { question_0: 'Fast', question_1: ['UI'] },
+      customs: { question_0: 'but carefully', question_1: 'docs' },
+    }),
+    { question_0: 'Fast', question_0_custom: 'but carefully', question_1: ['UI'], question_1_custom: 'docs' },
+  )
+})
+
+test('a question_<n>_custom field whose question is missing stays a tab of its own', () => {
+  const fields = askFields({
+    type: 'object',
+    properties: { question_3_custom: { type: 'string', title: 'Other' } },
+  })
+  assert.deepEqual(
+    fields.map((field) => [field.key, field.kind.type]),
+    [['question_3_custom', 'text']],
+  )
 })
 
 test('an unknown property type degrades to a text input rather than vanishing', () => {

@@ -16,9 +16,10 @@ import type { AppActionHandler, AppServerHooks } from '@opencroft/server'
 import { resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import { graphActions } from '@/app/_authed/(apps)/_server/graph-actions'
 import { graphAppHooks } from '@/app/_authed/(apps)/_server/graph-app'
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { getProvided } from '@/app/_authed/(extension-runtime)/_server/provides'
-import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
+import { GRAPH_APP_TYPE } from '@/app/_authed/(space)/_server/types'
 
 /**
  * One action of a host-implemented App: what the catalog shows, what runs, and
@@ -48,21 +49,22 @@ interface HostApp {
 // Built on first use rather than at module load: the graph's actions reach the
 // extension runtime, which reaches back here, so whichever of the two a process
 // happens to import first, the other may still be initialising at load time.
-let hostApps: Record<string, Record<string, HostApp>> | undefined
+// Keyed by the App's qualified type, which names the extension declaring it.
+let hostApps: Record<string, HostApp> | undefined
 
-function hostApp(extensionId: string, appSlug: string): HostApp | undefined {
+function hostApp(type: string): HostApp | undefined {
   hostApps ??= {
-    [GRAPH_APP_EXTENSION_ID]: { [GRAPH_APP_SLUG]: { hooks: graphAppHooks, actions: graphActions } },
+    [GRAPH_APP_TYPE]: { hooks: graphAppHooks, actions: graphActions },
   }
-  return hostApps[extensionId]?.[appSlug]
+  return hostApps[type]
 }
 
 /**
  * The server hooks of a host-implemented App — its lifecycle plus its actions'
  * handlers — or undefined for an App an extension implements.
  */
-export function hostAppHooks(extensionId: string, appSlug: string): AppServerHooks | undefined {
-  const app = hostApp(extensionId, appSlug)
+export function hostAppHooks(type: string): AppServerHooks | undefined {
+  const app = hostApp(type)
   if (!app) {
     return undefined
   }
@@ -88,15 +90,16 @@ function actionMeta({ id, label, description, inputSchema, execution }: HostAppA
 export async function providedApps(): Promise<Provided<AppEntry>[]> {
   const provided = await getProvided<AppEntry>('apps')
   return provided.map((entry) => {
-    const app = hostApp(entry.extensionId, entry.value.slug)
+    const app = hostApp(entry.value.type)
     return app ? { ...entry, value: { ...entry.value, actions: app.actions.map(actionMeta) } } : entry
   })
 }
 
 /**
  * How the tool surfaces classify one `app_call`: the policy key of the action
- * it names — `<type>.<action>`, e.g. `graph.listNodes` — and that action's
- * declaration, when the call names an action of a HOST App.
+ * it names — `<bare type>.<action>`, e.g. `graph.listNodes`, the host's own
+ * vocabulary for its own Apps — and that action's declaration, when the call
+ * names an action of a HOST App.
  *
  * Undefined for everything else: an extension App's action, an address that
  * resolves to nothing, an action the App does not declare, arguments that are
@@ -116,6 +119,7 @@ export async function hostAppCall(
   if (!row) {
     return undefined
   }
-  const declared = hostApp(row.extensionId, row.appSlug)?.actions.find((candidate) => candidate.id === action)
-  return declared ? { key: `${row.appSlug}.${action}`, instanceId: row.id, action: declared } : undefined
+  const declared = hostApp(row.type)?.actions.find((candidate) => candidate.id === action)
+  const bare = parseType(row.type)?.bare
+  return declared && bare ? { key: `${bare}.${action}`, instanceId: row.id, action: declared } : undefined
 }

@@ -19,7 +19,9 @@ import test, { after } from 'node:test'
 
 import { fromCrossJSON, toCrossJSONStream } from 'seroval'
 
+import type { InstalledExtensionRecord } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import type { LocalExtensionRecord } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
+import type { ExtensionRecord } from '@/app/_authed/(extension-editor)/_components/extension-detail'
 import { installDomEnvironment } from '@/test-support/dom-environment'
 
 const dom = await installDomEnvironment()
@@ -37,7 +39,8 @@ for (const name of ['getComputedStyle', 'requestAnimationFrame', 'cancelAnimatio
 }
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-execution-badge-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 // After the DOM exists, never before -- react-dom binds to the globals it finds.
 const { act } = await import('react')
@@ -50,21 +53,25 @@ const { ExtensionDetail } = await import('@/app/_authed/(extension-editor)/_comp
 
 after(async () => {
   dom.cleanup()
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
 // Every mode on an app action, plus the two cases the page decides for itself:
 // an action that declares nothing, and one that declares a mode that does not
-// exist. Ids never repeat the app's slug or the node's type id, since the rows
+// exist. Ids never repeat the app's type or the node's type, since the rows
 // are found by the id they print.
 const MANIFEST = {
-  id: 'local/modes',
   name: 'Modes',
   version: '1.0.0',
   provides: {
     apps: [
       {
-        slug: 'runner',
+        type: 'runner',
         title: 'Runner',
         actions: [
           { id: 'undeclared', label: 'Undeclared' },
@@ -78,7 +85,7 @@ const MANIFEST = {
   },
   nodes: [
     {
-      typeId: 'modes-node',
+      type: 'modes-node',
       name: 'Modes node',
       actions: [
         { id: 'node-undeclared', label: 'Node undeclared' },
@@ -88,8 +95,9 @@ const MANIFEST = {
   ],
 }
 
-await fs.mkdir(path.join(root, 'modes'), { recursive: true })
-await fs.writeFile(path.join(root, 'modes', 'extension.json'), JSON.stringify(MANIFEST, null, 2))
+const FOLDER = 'local.modes'
+await fs.mkdir(path.join(root, 'extensions', FOLDER), { recursive: true })
+await fs.writeFile(path.join(root, 'extensions', FOLDER, 'extension.json'), JSON.stringify(MANIFEST, null, 2))
 
 // The record as the browser receives it. The server encodes a server
 // function's result with seroval's toCrossJSONStream and Start's default
@@ -104,7 +112,7 @@ await fs.writeFile(path.join(root, 'modes', 'extension.json'), JSON.stringify(MA
 // there because getDefaultSerovalPlugins reads the adapters out of a request
 // context that a test does not have.
 async function wireRecord(): Promise<LocalExtensionRecord> {
-  const record = await getLocalExtensionImpl('local/modes')
+  const record = await getLocalExtensionImpl(FOLDER)
   assert.ok(record, 'the fixture extension must load')
   const plugins = defaultSerovalPlugins
   const body = await new Promise<unknown>((resolve, reject) => {
@@ -122,7 +130,7 @@ async function wireRecord(): Promise<LocalExtensionRecord> {
   return fromCrossJSON(JSON.parse(JSON.stringify(body)), { refs: new Map(), plugins }) as LocalExtensionRecord
 }
 
-async function mount(record: LocalExtensionRecord) {
+async function mount(record: ExtensionRecord) {
   const reactRoot = createRoot(dom.container)
   await act(async () => {
     reactRoot.render(<ExtensionDetail record={record} onEdit={() => {}} onUpdate={() => {}} onDelete={() => {}} />)
@@ -199,6 +207,63 @@ test('a node action wears its mode the same way', async () => {
     await press('Nodes', 'tab')
     await press('2 actions', 'button')
     assert.deepEqual(['node-undeclared', 'node-detached'].map(badgeFor), ['Sync', 'Async'])
+  } finally {
+    await page.unmount()
+  }
+})
+
+// ── An installed extension's source ────────────────────────────────────────
+//
+// What the page says about where an installed extension came from is what its
+// row recorded, and a row may record nothing: a folder copied in by hand has no
+// source. Such a page must not offer an update that has nothing to update from.
+
+function installedRecord(source: InstalledExtensionRecord['source']): InstalledExtensionRecord {
+  return {
+    id: 'acme.gauges',
+    folder: 'acme.gauges',
+    manifest: { id: 'acme.gauges', name: 'Gauges', version: '1.0.0' },
+    source,
+    files: {},
+    updatedAt: 0,
+  }
+}
+
+function buttonLabels(): string[] {
+  return [...dom.container.querySelectorAll('button')].map((button) => button.textContent ?? '')
+}
+
+test('an installed extension with a recorded source offers a reinstall and shows where it came from', async () => {
+  const commit = '0123456789abcdef0123456789abcdef01234567'
+  const page = await mount(
+    installedRecord({
+      url: 'https://example.com/acme/gauges.git',
+      registryName: null,
+      ref: 'v1.2.0',
+      commit,
+      installedAt: 0,
+    }),
+  )
+  try {
+    assert.ok(buttonLabels().includes('Reinstall'))
+    await press('Version', 'tab')
+    const text = dom.container.textContent ?? ''
+    assert.match(text, /https:\/\/example\.com\/acme\/gauges\.git/)
+    assert.match(text, /v1\.2\.0/)
+    assert.match(text, /0123456/)
+    assert.doesNotMatch(text, /0123456789abcdef/, 'the commit is shown short, not as the full sha')
+  } finally {
+    await page.unmount()
+  }
+})
+
+test('an installed extension with no recorded source offers no update and says so', async () => {
+  const page = await mount(installedRecord(null))
+  try {
+    assert.equal(buttonLabels().includes('Reinstall'), false)
+    assert.ok(buttonLabels().includes('Uninstall'), 'it is still an installed extension, removable as one')
+    await press('Version', 'tab')
+    assert.match(dom.container.textContent ?? '', /Not recorded/)
   } finally {
     await page.unmount()
   }

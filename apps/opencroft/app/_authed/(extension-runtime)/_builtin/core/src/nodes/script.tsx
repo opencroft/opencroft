@@ -1,8 +1,9 @@
 import { legacy } from '@opencroft/client'
-const { Badge, Button, CodeEditor, Input, InputHandle, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, dispatch, getStream, icons, inspectorIntent, toast, useGraphNodes, useNodeContext, useReactFlow } = legacy
+const { Badge, Button, CodeEditor, Input, InputHandle, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, dispatch, extensionId, getStream, icons, inspectorIntent, toast, useGraphNodes, useNodeContext, useReactFlow } = legacy
 type Stream<T> = legacy.Stream<T>
 type TextChunk = legacy.TextChunk
 import { type ScriptResult, setScriptResult, useScriptResult } from './script-output-store'
+import { storedType } from './stored-type'
 
 const { useCallback } = React
 
@@ -148,7 +149,7 @@ function SecretsPicker({ value, onChange }: { value: string; onChange: (next: st
   const availableKeys = React.useMemo(() => {
     const keys = new Set<string>()
     for (const n of nodes as { type?: string; data?: SecretsStoreNodeData }[]) {
-      if (n.type !== 'core-secrets-store') continue
+      if (n.type !== storedType(extensionId, 'core-secrets-store')) continue
       for (const key of n.data?.secretKeys ?? []) {
         keys.add(key)
       }
@@ -343,7 +344,7 @@ export function makeNodeJsNode() {
 export function scriptExposeOutput(
   handleId: string,
   _data: unknown,
-  _typeId: string,
+  _type: string,
   nodeId: string,
 ): Stream<TextChunk> | undefined {
   if (handleId === 'stdout-out') {

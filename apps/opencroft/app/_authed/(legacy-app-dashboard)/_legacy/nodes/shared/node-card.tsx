@@ -1,13 +1,12 @@
 'use client'
 
+import { cn } from 'cn'
 import type { LucideIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card.css'
 import { Flex } from 'ui/layout/flex'
 import { StatusIndicator, type StatusVariant } from 'ui/utils/status-indicator'
-
-import { cn } from '@/lib/utils'
 
 interface NodeCardProps {
   children: React.ReactNode

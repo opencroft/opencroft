@@ -8,12 +8,11 @@ import { useCanvasNodes } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-c
 import { useOptionalOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { backgroundRunLabel } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { sseEventsStore } from '@/app/_authed/(sse)/_lib/sse-events-store'
-import { CodeEditor, languageFromPath } from '@/components/code-editor'
 
 // This app's side of the tool views' host contract. The views live in the kit
 // and read everything product-specific through `useToolViewHost()`; this is the
-// one place that answers them from the canvas, the overlay, the server and the
-// editor this app actually has.
+// one place that answers them from the canvas, the overlay and the server this
+// app actually has.
 //
 // Mount it inside the RenderBoundary around each view, not above it. It reads
 // the canvas and overlay context at the same tree position the views used to
@@ -29,36 +28,6 @@ async function readSkill(name: string): Promise<string> {
 
 function readFile({ target, space, path }: { target: string; space?: string; path: string }): Promise<string> {
   return readRemoteFile({ data: { target, space, path } })
-}
-
-// @xyflow/react's `useKeyPress` calls `preventDefault()` on the keys it watches
-// unless the event came from an element its `isInputDOMNode` recognises, a
-// `.nokey` ancestor among them. Monaco takes input through the EditContext API
-// on a plain div, so a caret inside a diff would send Backspace to the canvas
-// as node deletion. The editor sets `nokey` on its own root as well; the class
-// is kept here because it is the contract the canvas reads, and these diffs
-// render inside the canvas whatever the editor does internally.
-//
-// With no language given, the language comes from `path`, and anything that is
-// not a recognisable file name lands on `plaintext`: these diffs carry file
-// contents, node property values and skill bodies, and highlighting all of that
-// as the editor's default TypeScript is worse than not highlighting it.
-function CanvasSafeDiffEditor({
-  original,
-  value,
-  language,
-  path,
-}: {
-  original: string
-  value: string
-  language?: string
-  path?: string
-}) {
-  return (
-    <div className='nokey'>
-      <CodeEditor original={original} value={value} language={language ?? languageFromPath(path)} />
-    </div>
-  )
 }
 
 // Projects an approval-mode diff into the canvas overlay's content slot. Where
@@ -82,7 +51,6 @@ export function AppToolViewHost({ children }: { children: ReactNode }) {
       readSkill,
       describeBackgroundRun: backgroundRunLabel,
       canvas: canvasNodes ? { getNode: canvasNodes.getNode, focusNode } : undefined,
-      DiffEditor: CanvasSafeDiffEditor,
       ApprovalPanel: OverlayApprovalPanel,
     }),
     [canvasNodes],

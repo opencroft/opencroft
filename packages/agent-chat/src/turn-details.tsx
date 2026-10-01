@@ -1,11 +1,11 @@
 'use client'
 
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
+import { cn } from 'cn'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
-import { cn } from 'ui/lib/utils'
 
 import { ChainDot, type ChainDotVariant, Chained } from './components/chain'
 import { type MessageHandlers, MessageView } from './messages'
@@ -47,7 +47,7 @@ function dotVariant(message: ChatMessage): ChainDotVariant {
     if (!settled && message.output === undefined) return 'default'
     return message.status === 'failed' ? 'destructive' : 'success'
   }
-  if (message.kind === 'error') return 'destructive'
+  if (message.kind === 'error' || (message.kind === 'notice' && message.severity === 'error')) return 'destructive'
   return 'default'
 }
 
@@ -83,8 +83,9 @@ function TurnHeader({ botName, toggle }: { botName?: string; toggle?: ReactNode 
 // One non-user turn, rendered as a vertical chain: a status dot per item
 // (default/success/destructive, an avatar on the first), connected by a rail.
 // More than one item earns a collapse toggle that condenses the turn down to
-// its last text plus any tool call that followed it — useful once a turn has
-// accumulated several tool calls a reader doesn't need to re-scan.
+// its last text plus the tool call and the notices that followed it — useful
+// once a turn has accumulated several tool calls a reader doesn't need to
+// re-scan.
 export function TurnDetails({
   items,
   toolViews,
@@ -113,8 +114,8 @@ export function TurnDetails({
     ) : null
 
   if (collapsed) {
-    // Combine the last assistant text with the last tool call that followed
-    // it (if any) — a compact "where things ended up" summary for the turn.
+    // The last assistant text and what followed it (see `afterText`) — a
+    // compact "where things ended up" summary for the turn.
     let lastTextIndex = -1
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]
@@ -135,15 +136,25 @@ export function TurnDetails({
       }
     }
     const lastEntry = entries[entries.length - 1]
+    // What follows the last text, in order: the tool call it ended on and
+    // every notice. A notice after the reply is usually the turn's outcome (a
+    // hook that blocked it), so folding it away would read as a normal reply.
+    // With no text at all, the turn's last entry stands in for the reply.
+    const afterText = entries
+      .slice(lastTextIndex + 1)
+      .filter((entry): entry is Extract<Entry, { kind: 'item' }> => entry.kind === 'item')
+      .map((entry) => entry.item)
+      .filter(
+        (item) =>
+          item.kind === 'notice' ||
+          item === lastToolAfterText ||
+          (!lastText && lastEntry?.kind === 'item' && item === lastEntry.item),
+      )
     // A permission/ask item never counts as "shown" by the summary above
     // (it's neither the last text nor a tool call) — surface any unresolved
     // one regardless, or it silently vanishes into a collapsed turn with no
     // cue that the session is waiting on the user.
-    const shown = new Set([
-      lastText?.id,
-      lastToolAfterText?.id,
-      !lastText && lastEntry?.kind === 'item' ? lastEntry.item.id : undefined,
-    ])
+    const shown = new Set([lastText?.id, ...afterText.map((item) => item.id)])
     const unresolvedRequests = entries.filter(
       (entry): entry is Extract<Entry, { kind: 'item' }> =>
         entry.kind === 'item' &&
@@ -167,28 +178,17 @@ export function TurnDetails({
                 onRespondText={onRespondText}
               />
             ) : null}
-            {lastToolAfterText ? (
+            {afterText.map((item) => (
               <MessageView
-                message={lastToolAfterText}
+                key={item.id}
+                message={item}
                 toolViews={toolViews}
                 hideToolCalls={hideToolCalls}
                 onRespondPermission={onRespondPermission}
                 onRespondAsk={onRespondAsk}
                 onRespondText={onRespondText}
               />
-            ) : null}
-            {/* No assistant text anywhere in the turn — fall back to the very
-                last entry so a collapsed tool-only turn still shows something. */}
-            {!lastText && lastEntry?.kind === 'item' ? (
-              <MessageView
-                message={lastEntry.item}
-                toolViews={toolViews}
-                hideToolCalls={hideToolCalls}
-                onRespondPermission={onRespondPermission}
-                onRespondAsk={onRespondAsk}
-                onRespondText={onRespondText}
-              />
-            ) : null}
+            ))}
             {unresolvedRequests.map((entry) => (
               <MessageView
                 key={entry.item.id}

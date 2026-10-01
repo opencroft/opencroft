@@ -17,7 +17,7 @@ import {
 import { Button } from 'ui/components/ui/button'
 import { Calendar } from 'ui/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export type UsageGrouping = 'all' | 'agent' | 'model'
 

@@ -20,7 +20,7 @@ import type { ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/reg
 interface FlowContextMenuProps {
   position: { x: number; y: number }
   extensions: ResolvedNode[]
-  onSelect: (typeId: string) => void
+  onSelect: (type: string) => void
   onNewExtension: () => void
   onClose: () => void
   onPaste: () => void
@@ -99,9 +99,9 @@ export function FlowContextMenu({
                 const Icon = node.icon
                 return (
                   <CommandItem
-                    key={node.typeId}
+                    key={node.type}
                     value={`${category} ${node.name}`}
-                    onSelect={() => onSelect(node.typeId)}
+                    onSelect={() => onSelect(node.type)}
                     className={ITEM_CLASS}
                   >
                     <Icon className='size-4' style={{ color: node.accent }} />

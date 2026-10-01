@@ -11,6 +11,10 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { admin } from 'better-auth/plugins'
 import { tanstackStartCookies } from 'better-auth/tanstack-start'
 import { count, eq } from 'drizzle-orm'
+import * as z from 'zod'
+
+import { sponsorPromptUserField } from './sponsor-prompt'
+import { THEME_PREFERENCES, themeUserField } from './theme'
 
 // The placeholder an explicitly-development deployment falls back to. Fixed
 // rather than random because sessions are signed with it: a value that changed
@@ -110,6 +114,19 @@ function buildAuth() {
       // step exists when nothing can send it. The seam is here for when it
       // does.
       changeEmail: { enabled: true, updateEmailWithoutVerification: true },
+      // Set by the person through the update-user endpoint. Better Auth stores
+      // an additional field's value unchecked unless it has a validator, so
+      // the choices are enforced here.
+      additionalFields: {
+        theme: { ...themeUserField.theme, input: true, validator: { input: z.enum(THEME_PREFERENCES) } },
+        // Arrives as JSON text; coercing yields the Date the column stores and
+        // refuses anything that is not a date.
+        sponsorPromptSeenAt: {
+          ...sponsorPromptUserField.sponsorPromptSeenAt,
+          input: true,
+          validator: { input: z.coerce.date() },
+        },
+      },
     },
     // Stamps `user.lastSeenAt` on every sign-in. Deliberately not derived from
     // the session table at read time (see the column's own comment in

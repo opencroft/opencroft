@@ -6,7 +6,7 @@
 // records its calls, so "refused" also means "the extension's code never ran".
 //
 // dispatchExtensionRoute is called directly. The Nitro route in
-// server/routes/api/ext/[scope]/[slug]/http hands it every request unchanged,
+// server/routes/api/ext/[extensionId]/http hands it every request unchanged,
 // and is checked on a running server rather than here.
 //
 // Environment set up exactly as session-access.test.ts does it, and for the
@@ -48,7 +48,7 @@ after(async () => {
   await rm(workdir, { recursive: true, force: true })
 })
 
-const URL_BASE = 'http://localhost:9999/api/ext/local/example/http/files'
+const URL_BASE = 'http://localhost:9999/api/ext/acme.example/http/files'
 
 // A real Better Auth session: sign up and keep the cookie the response sets.
 async function signUp(email: string): Promise<{ id: string; cookie: string }> {

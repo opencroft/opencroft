@@ -4,7 +4,7 @@ import { type ComponentType, type MouseEvent, type ReactElement, type ReactNode,
 import { Button, buttonVariants } from 'ui/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface SwitcherApp {
   id: string

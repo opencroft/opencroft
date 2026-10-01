@@ -55,7 +55,7 @@ test('the matchers catch what they are meant to catch (guards against a check th
 })
 
 test('the views and their chrome do read the host through useToolViewHost()', () => {
-  for (const file of ['tool-views.tsx', 'op-block.tsx']) {
+  for (const file of ['op-block.tsx', 'approval-fields.tsx', 'edit-sides.ts', 'graph-views.tsx', 'run-views.tsx']) {
     const source = readFileSync(join(dir, file), 'utf8')
     assert.ok(calls(source, 'useToolViewHost'), `${file} does not call useToolViewHost()`)
   }

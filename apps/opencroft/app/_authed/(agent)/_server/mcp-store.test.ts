@@ -37,7 +37,8 @@ async function spaceWithConnectionNode(name: string) {
     nodes: [
       {
         id: 'conn-1',
-        type: 'mcp-connection',
+        // Whichever owner the providing extension is installed under.
+        type: 'acme.mcp.mcp-connection',
         position: { x: 0, y: 0 },
         data: { name, transport: 'sse', url: `https://example.test/${name}`, headers: [], env: [] },
       },

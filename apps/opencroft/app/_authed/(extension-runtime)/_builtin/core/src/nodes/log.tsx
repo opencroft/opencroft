@@ -130,4 +130,4 @@ export function LogInspector({
   )
 }
 
-export const LOG_HANDLES = [{ id: 'text-in', contextType: 'text-stream', role: 'target' as const, label: 'Text' }]
+export const LOG_HANDLES = [{ id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Text' }]

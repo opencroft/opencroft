@@ -1,5 +1,5 @@
 // The HOST-registered Graph App's server hooks. The app is declared in
-// builtin/core's manifest and its client component ships in that extension's
+// builtin.core's manifest and its client component ships in that extension's
 // bundle, but these hooks are host code, wired in by the apps runtime ahead
 // of the extension-module lookup: graphs are core data (the whole node
 // machinery -- exec dispatch, streams, the graph actions -- stands on them), so

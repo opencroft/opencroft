@@ -529,6 +529,22 @@ test('a picture is drawn the same way waiting, delivered, and as the header of a
   assert.equal(header?.parts[0]?.attachments?.[0]?.src, SHOT_SRC)
 })
 
+test('a picture carries the size it was stored with, waiting, delivered, and as a header', () => {
+  const pictures = [{ ...SHOT, width: 640, height: 480, message: 0 }]
+  const sized = { label: 'shot.png', detail: 'shot.png', src: SHOT_SRC, width: 640, height: 480 }
+  const [queued] = buildUnread(
+    [{ ...waiting('q13', 'Alex Rivera', '2026-03-04T09:12:00.000Z', 'look'), attachments: pictures }],
+    undefined,
+    KEY,
+  )
+  const [delivered] =
+    partsOf(buildBlocks([{ ...userMessage(1, 'look'), attachments: pictures }], undefined, undefined, KEY)[0]) ?? []
+  const header = headerFromWindow({ index: 1, event: { kind: 'user', text: 'look', attachments: pictures } }, KEY)
+  assert.deepEqual(queued?.attachments, [sized])
+  assert.deepEqual(delivered?.attachments, [sized])
+  assert.deepEqual(header?.parts[0]?.attachments, [sized])
+})
+
 test('a quoted selection is never drawn as a picture, key or not', () => {
   const [part] =
     partsOf(buildBlocks([userMessage(1, `${SELECTION}what does this do?`)], undefined, undefined, KEY)[0]) ?? []

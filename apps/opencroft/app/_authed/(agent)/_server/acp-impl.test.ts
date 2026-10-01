@@ -138,7 +138,7 @@ async function freshAgentNode(): Promise<{ nodeId: string; selection: AgentSelec
     nodes: [
       {
         id: nodeId,
-        type: 'agent',
+        type: 'builtin.core.agent',
         position: { x: 0, y: 0 },
         data: { name: agentName, providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },

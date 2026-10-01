@@ -10,22 +10,25 @@ import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/popover'
 import { Spinner } from 'ui/spinner'
 
-import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
-import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import type { EmbeddedChatSelection } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import {
   GroupChatThreadDeleteDialog,
   GroupChatThreadRenameDialog,
 } from '@/app/_authed/(group-chats)/_components/group-chat-edit-dialogs'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { useThreadRowStates } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
-import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
+import type { GroupChatThreadListEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   getGroupChatEmbedView,
   listGroupChatThreadsView,
   setGroupChatThreadArchived,
 } from '@/app/_authed/(group-chats)/_server/actions'
+
+// One empty list for "not loaded", so the row states memoised on it are not
+// rebuilt on every render while the menu is closed.
+const NO_THREADS: GroupChatThreadListEntry[] = []
 
 export interface ChatSelectorProps {
   /** The group chat's slug — same address the embedded chat surface takes. */
@@ -51,7 +54,7 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   // null = loading; [] with error = the load failed.
-  const [threads, setThreads] = useState<GroupChatThreadEntry[] | null>(null)
+  const [threads, setThreads] = useState<GroupChatThreadListEntry[] | null>(null)
   const [error, setError] = useState<string>()
   // The chat's id, once resolved — the More footer links to its screen by it.
   const [chatId, setChatId] = useState<string | null>(null)
@@ -95,7 +98,7 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
 
   // The same shared session activity the group-chat screen's list reads, so a
   // row here shows the same live state as the same thread there.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
+  const stateById = useThreadRowStates(threads ?? NO_THREADS)
 
   // EVERY thread of the chat, newest first — the menu is bounded by its own
   // scroll box (the kit's CommandList, 300px) rather than by a count.
@@ -130,12 +133,7 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
     agent: t.agent,
     createdAt: new Date(t.createdAt),
     disabled: !t.agentIsMember,
-    status: deriveSessionStatus(t.sessionKey, {
-      pending: pendingKeys,
-      active: activeKeys,
-      background: backgroundKeys,
-      alive: aliveKeys,
-    }),
+    ...stateById.get(t.id),
     hasDraft: t.hasDraft,
   }))
   const activeThreadId = selection && 'threadId' in selection ? selection.threadId : undefined

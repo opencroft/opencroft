@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import { Field } from 'ui/components/ui/field'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export type SocialProvider = 'apple' | 'google'
 

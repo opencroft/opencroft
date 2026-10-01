@@ -1,4 +1,6 @@
+import { qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { findDockerExtensionId } from '@/app/_authed/(extension-runtime)/_server/node-handles'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { DockerContainerSnapshot } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
@@ -69,7 +71,18 @@ export function isDue(current: HostFailureState | undefined, now: number): boole
   return (current?.nextAttemptAt ?? 0) <= now
 }
 
-function collectDockerNodeIds(): string[] {
+// The docker extension's `docker` nodes among `nodes`, by their stored type:
+// qualified with the id of whichever extension declares that bare type, since
+// the host does not know which owner the docker extension is installed under.
+export function dockerNodeIds(nodes: GraphNode[], dockerExtensionId: string | null): string[] {
+  if (!dockerExtensionId) {
+    return []
+  }
+  const dockerType = qualifyType(dockerExtensionId, 'docker')
+  return nodes.flatMap((node) => (node.type === dockerType && node.id ? [node.id] : []))
+}
+
+function collectDockerNodeIds(dockerExtensionId: string | null): string[] {
   const r = getSpacesRegistry()
   const ids: string[] = []
   for (const summary of r.list()) {
@@ -78,12 +91,7 @@ function collectDockerNodeIds(): string[] {
       continue
     }
     const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
-    for (const node of spaceNodes as unknown as GraphNode[]) {
-      if (node.type !== 'docker' || !node.id) {
-        continue
-      }
-      ids.push(node.id)
-    }
+    ids.push(...dockerNodeIds(spaceNodes as unknown as GraphNode[], dockerExtensionId))
   }
   return ids
 }
@@ -112,17 +120,15 @@ function sortContainers(list: DockerContainerSnapshot[]): DockerContainerSnapsho
   return [...list].sort((a, b) => a.id.localeCompare(b.id))
 }
 
-// Resolve whichever extension currently declares the "docker" node typeId, the same way
-// node-actions.ts does for dispatched node actions — the docker extension isn't guaranteed to be
-// installed under the literal slug "docker" (e.g. an asLocal install can land under a different
-// slug, such as "opencroft-docker", giving it the id "local/opencroft-docker").
+// Resolve whichever extension currently declares the bare node type "docker" — the docker
+// extension isn't installed under a fixed id (e.g. an asLocal install lands in a `local.` folder
+// and runs under whichever id its manifest claims).
 async function callDockerPs(dockerNodeId: string): Promise<DockerContainerSnapshot[]> {
-  const manifests = await loadAllManifests()
-  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))
-  if (!owning) {
+  const dockerExtensionId = findDockerExtensionId(await loadAllManifests())
+  if (!dockerExtensionId) {
     return []
   }
-  const mod = await getExtensionModule(owning.id)
+  const mod = await getExtensionModule(dockerExtensionId)
   const fn = mod.actions['docker.ps']
   if (!fn) {
     return []
@@ -169,7 +175,7 @@ async function pollOne(dockerNodeId: string): Promise<void> {
 async function tick(): Promise<void> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
-  const ids = collectDockerNodeIds()
+  const ids = collectDockerNodeIds(findDockerExtensionId(await loadAllManifests()))
   const known = new Set(ids)
   for (const id of [...lastSnapshot.keys()]) {
     if (!known.has(id)) {

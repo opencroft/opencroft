@@ -6,11 +6,11 @@
 // asserted is what reaches the service, what a handler is handed when its task
 // runs it, and that the approval gate still stands in front of all of it.
 //
-// A local extension written into a scratch root stands in for the extensions
-// that really declare such tools and actions, which live in other
+// A local extension written into a scratch data dir stands in for the
+// extensions that really declare such tools and actions, which live in other
 // repositories. Its server module is written as a build would leave it, so
 // nothing compiles. It also gives the remote tools a target,
-// `extensions/<slug>`, that resolves without a node. The service is a
+// `extensions/<folder>`, that resolves without a node. The service is a
 // stand-in: nothing here starts a process, and a task's work runs only when a
 // test runs it — which is how "the handler runs afterwards" is observed.
 //
@@ -27,6 +27,7 @@ import test, { after, afterEach } from 'node:test'
 import type { ExecutionMode } from '@opencroft/core'
 import { db, spaceApp } from '@opencroft/db'
 
+import { AGENT_TOOL_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import type {
   BackgroundTaskRecord,
@@ -34,6 +35,7 @@ import type {
   StartInProcessTaskInput,
   StartRunnerTaskInput,
 } from '@/app/_authed/(background-tasks)/_server/types'
+import { qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { approvalStore } from '@/lib/approval-store'
 import { ASYNC_SENTENCE, AWAITABLE_SENTENCE, type ListedTool } from './execution-mode'
@@ -49,11 +51,20 @@ const suffix = crypto.randomUUID().slice(0, 8)
 // ── the fixture extension ────────────────────────────────────────────
 
 const root = mkdtempSync(join(tmpdir(), 'background-calls-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
-after(() => rmSync(root, { recursive: true, force: true }))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
+after(() => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
+  rmSync(root, { recursive: true, force: true })
+})
 
 const SLUG = `bgfix-${suffix}`
-const TARGET = `extensions/${SLUG}`
+const FOLDER = `local.${SLUG}`
+const TARGET = `extensions/${FOLDER}`
 const SCHEMA = { type: 'object', properties: { region: { type: 'string' } } }
 const ACTIONS = [
   { id: 'deploy', label: 'Deploy', description: 'Deploy it.', execution: 'async' },
@@ -67,21 +78,23 @@ const EXT = {
   sync: `bgfix_${suffix}_ext_sync`,
   misspelt: `bgfix_${suffix}_ext_misspelt`,
 }
-// The node type an agent-tool node hands its calls to.
-const HANDLER_TYPE = `${SLUG}-handler`
-mkdirSync(join(root, SLUG, 'dist'), { recursive: true })
+// The node type an agent-tool node hands its calls to: declared, and keyed in
+// `nodeActions`, bare; stored in the graph qualified with the extension's id.
+const HANDLER_TYPE = 'handler'
+const APP_TYPE = qualifyType(FOLDER, 'app')
+mkdirSync(join(root, 'extensions', FOLDER, 'dist'), { recursive: true })
 writeFileSync(
-  join(root, SLUG, 'extension.json'),
+  join(root, 'extensions', FOLDER, 'extension.json'),
   JSON.stringify({
-    id: `local/${SLUG}`,
+    id: FOLDER,
     name: 'Background-call fixture',
     version: '0.0.0',
     nodes: [
-      { typeId: `${SLUG}-node`, name: 'Fixture node', actions: ACTIONS },
-      { typeId: HANDLER_TYPE, name: 'Fixture handler' },
+      { type: 'node', name: 'Fixture node', actions: ACTIONS },
+      { type: HANDLER_TYPE, name: 'Fixture handler' },
     ],
     provides: {
-      apps: [{ slug: `${SLUG}-app`, title: 'Fixture app', actions: ACTIONS }],
+      apps: [{ type: 'app', title: 'Fixture app', actions: ACTIONS }],
       mcpTools: [
         { name: EXT.async, description: 'Index the repository.', inputSchema: SCHEMA, execution: 'async' },
         { name: EXT.awaitable, description: 'Build it.', inputSchema: SCHEMA, execution: 'awaitable' },
@@ -95,7 +108,7 @@ writeFileSync(
 // waited for. With no source entry to compile, the loader evaluates this
 // bundle as it stands.
 writeFileSync(
-  join(root, SLUG, 'dist', 'server.js'),
+  join(root, 'extensions', FOLDER, 'dist', 'server.js'),
   `module.exports = {
   tools: {
     ${JSON.stringify(EXT.async)}: async (args) => ({ indexed: args }),
@@ -105,7 +118,7 @@ writeFileSync(
   },
   nodeActions: {
     ${JSON.stringify(HANDLER_TYPE)}: {
-      handle: async (ctx) => ({ body: { handled: ctx.params.params, tool: ctx.params.context.toolName } }),
+      handle: async (ctx) => ({ body: { handled: ctx.params.params, tool: ctx.params.context.toolName, type: ctx.type } }),
     },
   },
 }
@@ -139,11 +152,11 @@ const graphTools = Object.values(GRAPH).map((tool) => ({ ...tool, id: `node-${to
 
 const space = await registry.create(spaceSlug, spaceSlug, {
   nodes: [
-    { id: NODE_ID, type: `${SLUG}-node`, position: { x: 0, y: 0 }, data: {} },
-    { id: HANDLER_NODE, type: HANDLER_TYPE, position: { x: 400, y: 0 }, data: {} },
+    { id: NODE_ID, type: qualifyType(FOLDER, 'node'), position: { x: 0, y: 0 }, data: {} },
+    { id: HANDLER_NODE, type: qualifyType(FOLDER, HANDLER_TYPE), position: { x: 400, y: 0 }, data: {} },
     ...graphTools.map((tool) => ({
       id: tool.id,
-      type: 'agent-tool',
+      type: AGENT_TOOL_NODE_TYPE,
       position: { x: 0, y: 200 },
       data: {
         name: tool.name,
@@ -166,7 +179,7 @@ const space = await registry.create(spaceSlug, spaceSlug, {
 })
 const [appRow] = await db
   .insert(spaceApp)
-  .values({ spaceId: space.id, extensionId: `local/${SLUG}`, appSlug: `${SLUG}-app`, name: 'Fixture', slug: 'fixture' })
+  .values({ spaceId: space.id, type: APP_TYPE, name: 'Fixture', slug: 'fixture' })
   .returning()
 const APP_ADDRESS = `${spaceSlug}.fixture`
 
@@ -467,23 +480,31 @@ test('an extension tool with no mode, or a misspelt one, runs in place with its 
 
 // ── agent-tool nodes ─────────────────────────────────────────────────
 
+// The handler is found under, and told, the bare type its extension declared,
+// though the graph stores the handler node's type qualified.
 test('an agent-tool node with execution async detaches, and its connected handler is the task', async () => {
   const { inProcess } = fakeService()
   const result = await handleToolCall(GRAPH.async.name, { q: 'x' }, { internal: true, callerSessionId: 'session-30' })
   assert.match(text(result), new RegExp(`^Started background task task-1 — ${GRAPH.async.name}\\. Its result will`))
   const [start] = inProcess
   assert.deepEqual([start?.kind, start?.name, start?.timeoutMs], ['tool', GRAPH.async.name, 3_600_000])
-  assert.equal(await start?.run(signal()), JSON.stringify({ handled: { q: 'x' }, tool: GRAPH.async.name }))
+  assert.equal(
+    await start?.run(signal()),
+    JSON.stringify({ handled: { q: 'x' }, tool: GRAPH.async.name, type: HANDLER_TYPE }),
+  )
 })
 
 test('an awaitable agent-tool node runs in place unless asked, and its handler gets only its own arguments', async () => {
   const { inProcess } = fakeService()
   const inPlace = await handleToolCall(GRAPH.awaitable.name, { q: 'here', timeoutMinutes: 2 }, { internal: true })
-  assert.equal(text(inPlace), JSON.stringify({ handled: { q: 'here' }, tool: GRAPH.awaitable.name }))
+  assert.equal(
+    text(inPlace),
+    JSON.stringify({ handled: { q: 'here' }, tool: GRAPH.awaitable.name, type: HANDLER_TYPE }),
+  )
   await handleToolCall(GRAPH.awaitable.name, { q: 'later', background: true }, { internal: true })
   assert.equal(
     await inProcess[0]?.run(signal()),
-    JSON.stringify({ handled: { q: 'later' }, tool: GRAPH.awaitable.name }),
+    JSON.stringify({ handled: { q: 'later' }, tool: GRAPH.awaitable.name, type: HANDLER_TYPE }),
   )
 })
 
@@ -564,7 +585,7 @@ test('remote_exec with background: true starts a runner task for the calling ses
       mode: 'command',
       command: 'npm test',
       // Resolved against the target's own directory, as the in-place path does.
-      cwd: join(root, SLUG, 'server'),
+      cwd: join(root, 'extensions', FOLDER, 'server'),
       // Names, unresolved: none of these is stored anywhere, and the start still
       // goes through — the values are the service's to put in the environment.
       secrets: ['DEPLOY_TOKEN'],
@@ -637,7 +658,7 @@ test('a backgrounded call is validated like one run in place', async () => {
   await assert.rejects(
     handleToolCall(
       'remote_exec',
-      { target: `extensions/no-such-${suffix}`, command: 'ls', background: true },
+      { target: `extensions/local.no-such-${suffix}`, command: 'ls', background: true },
       {
         internal: true,
       },
@@ -777,7 +798,7 @@ test('list_actions presents each action by its declared mode', async () => {
 })
 
 test('app_actions presents each action by its declared mode, by type and by address alike', async () => {
-  for (const app of [`${SLUG}-app`, APP_ADDRESS]) {
+  for (const app of [APP_TYPE, APP_ADDRESS]) {
     const result = await handleToolCall('app_actions', { app }, { internal: true })
     checkListing(text(result), (action) => action.id)
   }

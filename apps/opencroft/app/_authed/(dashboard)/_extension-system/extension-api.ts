@@ -5,6 +5,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { Badge } from 'ui/badge'
 import { Button } from 'ui/button'
+import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
@@ -34,7 +35,6 @@ import {
   removeKeyFromWsl,
 } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { deleteSecret, getSecrets, setSecret } from '@/app/_authed/(secrets-store)/_server/actions'
-import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 // What extension code actually receives as `icons` -- see safe-icons.ts for
 // why this has to be the namespace's source, not something callers opt into.

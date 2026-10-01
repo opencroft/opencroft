@@ -49,11 +49,20 @@ export function ControlledInput({ value, onValueChanged, onAccepted, ...props }:
     }
   };
 
+  // Pressing a button moves focus before its click fires, so flushing here
+  // hands the parent the typed value before any submit handler reads it.
+  // Callers that submit without moving focus (a shortcut, a programmatic
+  // submit) must use the value `onAccepted` passes them instead.
+  const handleBlur = () => {
+    debouncedChange.flush();
+  };
+
   return (
     <Input
       value={text}
       onChange={handleChange}
       onKeyDown={handleKeyDown}
+      onBlur={handleBlur}
       {...props}
     />
   );

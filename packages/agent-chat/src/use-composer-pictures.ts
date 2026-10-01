@@ -174,3 +174,23 @@ export function useComposerPictures(upload: UploadPicture | undefined): Composer
 export function storedIds(pictures: readonly ComposerPicture[] | undefined): string[] {
   return (pictures ?? []).flatMap((picture) => (picture.id && !picture.error ? [picture.id] : []))
 }
+
+/**
+ * What a send has to say when pictures in `slots` could not be attached, or
+ * undefined when none failed.
+ *
+ * A failed picture has no stored id, so a send that went ahead would carry the
+ * others and drop it without a word: the chip that said why is cleared with
+ * the composer. So the send is refused and the composer says which picture
+ * failed and why, in words, until the reader removes it.
+ */
+export function failedPicturesNotice(slots: readonly (readonly ComposerPicture[] | undefined)[]): string | undefined {
+  const failed = slots.flatMap((pictures) => (pictures ?? []).filter((picture) => picture.error))
+  if (failed.length === 0) {
+    return undefined
+  }
+  const named = failed.map((picture) => `${picture.name} (${picture.error})`).join('; ')
+  return failed.length === 1
+    ? `A picture could not be attached: ${named}. Remove it to send the message without it.`
+    : `${failed.length} pictures could not be attached: ${named}. Remove them to send the message without them.`
+}

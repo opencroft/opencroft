@@ -39,7 +39,7 @@ import {
   promptLocalImpl,
   stopLocalSessionProcessImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
-import { readLastKnownUsage, readPersistedSession } from '@/app/_authed/(agent)/_server/acp-session-store'
+import { readLastKnownUsages, readPersistedSession } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import {
   settleSessionKeyMoves,
@@ -3117,45 +3117,15 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
   // Same lookup host.ts's ordinary-session listSessions does: agent-client
   // only holds live (loaded-since-restart) sessions in memory, so a thread
   // whose session isn't in this map is offline, not necessarily unknown —
-  // see the last-known fallback below.
+  // it falls back to what it persisted before going offline, and only
+  // offline threads pay for that read at all.
   const metaBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta] as const))
-  // Resolved once per thread, ahead of the synchronous map below: an offline
-  // thread falls back to what it persisted before going offline (readLastKnownUsage
-  // does its own settings-store read), and only offline threads pay for that
-  // read at all.
-  // One node read per distinct agent, not per thread: an offline thread needs
-  // its agent's configured window (the only window authority left once the
-  // session is not loaded -- see toContextUsage), and a chat's threads share
-  // few agents between many threads.
-  // The PROMISE is memoised, not the value it resolves to. These lookups run
-  // inside the Promise.all below, so an await between the check and the store
-  // would let every thread reach the check before any of them had stored
-  // anything: all miss, all issue the lookup, and the memo dedupes nothing
-  // while reading as though it does. Storing before the first await is what
-  // makes the claim above true.
-  const windowByAgentNodeId = new Map<string, Promise<number | undefined>>()
-  const configuredWindowFor = (agentNodeId: string): Promise<number | undefined> => {
-    let pending = windowByAgentNodeId.get(agentNodeId)
-    if (!pending) {
-      pending = agentConfiguredWindowByNodeId(agentNodeId)
-      windowByAgentNodeId.set(agentNodeId, pending)
-    }
-    return pending
-  }
+  const lastKnownByKey = await lastKnownContextUsage(threads.filter((t) => !metaBySessionKey.has(t.sessionKey)))
   const contextUsageByKey = new Map(
-    await Promise.all(
-      threads.map(async (t) => {
-        const live = metaBySessionKey.get(t.sessionKey)
-        const usage = live
-          ? toContextUsage(live.usage)
-          : toContextUsage(
-              undefined,
-              (await readLastKnownUsage(t.sessionKey)) ?? undefined,
-              await configuredWindowFor(t.agentNodeId),
-            )
-        return [t.sessionKey, usage] as const
-      }),
-    ),
+    threads.map((t) => {
+      const live = metaBySessionKey.get(t.sessionKey)
+      return [t.sessionKey, live ? toContextUsage(live.usage) : (lastKnownByKey.get(t.sessionKey) ?? null)] as const
+    }),
   )
   // The rosters for every chat at once, alongside the threads. Needed because
   // `group_chat_start_thread` takes the target agent BY NAME and has no
@@ -3197,6 +3167,46 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
         queuedMessages: metaBySessionKey.get(t.sessionKey)?.queuedMessages ?? 0,
       })),
   }))
+}
+
+/**
+ * The context each thread's session last persisted, by session key, with
+ * `asOf` set (see ContextUsage) — the reading a session left behind at its last
+ * turn end, whether or not it is loaded now. Null for a thread whose session
+ * never reported any. No membership gate: the caller has already selected
+ * threads the asker may read.
+ */
+export async function lastKnownContextUsage(
+  threads: readonly { sessionKey: string; agentNodeId: string }[],
+): Promise<Map<string, ContextUsage | null>> {
+  // One node read per distinct agent, not per thread: a stored reading needs
+  // its agent's configured window (the only window authority left once the
+  // session is not loaded -- see toContextUsage), and a chat's threads share
+  // few agents between many threads.
+  // The PROMISE is memoised, not the value it resolves to. These lookups run
+  // inside the Promise.all below, so an await between the check and the store
+  // would let every thread reach the check before any of them had stored
+  // anything: all miss, all issue the lookup, and the memo dedupes nothing
+  // while reading as though it does. Storing before the first await is what
+  // makes the claim above true.
+  const windowByAgentNodeId = new Map<string, Promise<number | undefined>>()
+  const configuredWindowFor = (agentNodeId: string): Promise<number | undefined> => {
+    let pending = windowByAgentNodeId.get(agentNodeId)
+    if (!pending) {
+      pending = agentConfiguredWindowByNodeId(agentNodeId)
+      windowByAgentNodeId.set(agentNodeId, pending)
+    }
+    return pending
+  }
+  const storedByKey = await readLastKnownUsages(threads.map((t) => t.sessionKey))
+  return new Map(
+    await Promise.all(
+      threads.map(async (t) => {
+        const usage = toContextUsage(undefined, storedByKey.get(t.sessionKey), await configuredWindowFor(t.agentNodeId))
+        return [t.sessionKey, usage] as const
+      }),
+    ),
+  )
 }
 
 /** The reference `group_chat_list` hands out for a thread: readable where it has a slug, its id otherwise. */

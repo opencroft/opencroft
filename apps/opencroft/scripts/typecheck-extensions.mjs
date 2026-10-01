@@ -1,10 +1,15 @@
-// Typechecks the extension checkouts beside this app, which nothing else does.
+// Typechecks the extension checkouts under this instance's data dir, which
+// nothing else does.
 //
-// An extension is its own repository, cloned under the local-extension root and
-// built by esbuild. esbuild strips types without checking them, so a successful
-// compile says the file parsed and bundled -- never that it typechecks. Biome
-// does not reach these paths either. This script is the only thing that reads
-// them with a type checker.
+// An extension is its own repository, cloned into a folder of the extensions
+// root and built by esbuild. esbuild strips types without checking them, so a
+// successful compile says the file parsed and bundled -- never that it
+// typechecks. Biome does not reach these paths either. This script is the only
+// thing that reads them with a type checker.
+//
+// Only the `local.*` folders are read: they are the editable ones, and the
+// ones whose type errors this repository's authors can fix. Every other folder
+// is a snapshot of a registry release, which an update replaces.
 //
 // THREE ANSWERS, NOT TWO. An extension is `checked` (tsc ran over it),
 // `blocked` (it imports a specifier that has no declarations, so tsc would
@@ -27,7 +32,12 @@ import path from 'node:path'
 
 // npm runs a workspace script from the workspace directory.
 const APP_ROOT = process.cwd()
-const EXTENSION_ROOT = process.env.OPENCROFT_LOCAL_EXTENSIONS ?? path.join(APP_ROOT, 'data', 'extensions', 'local')
+// The one extensions root, resolved the way server/data-dir.ts does.
+const EXTENSION_ROOT = path.join(process.env.OPENCROFT_DATA_DIR || path.join(APP_ROOT, 'data'), 'extensions')
+// `isLocalFolder` in app/_authed/(extension-runtime)/_extension-id.ts, restated
+// because this file runs under plain node and cannot import that TypeScript;
+// typecheck-extensions.test.ts holds the two to the same answer.
+const LOCAL_FOLDER = /^local\.[a-z0-9-]+$/
 const GENERATED_DIR = path.join(APP_ROOT, '.extension-typecheck')
 const BASELINE_PATH = path.join(APP_ROOT, 'extension-typecheck-baseline.json')
 
@@ -71,10 +81,7 @@ function sourceFiles(dir) {
   const found = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      // `dist.building-<pid>-<n>` is a compile's staging directory, a sibling
-      // of dist/ that exists only while a build runs -- or forever, after one
-      // was killed. It holds a copy of the output, never authored source.
-      if (SKIP_DIRECTORIES.has(entry.name) || entry.name.startsWith('dist.building-')) {
+      if (SKIP_DIRECTORIES.has(entry.name)) {
         continue
       }
       found.push(...sourceFiles(path.join(dir, entry.name)))
@@ -182,6 +189,7 @@ function extensionDirectories() {
     return []
   }
   return readdirSync(EXTENSION_ROOT)
+    .filter((name) => LOCAL_FOLDER.test(name))
     .map((name) => ({ slug: name, dir: path.join(EXTENSION_ROOT, name) }))
     .filter((entry) => statSync(entry.dir).isDirectory())
     .sort((a, b) => a.slug.localeCompare(b.slug))
@@ -218,7 +226,7 @@ if (directories.length === 0) {
   // Not a pass. A checkout with no extensions in it is the ordinary state of a
   // fresh clone, and reporting "OK" there would say this app's extensions are
   // typechecked when nothing was read.
-  console.log(`No extension checkouts under ${EXTENSION_ROOT} -- 0 extensions typechecked.`)
+  console.log(`No local.* extension folders under ${EXTENSION_ROOT} -- 0 extensions typechecked.`)
   process.exit(0)
 }
 

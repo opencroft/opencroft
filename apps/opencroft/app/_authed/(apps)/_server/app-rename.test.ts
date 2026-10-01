@@ -19,7 +19,7 @@ import test from 'node:test'
 import { db, spaceApp } from '@opencroft/db'
 
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
+import { GRAPH_APP_TYPE } from '@/app/_authed/(space)/_server/types'
 import { resolveAppAddress } from './app-address'
 import { renameSpaceAppImpl } from './runtime'
 
@@ -30,10 +30,7 @@ async function spaceWithGraphApp(spaceSlug: string, name: string, slug: string) 
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const space = await registry.create(spaceSlug, spaceSlug, { nodes: [], edges: [] })
-  const [row] = await db
-    .insert(spaceApp)
-    .values({ spaceId: space.id, extensionId: GRAPH_APP_EXTENSION_ID, appSlug: GRAPH_APP_SLUG, name, slug })
-    .returning()
+  const [row] = await db.insert(spaceApp).values({ spaceId: space.id, type: GRAPH_APP_TYPE, name, slug }).returning()
   await registry.createGraph(space.slug, name, slug, row.id)
   return { space, row }
 }
@@ -89,8 +86,7 @@ test('a rename onto a taken slug is refused, and changes nothing at all', async 
     .insert(spaceApp)
     .values({
       spaceId: space.id,
-      extensionId: GRAPH_APP_EXTENSION_ID,
-      appSlug: GRAPH_APP_SLUG,
+      type: GRAPH_APP_TYPE,
       name: 'Archive',
       slug: 'archive',
     })
@@ -114,8 +110,7 @@ test('a hook refusing the new address rolls the instance back whole', async () =
     .insert(spaceApp)
     .values({
       spaceId: space.id,
-      extensionId: GRAPH_APP_EXTENSION_ID,
-      appSlug: GRAPH_APP_SLUG,
+      type: GRAPH_APP_TYPE,
       name: 'placeholder',
       slug: 'placeholder',
     })

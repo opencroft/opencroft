@@ -1,4 +1,4 @@
-import { cn } from "ui/lib/utils";
+import { cn } from "cn";
 import { Flex } from "ui/components/ui/layout/flex";
 import { ScrollArea } from "ui/components/ui/layout/scroll-area";
 

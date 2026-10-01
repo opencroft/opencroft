@@ -27,8 +27,20 @@
 // FAKE_AGENT_LOG: file that receives one JSON line per request.
 // FAKE_AGENT_MODE: '' | 'prompt-leaks-key' (every prompt is refused with the
 //   key in the refusal's data, the way a provider error can quote a header)
-//   | 'fork-unresumable' (a fork's transcript cannot be read back).
-import { appendFileSync } from 'node:fs'
+//   | 'fork-unresumable' (a fork's transcript cannot be read back)
+//   | 'prompt-sends-notices' (every prompt reports one notice of each defined
+//   severity before it ends, the way the bridge's session-notices.js does in
+//   0.84.0: as `notice` updates only when initialize advertised
+//   `clientCapabilities.session.notices` as an object, otherwise as a
+//   bold-label agent_message_chunk)
+//   | 'prompt-drops-connection' (a prompt whose text is "drop the connection"
+//   is never answered: the fake closes its end of the connection instead, the
+//   way the SDK closes it on a line over its size limit).
+// FAKE_AGENT_STATE: file the transcripts are kept in, so that a second process
+//   finds the sessions the first one wrote — the bridge keeps them on disk.
+//
+// Like the bridge (index.js), the process exits once its connection closes.
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 
 import { AgentSideConnection, ndJsonStream, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk'
@@ -49,11 +61,33 @@ const MODES = [
 const MODELS = [...new Set(['default', envModel, 'claude-sonnet-5'])]
 
 // Transcripts by session id: what the process would find on disk.
-const transcripts = new Map()
+const statePath = process.env.FAKE_AGENT_STATE
+const transcripts = new Map(statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : [])
+const saveTranscripts = () => {
+  if (statePath) {
+    writeFileSync(statePath, JSON.stringify([...transcripts]))
+  }
+}
 // Live sessions by id: the bridge's `this.sessions`.
 const live = new Map()
 const forks = new Set()
 let minted = 0
+// The bridge's clientSupportsNotices, applied to what initialize received.
+let supportsNotices = false
+
+const NOTICES = [
+  { severity: 'info', title: 'Task stopped by user', description: 'npm run dev.' },
+  { severity: 'warning', title: 'Model fallback', description: 'Switched to a smaller model.' },
+  { severity: 'error', title: 'Hook blocked the turn' },
+]
+
+function noticeOrTranscriptUpdate(notice) {
+  if (supportsNotices) {
+    return { sessionUpdate: 'notice', ...notice }
+  }
+  const text = notice.description ? `**${notice.title}:** ${notice.description}` : `**${notice.title}**`
+  return { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+}
 
 function stateOf(session) {
   return {
@@ -88,10 +122,12 @@ function openSession(sessionId) {
 }
 
 const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
-new AgentSideConnection(
+const connection = new AgentSideConnection(
   (client) => ({
     async initialize(params) {
       log({ method: 'initialize', params })
+      const notices = params.clientCapabilities?.session?.notices
+      supportsNotices = typeof notices === 'object' && notices !== null && !Array.isArray(notices)
       return {
         protocolVersion: PROTOCOL_VERSION,
         agentCapabilities: {
@@ -107,6 +143,7 @@ new AgentSideConnection(
       minted += 1
       const sessionId = `claude-${process.pid}-${minted}`
       transcripts.set(sessionId, { turns: 0 })
+      saveTranscripts()
       const session = { mode: 'default', model: envModel }
       live.set(sessionId, session)
       return { sessionId, ...stateOf(session) }
@@ -120,6 +157,7 @@ new AgentSideConnection(
       minted += 1
       const sessionId = `claude-${process.pid}-${minted}`
       transcripts.set(sessionId, { ...source })
+      saveTranscripts()
       forks.add(sessionId)
       return { sessionId }
     },
@@ -180,9 +218,19 @@ new AgentSideConnection(
         })
       }
       openSession(params.sessionId)
+      if (mode === 'prompt-drops-connection' && params.prompt[0]?.text === 'drop the connection') {
+        process.stdout.end()
+        return new Promise(() => {})
+      }
       const transcript = transcripts.get(params.sessionId)
       if (transcript) {
         transcript.turns += 1
+        saveTranscripts()
+      }
+      if (mode === 'prompt-sends-notices') {
+        for (const notice of NOTICES) {
+          await client.sessionUpdate({ sessionId: params.sessionId, update: noticeOrTranscriptUpdate(notice) })
+        }
       }
       return { stopReason: 'end_turn' }
     },
@@ -190,3 +238,4 @@ new AgentSideConnection(
   }),
   stream,
 )
+connection.closed.then(() => process.exit(0))

@@ -3,7 +3,7 @@
 import { ChevronLeft, ChevronRight, Pencil, RotateCcw, X } from 'lucide-react'
 
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface ChatEditBarProps {
   /** What the selected message ORIGINALLY said, before this edit began.

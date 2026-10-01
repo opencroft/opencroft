@@ -2,8 +2,7 @@
 // rebuild. The staleness test may only require the bundles this extension can
 // produce: the compiler writes nothing for a side with no entry, so demanding
 // both bundles makes a one-sided extension permanently stale -- rebuilt on
-// every consultation, forever, each rebuild's staging directory then tripping
-// the dirty-checkout guard of whichever consultation overlaps it. The same
+// every consultation, forever. The same
 // two-sided demand in the refusal fallback made "keep the existing bundle"
 // unreachable for a one-sided extension, turning a refusal that should serve
 // the previous bundle into a thrown "was not built".
@@ -20,15 +19,21 @@ import path from 'node:path'
 import test, { after } from 'node:test'
 import { promisify } from 'node:util'
 
+import { toastStore } from '@/lib/toast-store'
+import { ensureExtensionBuilt } from './loader'
+
 const run = promisify(execFile)
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-freshness-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
-
-const { ensureExtensionBuilt } = await import('./loader')
-const { toastStore } = await import('@/lib/toast-store')
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -51,8 +56,8 @@ async function makeFixture(
   dir: string
 }> {
   seq += 1
-  const slug = `ext-${seq}`
-  const dir = path.join(root, slug)
+  const id = `local.ext-${seq}`
+  const dir = path.join(root, 'extensions', id)
   await fs.mkdir(dir, { recursive: true })
   if (sides.client) {
     await fs.mkdir(path.join(dir, 'src'), { recursive: true })
@@ -62,15 +67,12 @@ async function makeFixture(
     await fs.mkdir(path.join(dir, 'server'), { recursive: true })
     await fs.writeFile(path.join(dir, 'server', 'index.ts'), 'export const actions = {}\n')
   }
-  await fs.writeFile(
-    path.join(dir, 'extension.json'),
-    JSON.stringify({ id: `local/${slug}`, name: slug, version: '0.0.0' }),
-  )
+  await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify({ id, name: id, version: '0.0.0' }))
   await fs.writeFile(path.join(dir, '.gitignore'), 'dist/\nnode_modules/\n')
 
   await run('git', ['init', '-q'], { cwd: dir })
   await run('git', ['add', '-A'], { cwd: dir })
-  await run('git', ['commit', '-q', '-m', 'init'], { cwd: dir, env: GIT_ENV })
+  await run('git', ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init'], { cwd: dir, env: GIT_ENV })
 
   if (opts.dirty) {
     // An authored, uncommitted change in whichever side exists.
@@ -78,7 +80,7 @@ async function makeFixture(
     await fs.appendFile(file, '// edit in progress\n')
   }
 
-  return { id: `local/${slug}`, dir }
+  return { id, dir }
 }
 
 function captureToasts(): { events: string[]; stop: () => void } {

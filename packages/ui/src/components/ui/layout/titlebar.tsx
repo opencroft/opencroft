@@ -3,7 +3,7 @@
 import { ArrowLeft } from 'lucide-react'
 import { createContext, type DependencyList, type ReactNode, useContext, useEffect, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 interface TitlebarContextValue {
   content: ReactNode

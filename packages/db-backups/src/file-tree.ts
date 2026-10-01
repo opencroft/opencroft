@@ -11,7 +11,10 @@ const execFileAsync = promisify(execFile)
  *
  * `all` takes everything. `git-aware` treats each immediate child as a
  * checkout and takes what a fresh clone would NOT bring back: tracked files,
- * untracked-but-not-ignored files, and `.git` itself.
+ * untracked-but-not-ignored files, and `.git` itself. A child with no `.git`
+ * is a snapshot of some source and is taken without its rebuildable
+ * directories (see `NON_CHECKOUT_EXCLUDES`). A child whose name starts with a
+ * dot is transient and is skipped.
  */
 export type RootPolicy = 'all' | 'git-aware'
 
@@ -30,12 +33,21 @@ export interface FileRoot {
  * an extension. `agent-workspace` is where agent sessions work, and is taken
  * whole and unfiltered by design: anything can be in there.
  *
- * `extensions/local` is `git-aware` because it is 370 MB of which 2 MB is
- * authored. The rest is `node_modules`, `dist`, and vendored binaries the
- * checkouts gitignore — measured 2026-09-22: 43 MB of onnxruntime wasm under
- * `audio-pipelines/assets/vad`. Dropping those loses nothing, because the host
+ * `extensions` is one root with one folder per extension, and `git-aware`
+ * fits both kinds of folder in it:
+ *   - a `local.*` folder is a git checkout, 370 MB of which 2 MB is authored.
+ *     The rest is `node_modules`, `dist`, and vendored binaries the checkouts
+ *     gitignore — measured 2026-09-22: 43 MB of onnxruntime wasm under
+ *     `audio-pipelines/assets/vad`. Its unpushed commits and local branches
+ *     exist only in `.git`, so that is taken as well.
+ *   - any other folder is a snapshot of one commit of its source, with no
+ *     `.git`. Its source, ref and commit are a row of the `Extension` table,
+ *     which the database backup carries, so it can be fetched again; it is
+ *     taken as it stands, without the directories below, as a fallback that
+ *     works offline or when the source is gone.
+ * Dropping the ignored files and directories loses nothing, because the host
  * rebuilds them: `ensureDependencies` in the extension compiler runs
- * `npm ci`/`npm install` for a checkout whose node_modules does not match its
+ * `npm ci`/`npm install` for a folder whose node_modules does not match its
  * manifest, that install runs each extension's `postinstall` (which is what
  * copies the wasm out of node_modules), and `ensureBuilt` in the loader treats
  * a missing bundle as stale and compiles it.
@@ -43,33 +55,18 @@ export interface FileRoot {
 export const BACKUP_FILE_ROOTS: readonly FileRoot[] = [
   { name: 'app-data', policy: 'all' },
   { name: 'extension-data', policy: 'all' },
-  { name: 'extensions/local', policy: 'git-aware' },
+  { name: 'extensions', policy: 'git-aware' },
   { name: 'agent-workspace', policy: 'all' },
 ]
 
 /**
  * Directories a `git-aware` root skips in a child that is NOT a git checkout.
  *
- * The fallback for an extension installed from a tarball, or one whose `.git`
- * is gone. Both are rebuilt on demand, exactly as in a checkout.
+ * The form of every extension that is not a `local.*` checkout: a registry
+ * install has no `.git` by design. Both are rebuilt on demand, exactly as in a
+ * checkout.
  */
 const NON_CHECKOUT_EXCLUDES: ReadonlySet<string> = new Set(['node_modules', 'dist'])
-
-/**
- * The host's own record of where an extension was installed from — its git
- * URL, ref and the secret used to fetch it.
- *
- * Carried even when the checkout gitignores it, which `audio-pipelines` does:
- * an extension's `.gitignore` is about that extension's repository and has no
- * standing to decide whether the HOST keeps its own install record.
- *
- * SECOND DEFINITION of a literal the extension runtime already owns, as
- * `SIDECAR_FILE` in apps/opencroft/app/_authed/(extension-runtime)/_server/
- * paths.ts. Not imported because the arrow runs the other way — the app
- * depends on this package. If the runtime renames the sidecar, this is the
- * line that has to follow it, and nothing will fail until a restore does.
- */
-const HOST_SIDECAR = 'installed.json'
 
 export interface WalkedEntry {
   /** Path relative to the root, '/'-separated. A trailing '/' marks a directory. */
@@ -212,12 +209,7 @@ async function* walkCheckout(
   listed: string[],
   skipped: SkippedEntry[],
 ): AsyncGenerator<WalkedEntry> {
-  const names = new Set(listed)
-  // Always, whatever the checkout's .gitignore says about it.
-  if (await statMaybe(path.join(checkoutDir, HOST_SIDECAR))) {
-    names.add(HOST_SIDECAR)
-  }
-  for (const name of [...names].sort()) {
+  for (const name of [...new Set(listed)].sort()) {
     // Null means the index lists it but the worktree does not — a staged
     // delete, with nothing to store.
     const file = await fileEntry(path.join(checkoutDir, name), `${relativePrefix}/${name}`)
@@ -234,6 +226,13 @@ async function* walkCheckout(
 async function* walkGitAware(absoluteRoot: string, skipped: SkippedEntry[]): AsyncGenerator<WalkedEntry> {
   for (const entry of await readSorted(absoluteRoot, '', skipped)) {
     const absolutePath = path.join(absoluteRoot, entry.name)
+    // A dot-prefixed child is where an install stages a folder before swapping
+    // it in, or parks the one it replaced: a second, possibly half-written copy
+    // of an extension that is also present under its real name.
+    if (entry.name.startsWith('.')) {
+      skipped.push({ path: entry.name, reason: 'transient' })
+      continue
+    }
     if (entry.isSymbolicLink()) {
       skipped.push({ path: entry.name, reason: 'symlink' })
       continue

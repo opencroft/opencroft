@@ -3,7 +3,7 @@
 import { Check, Copy, TriangleAlert } from 'lucide-react'
 
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface ApiTokenRevealProps {
   // The secret, shown once. The host feeds it in from the create call; this

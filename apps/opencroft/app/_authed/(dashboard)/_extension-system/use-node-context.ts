@@ -3,41 +3,22 @@
 import { useEdges, useNodes } from '@xyflow/react'
 import { useMemo } from 'react'
 
-import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { findExtensionHandle, type ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
+import { resolveSourceContext } from '@/app/_authed/(dashboard)/_extension-system/context-resolver'
+import { feedingEdges } from '@/app/_authed/(extension-runtime)/_input-edges'
+import type { ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 
 export function useNodeContext<V = unknown>(nodeId: string, targetHandleId: string): ResolvedContext<V> | null {
   const nodes = useNodes()
   const edges = useEdges()
 
-  const edge = edges.find((e) => e.target === nodeId && e.targetHandle === targetHandleId)
+  const edge = feedingEdges(edges).find((e) => e.target === nodeId && e.targetHandle === targetHandleId)
   const sourceNode = edge ? nodes.find((n) => n.id === edge.source) : undefined
-  const sourceData = sourceNode?.data
-  const sourceType = sourceNode?.type
-  const sourceId = sourceNode?.id
-  const sourceHandleId = edge?.sourceHandle ?? undefined
+  const ctx =
+    sourceNode && edge?.sourceHandle ? resolveSourceContext(sourceNode, edge.sourceHandle, { nodes, edges }) : null
 
-  return useMemo(() => {
-    if (!sourceId || !sourceType || !sourceHandleId || !sourceData) {
-      return null
-    }
-    const resolved = extensionRegistry.resolveNode(sourceType)
-    if (!resolved?.exposeOutput) {
-      return null
-    }
-    const handleDef = findExtensionHandle(resolved.handles, sourceHandleId, 'source')
-    if (!handleDef) {
-      return null
-    }
-    const value = resolved.exposeOutput(sourceHandleId, sourceData as Record<string, unknown>, sourceType, sourceId)
-    if (value === undefined || value === null) {
-      return null
-    }
-    return {
-      sourceNodeId: sourceId,
-      sourceHandleId,
-      type: handleDef.contextType,
-      value,
-    } as ResolvedContext<V>
-  }, [sourceId, sourceType, sourceHandleId, sourceData])
+  // The context can be built from anywhere upstream of the source, so it is
+  // resolved against the whole graph on every change. Keyed on its content,
+  // so moving an unrelated node does not hand consumers a new context object.
+  const key = ctx ? JSON.stringify(ctx) : ''
+  return useMemo(() => (key ? (JSON.parse(key) as ResolvedContext<V>) : null), [key])
 }

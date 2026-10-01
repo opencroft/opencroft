@@ -22,11 +22,15 @@ import type { ElicitationContentValue, ElicitationSchema } from './types'
 
 /**
  * The `_meta` key that marks a free-text field as some question's "Other" box,
- * naming the question field it belongs to. The cross-bridge convention —
- * claude-agent-acp stamps exactly this on the forms it builds, so one renderer
- * pairs customs for agent-sent and host-sent forms alike.
+ * naming the question field it belongs to. This encoder stamps it, and so may
+ * an agent's bridge; a bridge may also send the box unmarked, and then its key
+ * alone pairs it (see customAnswerTarget).
  */
 export const CUSTOM_ANSWER_META_KEY = '_askUserQuestionCustomAnswer'
+
+/** `question_<n>_custom`, the key the AskUserQuestion bridges give a question's
+ * "Other" box, capturing the key of its question. */
+const CUSTOM_KEY_PATTERN = /^(question_\d+)_custom$/
 
 /**
  * The `_meta` key codex-acp stamps on the fields of a `request_user_input`
@@ -44,11 +48,13 @@ function metaEntry(property: unknown, key: string): Record<string, unknown> | un
 
 /**
  * The key of the question a field is the free-text answer box of, or null for
- * a field that is a question of its own. Either bridge convention marks one.
+ * a field that is a question of its own. Either bridge's `_meta` marker names
+ * one; an unmarked field keyed `question_<n>_custom` belongs to `question_<n>`.
  * Only where it RENDERS moves: the box still answers under its own key, which
- * is the key the agent reads it back from.
+ * is the key the agent reads it back from. The caller checks that the named
+ * question exists in the form.
  */
-export function customAnswerTarget(property: unknown): string | null {
+export function customAnswerTarget(key: string, property: unknown): string | null {
   const custom = metaEntry(property, CUSTOM_ANSWER_META_KEY)
   if (custom?.isCustomAnswer === true && typeof custom.questionId === 'string') {
     return custom.questionId
@@ -57,7 +63,7 @@ export function customAnswerTarget(property: unknown): string | null {
   if (codex?.role === 'user_note' && typeof codex.questionId === 'string') {
     return codex.questionId
   }
-  return null
+  return CUSTOM_KEY_PATTERN.exec(key)?.[1] ?? null
 }
 
 /** Whether a field asks for a secret, whose value must not be shown as typed. */

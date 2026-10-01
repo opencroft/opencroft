@@ -1,6 +1,5 @@
 import type { CompileRefusal, CompileRefusalReason } from '../_types'
 import { runGit } from './git-exec'
-import { BUILD_ARTIFACT_FILES, isStagingArtifactPath } from './paths'
 
 /** The name of the parameter a caller passes to compile a checkout anyway. */
 export const COMPILE_OVERRIDE_PARAM = 'allowUnclean'
@@ -18,10 +17,8 @@ export interface StatusEntry {
  *
  * Paths git considers to contain special characters arrive C-quoted. The
  * surrounding quotes are stripped, but the escapes inside are deliberately NOT
- * decoded: the only thing these paths are compared against is a fixed set of
- * generated-file names, and a path that fails to match is treated as an
- * authored change — the safe direction. Decoding would mean maintaining a
- * second copy of git's escaping rules to make no behavioural difference.
+ * decoded: the paths are only listed back to a reader, and decoding would mean
+ * maintaining a second copy of git's escaping rules for that.
  */
 export function parseStatusLines(porcelain: string): StatusEntry[] {
   const entries: StatusEntry[] = []
@@ -44,38 +41,17 @@ export function parseStatusLines(porcelain: string): StatusEntry[] {
   return entries
 }
 
-/**
- * Split a checkout's uncommitted entries into authored changes and generated
- * ones.
- *
- * Matching is against the exact path from the checkout root, not the file name:
- * the generated files are written at the root, so a source file that happens to
- * share a name deeper in the tree stays an authored change. The compiler's own
- * staging directory is matched by shape instead — its name varies per attempt —
- * and equally root-anchored (see isStagingArtifactPath).
- */
-export function classifyDirtyEntries(porcelain: string): { sourcePaths: string[]; artifactPaths: string[] } {
-  const sourcePaths: string[] = []
-  const artifactPaths: string[] = []
-  for (const entry of parseStatusLines(porcelain)) {
-    if (BUILD_ARTIFACT_FILES.includes(entry.path) || isStagingArtifactPath(entry.path)) {
-      artifactPaths.push(entry.path)
-    } else {
-      sourcePaths.push(entry.path)
-    }
-  }
-  return { sourcePaths, artifactPaths }
-}
-
 export interface CheckoutState {
   /** The commit the checkout is on, or null when it is not a git checkout. */
   sourceCommit: string | null
-  /** True when the tree carries AUTHORED uncommitted changes. Null when unknown. */
+  /**
+   * True when the tree carries uncommitted changes, null when unknown. Every
+   * change counts: the host writes nothing into an extension's tree outside
+   * `dist/` and `node_modules/`, which extension repositories ignore.
+   */
   sourceDirty: boolean | null
-  /** The authored uncommitted paths behind `sourceDirty`. */
+  /** The uncommitted paths behind `sourceDirty`. */
   sourceDirtyPaths: string[]
-  /** Uncommitted paths discounted as generated — reported, never hidden. */
-  artifactPaths: string[]
   /** The checked-out branch, "HEAD" when detached, or null when unknown. */
   branch: string | null
   /** The branch the remote calls default, or null when it cannot be determined. */
@@ -86,7 +62,6 @@ const UNKNOWN_CHECKOUT: CheckoutState = {
   sourceCommit: null,
   sourceDirty: null,
   sourceDirtyPaths: [],
-  artifactPaths: [],
   branch: null,
   defaultBranch: null,
 }
@@ -128,12 +103,11 @@ export async function readCheckoutState(dir: string): Promise<CheckoutState> {
     const { stdout: head } = await runGit(['-C', dir, 'rev-parse', 'HEAD'])
     const { stdout: status } = await runGit(['-C', dir, 'status', '--porcelain'])
     const { stdout: branch } = await runGit(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])
-    const { sourcePaths, artifactPaths } = classifyDirtyEntries(status)
+    const sourcePaths = parseStatusLines(status).map((entry) => entry.path)
     return {
       sourceCommit: head.trim(),
       sourceDirty: sourcePaths.length > 0,
       sourceDirtyPaths: sourcePaths,
-      artifactPaths,
       branch: branch.trim() || null,
       defaultBranch: await readDefaultBranch(dir),
     }

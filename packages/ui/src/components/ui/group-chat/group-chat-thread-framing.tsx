@@ -1,5 +1,6 @@
 'use client'
 
+import { AgentPlanControl, type PlanEntry } from 'agent-chat/components/agent-plan-control'
 import type { ReactNode } from 'react'
 
 import { BackButton } from '../utils/back-button'
@@ -46,6 +47,10 @@ export interface GroupChatThreadFramingProps {
    * jumps to each entry's block. Omit, or pass one with no items, and no
    * control is drawn. */
   work?: ThreadWork
+  /** The agent's current plan, beside the work control: a button whose panel
+   * lists each entry with its status and priority. Omit, or pass an empty
+   * list, and no control is drawn. */
+  plan?: PlanEntry[]
   /** Back out of the conversation -- to the thread list / group chat. Draws
    * the shared BackButton: the deepest of three nesting surfaces, and the same
    * control the two above it use rather than a matching one. */
@@ -96,6 +101,7 @@ export function GroupChatThreadFraming({
   agent,
   status,
   work,
+  plan,
   onBack,
   children,
   composer,
@@ -194,13 +200,15 @@ export function GroupChatThreadFraming({
               <span className={LIST_ROW_TITLE_CLASS}>{threadTitle || 'Thread'}</span>
             </div>
           )}
-          {/* The trailing side: the thread's notes, then its background tasks.
-              Each control draws nothing of its own until there is something
-              to list, so a thread with neither is framed exactly as before. */}
+          {/* The trailing side: the thread's notes, its background tasks,
+              then the agent's plan. Each control draws nothing of its own
+              until there is something to list, so a thread with none of them
+              is framed exactly as before. */}
           {artifacts ? (
             <ArtifactMenu artifacts={artifacts} openId={openArtifact?.id} onOpen={(id) => onOpenArtifact?.(id)} />
           ) : null}
           {work ? <ThreadWorkControl work={work} /> : null}
+          {plan ? <AgentPlanControl entries={plan} /> : null}
         </>
       }
     >

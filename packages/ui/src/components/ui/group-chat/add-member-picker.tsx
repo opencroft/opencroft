@@ -8,7 +8,7 @@ import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/components/ui/command'
 import { FieldError } from 'ui/components/ui/field'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // The same MemberRef shape the phase-2 components render, and the same one for
 // both kinds: a person and an agent each arrive as {id, name, avatarUrl}, so

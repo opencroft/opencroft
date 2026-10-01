@@ -1,8 +1,13 @@
 'use client'
 
-import { type ExtensionDeclaration, installClientHost } from '@/app/_authed/(extension-runtime)/_client/host'
+import {
+  type ExtensionDeclaration,
+  installClientHost,
+  type LoadedExtensionDeclaration,
+} from '@/app/_authed/(extension-runtime)/_client/host'
+import { loadedDeclaration } from '@/app/_authed/(extension-runtime)/_client/loaded-declaration'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { assertUniqueNodeTypeIds } from '@/app/_authed/(extension-runtime)/_node-type-guard'
+import { extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { listExtensionManifests } from '@/app/_authed/(extension-runtime)/_server/actions'
 import type { ExtensionManifest, ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
@@ -21,8 +26,7 @@ function bundleVersion(clientVersion?: number): number {
 }
 
 function bundleUrl(extensionId: string, file: string, version: number): string {
-  const [scope, slug] = extensionId.split('/')
-  return `/api/ext/${scope}/${slug}/${file}?v=${version}`
+  return `${extensionUrlBase(extensionId)}/${file}?v=${version}`
 }
 
 async function importBundle(url: string): Promise<LoadedModule> {
@@ -47,9 +51,8 @@ async function importBundle(url: string): Promise<LoadedModule> {
 // So: moving this insertion later reintroduces a real defect, and moving it
 // earlier changes nothing. It is not a free knob in either direction.
 function injectStyles(extensionId: string, version: number): void {
-  const [scope, slug] = extensionId.split('/')
   const href = bundleUrl(extensionId, 'client.css', version)
-  const id = `ext-css-${scope}-${slug}`
+  const id = `ext-css-${extensionId}`
   const existing = document.getElementById(id)
   if (existing instanceof HTMLLinkElement) {
     existing.href = href
@@ -66,9 +69,9 @@ function injectStyles(extensionId: string, version: number): void {
 // Fetches and validates a bundle WITHOUT registering it, so several can be in
 // flight at once while registration order stays under the caller's control.
 async function importExtension(
-  manifest: ExtensionManifest,
+  manifest: ExtensionManifest & { folder: string },
   clientVersion?: number,
-): Promise<ExtensionDeclaration | null> {
+): Promise<LoadedExtensionDeclaration | null> {
   installClientHost()
   const version = bundleVersion(clientVersion)
   injectStyles(manifest.id, version)
@@ -79,10 +82,7 @@ async function importExtension(
       console.error(`[ext] ${manifest.id}: bundle default export is not a valid ExtensionDeclaration`)
       return null
     }
-    return {
-      ...decl,
-      manifest: { ...decl.manifest, id: manifest.id },
-    }
+    return loadedDeclaration(decl, { id: manifest.id, folder: manifest.folder })
   } catch (err) {
     console.error(`[ext] ${manifest.id}: load failed`, err)
     return null
@@ -90,9 +90,9 @@ async function importExtension(
 }
 
 export async function loadExtension(
-  manifest: ExtensionManifest,
+  manifest: ExtensionManifest & { folder: string },
   clientVersion?: number,
-): Promise<ExtensionDeclaration | null> {
+): Promise<LoadedExtensionDeclaration | null> {
   const decl = await importExtension(manifest, clientVersion)
   if (decl) {
     extensionRegistry.register(decl)
@@ -100,7 +100,7 @@ export async function loadExtension(
   return decl
 }
 
-export async function loadAllExtensions(): Promise<ExtensionDeclaration[]> {
+export async function loadAllExtensions(): Promise<LoadedExtensionDeclaration[]> {
   const manifests: ExtensionManifestInfo[] = await listExtensionManifests()
   const withClient = manifests.filter((manifest) => manifest.hasClient)
   // Imported concurrently: the previous serial loop paid one round trip per
@@ -110,16 +110,7 @@ export async function loadAllExtensions(): Promise<ExtensionDeclaration[]> {
   const declarations = await Promise.all(
     withClient.map((manifest) => importExtension(manifest, manifest.clientVersion)),
   )
-  const loaded = declarations.filter((decl): decl is ExtensionDeclaration => decl !== null)
-  // A duplicate typeId across two extensions is a configuration error, not a
-  // race to be resolved by ordering — checked here, over every bundle's real
-  // declared nodes, before any of them register. (extension.json's own
-  // `nodes` field is only a hint for lazy palette discovery and can be stale
-  // relative to what a bundle actually declares, so this can't be checked
-  // any earlier than this, once each bundle has actually been evaluated.)
-  assertUniqueNodeTypeIds(
-    loaded.map((decl) => ({ extensionId: decl.manifest.id, typeIds: (decl.nodes ?? []).map((n) => n.typeId) })),
-  )
+  const loaded = declarations.filter((decl): decl is LoadedExtensionDeclaration => decl !== null)
   for (const decl of loaded) {
     extensionRegistry.register(decl)
   }

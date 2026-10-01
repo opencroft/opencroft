@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export type FlexDirection = 'row' | 'row-reverse' | 'col' | 'col-reverse'
 export type JustifyContent =

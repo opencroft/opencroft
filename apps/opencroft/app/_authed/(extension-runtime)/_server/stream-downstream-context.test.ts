@@ -39,8 +39,8 @@ test('a completed stream dispatches a downstream text-generation.run with no req
   await registry.ensureLoaded()
   await registry.create(slug, slug, {
     nodes: [
-      { id: 'src-1', type: 'prompt', position: { x: 0, y: 0 }, data: {} },
-      { id: 'tg-1', type: 'text-generation', position: { x: 200, y: 0 }, data: {} },
+      { id: 'src-1', type: 'builtin.core.prompt', position: { x: 0, y: 0 }, data: {} },
+      { id: 'tg-1', type: 'builtin.core.text-generation', position: { x: 200, y: 0 }, data: {} },
     ],
     edges: [
       { id: 'edge-1', source: 'src-1', target: 'tg-1', sourceHandle: 'text-out', targetHandle: 'text-in' },
@@ -60,8 +60,8 @@ test('a completed stream dispatches a downstream text-generation.run with no req
     })
     await waitFor(
       () =>
-        errors.some((e) => /\[stream→text-generation\.run\] dispatch failed/.test(e)) ||
-        errors.some((e) => /\[node-action\] text-generation\.run/.test(e)),
+        errors.some((e) => /\[stream→builtin\.core\.text-generation\.run\] dispatch failed/.test(e)) ||
+        errors.some((e) => /\[node-action\] builtin\.core\.text-generation\.run/.test(e)),
       'the downstream text-generation.run dispatch to resolve',
     )
   } finally {
@@ -73,10 +73,11 @@ test('a completed stream dispatches a downstream text-generation.run with no req
   // context/authorization refusal. Routed through the server function from a
   // request-less caller, the impl is never entered and this line is absent.
   assert.ok(
-    errors.some((e) => /\[node-action\] text-generation\.run/.test(e)),
+    errors.some((e) => /\[node-action\] builtin\.core\.text-generation\.run/.test(e)),
     `text-generation.run was never reached — the request-less dispatch was blocked before the action. Captured: ${JSON.stringify(errors)}`,
   )
-  const streamFailure = errors.find((e) => /\[stream→text-generation\.run\] dispatch failed/.test(e)) ?? ''
+  const streamFailure =
+    errors.find((e) => /\[stream→builtin\.core\.text-generation\.run\] dispatch failed/.test(e)) ?? ''
   assert.match(
     streamFailure,
     /No assistant selected/,

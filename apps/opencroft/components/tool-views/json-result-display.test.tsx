@@ -8,14 +8,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { GenericToolView } from 'ui/tool-views/run-views'
 import { type ToolViewHost, ToolViewHostProvider } from 'ui/tool-views/tool-view-host'
-import { GenericToolView, lookupToolView } from 'ui/tool-views/tool-views'
+import { lookupToolView } from 'ui/tool-views/tool-views'
 
 const host: ToolViewHost = {
   readFile: async () => '',
   readSkill: async () => '',
   describeBackgroundRun: () => undefined,
-  DiffEditor: () => null,
 }
 
 const ANSWER = {

@@ -12,32 +12,32 @@ const CLOSE_ANIMATION_MS = 200
 
 export type HandleDef = {
   id: string
-  contextType: string
+  handleType: string
   role: 'source' | 'target'
   label?: string
   dynamic?: boolean
 }
 
 export const TERMINAL_SOURCE: HandleDef[] = [
-  { id: 'terminal', contextType: 'terminal-context', role: 'source', label: 'Terminal' },
+  { id: 'terminal', handleType: 'terminal-context', role: 'source', label: 'Terminal' },
 ]
 
 export const TERMINAL_CONSUMER: HandleDef[] = [
-  { id: 'ssh-in', contextType: 'terminal-context', role: 'target', label: 'Terminal' },
+  { id: 'ssh-in', handleType: 'terminal-context', role: 'target', label: 'Terminal' },
 ]
 
 export const SCRIPT_CONSUMER: HandleDef[] = [
-  { id: 'ctx-in', contextType: 'terminal-context', role: 'target', label: 'Target' },
-  { id: 'exec-in', contextType: 'execution-context', role: 'target', label: 'Handler' },
-  { id: 'stdout-out', contextType: 'text-stream', role: 'source', label: 'Output' },
+  { id: 'ctx-in', handleType: 'terminal-context', role: 'target', label: 'Target' },
+  { id: 'exec-in', handleType: 'execution-context', role: 'target', label: 'Handler' },
+  { id: 'stdout-out', handleType: 'text-stream', role: 'source', label: 'Output' },
 ]
 
 export const AGENT_HANDLES: HandleDef[] = [
-  { id: 'instructions-in', contextType: 'agent-instruction', role: 'target', label: 'Instructions' },
+  { id: 'instructions-in', handleType: 'agent-instruction', role: 'target', label: 'Instructions' },
 ]
 
 export const AGENT_INSTRUCTION_HANDLES: HandleDef[] = [
-  { id: 'instruction-out', contextType: 'agent-instruction', role: 'source', label: 'Agent' },
+  { id: 'instruction-out', handleType: 'agent-instruction', role: 'source', label: 'Agent' },
 ]
 
 // ═════════════════════════════════════════════════════════════════════

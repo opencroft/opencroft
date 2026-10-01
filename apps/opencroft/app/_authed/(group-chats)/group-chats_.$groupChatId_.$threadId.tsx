@@ -4,7 +4,7 @@ import { Button } from 'ui/button'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
 import { ScrollPage } from 'ui/layout/scrollpage'
 
-import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   GroupChatRefusal,
@@ -174,13 +174,7 @@ function ThreadConversation({
   // for its thread list — one status vocabulary, one source. The header's
   // status line and the list row a reader just came from must never disagree
   // about the same session.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
-  const status = deriveSessionStatus(thread.sessionKey, {
-    pending: pendingKeys,
-    active: activeKeys,
-    background: backgroundKeys,
-    alive: aliveKeys,
-  })
+  const status = deriveSessionStatus(thread.sessionKey, useSessionActivity())
   // An agent writes its notes DURING a turn, so the loader's copy is stale the
   // moment one lands. Refetching when a turn finishes is the cheapest signal
   // that something might have changed -- there is no push for artifacts, and
@@ -210,13 +204,14 @@ function ThreadConversation({
         thread={thread}
         onTurnSettled={onTurnSettled}
         onThreadForked={onThreadForked}
-        renderFrame={({ conversation, composer, work }) => (
+        renderFrame={({ conversation, composer, work, plan }) => (
           <GroupChatThreadFraming
             groupChatName={chat.name}
             threadTitle={thread.title}
             agent={{ name: thread.agent.name, avatarUrl: thread.agent.avatarUrl }}
             status={status}
             work={work}
+            plan={plan}
             artifacts={artifacts}
             openArtifactId={openArtifactId}
             onOpenArtifact={setOpenArtifactId}

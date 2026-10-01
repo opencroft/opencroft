@@ -58,7 +58,7 @@ async function agentNode(name: string): Promise<string> {
   const space = await registry.create(slug, slug, { nodes: [], edges: [] })
   const id = `mcp-auth-agent-${crypto.randomUUID()}`
   await registry.saveGraph(space.slug, {
-    nodes: [{ id, type: 'agent', position: { x: 0, y: 0 }, data: { name } }],
+    nodes: [{ id, type: 'builtin.core.agent', position: { x: 0, y: 0 }, data: { name } }],
     edges: [],
   })
   return id
@@ -158,7 +158,7 @@ test('a graph read and a graph write through app_call are refused without a toke
   const read = { name: 'app_call', arguments: { app: address, action: 'listNodes' } }
   const write = {
     name: 'app_call',
-    arguments: { app: address, action: 'createNodes', params: { nodes: [{ type: 'note' }] } },
+    arguments: { app: address, action: 'createNodes', params: { nodes: [{ type: 'acme.notes.note' }] } },
   }
 
   await assertRefused(await call('tools/call', undefined, read), 'a graph read without a token')

@@ -1,5 +1,8 @@
 import { legacy } from '@opencroft/client'
-const { React, useGraphNodes } = legacy
+
+import { storedType } from './stored-type'
+
+const { React, extensionId, useGraphNodes } = legacy
 
 interface SecretsStoreNodeData {
   secretKeys?: string[]
@@ -11,7 +14,7 @@ export function useSecretKeys(): string[] {
   return React.useMemo(() => {
     const keys = new Set<string>()
     for (const node of nodes as { type?: string; data?: SecretsStoreNodeData }[]) {
-      if (node.type !== 'core-secrets-store') {
+      if (node.type !== storedType(extensionId, 'core-secrets-store')) {
         continue
       }
       for (const key of node.data?.secretKeys ?? []) {

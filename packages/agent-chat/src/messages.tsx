@@ -1,16 +1,16 @@
 'use client'
 
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
+import { cn } from 'cn'
 import { Check, CheckCheck, X } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Badge } from 'ui/components/ui/badge'
 import { Button } from 'ui/components/ui/button'
 import { Input } from 'ui/components/ui/input'
 import { Flex } from 'ui/components/ui/layout/flex'
-import { cn } from 'ui/lib/utils'
 
+import { ChatNotice } from './components/chat-turn'
 import { ThinkingBlock } from './components/thinking-block'
 import { markdownLinkComponents } from './markdown-link'
 import { ToolCallBlock } from './tool-block'
@@ -18,7 +18,6 @@ import { lookupToolView, type ToolMessage, type ToolViewRegistry, toolViewProps 
 
 export type PermissionMessage = Extract<ChatMessage, { kind: 'permission' }>
 export type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
-export type PlanMessage = Extract<ChatMessage, { kind: 'plan' }>
 
 export interface MessageHandlers {
   onRespondPermission: (requestId: string, optionId?: string) => void
@@ -98,9 +97,6 @@ export function MessageView({
     case 'tool':
       return <ToolView message={message} toolViews={toolViews} hideToolCall={hideToolCalls} />
 
-    case 'plan':
-      return <PlanView message={message} />
-
     case 'permission': {
       const request = (
         <PermissionRequest message={message} onRespond={onRespondPermission} onRespondText={onRespondText} />
@@ -116,6 +112,9 @@ export function MessageView({
       return message.resolved ? prompt : <AppearGuard>{prompt}</AppearGuard>
     }
 
+    case 'notice':
+      return <ChatNotice item={message} />
+
     case 'error':
       return (
         <div className='rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive whitespace-pre-wrap wrap-break-word'>
@@ -126,23 +125,6 @@ export function MessageView({
     default:
       return null
   }
-}
-
-export function PlanView({ message }: { message: PlanMessage }) {
-  return (
-    <Flex withGaps className='rounded-md border p-2 text-sm gap-1'>
-      {message.entries.map((entry) => (
-        <Flex row key={entry.content} align='center' className='gap-2'>
-          <Badge variant={statusVariant(entry.status)} className='shrink-0'>
-            {entry.status}
-          </Badge>
-          <span className={cn(entry.status === 'completed' && 'line-through text-muted-foreground')}>
-            {entry.content}
-          </span>
-        </Flex>
-      ))}
-    </Flex>
-  )
 }
 
 export function PermissionRequest({

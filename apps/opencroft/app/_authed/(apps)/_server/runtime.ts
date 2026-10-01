@@ -8,6 +8,7 @@
 // onLoad, or a reloaded module would load them a second time.
 
 import { promises as fs } from 'node:fs'
+import path from 'node:path'
 
 import type { AppActionMeta, AppEntry, AppHandle } from '@opencroft/core'
 import { db, spaceApp } from '@opencroft/db'
@@ -17,6 +18,7 @@ import { asc, eq } from 'drizzle-orm'
 import { appAddressOf, isAppAddress, resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
 import { hostAppHooks, providedApps } from '@/app/_authed/(apps)/_server/host-apps'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
+import { extensionIdOfType, parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import type { AppActionCaller } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
@@ -27,8 +29,7 @@ import { registerShutdownStep } from '@/server/shutdown'
 type SpaceAppRow = typeof spaceApp.$inferSelect
 
 interface LoadedInstance {
-  extensionId: string
-  appSlug: string
+  type: string
   ctx: AppInstanceContext
 }
 
@@ -41,15 +42,40 @@ function loadedInstances(): Map<string, LoadedInstance> {
   return (globalForApps.__spaceAppsLoaded ??= new Map())
 }
 
+/**
+ * Whether an App type is provided right now: by a host App, or by an installed
+ * extension whose manifest declares it. An instance whose type is not is in the
+ * missing-extension state — a state, not an error: it keeps its row and its
+ * data, runs no hooks, and comes back as it was once its extension is
+ * installed again.
+ */
+async function isProvided(type: string): Promise<boolean> {
+  return (await providedApps()).some((entry) => entry.value.type === type)
+}
+
 // Host-implemented apps first (see host-apps.ts); everything else resolves
-// through the extension's server module.
-async function hooksFor(extensionId: string, appSlug: string): Promise<AppServerHooks | undefined> {
-  const hostHooks = hostAppHooks(extensionId, appSlug)
+// through the providing extension's server module, which keys its hooks by
+// the bare type it declared. Undefined for an App nothing provides, so no
+// caller has to tell a missing extension from an App without hooks.
+async function hooksFor(type: string): Promise<AppServerHooks | undefined> {
+  const hostHooks = hostAppHooks(type)
   if (hostHooks) {
     return hostHooks
   }
-  const mod = await getExtensionModule(extensionId)
-  return mod.apps?.[appSlug]
+  const parsed = parseType(type)
+  if (!parsed || !(await isProvided(type))) {
+    return undefined
+  }
+  const mod = await getExtensionModule(parsed.extensionId)
+  return mod.apps?.[parsed.bare]
+}
+
+/** Why an action cannot run on an instance whose App nothing provides: its extension, named. */
+function missingProviderMessage(row: SpaceAppRow): string {
+  const extensionId = extensionIdOfType(row.type)
+  return extensionId
+    ? `"${row.name}" is an app of type ${row.type}, which nothing provides: its extension ${extensionId} is not installed, or no longer declares it.`
+    : `"${row.name}" is an app of type ${row.type}, which no extension provides.`
 }
 
 async function instanceContext(row: SpaceAppRow): Promise<AppInstanceContext> {
@@ -61,8 +87,14 @@ async function instanceContext(row: SpaceAppRow): Promise<AppInstanceContext> {
     name: row.name,
     slug: row.slug,
     params: JSON.parse(row.params) as Record<string, string>,
-    dataDir: appInstanceDataDir(row.extensionId, row.id),
+    dataDir: instanceDataDir(row.type, row.id),
   }
+}
+
+// Keyed by the extension the type names; a type that names none (stored
+// before types were qualified) keeps its directory under the whole type.
+function instanceDataDir(type: string, instanceId: string): string {
+  return appInstanceDataDir(extensionIdOfType(type) ?? type, instanceId)
 }
 
 async function loadInstance(row: SpaceAppRow): Promise<void> {
@@ -71,9 +103,9 @@ async function loadInstance(row: SpaceAppRow): Promise<void> {
   }
   const ctx = await instanceContext(row)
   await fs.mkdir(ctx.dataDir, { recursive: true })
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  const hooks = await hooksFor(row.type)
   await hooks?.onLoad?.(ctx)
-  loadedInstances().set(row.id, { extensionId: row.extensionId, appSlug: row.appSlug, ctx })
+  loadedInstances().set(row.id, { type: row.type, ctx })
 }
 
 /**
@@ -85,10 +117,10 @@ async function loadInstance(row: SpaceAppRow): Promise<void> {
 export async function handleInstanceAdded(row: SpaceAppRow): Promise<void> {
   const ctx = await instanceContext(row)
   await fs.mkdir(ctx.dataDir, { recursive: true })
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  const hooks = await hooksFor(row.type)
   await hooks?.onAdded?.(ctx)
   await hooks?.onLoad?.(ctx)
-  loadedInstances().set(row.id, { extensionId: row.extensionId, appSlug: row.appSlug, ctx })
+  loadedInstances().set(row.id, { type: row.type, ctx })
 }
 
 /**
@@ -98,7 +130,7 @@ export async function handleInstanceAdded(row: SpaceAppRow): Promise<void> {
  * swallows hook failures -- by then the removal is already under way.
  */
 export async function handleInstanceBeforeRemoved(row: SpaceAppRow): Promise<void> {
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  const hooks = await hooksFor(row.type)
   await hooks?.beforeRemoved?.(await instanceContext(row))
 }
 
@@ -111,13 +143,13 @@ export async function handleInstanceBeforeRemoved(row: SpaceAppRow): Promise<voi
 export async function handleInstanceRemoved(row: SpaceAppRow): Promise<void> {
   const ctx = await instanceContext(row)
   try {
-    const hooks = await hooksFor(row.extensionId, row.appSlug)
+    const hooks = await hooksFor(row.type)
     if (loadedInstances().has(row.id)) {
       await hooks?.onUnload?.(ctx)
     }
     await hooks?.onRemoved?.(ctx)
   } catch (error) {
-    console.error(`[apps] remove hooks failed for ${row.extensionId}/${row.appSlug} (${row.id})`, error)
+    console.error(`[apps] remove hooks failed for ${row.type} (${row.id})`, error)
   }
   loadedInstances().delete(row.id)
   await fs.rm(ctx.dataDir, { recursive: true, force: true })
@@ -154,7 +186,7 @@ export async function handleInstanceRecreated(row: SpaceAppRow, params: string):
  * as its second argument.
  */
 export async function handleInstanceUpdated(row: SpaceAppRow, params: string): Promise<SpaceAppRow> {
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  const hooks = await hooksFor(row.type)
   if (!hooks?.onUpdated) {
     return handleInstanceRecreated(row, params)
   }
@@ -173,9 +205,9 @@ export async function handleInstanceUpdated(row: SpaceAppRow, params: string): P
 }
 
 /** Whether an App's server hooks react to parameter edits in place — see AppMeta.updatesInPlace. */
-export async function appUpdatesInPlace(extensionId: string, appSlug: string): Promise<boolean> {
+export async function appUpdatesInPlace(type: string): Promise<boolean> {
   try {
-    return Boolean((await hooksFor(extensionId, appSlug))?.onUpdated)
+    return Boolean((await hooksFor(type))?.onUpdated)
   } catch {
     // A server module that does not build answers as "recreates" — the safe
     // reading, since that is what the edit flow will actually do.
@@ -229,7 +261,7 @@ export async function transferSpaceAppImpl(ref: string, targetSpaceSlug: string)
     .where(eq(spaceApp.id, row.id))
     .returning()
   try {
-    const hooks = await hooksFor(row.extensionId, row.appSlug)
+    const hooks = await hooksFor(row.type)
     await hooks?.onTransferred?.(await instanceContext(moved), previousSpace?.slug ?? '')
   } catch (error) {
     await db
@@ -252,15 +284,9 @@ export async function transferSpaceAppImpl(ref: string, targetSpaceSlug: string)
 
 /** Fire onUnload for every loaded instance — the shutdown half of startSpaceApps. */
 async function unloadAllInstances(): Promise<void> {
-  for (const [instanceId, loaded] of loadedInstances()) {
-    try {
-      const hooks = await hooksFor(loaded.extensionId, loaded.appSlug)
-      await hooks?.onUnload?.(loaded.ctx)
-    } catch (error) {
-      console.error(`[apps] unload failed for ${loaded.extensionId}/${loaded.appSlug} (${instanceId})`, error)
-    }
+  for (const instanceId of [...loadedInstances().keys()]) {
+    await unloadInstance(instanceId)
   }
-  loadedInstances().clear()
 }
 
 /**
@@ -269,8 +295,8 @@ async function unloadAllInstances(): Promise<void> {
  * `app_find` prints into an agent's context.
  */
 export interface AppCatalogEntry {
-  extensionId: string
-  appSlug: string
+  /** The App's qualified type — what `app_add` takes. */
+  type: string
   title: string
   description?: string
   parameters: AppParameterSpec[]
@@ -297,9 +323,8 @@ function parameterSpecs(entry: AppEntry | undefined): AppParameterSpec[] {
 /** Every App any extension provides — what an `app_add` can instantiate. */
 export async function listAppCatalog(): Promise<AppCatalogEntry[]> {
   const provided = await providedApps()
-  return provided.map(({ extensionId, value }) => ({
-    extensionId,
-    appSlug: value.slug,
+  return provided.map(({ value }) => ({
+    type: value.type,
     title: value.title,
     description: value.description,
     parameters: parameterSpecs(value),
@@ -331,8 +356,7 @@ export class AppSlugTakenError extends Error {
  */
 export async function addSpaceAppImpl(
   spaceSlug: string,
-  extensionId: string,
-  appSlug: string,
+  type: string,
   name: string,
   input?: Record<string, string>,
 ): Promise<SpaceAppRow> {
@@ -342,9 +366,9 @@ export async function addSpaceAppImpl(
     throw new Error(`Unknown space: ${spaceSlug}`)
   }
   const provided = await providedApps()
-  const entry = provided.find((p) => p.extensionId === extensionId && p.value.slug === appSlug)?.value
+  const entry = provided.find((p) => p.value.type === type)?.value
   if (!entry) {
-    throw new Error(`No extension provides app: ${extensionId}/${appSlug}`)
+    throw new Error(`No extension provides the App type ${type}`)
   }
   const trimmedName = name.trim()
   if (!trimmedName) {
@@ -367,13 +391,13 @@ export async function addSpaceAppImpl(
   }
   const [row] = await db
     .insert(spaceApp)
-    .values({ spaceId: space.id, extensionId, appSlug, name: trimmedName, slug, params: JSON.stringify(params) })
+    .values({ spaceId: space.id, type, name: trimmedName, slug, params: JSON.stringify(params) })
     .returning()
   try {
     await handleInstanceAdded(row)
   } catch (error) {
     await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
-    await fs.rm(appInstanceDataDir(row.extensionId, row.id), { recursive: true, force: true })
+    await fs.rm(instanceDataDir(row.type, row.id), { recursive: true, force: true })
     throw error
   }
   return row
@@ -440,7 +464,7 @@ export async function renameSpaceAppImpl(instanceId: string, name: string): Prom
     .set({ name: trimmedName, slug, updatedAt: new Date() })
     .where(eq(spaceApp.id, row.id))
     .returning()
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  const hooks = await hooksFor(row.type)
   try {
     await hooks?.onRenamed?.(await instanceContext(updated), row.name)
   } catch (error) {
@@ -458,9 +482,100 @@ export async function renameSpaceAppImpl(instanceId: string, name: string): Prom
   return updated
 }
 
+/**
+ * Bind one instance to another App, keeping everything the instance has: its
+ * id, name, address, parameters and data. This is how an instance whose App
+ * is no longer provided (its extension is gone or was renamed) is pointed at
+ * one that is.
+ *
+ * The data directory is keyed by the providing extension, so it moves with the
+ * instance: directory first, then the row, and a failed row write moves the
+ * directory back so the two never disagree. A directory already present at
+ * the destination is refused rather than merged into.
+ *
+ * The new App's onLoad runs last, as at boot. It is not onAdded: the instance
+ * is not new, and its data is still there. A load that throws leaves the
+ * instance retyped, as a failed load at boot leaves it stored, and comes back
+ * as `loadError` for the caller to report. Anything that throws happened
+ * before the row changed.
+ */
+export async function retypeSpaceAppImpl(
+  instanceId: string,
+  type: string,
+): Promise<{ row: SpaceAppRow; loadError?: string }> {
+  const row = await db.query.spaceApp.findFirst({ where: eq(spaceApp.id, instanceId) })
+  if (!row) {
+    throw new Error(`Unknown app instance: ${instanceId}`)
+  }
+  if (!(await isProvided(type))) {
+    throw new Error(`No extension provides the App type ${type}`)
+  }
+  await unloadInstance(row.id)
+  const fromDir = instanceDataDir(row.type, row.id)
+  const toDir = instanceDataDir(type, row.id)
+  const moved = fromDir !== toDir && (await moveDataDir(fromDir, toDir))
+  let updated: SpaceAppRow
+  try {
+    ;[updated] = await db
+      .update(spaceApp)
+      .set({ type, updatedAt: new Date() })
+      .where(eq(spaceApp.id, row.id))
+      .returning()
+  } catch (error) {
+    if (moved) {
+      await fs.rename(toDir, fromDir)
+    }
+    throw error
+  }
+  try {
+    await loadInstance(updated)
+  } catch (error) {
+    console.error(`[apps] load failed for ${type} (${updated.id})`, error)
+    return { row: updated, loadError: error instanceof Error ? error.message : String(error) }
+  }
+  return { row: updated }
+}
+
+/** Fire onUnload for one instance if it is loaded. Its App may be gone, so a hook that cannot run is logged. */
+async function unloadInstance(instanceId: string): Promise<void> {
+  const loaded = loadedInstances().get(instanceId)
+  if (!loaded) {
+    return
+  }
+  try {
+    const hooks = await hooksFor(loaded.type)
+    await hooks?.onUnload?.(loaded.ctx)
+  } catch (error) {
+    console.error(`[apps] unload failed for ${loaded.type} (${instanceId})`, error)
+  }
+  loadedInstances().delete(instanceId)
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Move a data directory; false when there was none to move. */
+async function moveDataDir(fromDir: string, toDir: string): Promise<boolean> {
+  if (!(await pathExists(fromDir))) {
+    return false
+  }
+  if (await pathExists(toDir)) {
+    throw new Error(`A data directory already exists at ${toDir}`)
+  }
+  await fs.mkdir(path.dirname(toDir), { recursive: true })
+  await fs.rename(fromDir, toDir)
+  return true
+}
+
 /** The manifest entry a row's App was declared in, or undefined when its extension is gone. */
 function appEntryFor(provided: Provided<AppEntry>[], row: SpaceAppRow): AppEntry | undefined {
-  return provided.find((p) => p.extensionId === row.extensionId && p.value.slug === row.appSlug)?.value
+  return provided.find((p) => p.value.type === row.type)?.value
 }
 
 /**
@@ -476,7 +591,7 @@ function appEntryFor(provided: Provided<AppEntry>[], row: SpaceAppRow): AppEntry
  * circulation. Acceptance is not vocabulary; emission is.
  */
 export interface SpaceAppInfo {
-  /** The App this is an instance of, in the manifest's slug form — its type. */
+  /** The App this is an instance of: its qualified type, `<owner>.<extension>.<type>`. */
   type: string
   /** The instance's own name — what the user called it, not the App's title. */
   name: string
@@ -517,13 +632,13 @@ export async function listSpaceApps(spaceSlug?: string): Promise<SpaceAppListing
       continue
     }
     const entry = appEntryFor(provided, row)
-    const info: SpaceAppInfo = { type: row.appSlug, name: row.name }
+    const info: SpaceAppInfo = { type: row.type, name: row.name }
     const handles = await liveHandles(row, entry)
     if (handles.length > 0) {
       info.handles = handles.map(({ handleId }) => handleId)
     }
     apps[`${space}.${row.slug}`] = info
-    actions[row.appSlug] = (entry?.actions ?? []).map((action) => action.id)
+    actions[row.type] = (entry?.actions ?? []).map((action) => action.id)
   }
   return { apps, actions }
 }
@@ -535,7 +650,10 @@ export async function listSpaceApps(spaceSlug?: string): Promise<SpaceAppListing
  */
 export interface SpaceAppDetail extends SpaceAppInfo {
   address: string
-  extensionId: string
+  /** The extension the type names — whether or not it is installed. */
+  extensionId: string | null
+  /** False while the extension providing the App is not installed; the instance keeps its data meanwhile. */
+  provided: boolean
   title: string
   description?: string
   params: Record<string, string>
@@ -561,10 +679,11 @@ export async function appDetail(ref: string): Promise<SpaceAppDetail> {
   const entry = appEntryFor(await providedApps(), row)
   const detail: SpaceAppDetail = {
     address,
-    type: row.appSlug,
+    type: row.type,
     name: row.name,
-    extensionId: row.extensionId,
-    title: entry?.title ?? row.appSlug,
+    extensionId: extensionIdOfType(row.type),
+    provided: entry !== undefined,
+    title: entry?.title ?? row.type,
     description: entry?.description,
     params: JSON.parse(row.params) as Record<string, string>,
     parameters: parameterSpecs(entry),
@@ -577,22 +696,17 @@ export async function appDetail(ref: string): Promise<SpaceAppDetail> {
 }
 
 /**
- * The single App a bare type names. Two extensions may each provide an App
- * called `git`, and they declare different actions under that one name — so an
- * ambiguous type is refused rather than resolved to whichever manifest loaded
- * first.
+ * The App a qualified type names. Two extensions may each declare an App
+ * called `git`; qualified, those are two types, so a type names one App.
  */
-function soleAppOfType(provided: Provided<AppEntry>[], type: string): AppEntry {
-  const matches = provided.filter((p) => p.value.slug === type)
-  if (matches.length === 0) {
-    throw new Error(`No App type "${type}" — run app_list to see the types in use.`)
-  }
-  if (matches.length > 1) {
+function appOfType(provided: Provided<AppEntry>[], type: string): AppEntry {
+  const match = provided.find((p) => p.value.type === type)
+  if (!match) {
     throw new Error(
-      `"${type}" is provided by ${matches.map((p) => p.extensionId).join(' and ')}. Pass an app's address instead of its type.`,
+      `No App type "${type}" — a type is <owner>.<extension>.<type>; run app_list to see the types in use.`,
     )
   }
-  return matches[0].value
+  return match.value
 }
 
 /**
@@ -609,15 +723,16 @@ function soleAppOfType(provided: Provided<AppEntry>[], type: string): AppEntry {
 export async function listAppActions(app: string, ids?: string[]): Promise<AppActionMeta[]> {
   const provided = await providedApps()
   let entry: AppEntry
-  if (isAppAddress(app)) {
+  // A qualified type is dotted too, but with two dots where an address has one.
+  if (isAppAddress(app) && !parseType(app)) {
     const row = await requireAppRow(app)
     const found = appEntryFor(provided, row)
     if (!found) {
-      throw new Error(`"${app}" is an app of type "${row.appSlug}", which ${row.extensionId} no longer provides.`)
+      throw new Error(missingProviderMessage(row))
     }
     entry = found
   } else {
-    entry = soleAppOfType(provided, app)
+    entry = appOfType(provided, app)
   }
   const actions = entry.actions ?? []
   if (!ids) {
@@ -639,14 +754,16 @@ export async function listAppActions(app: string, ids?: string[]): Promise<AppAc
 export interface AppHandleInfo {
   instanceId: string
   spaceSlug: string
-  appSlug: string
+  /** The App's qualified type. */
+  type: string
   /** The App's title — what a picker shows in the node-name position. */
   title: string
   /** The live id; for a dynamic declaration, an expanded runtime id. */
   handleId: string
   /** The manifest id — the prefix form for a dynamic declaration. */
   declaredId: string
-  contextType: string
+  /** The qualified handle type. */
+  handleType: string
   label?: string
   dynamic: boolean
 }
@@ -664,10 +781,10 @@ export interface AppHandleInfo {
 async function liveHandles(
   row: SpaceAppRow,
   entry: AppEntry | undefined,
-  contextType?: string,
+  handleType?: string,
 ): Promise<Array<{ handle: AppHandle; handleId: string }>> {
   const declared = (entry?.handles ?? []).filter(
-    (handle) => contextType === undefined || handle.contextType === contextType,
+    (handle) => handleType === undefined || handle.handleType === handleType,
   )
   if (declared.length === 0) {
     return []
@@ -675,10 +792,10 @@ async function liveHandles(
   let liveIds: string[] = []
   if (declared.some((handle) => handle.dynamic)) {
     try {
-      const hooks = await hooksFor(row.extensionId, row.appSlug)
+      const hooks = await hooksFor(row.type)
       liveIds = (await hooks?.listHandles?.(await instanceContext(row))) ?? []
     } catch (error) {
-      console.error(`[apps] listHandles failed for ${row.extensionId}/${row.appSlug} (${row.id})`, error)
+      console.error(`[apps] listHandles failed for ${row.type} (${row.id})`, error)
       return []
     }
   }
@@ -690,7 +807,7 @@ async function liveHandles(
 }
 
 /** Every live handle every App instance exposes, described for a handle picker. */
-export async function listAppHandles(contextType?: string): Promise<AppHandleInfo[]> {
+export async function listAppHandles(handleType?: string): Promise<AppHandleInfo[]> {
   const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
   if (rows.length === 0) {
     return []
@@ -704,10 +821,10 @@ export async function listAppHandles(contextType?: string): Promise<AppHandleInf
     const base = {
       instanceId: row.id,
       spaceSlug: slugById.get(row.spaceId) ?? '',
-      appSlug: row.appSlug,
-      title: entry?.title ?? row.appSlug,
+      type: row.type,
+      title: entry?.title ?? row.type,
     }
-    for (const { handle, handleId } of await liveHandles(row, entry, contextType)) {
+    for (const { handle, handleId } of await liveHandles(row, entry, handleType)) {
       results.push({ ...base, ...handleFields(handle, handleId) })
     }
   }
@@ -718,7 +835,7 @@ function handleFields(handle: AppHandle, liveId: string) {
   return {
     handleId: liveId,
     declaredId: handle.id,
-    contextType: handle.contextType,
+    handleType: handle.handleType,
     label: handle.label,
     dynamic: Boolean(handle.dynamic),
   }
@@ -743,7 +860,7 @@ export async function resolveAppHandleContext(
   if (!row) {
     return undefined
   }
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
+  const hooks = await hooksFor(row.type)
   if (!hooks?.getHandleContext) {
     return undefined
   }
@@ -792,15 +909,19 @@ export async function callAppAction(
   signal?: AbortSignal,
 ): Promise<unknown> {
   const row = await requireAppRow(ref)
-  const hooks = await hooksFor(row.extensionId, row.appSlug)
-  const handler = hooks?.actions?.[actionId]
+  const extensionId = extensionIdOfType(row.type)
+  const hooks = await hooksFor(row.type)
+  if (!hooks || !extensionId) {
+    throw new Error(missingProviderMessage(row))
+  }
+  const handler = hooks.actions?.[actionId]
   if (!handler) {
-    throw new Error(`App ${row.extensionId}/${row.appSlug} has no action "${actionId}"`)
+    throw new Error(`App ${row.type} has no action "${actionId}"`)
   }
   // Lazy: the extension host reaches back into this module (app handles), and
   // the action path is the only one here that needs the host at all.
   const { groupChatsForCaller } = await import('@/app/_authed/(extension-runtime)/_server/host')
-  const groupChats = groupChatsForCaller(row.extensionId, caller)
+  const groupChats = groupChatsForCaller(extensionId, caller)
   const ctx = {
     ...(await instanceContext(row)),
     ...(caller && 'agent' in caller ? { callerAgent: caller.agent } : {}),
@@ -836,7 +957,7 @@ export async function startSpaceApps(): Promise<void> {
     try {
       await loadInstance(row)
     } catch (error) {
-      console.error(`[apps] load failed for ${row.extensionId}/${row.appSlug} (${row.id})`, error)
+      console.error(`[apps] load failed for ${row.type} (${row.id})`, error)
     }
   }
 }

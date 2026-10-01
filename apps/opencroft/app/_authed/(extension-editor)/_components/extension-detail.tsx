@@ -33,28 +33,33 @@ import type {
   LocalExtensionRecord,
   LocalRemoteState,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
+import { isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
 import type {
-  ExtensionContextType,
   ExtensionHandle,
+  ExtensionHandleType,
   ExtensionManifest,
   NodeMetadata,
 } from '@/app/_authed/(extension-runtime)/_types'
 
 export type ExtensionRecord = LocalExtensionRecord | InstalledExtensionRecord
 
-/** An installed extension carries a sidecar naming where it came from; a local
- *  one is a checkout on this instance and carries git state instead. Which of
- *  the two is open decides what this page can say about its source, and — in
- *  the editor — whether the files it holds can be written back. */
+/** An installed extension is a copy of a repository, described by the row that
+ *  recorded its install; a local one is a checkout on this instance and carries
+ *  git state instead. Which of the two is open decides what this page can say
+ *  about its source, and — in the editor — whether the files it holds can be
+ *  written back. Decided by the folder's owner, as the server decides it: an
+ *  installed record's source is null when nothing recorded where it came from,
+ *  so its presence cannot tell the two apart. */
 export function isInstalledRecord(record: ExtensionRecord): record is InstalledExtensionRecord {
-  return 'sidecar' in record
+  return !isLocalFolder(record.folder)
 }
 
-/** What an extension contributes under `provides.apps`. The runtime stores
- *  provisions opaquely, so this is read defensively rather than declared by
- *  the manifest type. */
+/** What an extension contributes under `provides.apps`, its `type` qualified
+ *  like every type the runtime has read. The runtime stores the rest of a
+ *  provision opaquely, so this is read defensively rather than declared by the
+ *  manifest type. */
 interface ProvidedApp {
-  slug?: string
+  type?: string
   title?: string
   description?: string
   parameters?: ProvidedAppParameter[]
@@ -84,7 +89,7 @@ interface ProvidedAppAction {
 interface ProvidedAppHandle {
   id?: string
   label?: string
-  contextType?: string
+  handleType?: string
   dynamic?: boolean
 }
 
@@ -211,8 +216,8 @@ function AppCard({ app }: { app: ProvidedApp }) {
     <div className='rounded-md border'>
       <div className='flex flex-col gap-1 px-4 py-3'>
         <div className='flex min-w-0 items-baseline gap-2'>
-          <span className='text-sm font-medium'>{app.title ?? app.slug}</span>
-          {app.slug ? <span className='truncate font-mono text-xs text-muted-foreground'>{app.slug}</span> : null}
+          <span className='text-sm font-medium'>{app.title ?? app.type}</span>
+          {app.type ? <span className='truncate font-mono text-xs text-muted-foreground'>{app.type}</span> : null}
         </div>
         {app.description ? <p className='max-w-prose text-xs text-muted-foreground'>{app.description}</p> : null}
       </div>
@@ -276,9 +281,9 @@ function AppCard({ app }: { app: ProvidedApp }) {
             <div key={handle.id ?? handle.label} className='flex min-w-0 flex-wrap items-baseline gap-2 text-xs'>
               {/* Type first, as in a node's handle columns: the same row means
                   the same thing on both screens. */}
-              {handle.contextType ? (
+              {handle.handleType ? (
                 <Badge variant='outline' className='font-mono text-xs'>
-                  {handle.contextType}
+                  {handle.handleType}
                 </Badge>
               ) : null}
               {handle.label ? <span>{handle.label}</span> : null}
@@ -308,7 +313,7 @@ function HandleColumn({ title, handles }: { title: string; handles: ExtensionHan
                 for; the name and the id say which one it is once the type
                 already matches. */}
             <Badge variant='outline' className='font-mono text-xs'>
-              {handle.contextType}
+              {handle.handleType}
             </Badge>
             {handle.label ? <span>{handle.label}</span> : null}
             <span className='font-mono text-muted-foreground'>{handle.id}</span>
@@ -333,11 +338,11 @@ function NodeCardList({ nodes }: { nodes: NodeMetadata[] }) {
         const handles = node.handles ?? []
         const actions = node.actions ?? []
         return (
-          <div key={node.typeId} className='rounded-md border'>
+          <div key={node.type} className='rounded-md border'>
             <div className='flex flex-col gap-1 px-4 py-3'>
               <div className='flex min-w-0 items-baseline gap-2'>
                 <span className='text-sm font-medium'>{node.name}</span>
-                <span className='truncate font-mono text-xs text-muted-foreground'>{node.typeId}</span>
+                <span className='truncate font-mono text-xs text-muted-foreground'>{node.type}</span>
                 {node.category ? (
                   <Badge variant='secondary' className='ml-auto shrink-0'>
                     {node.category}
@@ -389,20 +394,20 @@ function NodeCardList({ nodes }: { nodes: NodeMetadata[] }) {
   )
 }
 
-function HandleTypeList({ contexts }: { contexts: ExtensionContextType[] }) {
+function HandleTypeList({ handleTypes }: { handleTypes: ExtensionHandleType[] }) {
   return (
     <ItemGroup className='divide-y rounded-md border'>
-      {contexts.map((context) => (
-        <Item key={context.id} size='sm'>
+      {handleTypes.map((handleType) => (
+        <Item key={handleType.id} size='sm'>
           <span
             aria-hidden='true'
             className='mt-1.5 size-2.5 shrink-0 self-start rounded-full'
-            style={{ background: context.color }}
+            style={{ background: handleType.color }}
           />
           <ItemContent>
-            <ItemTitle>{context.label}</ItemTitle>
-            <ItemDescription className='font-mono'>{context.id}</ItemDescription>
-            {context.description ? <ItemDescription>{context.description}</ItemDescription> : null}
+            <ItemTitle>{handleType.label}</ItemTitle>
+            <ItemDescription className='font-mono'>{handleType.id}</ItemDescription>
+            {handleType.description ? <ItemDescription>{handleType.description}</ItemDescription> : null}
           </ItemContent>
         </Item>
       ))}
@@ -446,16 +451,12 @@ export function ExtensionDetail({
   const [tab, setTab] = useState<TabId>('description')
 
   const installed = isInstalledRecord(record)
+  // Where an installed extension came from, when anything recorded it. One that
+  // was copied in by hand has no source, so there is nothing to update it from.
+  const source = isInstalledRecord(record) ? record.source : null
   const manifest = record.manifest
   const nodes = manifest.nodes ?? []
-  // The manifest calls these `contexts`, and the UI calls them handle types.
-  // The field was named when the first two were Terminal Context and Execution
-  // Context, and "context" stuck from those names rather than from what the
-  // thing is: the TYPE a handle carries, in the sense Stream or Buffer is a
-  // type. The wire format is not renamed here — every installed extension
-  // declares `contexts` — so the two names are reconciled at the one place a
-  // person reads them.
-  const handleTypes = manifest.contexts ?? []
+  const handleTypes = manifest.handleTypes ?? []
   const apps = provided<ProvidedApp>(manifest, 'apps')
   const dependencies = manifest.extensionDependencies ?? []
   const readme = readmeOf(record.files)
@@ -493,7 +494,7 @@ export function ExtensionDetail({
         </div>
 
         <div className='flex shrink-0 items-center gap-1'>
-          {installed ? (
+          {source ? (
             <Button size='sm' variant='outline' disabled={busy} onClick={onUpdate}>
               {hasUpdate ? <ArrowDownToLine className='size-3.5' /> : <RefreshCw className='size-3.5' />}
               {hasUpdate ? `Update to ${updateCheck?.latest}` : 'Reinstall'}
@@ -575,7 +576,7 @@ export function ExtensionDetail({
             <Section title={`Apps (${apps.length})`}>
               <div className='flex flex-col gap-3'>
                 {apps.map((app) => (
-                  <AppCard key={app.slug ?? app.title} app={app} />
+                  <AppCard key={app.type ?? app.title} app={app} />
                 ))}
               </div>
             </Section>
@@ -587,9 +588,9 @@ export function ExtensionDetail({
             <>
               <p className='max-w-prose text-xs text-muted-foreground'>
                 The types this extension's handles carry — what flows along an edge, in the sense a stream or a buffer
-                is a type. Declared in the manifest as <Mono>contexts</Mono>.
+                is a type. Declared in the manifest as <Mono>handleTypes</Mono>.
               </p>
-              <HandleTypeList contexts={handleTypes} />
+              <HandleTypeList handleTypes={handleTypes} />
             </>
           ) : null}
 
@@ -599,23 +600,42 @@ export function ExtensionDetail({
                 <Field label='Version'>
                   <Mono>{manifest.version}</Mono>
                 </Field>
+                {/* Named apart from the id under the title because the two differ
+                    for a local copy standing in for another extension: the id is
+                    what it runs as, the folder is where its files are. */}
+                <Field label='Folder'>
+                  <Mono>{record.folder}</Mono>
+                </Field>
                 {isInstalledRecord(record) ? (
                   <>
-                    <Field label='Repository'>
-                      <a
-                        href={record.sidecar.source.url}
-                        target='_blank'
-                        rel='noreferrer'
-                        className='inline-flex items-center gap-1 font-mono text-xs underline underline-offset-2'
-                      >
-                        {record.sidecar.source.url}
-                        <ExternalLink className='size-3' />
-                      </a>
-                    </Field>
-                    <Field label='Installed ref'>
-                      <Mono>{record.sidecar.ref}</Mono>
-                    </Field>
-                    <Field label='Installed'>{new Date(record.sidecar.installedAt).toLocaleString()}</Field>
+                    {source ? (
+                      <>
+                        <Field label='Repository'>
+                          <a
+                            href={source.url}
+                            target='_blank'
+                            rel='noreferrer'
+                            className='inline-flex items-center gap-1 font-mono text-xs underline underline-offset-2'
+                          >
+                            {source.url}
+                            <ExternalLink className='size-3' />
+                          </a>
+                        </Field>
+                        <Field label='Installed ref'>
+                          <Mono>{source.ref ?? 'unknown'}</Mono>
+                        </Field>
+                        {source.commit ? (
+                          <Field label='Commit'>
+                            <Mono>{shortCommit(source.commit)}</Mono>
+                          </Field>
+                        ) : null}
+                        <Field label='Installed'>{new Date(source.installedAt).toLocaleString()}</Field>
+                      </>
+                    ) : (
+                      <Field label='Repository'>
+                        <span className='text-muted-foreground'>Not recorded</span>
+                      </Field>
+                    )}
                     <Field label='Updates'>
                       {hasUpdate ? (
                         <span className='text-amber-600'>{updateCheck?.latest} is available</span>

@@ -45,7 +45,7 @@ async function armExtensionLoad(): Promise<void> {
 
 await armExtensionLoad()
 
-const EXTENSION_ID = 'local/panel-source'
+const EXTENSION_ID = 'acme.panel-source'
 
 function panel(id: string, label: string) {
   return {

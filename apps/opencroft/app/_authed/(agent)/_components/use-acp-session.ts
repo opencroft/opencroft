@@ -17,6 +17,7 @@ import type {
   ElicitationContentValue,
   ElicitationSchema,
   PermissionOpt,
+  PlanItem,
   Presence,
   QueuedPrompt,
   QueueMode,
@@ -228,6 +229,9 @@ export interface AcpSession {
   // detached work that keeps going with no turn active. Drives the background
   // strip and the stop-session warning. Empty for harnesses that report none.
   backgroundTasks: AsyncTaskInfo[]
+  // The agent's current plan (the last 'plan' event; empty once cleared) —
+  // session state for the header's plan control, never a transcript part.
+  plan: PlanItem[]
   resolvePermission: (requestId: string, optionId?: string) => void
   resolveAsk: (requestId: string, answer?: string | Record<string, ElicitationContentValue>) => void
   respondPermissionText: (requestId: string, text: string) => void
@@ -312,6 +316,7 @@ function foldConversationPart(
         name: event.title,
         args: event.input,
         ...(event.name ? { toolName: event.name } : {}),
+        ...(event.diffs ? { diffs: event.diffs } : {}),
       }
       parts.push(part)
       tools.set(event.toolCallId, part)
@@ -325,6 +330,11 @@ function foldConversationPart(
         }
         if (event.input !== undefined) {
           part.args = event.input
+        }
+        // Replaced only by an event that has some: a later text result does
+        // not retract the change reported before it.
+        if (event.diffs) {
+          part.diffs = event.diffs
         }
         if (event.output !== undefined || isTerminalToolStatus(event.status)) {
           part.result = { text: toolText(event.output), isError: event.status === 'failed' }
@@ -362,6 +372,8 @@ export interface Folded {
   // Live ones drive the background-work strip and the stop-session warning;
   // the list is in first-seen order.
   asyncTasks: AsyncTaskInfo[]
+  // The last 'plan' snapshot wins; an empty one clears it.
+  plan: PlanItem[]
 }
 
 // A counter stays absent only while every contribution folded so far left it
@@ -431,6 +443,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   // "what a session reads at until told otherwise" is stated in one place.
   let presence: Presence = DEFAULT_PRESENCE
   let usage: AgentUsage | undefined
+  let plan: PlanItem[] = []
 
   const ensureAssistant = (id: number): ChatMessage => {
     if (!assistant) {
@@ -501,9 +514,6 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   // it in place. Kept beside (not instead of) `asyncTasks`: the list is what
   // the out-of-band surfaces read, the parts are what the transcript draws.
   const taskParts = new Map<string, AsyncTaskPart>()
-  // The live plan part and the assistant message it sits in, so later plan
-  // events patch it in place — see the 'plan' case below.
-  let plan: { message: ChatMessage; part: Extract<ChatPart, { type: 'plan' }> } | null = null
 
   events.forEach((event, offset) => {
     const id = baseIndex + offset
@@ -599,26 +609,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'plan': {
-        // The plan is one entity, not a step: its first event fixes the part's
-        // position in the transcript, later ones patch that part in place, and
-        // an empty list retires it (a conversation reset publishes one to clear
-        // the agent's task store). Held here so the next non-empty plan after a
-        // clear anchors a new part at its own position.
-        if (event.entries.length === 0) {
-          if (plan) {
-            plan.message.parts.splice(plan.message.parts.indexOf(plan.part), 1)
-            plan = null
-          }
-          break
-        }
-        if (plan) {
-          plan.part.entries = event.entries
-        } else {
-          const message = ensureAssistant(id)
-          const part: ChatPart = { type: 'plan', id, entries: event.entries }
-          message.parts.push(part)
-          plan = { message, part }
-        }
+        // Session state, not a step: every event replaces the list wholesale,
+        // and an empty one clears it (a conversation reset publishes one to
+        // clear the agent's task store).
+        plan = event.entries
         break
       }
       case 'compaction': {
@@ -649,6 +643,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
           message.parts.push(part)
           tools.set(view.id, part)
         }
+        break
+      }
+      case 'notice': {
+        ensureAssistant(id).parts.push({ type: 'notice', ...event.notice })
         break
       }
       case 'permission_request': {
@@ -759,6 +757,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     // whichever of this and `seedUsage` it ends up using.
     usage,
     asyncTasks: [...asyncTasks.values()],
+    plan,
   }
 }
 
@@ -1579,6 +1578,7 @@ export function useAcpSession(
       // history the strip would keep pinned. The strip and the stop-session
       // warning both read this.
       backgroundTasks: folded.asyncTasks.filter((task) => task.state === 'running' || task.state === 'paused'),
+      plan: folded.plan,
       resolvePermission,
       resolveAsk,
       respondPermissionText,
@@ -1603,6 +1603,7 @@ export function useAcpSession(
       canAttachImages,
       usage,
       folded.asyncTasks,
+      folded.plan,
       resolvePermission,
       resolveAsk,
       respondPermissionText,

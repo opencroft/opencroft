@@ -25,25 +25,31 @@ import { fileURLToPath } from 'node:url'
 // below, and invisible as such to anyone reading only what the tests assert.
 import { extensionHostApi, extensionUiApi } from '@/app/_authed/(extension-runtime)/_client/host'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
+import { buildExtension } from './compiler'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-host-api-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
-
-const { buildExtension } = await import('./compiler')
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
 async function buildProbe(slug: string, clientSource: string): Promise<string> {
-  const dir = path.join(root, slug)
+  const id = `local.${slug}`
+  const dir = path.join(root, 'extensions', id)
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.mkdir(path.join(dir, 'server'), { recursive: true })
   await fs.writeFile(path.join(dir, 'src', 'client.tsx'), clientSource)
   await fs.writeFile(path.join(dir, 'server', 'index.ts'), 'export const actions = {}\n')
-  const manifest: ExtensionManifest = { id: `local/${slug}`, name: slug, version: '0.0.0' }
+  const manifest: ExtensionManifest = { id, name: slug, version: '0.0.0' }
   await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
-  const result = await buildExtension(`local/${slug}`, manifest)
+  const result = await buildExtension(id, manifest)
   assert.ok(result.success, JSON.stringify(result.errors))
   return await fs.readFile(path.join(dir, 'dist', 'client.js'), 'utf-8')
 }
@@ -144,22 +150,22 @@ test('a name @ext/host binds to the extension keeps its own shape', async () => 
     ["import { createStorage } from '@ext/host'", '', "export const probe = createStorage('notes')", ''].join('\n'),
   )
 
-  assert.match(bundle, /createStorage\("local\/scoped-storage",/)
+  assert.match(bundle, /createStorage\("local\.scoped-storage",/)
 })
 
 test('a name the host does not provide fails the build rather than becoming undefined at runtime', async () => {
   // The guard that makes the assertion above mean something: if any identifier
   // imported from the host resolved regardless of whether the shim declares it,
   // the test above would pass for a capability that does not exist.
-  const dir = path.join(root, 'absent-name')
+  const dir = path.join(root, 'extensions', 'local.absent-name')
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.writeFile(
     path.join(dir, 'src', 'client.tsx'),
     "import { useSomethingTheHostDoesNotProvide } from '@ext/host'\n\nexport const probe = useSomethingTheHostDoesNotProvide\n",
   )
-  const manifest: ExtensionManifest = { id: 'local/absent-name', name: 'absent-name', version: '0.0.0' }
+  const manifest: ExtensionManifest = { id: 'local.absent-name', name: 'absent-name', version: '0.0.0' }
   await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
 
-  const result = await buildExtension('local/absent-name', manifest)
+  const result = await buildExtension('local.absent-name', manifest)
   assert.equal(result.success, false, 'importing a name the shim does not export must not build')
 })

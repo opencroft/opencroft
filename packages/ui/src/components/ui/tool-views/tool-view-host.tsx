@@ -17,7 +17,7 @@ export interface ToolViewNode {
 // host passes here cannot break the rules of hooks inside a view.
 export interface ToolViewHost {
   // The current contents of a file on a remote target. A rejection's message is
-  // shown to the reader as the reason the diff is missing.
+  // shown to the reader as the reason a diff covers less than the whole file.
   readFile: (request: { target: string; space?: string; path: string }) => Promise<string>
   // The current body of a skill, or '' when there is no skill by that name.
   readSkill: (name: string) => Promise<string>
@@ -32,11 +32,8 @@ export interface ToolViewHost {
     getNode: (nodeId: string) => ToolViewNode | undefined
     focusNode: (nodeId: string) => void
   }
-  // The diff editor. `language` when the view knows it; otherwise `path`, for
-  // the host to infer the language from.
-  DiffEditor: ComponentType<{ original: string; value: string; language?: string; path?: string }>
   // Where an approval-mode diff is shown larger than the approval list allows.
-  // Renders nothing itself. Absent, the content is simply not projected.
+  // Renders nothing itself. Absent, the diff is shown inline in the view.
   ApprovalPanel?: ComponentType<{ children: ReactNode }>
 }
 

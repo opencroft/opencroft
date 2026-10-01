@@ -25,7 +25,7 @@ export const definitions = [
   {
     name: 'app_list',
     description:
-      'The apps a space holds — an app is an extension-provided application a user added to a space, with its own parameters and private data. `apps` is keyed by ADDRESS, `<space>.<app-slug>`: that address is what every other tool takes to reach one, including the `<space>.<app-slug>/<handle-id>` target form the remote_* tools accept. Each entry gives the App it is an instance of (`type`), the name its user gave it, and — for the few Apps that expose context sources — the live `handles` ids, already resolved. `actions` lists the action ids by type, because actions belong to the App rather than to each app added from it; what an action does and what it takes comes from app_actions, and the parameter values an app was configured with come from app_get. Use this to discover which app to target before app_call.',
+      'The apps a space holds — an app is an extension-provided application a user added to a space, with its own parameters and private data. `apps` is keyed by ADDRESS, `<space>.<app-slug>`: that address is what every other tool takes to reach one, including the `<space>.<app-slug>/<handle-id>` target form the remote_* tools accept. Each entry gives the App it is an instance of (`type`, qualified with its extension: `<owner>.<extension>.<type>`, e.g. "acme.widgets.board"), the name its user gave it, and — for the few Apps that expose context sources — the live `handles` ids, already resolved. `actions` lists the action ids by type, because actions belong to the App rather than to each app added from it; what an action does and what it takes comes from app_actions, and the parameter values an app was configured with come from app_get. Use this to discover which app to target before app_call.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -40,7 +40,7 @@ export const definitions = [
   {
     name: 'app_get',
     description:
-      'One app in full: the parameter values it was added with, the fields those values fill (id, label, whether required), its App and extension, and its live handles. This is the configuration view — app_list deliberately omits parameters, because choosing which app to call does not need them and printing them for every app is what made that listing unreadable.',
+      'One app in full: the parameter values it was added with, the fields those values fill (id, label, whether required), its App type and extension — and `provided: false` while that extension is not installed, when the app keeps its data but cannot run — and its live handles. This is the configuration view — app_list deliberately omits parameters, because choosing which app to call does not need them and printing them for every app is what made that listing unreadable.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -56,7 +56,10 @@ export const definitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        app: { type: 'string', description: 'An app’s type (e.g. "git") or its address — see app_list.' },
+        app: {
+          type: 'string',
+          description: 'An app’s type (e.g. "acme.widgets.board") or its address — see app_list.',
+        },
         actions: {
           type: 'array',
           items: { type: 'string' },
@@ -104,27 +107,30 @@ export const definitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        query: { type: 'string', description: 'Narrow by title, slug, extension or description. Omit for all.' },
+        query: { type: 'string', description: 'Narrow by title, type or description. Omit for all.' },
       },
     },
   },
   {
     name: 'app_add',
     description:
-      'Add an app to a space. Every app is NAMED: its slug is derived from the name once, must be free in the space (a taken slug is refused — pick a different name), and with the space forms the address <space>.<slug>. The same App can be added many times under different names. Declared required parameters must be non-empty; an add the App refuses (a throwing hook) rolls back whole. Adding the builtin/core "graph" App creates a new graph in the space at that same address. See app_find for what can be added.',
+      'Add an app to a space. Every app is NAMED: its slug is derived from the name once, must be free in the space (a taken slug is refused — pick a different name), and with the space forms the address <space>.<slug>. The same App can be added many times under different names. Declared required parameters must be non-empty; an add the App refuses (a throwing hook) rolls back whole. Adding the "builtin.core.graph" App creates a new graph in the space at that same address. See app_find for what can be added.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         space: { type: 'string', description: 'Slug of the space to add the app to.' },
-        extensionId: { type: 'string', description: 'The providing extension — see app_find.' },
-        appSlug: { type: 'string', description: 'The App within that extension — see app_find.' },
+        type: {
+          type: 'string',
+          description:
+            'The App to add, by its type: `<owner>.<extension>.<type>`, e.g. "acme.widgets.board" — see app_find.',
+        },
         name: { type: 'string', description: 'The instance name; its slug (and so its address) derives from it.' },
         params: {
           type: 'object',
           description: 'Parameter values by parameter id, as declared in the catalog entry.',
         },
       },
-      required: ['space', 'extensionId', 'appSlug', 'name'],
+      required: ['space', 'type', 'name'],
     },
   },
   {
@@ -256,9 +262,7 @@ export const handlers: Record<string, ToolHandler> = {
     const catalog = await listAppCatalog()
     const matches = query
       ? catalog.filter((entry) =>
-          [entry.title, entry.appSlug, entry.extensionId, entry.description ?? ''].some((text) =>
-            text.toLowerCase().includes(query),
-          ),
+          [entry.title, entry.type, entry.description ?? ''].some((text) => text.toLowerCase().includes(query)),
         )
       : catalog
     return jsonResult(matches)
@@ -266,20 +270,19 @@ export const handlers: Record<string, ToolHandler> = {
 
   // ── app_add ──────────────────────────────────────────────────────
   app_add: withApprovalRequired(async (args) => {
-    const extensionId = args.extensionId as string | undefined
-    const appSlug = args.appSlug as string | undefined
+    const type = args.type as string | undefined
     const name = args.name as string | undefined
-    if (!extensionId || !appSlug || !name) {
-      fail(-32602, 'Missing required params: extensionId, appSlug, name')
+    if (!type || !name) {
+      fail(-32602, 'Missing required params: type, name')
     }
     // A graph address is accepted on the space part, like everywhere else,
     // but an instance is added to the SPACE — the graph suffix is dropped.
     const spaceSlug = await resolveSpaceSlug(args)
     const params = (args.params as Record<string, string> | undefined) ?? {}
-    const row = await addSpaceAppImpl(spaceSlug, extensionId, appSlug, name, params)
+    const row = await addSpaceAppImpl(spaceSlug, type, name, params)
     return jsonResult({
       space: spaceSlug,
-      app: `${extensionId}/${appSlug}`,
+      app: row.type,
       name: row.name,
       address: `${spaceSlug}.${row.slug}`,
       params: JSON.parse(row.params) as Record<string, string>,

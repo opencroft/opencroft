@@ -4,7 +4,7 @@ import { ChevronRight, Pencil, Pin, Plus, X } from 'lucide-react'
 
 import { Button } from 'ui/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/components/ui/collapsible'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Word for word the server's `pin-limit` refusal. The panel stops the press
 // early where it can, but two members pinning at the same instant both pass the

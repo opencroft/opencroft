@@ -1,14 +1,18 @@
 // The one definition of what an Agent / Agent Instruction node's graph data
 // looks like. Before this existed, call sites independently re-derived it by
 // hand — each matching `node.type === 'agent'` (etc.) and reading
-// `data.name`/`instruction`/… directly. A renamed field or typeId broke
+// `data.name`/`instruction`/… directly. A renamed field or type broke
 // whichever copies nobody happened to update, silently: wrong counts or empty
 // lists, not a compile error.
+//
+// The types are core's, in the qualified form graphs store.
 
-export const AGENT_NODE_TYPE = 'agent'
-export const AGENT_INSTRUCTION_NODE_TYPE = 'agent-instruction'
-export const AGENT_TOOL_NODE_TYPE = 'agent-tool'
-export const SEND_MESSAGE_NODE_TYPE = 'send-message'
+import { coreType } from '@/app/_authed/(extension-runtime)/_core-types'
+
+export const AGENT_NODE_TYPE = coreType('agent')
+export const AGENT_INSTRUCTION_NODE_TYPE = coreType('agent-instruction')
+export const AGENT_TOOL_NODE_TYPE = coreType('agent-tool')
+export const SEND_MESSAGE_NODE_TYPE = coreType('send-message')
 
 export interface AgentGraphNode {
   type?: string

@@ -11,7 +11,7 @@ import {
   shellJoin,
 } from './exec-util'
 import { sshExecResult, sshStreamHandle } from './ssh'
-import { pipedProcessHandle, type StreamHandle } from './stream-handle'
+import { type OutputFilter, pipedProcessHandle, type StreamHandle } from './stream-handle'
 
 /** What a streamed command needs, which is the collecting options minus everything about
  *  collecting: there is no timeout or output cap here, because nothing is being accumulated. */
@@ -23,6 +23,8 @@ export interface StreamOptions {
    * resolved secret values: every transport here is non-pty, so it is never echoed to a watcher.
    */
   stdin?: string
+  /** Transforms the output before anything keeps or shows it — see OutputFilter. */
+  filter?: OutputFilter
 }
 
 /**
@@ -181,7 +183,7 @@ const localBackend: TerminalBackend = {
     // The handle is built before anything is written, because it is what installs the `'error'`
     // listeners. Writing first leaves a window where a child that failed to spawn raises an
     // unhandled stream error instead of becoming a session that ended and said why.
-    const handle = pipedProcessHandle(child)
+    const handle = pipedProcessHandle(child, opts.filter)
     child.stdin?.end(opts.stdin ?? '')
     return handle
   },
@@ -261,7 +263,7 @@ const sshBackend: TerminalBackend = {
       )
     }
     const full = cdPrefix(cwd) + preamble + shellJoin(argv)
-    return sshStreamHandle(credsFromCtx(ctx), full, envStdin ?? opts.stdin)
+    return sshStreamHandle(credsFromCtx(ctx), full, envStdin ?? opts.stdin, opts.filter)
   },
 }
 

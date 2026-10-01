@@ -4,7 +4,7 @@ import { AlertCircle, Loader2, X } from 'lucide-react'
 import { type ComponentPropsWithoutRef, useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // The thumbnail's edge, in one place. Small enough that a row of chips sits
 // above the composer without pushing the message being written off the screen,

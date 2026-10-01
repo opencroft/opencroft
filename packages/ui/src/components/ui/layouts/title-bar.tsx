@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import { BackButton } from '../utils/back-button'
 import { Button } from 'ui/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/components/ui/dropdown-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface TitleBarProps extends Omit<ComponentProps<'header'>, 'title'> {
   /** The product mark, as a link home. Sits right after the sidebar button. */

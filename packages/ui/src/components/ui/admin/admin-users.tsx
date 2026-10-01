@@ -5,7 +5,7 @@ import { UserPlus, Users } from 'lucide-react'
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Badge } from 'ui/components/ui/badge'
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface AdminUser {
   id: string

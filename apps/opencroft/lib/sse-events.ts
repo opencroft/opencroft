@@ -40,14 +40,24 @@ export interface DockerContainerSnapshot {
 
 // The session keys of the receiving person's own chat threads, by activity:
 // waiting on someone (pending), a turn running (active), background work
-// running (background), a live agent process at all (alive — a superset of the
-// others). Always the whole picture, never a delta, so a missed frame cannot
-// leave a reader out of step.
+// running (background), messages held for a later turn (queued), a live agent
+// process at all (alive — a superset of the others). Beside them, the context
+// each live session last reported, by key; a key with no entry has reported
+// none since it loaded. Always the whole picture, never a delta, so a missed
+// frame cannot leave a reader out of step.
 export interface SessionActivitySnapshot {
   pending: string[]
   active: string[]
   background: string[]
+  queued: string[]
   alive: string[]
+  usage: Record<string, LiveContextUsage>
+}
+
+/** A live session's context reading: tokens held, and the window when the harness names one. */
+export interface LiveContextUsage {
+  usedTokens: number
+  contextLimit: number | null
 }
 
 // A stream chunk's shape is owned by whichever node produced it (text, audio,

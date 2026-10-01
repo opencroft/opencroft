@@ -39,7 +39,7 @@ import { routeHandleId, routeOutput, type TerminalRoute, type TerminalRouterData
 const { useCallback, useEffect, useState } = React
 
 export const TERMINAL_ROUTER_HANDLES = [
-  { id: 'route-', contextType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
+  { id: 'route-', handleType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
 ]
 
 export const terminalRouterExposeOutput = (handleId: string, data: TerminalRouterData) => routeOutput(handleId, data)

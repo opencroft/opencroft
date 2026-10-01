@@ -5,12 +5,13 @@ import type { ComponentType } from 'react'
 
 import type {
   CommandModeDefinition,
-  ExtensionDeclaration,
+  LoadedExtensionDeclaration,
   NodeContextMenuItem,
   SettingsPageDefinition,
 } from '@/app/_authed/(extension-runtime)/_client/host'
 import { providerRegistry } from '@/app/_authed/(extension-runtime)/_client/provides'
-import type { ExtensionContextType, ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
+import { isLocalFolder, parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import type { ExtensionHandle, ExtensionHandleType, ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 
 /** Resolved icon: LucideIcon component or fallback Box. */
 export function resolveIcon(name?: string): lucideIcons.LucideIcon {
@@ -23,10 +24,11 @@ export function resolveIcon(name?: string): lucideIcons.LucideIcon {
 /** Flat view of a single node — what consumer components need. */
 export interface ResolvedNode {
   /** The extension that owns this node. */
-  extension: ExtensionDeclaration
+  extension: LoadedExtensionDeclaration
   /** Index into extension.nodes. */
   nodeIndex: number
-  typeId: string
+  /** The qualified type graphs store. */
+  type: string
   name: string
   category?: string
   description?: string
@@ -50,7 +52,23 @@ export interface ResolvedNode {
 
   contextMenuItems?: NodeContextMenuItem[]
 
-  exposeOutput?: (handleId: string, data: Record<string, unknown>, typeId: string, nodeId: string) => unknown
+  /** The declaring extension's `exposeOutput`, already told the node's bare type. */
+  exposeOutput?: (
+    handleId: string,
+    data: Record<string, unknown>,
+    nodeId: string,
+    contexts: Record<string, ResolvedContext>,
+  ) => unknown
+}
+
+/**
+ * The folder to open in the extension editor for a node's extension, or null
+ * when the extension is not editable here. Only a local folder is: any other
+ * is a copy of a repository that an update replaces.
+ */
+export function editableFolderOf(node: ResolvedNode): string | null {
+  const folder = node.extension.manifest.folder
+  return folder !== undefined && isLocalFolder(folder) ? folder : null
 }
 
 export interface ResolvedExtensionSettings {
@@ -59,19 +77,23 @@ export interface ResolvedExtensionSettings {
   pages: SettingsPageDefinition[]
 }
 
+// Every type a loaded declaration carries is already qualified with the id the
+// server gave its extension (see loaded-declaration.ts), so two extensions
+// declaring one bare name file under two keys here and neither displaces the
+// other.
 class ExtensionRegistry {
-  private byExtensionId = new Map<string, ExtensionDeclaration>()
-  private byTypeId = new Map<string, { extension: ExtensionDeclaration; nodeIndex: number }>()
-  private contextTypes = new Map<string, ExtensionContextType>()
+  private byExtensionId = new Map<string, LoadedExtensionDeclaration>()
+  private byType = new Map<string, { extension: LoadedExtensionDeclaration; nodeIndex: number }>()
+  private handleTypes = new Map<string, ExtensionHandleType>()
   private commandModes = new Map<string, CommandModeDefinition>()
 
-  register(decl: ExtensionDeclaration): void {
+  register(decl: LoadedExtensionDeclaration): void {
     this.byExtensionId.set(decl.manifest.id, decl)
     ;(decl.nodes ?? []).forEach((node, nodeIndex) => {
-      this.byTypeId.set(node.typeId, { extension: decl, nodeIndex })
+      this.byType.set(node.type, { extension: decl, nodeIndex })
     })
-    for (const ctx of decl.contexts ?? []) {
-      this.contextTypes.set(ctx.id, ctx)
+    for (const handleType of decl.handleTypes ?? []) {
+      this.handleTypes.set(handleType.id, handleType)
     }
     for (const mode of decl.commandModes ?? []) {
       this.commandModes.set(mode.id, mode)
@@ -99,24 +121,22 @@ class ExtensionRegistry {
     return result
   }
 
-  getByTypeId(typeId: string): { extension: ExtensionDeclaration; nodeIndex: number } | undefined {
-    return this.byTypeId.get(typeId)
-  }
-
-  /** Returns a fully resolved node entry with icon, defaults, etc. */
-  resolveNode(typeId: string): ResolvedNode | undefined {
-    const entry = this.byTypeId.get(typeId)
+  /** Returns a fully resolved node entry with icon, defaults, etc., for a qualified type. */
+  resolveNode(type: string): ResolvedNode | undefined {
+    const entry = this.byType.get(type)
     if (!entry) {
       return undefined
     }
     const node = entry.extension.nodes?.[entry.nodeIndex]
-    if (!node) {
+    const bare = parseType(type)?.bare
+    if (!node || !bare) {
       return undefined
     }
+    const { exposeOutput } = node
     return {
       extension: entry.extension,
       nodeIndex: entry.nodeIndex,
-      typeId: node.typeId,
+      type: node.type,
       name: node.name,
       category: node.category,
       description: node.description,
@@ -128,15 +148,16 @@ class ExtensionRegistry {
       inspector: node.inspector,
       inspectorTabs: node.inspectorTabs,
       contextMenuItems: node.contextMenuItems,
-      exposeOutput: node.exposeOutput,
+      exposeOutput:
+        exposeOutput && ((handleId, data, nodeId, contexts) => exposeOutput(handleId, data, bare, nodeId, contexts)),
     }
   }
 
   /** Returns all nodes across all extensions, fully resolved. */
   allNodes(): ResolvedNode[] {
     const result: ResolvedNode[] = []
-    for (const [typeId] of this.byTypeId) {
-      const resolved = this.resolveNode(typeId)
+    for (const [type] of this.byType) {
+      const resolved = this.resolveNode(type)
       if (resolved) {
         result.push(resolved)
       }
@@ -144,26 +165,23 @@ class ExtensionRegistry {
     return result
   }
 
-  getById(extensionId: string): ExtensionDeclaration | undefined {
+  getById(extensionId: string): LoadedExtensionDeclaration | undefined {
     return this.byExtensionId.get(extensionId)
   }
 
-  all(): ExtensionDeclaration[] {
+  all(): LoadedExtensionDeclaration[] {
     return Array.from(this.byExtensionId.values())
   }
 
-  getContextType(id: string): ExtensionContextType | undefined {
-    return this.contextTypes.get(id)
-  }
-
-  allContextTypes(): ExtensionContextType[] {
-    return Array.from(this.contextTypes.values())
+  /** A declared handle type by its qualified id. */
+  getHandleType(id: string): ExtensionHandleType | undefined {
+    return this.handleTypes.get(id)
   }
 
   clear(): void {
     this.byExtensionId.clear()
-    this.byTypeId.clear()
-    this.contextTypes.clear()
+    this.byType.clear()
+    this.handleTypes.clear()
     this.commandModes.clear()
     providerRegistry.clear()
   }

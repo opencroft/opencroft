@@ -65,10 +65,10 @@ await db.insert(space).values({
   name: 'Thread Delivery Space',
   data: JSON.stringify({
     nodes: [
-      { id: 'agent-idle', type: 'agent', data: { name: 'Agent Idle' } },
+      { id: 'agent-idle', type: 'builtin.core.agent', data: { name: 'Agent Idle' } },
       {
         id: 'agent-session',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Agent Session', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
     ],
@@ -88,14 +88,14 @@ await db.insert(space).values({
     nodes: [
       {
         id: 'sf-agent',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Stream Failure Agent', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
       // A classified trigger, so the author resolves and the failure under test
       // is NOT the unattributable-sender refusal -- which is the whole point:
       // the refusal already reached a reader before this change.
-      { id: 'sf-src', type: 'script-node', data: {} },
-      { id: 'sf-sm', type: 'send-message', data: {} },
+      { id: 'sf-src', type: 'builtin.core.script-node', data: {} },
+      { id: 'sf-sm', type: 'builtin.core.send-message', data: {} },
     ],
     edges: [{ source: 'sf-src', sourceHandle: 'stdout-out', target: 'sf-sm', targetHandle: 'text-in' }],
   }),

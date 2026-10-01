@@ -5,15 +5,14 @@ import { Flex } from 'ui/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
 
 import { AddApp } from '@/app/_authed/(apps)/_components/add-app'
-import { findAppByRef } from '@/app/_authed/(apps)/_lib/app-ref'
 import { listApps } from '@/app/_authed/(apps)/_server/actions'
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
 
 // The add-app form — where a row of the settings' Add tab lands. Which App is
-// being added rides in the `app` search param as `<extension-slug>.<app-slug>`
-// (see _lib/app-ref.ts).
+// being added rides in the `app` search param as its qualified type,
+// `<owner>.<extension>.<type>`, which names one App on its own.
 //
 // THE SEGMENT IS `~add` RATHER THAN `add`, AND THE TILDE IS THE WHOLE POINT.
 // This route is a static sibling of `$app`, which carries a user-minted
@@ -53,7 +52,7 @@ function Page() {
   const { apps } = Route.useLoaderData()
   const { slug } = Route.useParams()
   const { app } = Route.useSearch()
-  const meta = findAppByRef(apps, app)
+  const meta = apps.find((entry) => entry.type === app)
   return (
     <ScrollPage>
       <ScrollHeader>

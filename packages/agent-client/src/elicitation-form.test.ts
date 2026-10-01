@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { contentToAnswers, customAnswerTarget, isSecretField, questionsToElicitation } from './elicitation-form'
-import { CODEX_USER_INPUT_FORM } from './elicitation-form.fixtures'
+import { CLAUDE_ASK_USER_QUESTION_FORM, CODEX_USER_INPUT_FORM } from './elicitation-form.fixtures'
 
 const QUESTIONS = [
   { title: 'Approach', question: 'Which approach?', options: ['fast', 'thorough'] },
@@ -51,15 +51,25 @@ test('an unanswered question folds to an empty string, a custom alone stands in 
 test('customAnswerTarget pairs the encoder’s custom box and codex-acp’s note field alike', () => {
   const { schema } = questionsToElicitation(QUESTIONS)
   const properties = schema.properties ?? {}
-  assert.equal(customAnswerTarget(properties.question_0_custom), 'question_0')
-  assert.equal(customAnswerTarget(properties.question_0), null)
+  assert.equal(customAnswerTarget('question_0_custom', properties.question_0_custom), 'question_0')
+  assert.equal(customAnswerTarget('question_0', properties.question_0), null)
 
   const codex = CODEX_USER_INPUT_FORM.requestedSchema.properties
-  assert.equal(customAnswerTarget(codex.target_note), 'target')
-  assert.equal(customAnswerTarget(codex.target), null)
-  assert.equal(customAnswerTarget(codex.token), null)
+  assert.equal(customAnswerTarget('target_note', codex.target_note), 'target')
+  assert.equal(customAnswerTarget('target', codex.target), null)
+  assert.equal(customAnswerTarget('token', codex.token), null)
   // A codex field in any other role is not a note, questionId or not.
-  assert.equal(customAnswerTarget({ type: 'string', _meta: { codex: { questionId: 'target' } } }), null)
+  assert.equal(customAnswerTarget('other', { type: 'string', _meta: { codex: { questionId: 'target' } } }), null)
+})
+
+test('customAnswerTarget pairs an unmarked question_<n>_custom box by its key alone', () => {
+  const claude = CLAUDE_ASK_USER_QUESTION_FORM.requestedSchema.properties
+  assert.equal(customAnswerTarget('question_0_custom', claude.question_0_custom), 'question_0')
+  assert.equal(customAnswerTarget('question_1_custom', claude.question_1_custom), 'question_1')
+  assert.equal(customAnswerTarget('question_0', claude.question_0), null)
+  // Only the bridge's exact key shape pairs; another `_custom` suffix is a field of its own.
+  assert.equal(customAnswerTarget('color_custom', { type: 'string' }), null)
+  assert.equal(customAnswerTarget('question_x_custom', { type: 'string' }), null)
 })
 
 test('isSecretField reads codex-acp’s isSecret, and nothing else marks a field secret', () => {

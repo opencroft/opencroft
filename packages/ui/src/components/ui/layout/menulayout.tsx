@@ -1,7 +1,7 @@
 import { Flex } from 'ui/components/ui/layout/flex'
 import { ScrollContent, ScrollFooter, ScrollHeader, ScrollPage } from 'ui/components/ui/layout/scrollpage'
 import { BackButton, useTitlebar } from 'ui/components/ui/layout/titlebar'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface MenuLayoutProps {
   isOpened: boolean

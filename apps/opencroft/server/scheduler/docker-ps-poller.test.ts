@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { backoffMs, isDue, nextFailureState } from './docker-ps-poller'
+import { backoffMs, dockerNodeIds, isDue, nextFailureState } from './docker-ps-poller'
 
 // ── nextFailureState ────────────────────────────────────────────────────
 
@@ -82,4 +82,20 @@ test('backoffMs doubles per consecutive failure starting from the base', () => {
 
 test('backoffMs is capped at 10 minutes', () => {
   assert.equal(backoffMs(20), 10 * 60_000)
+})
+
+// ── dockerNodeIds ────────────────────────────────────────────────────────
+
+test("the polled nodes are the docker extension's own docker nodes, under whatever owner it has", () => {
+  const nodes = [
+    { id: 'd-1', type: 'some-owner.containers.docker' },
+    { id: 'd-2', type: 'acme.widgets.docker' },
+    { id: 'a-1', type: 'some-owner.containers.application' },
+    { id: 'd-3', type: 'docker' },
+  ]
+  assert.deepEqual(dockerNodeIds(nodes, 'some-owner.containers'), ['d-1'])
+})
+
+test('with no docker extension nothing is polled', () => {
+  assert.deepEqual(dockerNodeIds([{ id: 'd-1', type: 'some-owner.containers.docker' }], null), [])
 })

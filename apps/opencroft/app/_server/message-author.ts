@@ -1,4 +1,6 @@
 import { AGENT_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
+import { API_ROUTE_NODE_TYPE, coreType, EVENT_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { agentNodesNamed } from '@/app/_authed/(space)/_server/agents-impl'
 import { currentUsername, ensureUsernameForAgent, ensureUsernameForUser } from '@/app/_server/usernames'
 
@@ -58,20 +60,34 @@ import { currentUsername, ensureUsernameForAgent, ensureUsernameForUser } from '
  * 2026-08-27 and the counts had already moved. The rest are anticipatory and
  * are marked so, because an entry nobody has exercised is a guess with good
  * manners.
+ *
+ * Core's triggers are keyed by the qualified type graphs store.
  */
 const SYSTEM_AUTHOR_BY_NODE_TYPE: Record<string, string> = {
-  // Live. Delivers forge notifications into the team's threads; one wiring.
-  'gitea-webhook-handler': 'system.webhook',
   // Live, and the most exercised path here: four wirings as of 2026-08-27, one
   // of them a schedule firing every ten minutes.
-  'script-node': 'system.script',
+  [coreType('script-node')]: 'system.script',
   // Anticipatory: no wiring feeds a send-message node through these today.
   // They are genuine triggers, so they are listed rather than left to refuse,
   // but nothing here has been exercised by a real delivery.
-  'api-route': 'system.route',
-  event: 'system.schedule',
-  'script-bash': 'system.script',
-  'script-python': 'system.script',
+  [API_ROUTE_NODE_TYPE]: 'system.route',
+  [EVENT_NODE_TYPE]: 'system.schedule',
+  [coreType('script-bash')]: 'system.script',
+  [coreType('script-python')]: 'system.script',
+}
+
+/**
+ * Triggers an extension provides, keyed by the bare type it declares. The host
+ * does not know which owner such an extension is installed under, so the name
+ * matches from whichever extension declares it.
+ */
+const SYSTEM_AUTHOR_BY_EXTENSION_NODE: Record<string, string> = {
+  // Live. Delivers forge notifications into the team's threads; one wiring.
+  'gitea-webhook-handler': 'system.webhook',
+}
+
+function systemAuthorFor(type: string): string | undefined {
+  return SYSTEM_AUTHOR_BY_NODE_TYPE[type] ?? SYSTEM_AUTHOR_BY_EXTENSION_NODE[parseType(type)?.bare ?? '']
 }
 
 /** Refused rather than attributed: the caller turns this into its own failure. */
@@ -109,6 +125,7 @@ export const SEND_MESSAGE_SYSTEM_AUTHOR = 'system.send-message'
  */
 export const SYSTEM_SENDER_IDS: ReadonlySet<string> = new Set([
   ...Object.values(SYSTEM_AUTHOR_BY_NODE_TYPE),
+  ...Object.values(SYSTEM_AUTHOR_BY_EXTENSION_NODE),
   SEND_MESSAGE_SYSTEM_AUTHOR,
 ])
 
@@ -116,22 +133,19 @@ export const SYSTEM_SENDER_IDS: ReadonlySet<string> = new Set([
  * The identity an extension speaks as when it sends on its own behalf —
  * through `host.groupChats` outside any agent's action call. One per
  * extension, derived from its WHOLE id, so a transcript and a members list
- * both say which extension it was: `local/task-pipelines` speaks as
- * `system.ext.local.task-pipelines`.
+ * both say which extension it was: `acme.task-pipelines` speaks as
+ * `system.ext.acme.task-pipelines`.
  *
- * The whole id, not its last segment: `local/x` and `installed/x` are
- * different extensions, and an identity is what a chat's grant is keyed by —
- * sharing one would hand each the other's grants. The `ext.` segment keeps
- * these apart from the trigger identities above.
+ * The whole id, not its last segment: `acme.x` and `other.x` are different
+ * extensions, and an identity is what a chat's grant is keyed by — sharing one
+ * would hand each the other's grants. The `ext.` segment keeps these apart from
+ * the trigger identities above.
+ *
+ * An id is already `<owner>.<extension>`, two lowercase slugs, so it is
+ * appended as it is: nothing needs escaping to keep the identity a dotted path.
  */
 export function extensionSystemSender(extensionId: string): string {
-  const path = extensionId
-    .toLowerCase()
-    .split('/')
-    .map((part) => part.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, ''))
-    .filter(Boolean)
-    .join('.')
-  return `system.ext.${path}`
+  return `system.ext.${extensionId}`
 }
 
 // The extensions whose host has been built in this process — each can send as
@@ -348,7 +362,7 @@ export async function senderForSourceNode(
     return { author: username, principal: { kind: 'agent', agentNodeId: sourceNodeId } }
   }
 
-  const systemAuthor = SYSTEM_AUTHOR_BY_NODE_TYPE[source.type]
+  const systemAuthor = systemAuthorFor(source.type)
   if (systemAuthor) {
     // The system identity is BOTH halves on purpose: what the transcript shows
     // is exactly what a membership grant authorizes, so machine origin — and

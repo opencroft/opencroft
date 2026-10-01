@@ -43,7 +43,20 @@ export interface ManagedSession {
   /** false ⇒ legacy client (no sessionKey): killed on socket close instead of detached. */
   persistent: boolean
   kind: SessionKind
+  /**
+   * When a job's command ended, or null while it runs. Always null for interactive sessions.
+   *
+   * An ended job is kept as a read-only record of its output: it has no watcher, a newcomer gets
+   * the output and the end and is not bound to it, and it is reclaimed by the detached TTL counted
+   * from this moment. See `endJob`.
+   */
+  endedAt: number | null
+  /** A job's `stopWhenUnwatchedMs` — see JobSessionOptions. */
+  stopWhenUnwatchedMs?: number
 }
+
+/** What every watcher of a job, then and later, is told when its command has ended. */
+export const JOB_ENDED_REASON = 'Job finished'
 
 export const DETACHED_TTL_MS = 15 * 60 * 1000
 export const SWEEP_INTERVAL_MS = 30 * 1000
@@ -98,6 +111,8 @@ export interface SessionManagerOptions {
   maxSessions?: number
   /** Cap on server-started job sessions, counted separately from interactive ones. */
   maxJobSessions?: number
+  /** Cap on ended jobs kept for replay; the oldest is dropped past it. Defaults to maxJobSessions. */
+  maxEndedJobSessions?: number
   maxScrollbackBytes?: number
   /** Injectable clock, for TTL tests. */
   now?: () => number
@@ -111,6 +126,8 @@ export type ConnectDecision =
   | { kind: 'reattached'; session: ManagedSession }
   | { kind: 'create' }
   | { kind: 'refused'; message: string }
+  /** The key named an ended job, and its output and end have already been sent to the peer. */
+  | { kind: 'ended' }
 
 /**
  * Server-owned registry of live shell sessions, keyed by sessionId and (optionally) by an opaque
@@ -118,9 +135,10 @@ export type ConnectDecision =
  *
  * Every method that removes a session (`kill`) is the single choke point that stops the
  * underlying process/channel AND removes the map entry AND clears any peer→session pointers, in
- * that order, synchronously — so a ManagedSession can never outlive its process, and a process
- * can never outlive its manager entry. The only timer here is the one global sweep interval;
- * there are no per-session timers to leak.
+ * that order, synchronously — so a process can never outlive its manager entry. The one entry
+ * that outlives its process is an ended job, kept on purpose as a read-only record of its output
+ * until the TTL (see `endJob`). The only timer here is the one global sweep interval; there are
+ * no per-session timers to leak.
  */
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>()
@@ -130,6 +148,7 @@ export class SessionManager {
   private readonly detachedTtlMs: number
   private readonly maxSessions: number
   private readonly maxJobSessions: number
+  private readonly maxEndedJobSessions: number
   private readonly maxScrollbackBytes: number
   private readonly now: () => number
   private readonly log: (line: string) => void
@@ -139,6 +158,7 @@ export class SessionManager {
     this.detachedTtlMs = opts.detachedTtlMs ?? DETACHED_TTL_MS
     this.maxSessions = opts.maxSessions ?? MAX_SESSIONS
     this.maxJobSessions = opts.maxJobSessions ?? MAX_JOB_SESSIONS
+    this.maxEndedJobSessions = opts.maxEndedJobSessions ?? this.maxJobSessions
     this.maxScrollbackBytes = opts.maxScrollbackBytes ?? MAX_SCROLLBACK_BYTES
     this.now = opts.now ?? (() => Date.now())
     this.log = opts.log ?? ((line: string) => console.log(`[terminal-session] ${line}`))
@@ -193,10 +213,12 @@ export class SessionManager {
     return !(session.kind === 'job' && session.handle.isAlive())
   }
 
-  private countOfKind(kind: SessionKind): number {
+  // Ended jobs are records, not running commands, and have a cap of their own (`endJob`), so they
+  // take no part in the capacity for running ones — neither counted nor evicted to make room.
+  private countLive(kind: SessionKind): number {
     let count = 0
     for (const session of this.sessions.values()) {
-      if (session.kind === kind) {
+      if (session.kind === kind && session.endedAt === null) {
         count++
       }
     }
@@ -213,12 +235,12 @@ export class SessionManager {
    */
   private reserveSlot(kind: SessionKind): { ok: true } | { ok: false; message: string } {
     const limit = kind === 'job' ? this.maxJobSessions : this.maxSessions
-    if (this.countOfKind(kind) < limit) {
+    if (this.countLive(kind) < limit) {
       return { ok: true }
     }
     let oldest: ManagedSession | undefined
     for (const session of this.sessions.values()) {
-      if (session.kind !== kind) {
+      if (session.kind !== kind || session.endedAt !== null) {
         continue
       }
       if (session.detachedAt === null || !this.isReclaimable(session)) {
@@ -273,10 +295,17 @@ export class SessionManager {
    * replace a live same-key interactive session then clear the way for a fresh spawn, or refuse
    * outright when at capacity with nothing evictable. Callers must not spawn a process when this
    * returns anything but `create`.
+   *
+   * A key naming an ENDED job is answered like `attach` answers it — output, then the end — and
+   * the caller spawns nothing. An ended job is never replaced by a fresh session under its key.
    */
   prepareConnect(peer: SocketPeer, sessionKey: string | undefined, cols: number, rows: number): ConnectDecision {
     if (sessionKey) {
       const existing = this.findByKey(sessionKey)
+      if (existing?.endedAt != null) {
+        this.replayEnded(existing, peer)
+        return { kind: 'ended' }
+      }
       if (existing) {
         // Four cases, and they are written out because the job column is the one that ends a
         // running deploy if it is got wrong:
@@ -339,7 +368,7 @@ export class SessionManager {
   create(
     peer: SocketPeer | null,
     handle: SessionHandle,
-    opts: { sessionKey?: string; id?: string; kind?: SessionKind } = {},
+    opts: { sessionKey?: string; id?: string; kind?: SessionKind; stopWhenUnwatchedMs?: number } = {},
   ): ManagedSession {
     const id = opts.id ?? randomUUID()
     const persistent = !!opts.sessionKey
@@ -364,14 +393,14 @@ export class SessionManager {
       scrollback: new ScrollbackBuffer(this.maxScrollbackBytes),
       attachedPeer: peer,
       createdAt: this.now(),
-      // A job starts detached: it is running and nobody is watching yet. The detached TTL is a
-      // backstop rather than the mechanism that reclaims it — `create` registers an exit callback
-      // that kills the session the moment the child closes, so a finished job is normally gone
-      // long before any TTL applies to it.
+      // A job starts detached: it is running and nobody is watching yet. A running job is never
+      // reclaimed by the TTL (see isReclaimable); once it ends, the TTL counts from the end.
       detachedAt: peer ? null : this.now(),
       sessionKey: opts.sessionKey,
       persistent,
       kind: opts.kind ?? 'interactive',
+      endedAt: null,
+      stopWhenUnwatchedMs: opts.stopWhenUnwatchedMs,
     }
 
     handle.onData((data) => {
@@ -380,13 +409,15 @@ export class SessionManager {
         this.sendToPeer(managed.attachedPeer, { type: 'data', payload: { data } })
       }
     })
-    handle.onExit(() => this.kill(id, 'exit'))
 
     this.sessions.set(id, managed)
     if (peer) {
       this.peerSession.set(peer, id)
     }
     this.log(`create id=${id} key=${opts.sessionKey ?? '-'} persistent=${persistent} kind=${managed.kind}`)
+    // Registered after the session is: a stream handle whose command has already ended calls a
+    // late exit listener at once, and the job has to be found to be marked ended.
+    handle.onExit(() => (managed.kind === 'job' ? this.endJob(id) : this.kill(id, 'exit')))
     return managed
   }
 
@@ -402,7 +433,7 @@ export class SessionManager {
   attach(
     peer: SocketPeer,
     opts: { sessionId?: string; sessionKey?: string; cols: number; rows: number },
-  ): { ok: true; session: ManagedSession } | { ok: false } {
+  ): { ok: true; session: ManagedSession; ended: boolean } | { ok: false } {
     const { sessionId, sessionKey, cols, rows } = opts
     let session: ManagedSession | undefined
     if (sessionId) {
@@ -414,8 +445,68 @@ export class SessionManager {
     if (!session) {
       return { ok: false }
     }
+    if (session.endedAt !== null) {
+      this.replayEnded(session, peer)
+      return { ok: true, session, ended: true }
+    }
     this.doAttach(session, peer, cols, rows)
-    return { ok: true, session }
+    return { ok: true, session, ended: false }
+  }
+
+  /**
+   * A job's command has ended: tell its watcher, let go of it, and keep the output to replay.
+   *
+   * The watcher is unbound here rather than left attached, because an attached session is never
+   * reclaimed — a tab left open on a finished log would otherwise hold its record forever. From
+   * here on every door (`attach`, `prepareConnect`) answers with the output and this same end, and
+   * binds nothing, so the TTL counted from this moment is the one that applies.
+   *
+   * Past the retention cap the oldest ended job is dropped. A viewer that ends at once — the last
+   * lines of a stopped container's log — would otherwise leave a full scrollback behind on every
+   * open, for the whole TTL.
+   */
+  private endJob(id: string): void {
+    const session = this.sessions.get(id)
+    if (!session || session.endedAt !== null) {
+      return
+    }
+    const now = this.now()
+    session.endedAt = now
+    if (session.attachedPeer) {
+      this.sendToPeer(session.attachedPeer, { type: 'disconnected', payload: { reason: JOB_ENDED_REASON } })
+    }
+    session.attachedPeer = null
+    session.detachedAt = now
+    this.unbindPeersOf(id)
+    this.log(`end id=${id} key=${session.sessionKey ?? '-'}`)
+    this.dropEndedJobsOverCap()
+  }
+
+  private dropEndedJobsOverCap(): void {
+    const ended = [...this.sessions.values()]
+      .filter((session) => session.endedAt !== null)
+      .sort((a, b) => (a.endedAt as number) - (b.endedAt as number))
+    for (const session of ended.slice(0, Math.max(0, ended.length - this.maxEndedJobSessions))) {
+      this.kill(session.id, 'evicted', undefined, 'ended-job cap')
+    }
+  }
+
+  /** Output first, then the end a live watcher got. The peer is not bound and the TTL runs on. */
+  private replayEnded(session: ManagedSession, peer: SocketPeer): void {
+    const backlog = session.scrollback.toString()
+    if (backlog) {
+      this.sendToPeer(peer, { type: 'data', payload: { data: backlog } })
+    }
+    this.sendToPeer(peer, { type: 'disconnected', payload: { reason: JOB_ENDED_REASON } })
+    this.log(`replay-ended id=${session.id} key=${session.sessionKey ?? '-'}`)
+  }
+
+  private unbindPeersOf(id: string): void {
+    for (const [peer, sid] of this.peerSession) {
+      if (sid === id) {
+        this.peerSession.delete(peer)
+      }
+    }
   }
 
   private doAttach(session: ManagedSession, peer: SocketPeer, cols: number, rows: number): void {
@@ -515,22 +606,37 @@ export class SessionManager {
       }
     }
     this.sessions.delete(id)
-    for (const [peer, sid] of this.peerSession) {
-      if (sid === id) {
-        this.peerSession.delete(peer)
-      }
-    }
+    this.unbindPeersOf(id)
     const suffix = context ? ` (${context})` : ''
     this.log(`kill id=${id} key=${session.sessionKey ?? '-'} reason=${reason}${suffix}`)
+  }
+
+  private isUnwatchedTooLong(session: ManagedSession, now: number): boolean {
+    return (
+      session.kind === 'job' &&
+      session.endedAt === null &&
+      session.stopWhenUnwatchedMs !== undefined &&
+      session.detachedAt !== null &&
+      now - session.detachedAt > session.stopWhenUnwatchedMs
+    )
   }
 
   private sweep(): void {
     const now = this.now()
     let killed = 0
     for (const session of [...this.sessions.values()]) {
-      if (!session.handle.isAlive()) {
+      // An ended job's process is dead by definition, and keeping it is the point; the TTL
+      // below is what reclaims it.
+      if (!session.handle.isAlive() && session.endedAt === null) {
         this.kill(session.id, 'exit', undefined, 'sweep-dead-process')
         killed++
+        continue
+      }
+      if (this.isUnwatchedTooLong(session, now)) {
+        // Stopping the command, not dropping the session: the job ends the ordinary way and its
+        // output stays readable like any other ended job's.
+        this.log(`stop-unwatched id=${session.id} key=${session.sessionKey ?? '-'}`)
+        session.handle.kill()
         continue
       }
       if (session.detachedAt !== null && this.isReclaimable(session) && now - session.detachedAt > this.detachedTtlMs) {

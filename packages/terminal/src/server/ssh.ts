@@ -7,7 +7,7 @@ import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
 import type { ExecOptions, ExecResult, ServerConfig, SshCredentials } from '../types'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, OutputCollector } from './exec-util'
 import { resolveKeyContent } from './keys'
-import { makeStreamHandle, type StreamHandle } from './stream-handle'
+import { makeStreamHandle, type OutputFilter, type StreamHandle } from './stream-handle'
 
 export interface SftpEntry {
   name: string
@@ -345,6 +345,7 @@ export async function sshStreamHandle(
   creds: SshCredentials,
   command: string,
   stdin?: string | Buffer,
+  filter?: OutputFilter,
 ): Promise<StreamHandle> {
   const client = await acquire(creds)
 
@@ -366,7 +367,7 @@ export async function sshStreamHandle(
         release(creds)
       }
 
-      const handle = makeStreamHandle(() => stream.close())
+      const handle = makeStreamHandle(() => stream.close(), filter)
       stream.setEncoding('utf8')
       stream.stderr.setEncoding('utf8')
       stream.on('data', (chunk: string) => handle.emit(chunk))

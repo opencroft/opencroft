@@ -6,6 +6,7 @@ import { NodeLoadingPlaceholder } from 'ui/nodes/node-loading-placeholder'
 
 import { edgeHandleIds } from '@/app/_authed/(dashboard)/_canvas/edge-handles'
 import { NODE_CARD_MIN_WIDTH } from '@/app/_authed/(dashboard)/_canvas/node-card'
+import { InstallMissingExtension, missingTypeLabel } from '@/app/_authed/(extension-runtime)/_client/missing-extension'
 
 interface UnresolvedNodeProps {
   /** The node type the graph asked for, which nothing has claimed. */
@@ -31,7 +32,9 @@ function useEdgeHandles(): { source: string[]; target: string[] } {
 }
 
 /**
- * A node whose type no extension has claimed.
+ * A node whose type no extension has claimed. It keeps its place, its edges and
+ * its data; once settled it names the extension its type belongs to and, when a
+ * registry lists that extension, offers to install it.
  *
  * Two states live here and they must not look alike. Still loading is transient
  * and needs nobody to do anything; genuinely missing is a fault someone has to
@@ -57,7 +60,7 @@ export function UnresolvedNode({ type, name, settled }: UnresolvedNodeProps) {
     // The width is DEFINITE, not a range, for the same reason: a shared min/max
     // is not a shared size, since each state was still sized by its own text
     // inside those bounds — measured as the placeholder sitting at the minimum
-    // and the longer "Unknown extension: …" pushed out to the maximum. A
+    // and the longer missing-extension label pushed out to the maximum. A
     // definite width cannot be pushed by content, so neither state can widen
     // the other out of step. The value is the node shell's own exported
     // minimum now, not a copied number, so it cannot drift out of step with it.
@@ -73,16 +76,21 @@ export function UnresolvedNode({ type, name, settled }: UnresolvedNodeProps) {
         <Handle key={`source:${id}`} id={id} type='source' position={Position.Right} />
       ))}
       {settled ? (
-        /* `truncate` because the box no longer grows to fit: without it a long
-           type id would simply overflow the node. `title` keeps the full id
-           reachable for whoever is actually debugging it — nobody needs to read
-           a type id in full to know what is wrong, but the one person who does
-           should not have to go to the console for it. */
-        <div
-          title={type}
-          className='truncate rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'
-        >
-          Unknown extension: {type}
+        <div className='flex flex-col items-start gap-1'>
+          {/* `truncate` because the box no longer grows to fit: without it a
+              long type would simply overflow the node. `title` keeps the full
+              type reachable for whoever is actually debugging it — nobody needs
+              to read it in full to know what is wrong, but the one person who
+              does should not have to go to the console for it. */}
+          <div
+            title={type}
+            className='max-w-full truncate rounded-md border border-destructive bg-destructive/10 text-destructive px-2 py-1 text-xs'
+          >
+            {missingTypeLabel(type)}
+          </div>
+          {/* `nodrag`: a press on the button is a press, not the start of a
+              drag of the node it sits on. */}
+          <InstallMissingExtension type={type} className='nodrag' />
         </div>
       ) : (
         // The type is the fallback name because it is the only other thing known

@@ -3,7 +3,7 @@ import type { HostAgentGroupChatsApi, HostGroupChatsApi, HostPersonGroupChatsApi
 /**
  * Server-side App lifecycle contracts. An extension that provides Apps (see
  * `AppEntry` in `@opencroft/core`) may export `apps` from its server module —
- * a map of app slug to hooks — to react to instances of its Apps being added
+ * a map of each App's bare type to its hooks — to react to instances of its Apps being added
  * to, removed from, loaded and unloaded by the host.
  */
 
@@ -135,5 +135,5 @@ export interface AppServerHooks {
   ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>
 }
 
-/** The `apps` export of an extension's server module, keyed by App slug. */
+/** The `apps` export of an extension's server module, keyed by the bare type each App is declared under. */
 export type AppsExport = Record<string, AppServerHooks>

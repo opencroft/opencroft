@@ -45,6 +45,14 @@ async function start(): Promise<void> {
   // Before the schedulers too: a fired event can drive a send into a thread,
   // and the background-task poller and the idle reaper address sessions by key.
   await maintainThreadKeys()
+  // Before anything can read an extension folder: an install a killed process
+  // left half done is finished or undone here.
+  try {
+    const { sweepInstallDebris } = await import('@/app/_authed/(extension-runtime)/_server/install')
+    await sweepInstallDebris()
+  } catch (err) {
+    console.error('[startup] extension install recovery failed', err)
+  }
   startEventScheduler()
   startDockerPsPoller()
   startDbBackupScheduler()
@@ -91,7 +99,7 @@ async function preload(): Promise<void> {
     console.error('[startup] spaces preload failed', err)
   }
   try {
-    const { autoInstallExtensions } = await import('@/app/_authed/(extension-runtime)/_server/registry')
+    const { autoInstallExtensions } = await import('@/app/_authed/(extension-runtime)/_server/install')
     await autoInstallExtensions()
   } catch (err) {
     console.error('[startup] extension auto-install failed', err)
@@ -130,17 +138,4 @@ async function preload(): Promise<void> {
     // designed state, and the next boot tries again.
     console.error('[startup] username backfill failed', err)
   }
-  // Deliberately NOT try/caught like the steps above: a type-id collision
-  // between two installed extensions means one of them cannot actually work
-  // (something owns the type; the other's declaration is dead), and letting
-  // the server come up anyway would serve that broken state as if it were
-  // fine. This is meant to fail the boot, loudly, not log and continue.
-  await assertNodeTypeIdsUniqueAtBoot()
-}
-
-async function assertNodeTypeIdsUniqueAtBoot(): Promise<void> {
-  const { loadAllManifests } = await import('@/app/_authed/(extension-runtime)/_server/loader')
-  const { assertUniqueNodeTypeIds, manifestOwners } = await import('@/app/_authed/(extension-runtime)/_node-type-guard')
-  const manifests = await loadAllManifests()
-  assertUniqueNodeTypeIds(manifestOwners(manifests))
 }

@@ -1,3 +1,5 @@
+import { declaredTypesOf, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import {
@@ -8,6 +10,7 @@ import {
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   ConnectedSource,
+  ExtensionManifest,
   NodeAction,
   NodeActionCtx,
   NodeActionCtxNode,
@@ -17,6 +20,7 @@ import type {
 } from '@/app/_authed/(extension-runtime)/_types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
+import { toastStore } from '@/lib/toast-store'
 
 const ERRORS_KEY = '__errors'
 
@@ -38,7 +42,7 @@ interface GraphEdgeLike {
 interface ResolvedHandle {
   sourceNodeId?: string
   sourceHandleId?: string
-  contextType?: string
+  handleType?: string
   value?: unknown
 }
 
@@ -80,10 +84,10 @@ export async function findNodeWithGraph(nodeId: string): Promise<FoundNode | nul
   return { slug: ref.space.slug, graph, node }
 }
 
-// The node's typeId from the live registry, without the context resolution
+// The node's type from the live registry, without the context resolution
 // findNodeWithGraph does — the admin gate needs only the type to find the owning
 // extension's declared policy, not resolved inputs.
-async function findNodeTypeId(nodeId: string): Promise<string | undefined> {
+async function findNodeType(nodeId: string): Promise<string | undefined> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
   const ref = r.findByNode(nodeId)
@@ -91,42 +95,47 @@ async function findNodeTypeId(nodeId: string): Promise<string | undefined> {
   return node?.type
 }
 
+// The extension declaring a stored (qualified) node type, and the bare name it
+// declared it under — the name its `nodeActions` and `nodeActionAccess` are
+// keyed by, and the one its handlers are told.
+async function owningExtension(type: string): Promise<{ manifest: ExtensionManifest; bare: string } | undefined> {
+  const parsed = parseType(type)
+  if (!parsed) {
+    return undefined
+  }
+  const manifests = await loadAllManifests()
+  const manifest = manifests.find((m) => m.nodes?.some((n) => n.type === type))
+  return manifest ? { manifest, bare: parsed.bare } : undefined
+}
+
 // The extension-declared authorization policy for one NODE action, resolved the
-// same way dispatchNodeActionImpl resolves the handler (node -> typeId -> owning
+// same way dispatchNodeActionImpl resolves the handler (node -> type -> owning
 // extension) so the two cannot disagree about what an action is. Consumed by the
 // request-facing dispatchNodeAction serverFn — the only layer that can identify
 // the caller. An action the owning extension does not list is 'signed-in', so
 // this changes nothing until a node action opts in. The Impl stays ungated:
 // internal callers (exec-dispatch, the MCP tool path) never pass through here.
 export async function getNodeActionAccess(nodeId: string, actionId: string): Promise<ActionAccess> {
-  const typeId = await findNodeTypeId(nodeId)
-  if (!typeId) {
-    return 'signed-in'
-  }
-  const manifests = await loadAllManifests()
-  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  const type = await findNodeType(nodeId)
+  const owning = type ? await owningExtension(type) : undefined
   if (!owning) {
     return 'signed-in'
   }
-  const mod = await getExtensionModule(owning.id)
-  return mod.nodeActionAccess?.[typeId]?.[actionId] ?? 'signed-in'
+  const mod = await getExtensionModule(owning.manifest.id)
+  return mod.nodeActionAccess?.[owning.bare]?.[actionId] ?? 'signed-in'
 }
 
 /**
  * The manifest's declaration of one node action — what `call` reads to learn
- * how a caller waits for it. Resolved node -> typeId -> owning extension, the
+ * how a caller waits for it. Resolved node -> type -> owning extension, the
  * way dispatchNodeActionImpl resolves the handler, so the declaration read here
  * belongs to the handler that will run. Undefined when nothing declares it: the
  * dispatch then fails, or runs, exactly as it would have.
  */
 export async function getNodeActionDeclaration(nodeId: string, actionId: string): Promise<NodeAction | undefined> {
-  const typeId = await findNodeTypeId(nodeId)
-  if (!typeId) {
-    return undefined
-  }
-  const manifests = await loadAllManifests()
-  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
-  return owning?.nodes?.find((n) => n.typeId === typeId)?.actions?.find((a) => a.id === actionId)
+  const type = await findNodeType(nodeId)
+  const owning = type ? await owningExtension(type) : undefined
+  return owning?.manifest.nodes?.find((n) => n.type === type)?.actions?.find((a) => a.id === actionId)
 }
 
 function nodesAsLike(graph: GraphData): GraphNodeLike[] {
@@ -139,14 +148,20 @@ function edgesAsLike(graph: GraphData): GraphEdgeLike[] {
 
 // Exported for its test: dispatch itself runs a compiled extension bundle,
 // which the plain test runner cannot load (see tools-integration.test.ts).
+//
+// `extensionId` is the extension whose handler receives the context: the node's
+// own type is handed to it bare, and a bare type it names resolves as
+// resolveCodeTypeRef says, against the types in `declared`.
 export function buildCtx(
   graph: GraphData,
   node: GraphNodeLike,
+  extensionId: string,
   params: Record<string, unknown>,
   spaceId: string,
   pending: Record<string, unknown>,
   callerAgent: string | undefined,
   signal?: AbortSignal,
+  declared: ReadonlySet<string> = new Set(),
 ): NodeActionCtx {
   const data = node.data ?? {}
   const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {}
@@ -162,10 +177,12 @@ export function buildCtx(
     if (!entry || entry.sourceNodeId === undefined) {
       return undefined
     }
+    const handleType = entry.handleType ?? ''
     return {
       sourceNodeId: entry.sourceNodeId,
       sourceHandleId: entry.sourceHandleId ?? '',
-      contextType: entry.contextType ?? '',
+      handleType,
+      contextType: handleType,
       value: entry.value as T,
     }
   }
@@ -190,15 +207,16 @@ export function buildCtx(
     return matches
   }
 
-  const containingNodes = (typeId?: string): NodeActionCtxNode[] => {
+  const containingNodes = (type?: string): NodeActionCtxNode[] => {
     const sx = node.position?.x ?? 0
     const sy = node.position?.y ?? 0
+    const wanted = type ? resolveCodeTypeRef(extensionId, type, (qualified) => declared.has(qualified)) : undefined
     return allNodes
       .filter((n) => {
         if (n.id === node.id) {
           return false
         }
-        if (typeId && n.type !== typeId) {
+        if (wanted && n.type !== wanted) {
           return false
         }
         const px = n.position?.x ?? 0
@@ -224,9 +242,11 @@ export function buildCtx(
     Object.assign(pending, patch)
   }
 
+  const bare = parseType(node.type ?? '')?.bare ?? ''
   return {
     nodeId: node.id,
-    typeId: node.type ?? '',
+    type: bare,
+    typeId: bare,
     data,
     params,
     input,
@@ -242,7 +262,15 @@ export function buildCtx(
   }
 }
 
-async function persistErrors(found: FoundNode, errors: string[]): Promise<void> {
+// Rewrites the stored node's data and, when that changes it, saves the graph
+// and broadcasts `graph_updated` like every other graph write — an open canvas
+// then refetches at once, instead of showing the old data until something else
+// makes it refetch, and its next save does not collide with a version it never
+// saw. `next` returning the data it was given means nothing changed.
+async function writeNodeData(
+  found: FoundNode,
+  next: (data: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
   const space = r.getBySlug(found.slug)
@@ -257,38 +285,37 @@ async function persistErrors(found: FoundNode, errors: string[]): Promise<void> 
     if (!node) {
       continue
     }
-    const data = (node.data ??= {})
-    if (errors.length > 0) {
-      data[ERRORS_KEY] = errors
-    } else {
-      delete data[ERRORS_KEY]
+    const data = node.data ?? {}
+    const updated = next(data)
+    if (updated === data) {
+      return
     }
+    node.data = updated
     await r.saveGraph(`${space.slug}.${graph.slug}`, graph.graph)
+    toastStore.broadcast({ type: 'graph_updated', spaceId: space.slug })
     return
   }
 }
 
+// The node's errors are what its frame shows. Clearing a node that has none is
+// the common case — every run starts by clearing — and writes nothing.
+function persistErrors(found: FoundNode, errors: string[]): Promise<void> {
+  return writeNodeData(found, (data) => {
+    if (errors.length > 0) {
+      return { ...data, [ERRORS_KEY]: errors }
+    }
+    if (!(ERRORS_KEY in data)) {
+      return data
+    }
+    const { [ERRORS_KEY]: _, ...rest } = data
+    return rest
+  })
+}
+
 // Persist a data patch produced by a node action (via ctx.updateData) back to
 // the stored graph, so actions can configure their own node (e.g. assign a key).
-async function persistData(found: FoundNode, patch: Record<string, unknown>): Promise<void> {
-  const r = getSpacesRegistry()
-  await r.ensureLoaded()
-  const space = r.getBySlug(found.slug)
-  if (!space) {
-    return
-  }
-  // Whichever of the space's graphs actually stores the node.
-  for (const graph of space.graphs.values()) {
-    const node = graph.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
-      | GraphNodeLike
-      | undefined
-    if (!node) {
-      continue
-    }
-    node.data = { ...(node.data ?? {}), ...patch }
-    await r.saveGraph(`${space.slug}.${graph.slug}`, graph.graph)
-    return
-  }
+function persistData(found: FoundNode, patch: Record<string, unknown>): Promise<void> {
+  return writeNodeData(found, (data) => ({ ...data, ...patch }))
 }
 
 /**
@@ -310,13 +337,13 @@ export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionLis
   }
   const manifests = await loadAllManifests()
   for (const manifest of manifests) {
-    const meta = manifest.nodes?.find((n) => n.typeId === found.node.type)
+    const meta = manifest.nodes?.find((n) => n.type === found.node.type)
     if (!meta?.actions) {
       continue
     }
     return meta.actions.map((a) => ({
       nodeId,
-      typeId: found.node.type ?? '',
+      type: meta.type,
       extensionId: manifest.id,
       actionId: a.id,
       label: a.label,
@@ -367,22 +394,32 @@ export async function dispatchNodeActionImpl(
   if (!found) {
     throw new Error(`Node not found: ${nodeId}`)
   }
-  const typeId = found.node.type
-  if (!typeId) {
-    throw new Error(`Node ${nodeId} has no typeId`)
+  const type = found.node.type
+  if (!type) {
+    throw new Error(`Node ${nodeId} has no type`)
   }
-  const manifests = await loadAllManifests()
-  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  const owning = await owningExtension(type)
   if (!owning) {
-    throw new Error(`No extension declares node typeId "${typeId}"`)
+    throw new Error(`No extension declares node type "${type}"`)
   }
-  const mod = await getExtensionModule(owning.id)
-  const handler = mod.nodeActions?.[typeId]?.[actionId]
+  const extensionId = owning.manifest.id
+  const mod = await getExtensionModule(extensionId)
+  const handler = mod.nodeActions?.[owning.bare]?.[actionId]
   if (!handler) {
-    throw new Error(`Extension ${owning.id} has no nodeAction "${typeId}.${actionId}"`)
+    throw new Error(`Extension ${extensionId} has no nodeAction "${owning.bare}.${actionId}"`)
   }
   const pending: Record<string, unknown> = {}
-  const ctx = buildCtx(found.graph, found.node, params, found.slug, pending, callerAgent, signal)
+  const ctx = buildCtx(
+    found.graph,
+    found.node,
+    extensionId,
+    params,
+    found.slug,
+    pending,
+    callerAgent,
+    signal,
+    declaredTypesOf(owning.manifest),
+  )
   await persistErrors(found, [])
   try {
     const result = await handler(ctx)
@@ -396,7 +433,7 @@ export async function dispatchNodeActionImpl(
     // UI/MCP response) — without this, the *only* diagnostic signal for a node
     // action failure was that string, no stack, nowhere to find the actual
     // throw site.
-    console.error(`[node-action] ${typeId}.${actionId} (node ${nodeId}) failed:`, err)
+    console.error(`[node-action] ${type}.${actionId} (node ${nodeId}) failed:`, err)
     await persistErrors(found, [message])
     throw err
   }

@@ -72,11 +72,10 @@ your shell or process manager; the server does not load a `.env` file itself.
 | `SECRETS_KEY` | Passphrase used to encrypt stored secrets. Falls back to a built-in default, so set your own value for any real deployment. |
 | `DATABASE_URL` | A `postgres://` or `postgresql://` connection string to use an external PostgreSQL server. When unset, the embedded PGlite database is used. |
 | `PGLITE_PATH` | Directory for the embedded database. Default: `data/pglite` under the app's working directory. |
-| `OPENCROFT_DATA_DIR` | Data directory. Default: `data` under the app's working directory. |
+| `OPENCROFT_DATA_DIR` | Data directory. Extensions live in its `extensions` directory, one folder per extension. Default: `data` under the app's working directory. |
 | `OPENCROFT_CACHE_DIR` | Cache directory. Default: `.cache` under the app's working directory. |
-| `OPENCROFT_LOCAL_EXTENSIONS` | Directory for locally authored extensions. Default: `data/extensions/local`. |
 | `EXTENSION_REGISTRIES` | Comma-separated list of additional extension registries. The default registry is always included. |
-| `EXTENSIONS` | Comma-separated extensions to install at startup, as `scope/name` or `scope/name:version`. |
+| `EXTENSIONS` | Comma-separated extensions to install at startup, as `owner.name` or `owner.name:version`. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Enable Google sign-in when both are set. |
 | `APPLE_CLIENT_ID`, `APPLE_CLIENT_SECRET` | Enable Apple sign-in when both are set. |
 
@@ -151,7 +150,7 @@ Extensions import the host API from two packages:
   `storage` and `graph`). It also defines the contracts for what a server
   module can export: `load`/`unload` lifecycle hooks, per-app hooks and actions
   (`apps`), HTTP routes (`routes`, served under
-  `/api/ext/<scope>/<slug>/http/<path>`) and MCP tool handlers (`tools`).
+  `/api/ext/<owner>.<name>/http/<path>`) and MCP tool handlers (`tools`).
 - **`@opencroft/client`** -- for client (UI) code. It re-exports
   `@opencroft/core` and declares host-provided components such as
   `Terminal`, `SecretSelector`, `TerminalSelector` and `NodeRef`.

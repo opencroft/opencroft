@@ -10,12 +10,12 @@
 // CommandBarMenu/CommandBarMenuItem below have no kit equivalent and stay
 // app-side.
 
+import { cn } from 'cn'
 import { type ReactNode, useEffect, useRef } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { ScrollArea } from 'ui/scroll-area'
 
 import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
-import { cn } from '@/lib/utils'
 
 export { CommandBarFrame as CommandBar }
 

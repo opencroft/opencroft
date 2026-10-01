@@ -49,15 +49,19 @@ beforeEach(async () => {
   await db.delete(user)
 })
 
+// Core's types as graphs store them, and the webhook handler under whatever
+// owner its extension is installed as.
 const nodes = [
-  { id: 'agent-1', type: 'agent' },
-  { id: 'webhook-1', type: 'gitea-webhook-handler' },
-  { id: 'scriptnode-1', type: 'script-node' },
-  { id: 'route-1', type: 'api-route' },
-  { id: 'schedule-1', type: 'event' },
-  { id: 'script-1', type: 'script-bash' },
-  { id: 'generator-1', type: 'text-generation' },
-  { id: 'terminal-1', type: 'terminal' },
+  { id: 'agent-1', type: 'builtin.core.agent' },
+  { id: 'webhook-1', type: 'acme.forge.gitea-webhook-handler' },
+  { id: 'scriptnode-1', type: 'builtin.core.script-node' },
+  { id: 'route-1', type: 'builtin.core.api-route' },
+  { id: 'schedule-1', type: 'builtin.core.event' },
+  { id: 'script-1', type: 'builtin.core.script-bash' },
+  { id: 'generator-1', type: 'builtin.core.text-generation' },
+  { id: 'terminal-1', type: 'builtin.core.terminal' },
+  { id: 'lookalike-1', type: 'acme.widgets.script-node' },
+  { id: 'unmigrated-1', type: 'script-node' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -129,6 +133,11 @@ test('a node type nobody classified is refused, not assumed to be the system', a
   // would quietly make `system.` the bucket for everything unconsidered, and
   // an author nobody checked is worth exactly what a tool name is worth.
   await assert.rejects(() => authorForSourceNode('terminal-1', nodes), UnattributableSendError)
+})
+
+test("a core trigger's name declared by another extension, or stored bare, is not that trigger", async () => {
+  await assert.rejects(() => authorForSourceNode('lookalike-1', nodes), UnattributableSendError)
+  await assert.rejects(() => authorForSourceNode('unmigrated-1', nodes), UnattributableSendError)
 })
 
 // ---------------------------------------------------------------------------

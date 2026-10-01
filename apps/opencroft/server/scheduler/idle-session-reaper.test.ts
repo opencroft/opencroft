@@ -81,6 +81,17 @@ test('a waiting session (blocked on a permission prompt) is never reaped, howeve
   assert.deepEqual(due, [])
 })
 
+test('a queued session (no turn, messages held for its reading cadence) is never reaped, however long it has been idle by the clock', () => {
+  const now = 1_000_000
+  const sessionKey = 'group-chat.my-chat.dave.standup'
+  const sessions = [{ sessionKey, lastActivityAt: now - 46 * 60_000 }]
+  const statuses = statusesOf([[sessionKey, 'queued']])
+
+  const due = selectDueSessions(sessions, statuses, () => ENABLED, now)
+
+  assert.deepEqual(due, [], 'unloading it would take away the timer that delivers the held messages')
+})
+
 test('an already-offline session is never reaped -- nothing to unload, however long it has been idle by the clock', () => {
   const now = 1_000_000
   const sessionKey = 'group-chat.my-chat.dave.standup'

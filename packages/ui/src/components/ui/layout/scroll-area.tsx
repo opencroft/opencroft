@@ -1,6 +1,6 @@
 import { ScrollArea as ScrollAreaPrimitive } from '@base-ui/react/scroll-area'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 interface ScrollAreaProps extends Omit<ScrollAreaPrimitive.Root.Props, 'className'> {
   className?: string
@@ -26,7 +26,8 @@ export function ScrollArea({ className, innerClassName, children, ref, onScroll,
         ref={ref}
         onScroll={onScroll}
         data-slot='scroll-area-viewport'
-        className='focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1'
+        // `isolate`: sticky parts inside (z-indexed headers, pinned columns) stack under the bars, not over them.
+        className='peer/viewport isolate size-full rounded-[inherit] outline-none'
       >
         <ScrollAreaPrimitive.Content data-slot='scroll-area-content' className={cn('flex flex-col', innerClassName)}>
           {children}
@@ -34,6 +35,15 @@ export function ScrollArea({ className, innerClassName, children, ref, onScroll,
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
       <ScrollAreaPrimitive.Corner />
+      {/* The viewport's keyboard focus ring, drawn inside the area's edge on a layer above the scrollbars.
+          A ring outside the area is cut off wherever it sits flush in a container that clips overflow;
+          one on the viewport itself is covered by the scrollbars, which overlay the viewport's edges;
+          an inset shadow is covered by any content with a background. */}
+      <span
+        aria-hidden
+        data-slot='scroll-area-focus-ring'
+        className='pointer-events-none absolute inset-0 rounded-[inherit] outline-ring/50 peer-focus-visible/viewport:outline-3 peer-focus-visible/viewport:-outline-offset-3'
+      />
     </ScrollAreaPrimitive.Root>
   )
 }

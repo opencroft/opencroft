@@ -1,11 +1,11 @@
 'use client'
 
+import { cn } from 'cn'
 import React, { useCallback } from 'react'
 import { MenuLayout, type MenuLayoutProps } from 'ui/layout/menulayout'
 import { ScrollContent, ScrollFooter, ScrollPage } from 'ui/layout/scrollpage'
 
 import { useUrlState } from '@/components/hooks/use-url-state'
-import { cn } from '@/lib/utils'
 
 // ---- MenuContent ----
 

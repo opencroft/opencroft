@@ -47,7 +47,7 @@ async function freshSpaceWithEventAndScript(slug: string, schedules: ScheduleRul
   const scriptId = `${slug}-script`
   await registry.create(slug, slug, {
     nodes: [
-      { id: eventId, type: 'event', position: { x: 0, y: 0 }, data: { schedules } },
+      { id: eventId, type: 'builtin.core.event', position: { x: 0, y: 0 }, data: { schedules } },
       {
         id: scriptId,
         type: 'script',
@@ -182,7 +182,7 @@ test('processDueEvents records a failed dispatch as an error entry, not a crash'
     nodes: [
       {
         id: eventId,
-        type: 'event',
+        type: 'builtin.core.event',
         position: { x: 0, y: 0 },
         data: { schedules: [{ id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' }] },
       },
@@ -253,7 +253,7 @@ async function freshSpaceWithEventOnNamedGraph(
   const scriptId = `${slug}-script`
   await registry.saveGraph(`${slug}.${graphSlug}`, {
     nodes: [
-      { id: eventId, type: 'event', position: { x: 0, y: 0 }, data: { schedules } },
+      { id: eventId, type: 'builtin.core.event', position: { x: 0, y: 0 }, data: { schedules } },
       ...(connectScript
         ? [
             {

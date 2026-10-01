@@ -2,9 +2,8 @@
 
 import { Trash } from 'lucide-react'
 import { Button } from 'ui/button'
+import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/table'
-
-import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 interface KeyValuePair {
   key: string

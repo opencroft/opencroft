@@ -116,9 +116,9 @@ function fakeHandle(): SessionHandle {
  * A handle whose process has already exited — what a finished deploy leaves behind.
  *
  * A constructed state, not one the real handle produces: `pipedProcessHandle` fires its exit
- * callbacks on close, and `create` registers one that kills the session, so a real dead job is
- * removed rather than left registered. This double's `onExit` is a no-op, which is the only
- * reason a dead-but-registered session exists here at all. It is the right shape for testing the
+ * callbacks on close, and `create` registers one that marks the job ended, so a real dead job is
+ * an ended job rather than a live one with a dead process. This double's `onExit` is a no-op,
+ * which is the only reason that state exists here at all. It is the right shape for testing the
  * reclaim policy and the wrong shape for reasoning about what production leaves lying around.
  */
 function deadHandle(): SessionHandle {

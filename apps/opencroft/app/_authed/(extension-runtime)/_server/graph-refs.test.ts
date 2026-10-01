@@ -22,17 +22,17 @@ async function spaceWith(nodes: Array<{ id: string; type: string; data: Record<s
 
 test('a node id resolves to its type, its name and the space it lives in', async () => {
   const id = crypto.randomUUID()
-  const slug = await spaceWith([{ id, type: 'server', data: { name: 'prod-db' } }])
+  const slug = await spaceWith([{ id, type: 'builtin.core.server', data: { name: 'prod-db' } }])
   const refs = await describeGraphRefsImpl([id])
-  assert.deepEqual(refs[id], { id, kind: 'node', typeId: 'server', name: 'prod-db', spaceSlug: slug })
+  assert.deepEqual(refs[id], { id, kind: 'node', type: 'builtin.core.server', name: 'prod-db', spaceSlug: slug })
 })
 
 test("a window node's title counts as its name; an unnamed node leaves the name to the caller", async () => {
   const titled = crypto.randomUUID()
   const unnamed = crypto.randomUUID()
   await spaceWith([
-    { id: titled, type: 'terminal', data: { title: 'Logs' } },
-    { id: unnamed, type: 'localhost', data: {} },
+    { id: titled, type: 'builtin.core.terminal', data: { title: 'Logs' } },
+    { id: unnamed, type: 'builtin.core.localhost', data: {} },
   ])
   const refs = await describeGraphRefsImpl([titled, unnamed])
   assert.equal(refs[titled]?.name, 'Logs')

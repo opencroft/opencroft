@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react'
 import { ChevronLeft } from 'lucide-react'
 
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface BackButtonProps extends Omit<ComponentProps<typeof Button>, 'children' | 'size' | 'variant'> {
   /** What the control announces. Defaults to "Back", which is right nearly

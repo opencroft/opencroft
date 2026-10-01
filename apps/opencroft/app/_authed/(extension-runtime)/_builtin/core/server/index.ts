@@ -13,6 +13,7 @@ import {
 import { reasoningEfforts } from 'agent-client/reasoning'
 
 import { agentPlacement } from '../src/nodes/agent-placement-shared'
+import { storedType } from '../src/nodes/stored-type'
 import { routeOutput, TERMINAL_ROUTER_TYPE, type TerminalRouterData } from '../src/nodes/terminal-router-shared'
 import {
   keyStoreCopyKeyToWsl,
@@ -64,7 +65,7 @@ function listAgentCatalog(): AgentCatalog {
 // or a disconnect aimed anywhere else would act on a login the agent never sees.
 async function agentOauthPlacement(nodeId: string): Promise<OauthPlacement> {
   const node = await host.graph.getNode(String(nodeId ?? ''))
-  if (node?.type !== 'agent') {
+  if (node?.type !== storedType(host.extensionId, 'agent')) {
     throw new Error('Agent node not found')
   }
   const { harnessHome, containerName } = agentPlacement(
@@ -557,19 +558,19 @@ export const actions = {
 // exposeOutput
 // ═══════════════════════════════════════════════════════════════════
 
-export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>, typeId: string): unknown => {
-  if (typeId === TERMINAL_ROUTER_TYPE) {
+export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>, type: string): unknown => {
+  if (type === TERMINAL_ROUTER_TYPE) {
     return routeOutput(handleId, nodeData as TerminalRouterData)
   }
 
-  if (typeId === 'localhost') {
+  if (type === 'localhost') {
     if (handleId === 'terminal') {
       return { type: 'local' }
     }
     return undefined
   }
 
-  if (typeId === 'wsl') {
+  if (type === 'wsl') {
     const distro = nodeData.distro as string | undefined
     if (!distro) {
       return undefined
@@ -580,7 +581,7 @@ export const exposeOutput = (handleId: string, nodeData: Record<string, unknown>
     return undefined
   }
 
-  if (typeId === 'server') {
+  if (type === 'server') {
     const address = nodeData.address as string | undefined
     if (!address) {
       return undefined

@@ -116,7 +116,7 @@ function handleDetail(info: GraphRefInfo, handleId: string): string {
   if (info.kind !== 'node') {
     return handleId === 'terminal' ? '' : handleId
   }
-  const handles = extensionRegistry.resolveNode(info.typeId)?.handles ?? []
+  const handles = extensionRegistry.resolveNode(info.type)?.handles ?? []
   const handle = findExtensionHandle(handles, handleId, 'source')
   if (!handle) {
     return handleId
@@ -124,9 +124,7 @@ function handleDetail(info: GraphRefInfo, handleId: string): string {
   if (handle.dynamic) {
     return handleId.slice(handle.id.length)
   }
-  const plainTerminals = handles.filter(
-    (h) => h.role === 'source' && h.contextType === handle.contextType && !h.dynamic,
-  )
+  const plainTerminals = handles.filter((h) => h.role === 'source' && h.handleType === handle.handleType && !h.dynamic)
   return plainTerminals.length > 1 ? (handle.label ?? handleId) : ''
 }
 
@@ -138,16 +136,15 @@ export function describeGraphRef(info: GraphRefInfo, handleId = ''): GraphRefDes
   // The resolved type for what the canvas shows (its accent, with the
   // registry's default); the declaration for the icon's name, which the
   // resolved type has already turned into a component.
-  const type = extensionRegistry.resolveNode(info.typeId)
-  const found = extensionRegistry.getByTypeId(info.typeId)
+  const type = extensionRegistry.resolveNode(info.type)
   return {
     kind: 'node',
     // The same fallback the canvas outline uses for an unnamed node.
-    name: info.name || type?.name || info.typeId,
+    name: info.name || type?.name || info.type,
     detail,
-    icon: found?.extension.nodes?.[found.nodeIndex]?.icon,
+    icon: type?.extension.nodes?.[type.nodeIndex]?.icon,
     accent: type?.accent,
-    typeName: type?.name ?? info.typeId,
+    typeName: type?.name ?? info.type,
     spaceSlug: info.spaceSlug,
   }
 }

@@ -1,7 +1,10 @@
 import type { ChangeEvent } from 'react'
 
 import { legacy } from '@opencroft/client'
-const { Input, Label, NodeFrame, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, icons, useGraphNodes } = legacy
+
+import { storedType } from './stored-type'
+
+const { Input, Label, NodeFrame, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, extensionId, icons, useGraphNodes } = legacy
 
 export interface OpenAIAssistantData {
   name: string
@@ -95,7 +98,7 @@ interface AssistantNode {
 
 export function useAssistantsList(): AssistantNode[] {
   const nodes = useGraphNodes()
-  return nodes.filter((n) => n.type === 'openai-assistant') as unknown as AssistantNode[]
+  return nodes.filter((n) => n.type === storedType(extensionId, 'openai-assistant')) as unknown as AssistantNode[]
 }
 
 export function useAssistant(assistantId?: string): OpenAIAssistantData | null {

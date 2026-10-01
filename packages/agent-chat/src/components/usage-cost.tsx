@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 /** The token account of a piece of work. Every counter is optional: a harness
  * that reports only a total leaves the rest absent, and absent draws as a dash. */

@@ -8,7 +8,7 @@ import { ListEmpty } from 'ui/components/ui/utils/list-empty'
 import { ListRow } from 'ui/components/ui/utils/list-row'
 import { MemberAvatarGroup, type MemberRef } from 'ui/components/ui/group-chat/member-avatar-group'
 import { RowContextMenu } from 'ui/components/ui/utils/row-context-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface GroupChatListItem {
   id: string

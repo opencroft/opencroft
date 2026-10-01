@@ -26,7 +26,8 @@ import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
-import { EMPTY_THREAD_LAYOUT, type ThreadStatusById } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
+import type { ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
+import { EMPTY_THREAD_LAYOUT } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
 import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type {
   DirectoryUser,
@@ -54,10 +55,10 @@ interface Props {
   /** This chat's archived threads -- the screen already split them out of the
    *  full thread list it loaded, so nothing here re-fetches them. */
   archivedThreads: GroupChatThreadEntry[]
-  /** The same live-status map the active list reads, so an archived thread's
-   *  row (its session can still be mid-turn) never disagrees with the one the
-   *  active list would have shown it. */
-  statusById: ThreadStatusById
+  /** The same live row-state map the active list reads, so an archived
+   *  thread's row (its session can still be mid-turn) never disagrees with the
+   *  one the active list would have shown it. */
+  stateById: ThreadRowStateById
   /** Opening an archived row leaves the dialog and goes to its thread. */
   onOpenThread: (threadId: string) => void
 }
@@ -74,7 +75,7 @@ export function GroupChatSettings({
   directory,
   agents,
   archivedThreads,
-  statusById,
+  stateById,
   onOpenThread,
 }: Props) {
   const refresh = useGroupChatRefresh()
@@ -295,7 +296,7 @@ export function GroupChatSettings({
           archivedThreads.length > 0 ? (
             <GroupChatThreadTree
               threads={archivedThreads}
-              statusById={statusById}
+              stateById={stateById}
               layout={archiveTree}
               onChange={persistArchive}
               onSelect={(threadId) => {

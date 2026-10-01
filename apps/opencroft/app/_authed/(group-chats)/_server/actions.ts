@@ -55,6 +55,7 @@ import type {
   GroupChatDetailView,
   GroupChatListEntry,
   GroupChatThreadEntry,
+  GroupChatThreadListEntry,
   MemberRef,
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import {
@@ -90,6 +91,7 @@ export type {
   GroupChatPinSummary,
   GroupChatSummary,
   GroupChatThreadEntry,
+  GroupChatThreadListEntry,
   GroupChatThreadSummary,
   JoinGroupChatResult,
   MemberPrincipal,
@@ -423,7 +425,7 @@ export const getMyGroupChatView = createServerFn({ method: 'GET', strict: { outp
 export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((groupChatId: string) => groupChatId)
   .handler(
-    async ({ data: groupChatId }): Promise<GroupChatThreadEntry[]> =>
+    async ({ data: groupChatId }): Promise<GroupChatThreadListEntry[]> =>
       listThreadsInGroupChatView(getRequest(), groupChatId),
   )
 

@@ -91,7 +91,7 @@ await db.insert(space).values({
     nodes: [
       {
         id: 'agent-session',
-        type: 'agent',
+        type: 'builtin.core.agent',
         data: { name: 'Agent Session', providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
       },
     ],

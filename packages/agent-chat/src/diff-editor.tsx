@@ -1,10 +1,10 @@
 'use client'
 
 import { type DiffOnMount, loader, DiffEditor as MonacoDiffEditor } from '@monaco-editor/react'
+import { cn } from 'cn'
 import { Columns2, Rows2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from 'ui/components/ui/button'
-import { cn } from 'ui/lib/utils'
 
 // A separate subpath export (`agent-chat/diff-editor`), never imported from the
 // core chat modules — Monaco is a heavy dependency and hosts that don't register

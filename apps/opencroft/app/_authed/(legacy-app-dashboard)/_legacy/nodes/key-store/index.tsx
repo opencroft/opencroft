@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Badge } from 'ui/badge'
 import { Button } from 'ui/button'
+import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Separator } from 'ui/separator'
@@ -22,7 +23,6 @@ import {
   removeKeyFromWsl,
 } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
-import { ControlledInput } from '@/components/ui/input/controlled-input'
 
 export type KeyStoreData = {
   keyNames: string[]
@@ -174,15 +174,18 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
     onDirtyChange(false, () => {})
   }, [onDirtyChange])
 
-  const handleCreate = useCallback(async () => {
-    if (!newName.trim()) {
-      return
-    }
-    await createKey({ data: { storeId: id, name: newName.trim(), keyType: newType } })
-    setNewName('')
-    await load()
-    toast.success('Key created')
-  }, [id, newName, newType, load])
+  const handleCreate = useCallback(
+    async (name: string) => {
+      if (!name.trim()) {
+        return
+      }
+      await createKey({ data: { storeId: id, name: name.trim(), keyType: newType } })
+      setNewName('')
+      await load()
+      toast.success('Key created')
+    },
+    [id, newType, load],
+  )
 
   const handleImport = useCallback(
     async (name: string, content: string) => {
@@ -253,7 +256,7 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
             <SelectItem value='ecdsa'>ECDSA</SelectItem>
           </SelectContent>
         </Select>
-        <Button size='sm' className='h-7 text-xs' onClick={handleCreate} disabled={!newName.trim()}>
+        <Button size='sm' className='h-7 text-xs' onClick={() => handleCreate(newName)} disabled={!newName.trim()}>
           <Plus className='h-3 w-3' />
         </Button>
       </Flex>

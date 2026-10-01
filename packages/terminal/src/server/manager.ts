@@ -13,5 +13,18 @@ import { SessionManager } from './session-manager'
  * package that could reach the registry directly could attach a session to an arbitrary peer, or
  * start one from a request handler; the exported surface is the socket handler and the job entry,
  * both of which decide those things themselves.
+ *
+ * It is kept on `globalThis` because this module can be loaded more than once in one process: the
+ * dev server evaluates the websocket route and server functions in separate module runners, and a
+ * production build bundles the package into more than one output. Each copy of the module then
+ * finds the registry the first one made, and only that first copy constructs one, so there is one
+ * sweep timer too. The cost is on the development side: a hot reload of `session-manager.ts` keeps
+ * the instance built from the old class, so a change there takes effect only after a restart.
  */
-export const sessionManager = new SessionManager()
+const REGISTRY_KEY = Symbol.for('opencroft.terminal.sessionManager')
+
+const registryHolder = globalThis as typeof globalThis & { [REGISTRY_KEY]?: SessionManager }
+
+registryHolder[REGISTRY_KEY] ??= new SessionManager()
+
+export const sessionManager: SessionManager = registryHolder[REGISTRY_KEY]

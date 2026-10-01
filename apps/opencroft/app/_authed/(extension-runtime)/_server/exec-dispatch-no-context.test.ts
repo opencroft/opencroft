@@ -22,7 +22,7 @@ async function freshSpaceWithEventAndScript(slug: string) {
   const scriptId = 'script-1'
   return registry.create(slug, slug, {
     nodes: [
-      { id: eventId, type: 'event', position: { x: 0, y: 0 }, data: {} },
+      { id: eventId, type: 'builtin.core.event', position: { x: 0, y: 0 }, data: {} },
       {
         id: scriptId,
         type: 'script',

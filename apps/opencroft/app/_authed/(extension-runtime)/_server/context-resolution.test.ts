@@ -8,21 +8,30 @@ import type { GraphEdgeRecord, GraphNodeRecord, GraphSnapshot } from './host'
 // A three-node chain in which the middle node's output depends on its own
 // input, the shape an application node's per-container terminal handle has:
 //   docker --docker-out--> application --instance-terminal-*--> script
-const handle = (id: string, role: 'source' | 'target', contextType: string, dynamic?: boolean) => ({
+// The graph stores qualified types; the extension answering for them knows its
+// own bare names, and that is what the resolver has to tell it.
+const handle = (id: string, role: 'source' | 'target', handleType: string, dynamic?: boolean) => ({
   id,
   role,
-  contextType,
+  handleType,
   dynamic,
 })
 
-const exposeOutput: ExposeOutput = (handleId, nodeData, typeId) => {
-  if (typeId === 'terminal-router') {
+const DOCKER = 'acme.docker.docker'
+const APPLICATION = 'acme.docker.application'
+const SCRIPT = 'acme.docker.script'
+const ROUTER = 'builtin.core.terminal-router'
+const DOCKER_CONTEXT = 'acme.docker.docker-context'
+const TERMINAL_CONTEXT = 'builtin.core.terminal-context'
+
+const exposeOutput: ExposeOutput = (handleId, nodeData, type) => {
+  if (type === 'terminal-router') {
     return routeOutput(handleId, nodeData as TerminalRouterData)
   }
-  if (typeId === 'docker') {
+  if (type === 'docker') {
     return { type: 'local' }
   }
-  if (typeId === 'application') {
+  if (type === 'application') {
     const resolved = nodeData.__resolvedContexts as Record<string, { value: unknown }> | undefined
     const via = resolved?.['docker-in']?.value
     return via ? { type: 'docker-exec', via, containerId: handleId.slice('instance-terminal-'.length) } : undefined
@@ -32,19 +41,19 @@ const exposeOutput: ExposeOutput = (handleId, nodeData, typeId) => {
 
 const deps: ContextResolverDeps = {
   nodeTypeToExtension: new Map([
-    ['docker', { extensionId: 'my-ext', handles: [handle('docker-out', 'source', 'docker-context')] }],
+    [DOCKER, { extensionId: 'acme.docker', handles: [handle('docker-out', 'source', DOCKER_CONTEXT)] }],
     [
-      'application',
+      APPLICATION,
       {
-        extensionId: 'my-ext',
+        extensionId: 'acme.docker',
         handles: [
-          handle('docker-in', 'target', 'docker-context'),
-          handle('instance-terminal-', 'source', 'terminal-context', true),
+          handle('docker-in', 'target', DOCKER_CONTEXT),
+          handle('instance-terminal-', 'source', TERMINAL_CONTEXT, true),
         ],
       },
     ],
-    ['script', { extensionId: 'my-ext', handles: [handle('ctx-in', 'target', 'terminal-context')] }],
-    ['terminal-router', { extensionId: 'my-ext', handles: [handle('route-', 'source', 'terminal-context', true)] }],
+    [SCRIPT, { extensionId: 'acme.docker', handles: [handle('ctx-in', 'target', TERMINAL_CONTEXT)] }],
+    [ROUTER, { extensionId: 'builtin.core', handles: [handle('route-', 'source', TERMINAL_CONTEXT, true)] }],
   ]),
   exposeOutputOf: async () => exposeOutput,
   // Terminals living outside the resolved graph, as terminal.getContext sees them.
@@ -80,7 +89,7 @@ const terminalEdge: GraphEdgeRecord = {
 }
 
 function graph(edges: GraphEdgeRecord[]): GraphSnapshot {
-  return { nodes: [node('docker-1', 'docker'), node('app-1', 'application'), node('script-1', 'script')], edges }
+  return { nodes: [node('docker-1', DOCKER), node('app-1', APPLICATION), node('script-1', SCRIPT)], edges }
 }
 
 function nodeIn(snapshot: GraphSnapshot, nodeId: string): GraphNodeRecord {
@@ -107,6 +116,21 @@ test('resolves the same chain in dependency order (control)', async () => {
   assert.deepEqual(contextOf(resolved, 'app-1', 'docker-in'), { type: 'local' })
 })
 
+test('exposeOutput is told the bare type, and the resolved input names the qualified handle type', async () => {
+  const told: string[] = []
+  const recording: ContextResolverDeps = {
+    ...deps,
+    exposeOutputOf: async () => (handleId, nodeData, type, nodeId) => {
+      told.push(type)
+      return exposeOutput(handleId, nodeData, type, nodeId)
+    },
+  }
+  const resolved = await resolveContexts(graph([dockerEdge, terminalEdge]), recording)
+  assert.deepEqual(told, ['docker', 'application'])
+  const inputs = nodeIn(resolved, 'app-1').data.__resolvedContexts as Record<string, { handleType: string }>
+  assert.equal(inputs['docker-in'].handleType, DOCKER_CONTEXT)
+})
+
 test('an edge whose source never produces a value is left unresolved and the run terminates', async () => {
   const resolved = await resolveContexts(graph([terminalEdge]), deps)
   assert.equal(nodeIn(resolved, 'script-1').data.__resolvedContexts, undefined)
@@ -114,13 +138,13 @@ test('an edge whose source never produces a value is left unresolved and the run
 
 test('previously stored contexts are recomputed, not carried over', async () => {
   const stale = {
-    'ctx-in': { sourceNodeId: 'gone', sourceHandleId: 'gone', contextType: 'terminal-context', value: 1 },
+    'ctx-in': { sourceNodeId: 'gone', sourceHandleId: 'gone', handleType: TERMINAL_CONTEXT, value: 1 },
   }
   const snapshot: GraphSnapshot = {
     nodes: [
-      node('docker-1', 'docker'),
-      node('app-1', 'application'),
-      node('script-1', 'script', { __resolvedContexts: stale }),
+      node('docker-1', DOCKER),
+      node('app-1', APPLICATION),
+      node('script-1', SCRIPT, { __resolvedContexts: stale }),
     ],
     edges: [],
   }
@@ -137,11 +161,65 @@ test('node order and the rest of each node are preserved', async () => {
   assert.deepEqual(nodeIn(resolved, 'app-1').position, { x: 0, y: 0 })
 })
 
+function sourceOf(snapshot: GraphSnapshot, nodeId: string, handleId: string): string | undefined {
+  const contexts = nodeIn(snapshot, nodeId).data.__resolvedContexts as
+    | Record<string, { sourceNodeId: string }>
+    | undefined
+  return contexts?.[handleId]?.sourceNodeId
+}
+
+test('a handle wired from two sources is fed by the first edge', async () => {
+  const snapshot: GraphSnapshot = {
+    nodes: [node('docker-1', DOCKER), node('docker-2', DOCKER), node('app-1', APPLICATION)],
+    edges: [dockerEdge, { ...dockerEdge, id: 'edge-docker-2', source: 'docker-2' }],
+  }
+  const resolved = await resolveContexts(snapshot, deps)
+  assert.equal(sourceOf(resolved, 'app-1', 'docker-in'), 'docker-1')
+})
+
+// Two sources for one script, one resolving in the first pass and one only
+// once the application's own docker input is written:
+//   router --route-r1--> script <--instance-terminal-*-- application <-- docker
+function twoSourceScript(first: GraphEdgeRecord, second: GraphEdgeRecord, withDocker: boolean): GraphSnapshot {
+  return {
+    nodes: [
+      node('router-1', ROUTER, { routes: [{ id: 'r1', target: 'server-9/terminal' }] }),
+      node('docker-1', DOCKER),
+      node('app-1', APPLICATION),
+      node('script-1', SCRIPT),
+    ],
+    edges: [first, second, ...(withDocker ? [dockerEdge] : [])],
+  }
+}
+const routeEdge: GraphEdgeRecord = {
+  id: 'edge-route',
+  source: 'router-1',
+  sourceHandle: 'route-r1',
+  target: 'script-1',
+  targetHandle: 'ctx-in',
+}
+
+test('the first edge feeds the handle when a later edge resolves in a later pass', async () => {
+  const resolved = await resolveContexts(twoSourceScript(routeEdge, terminalEdge, true), deps)
+  assert.equal(sourceOf(resolved, 'script-1', 'ctx-in'), 'router-1')
+})
+
+test('the first edge feeds the handle when it resolves in a later pass than a later edge', async () => {
+  const resolved = await resolveContexts(twoSourceScript(terminalEdge, routeEdge, true), deps)
+  assert.equal(sourceOf(resolved, 'script-1', 'ctx-in'), 'app-1')
+  assert.deepEqual(contextOf(resolved, 'script-1', 'ctx-in'), expectedTerminal)
+})
+
+test('a first edge that resolves nothing leaves the handle empty rather than falling back to the next', async () => {
+  const resolved = await resolveContexts(twoSourceScript(terminalEdge, routeEdge, false), deps)
+  assert.equal(nodeIn(resolved, 'script-1').data.__resolvedContexts, undefined)
+})
+
 // A router whose routes point at terminals in another space, feeding a script:
 //   (server-9/terminal, elsewhere) ~~route r1~~> router --route-r1--> script
 function routerGraph(routes: TerminalRouterData['routes']): GraphSnapshot {
   return {
-    nodes: [node('router-1', 'terminal-router', { routes }), node('script-1', 'script')],
+    nodes: [node('router-1', ROUTER, { routes }), node('script-1', SCRIPT)],
     edges: [
       { id: 'edge-route', source: 'router-1', sourceHandle: 'route-r1', target: 'script-1', targetHandle: 'ctx-in' },
     ],

@@ -6,7 +6,7 @@ import type { PanelImperativeHandle } from 'react-resizable-panels'
 
 import { Button } from 'ui/components/ui/button'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/components/ui/resizable'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 /** The edges a panel can be docked to. */
 export const DOCK_SIDES = ['left', 'right', 'bottom'] as const

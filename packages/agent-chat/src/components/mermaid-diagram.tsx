@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useId, useState } from 'react'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // mermaid is loaded through a dynamic import inside the effect below, never at
 // module scope. The package unpacks to 124 MB and still costs on the order of

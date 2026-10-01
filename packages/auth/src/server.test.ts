@@ -317,6 +317,62 @@ test('signing in yields a session that resolves back to the same user', async ()
   assert.equal(identified.email, ADMIN.email)
 })
 
+test('a person stores one of the offered themes on their account, and nothing else', async () => {
+  const { ensureAuth, handleAuthRequest } = await import('./server')
+  const signIn = await ensureAuth().api.signInEmail({
+    body: { email: ADMIN.email, password: ADMIN.password },
+    asResponse: true,
+  })
+  const cookie = signIn.headers.get('set-cookie') as string
+  // The browser's own route: the update-user endpoint over HTTP, same origin.
+  const updateTheme = (theme: string) =>
+    handleAuthRequest(
+      new Request('http://localhost/api/auth/update-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: 'http://localhost', cookie },
+        body: JSON.stringify({ theme }),
+      }),
+    )
+  const storedTheme = async () =>
+    (await getSessionUser(new Request('http://localhost/', { headers: { cookie } })))?.theme
+
+  assert.equal(await storedTheme(), null, 'no choice has been made yet')
+
+  assert.equal((await updateTheme('dark')).status, 200)
+  assert.equal(await storedTheme(), 'dark')
+
+  assert.equal((await updateTheme('purple')).status, 400, 'a value outside the choices must be refused')
+  assert.equal(await storedTheme(), 'dark', 'a refused value must leave the stored choice alone')
+})
+
+test('a person records when they last saw the sponsor prompt, and only as a date', async () => {
+  const { ensureAuth, handleAuthRequest } = await import('./server')
+  const signIn = await ensureAuth().api.signInEmail({
+    body: { email: ADMIN.email, password: ADMIN.password },
+    asResponse: true,
+  })
+  const cookie = signIn.headers.get('set-cookie') as string
+  const updateSeenAt = (sponsorPromptSeenAt: string) =>
+    handleAuthRequest(
+      new Request('http://localhost/api/auth/update-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', origin: 'http://localhost', cookie },
+        body: JSON.stringify({ sponsorPromptSeenAt }),
+      }),
+    )
+  const storedSeenAt = async () =>
+    (await getSessionUser(new Request('http://localhost/', { headers: { cookie } })))?.sponsorPromptSeenAt
+
+  assert.equal(await storedSeenAt(), null, 'the prompt has not been seen yet')
+
+  const seen = '2031-05-17T09:30:00.000Z'
+  assert.equal((await updateSeenAt(seen)).status, 200)
+  assert.equal((await storedSeenAt())?.toISOString(), seen)
+
+  assert.equal((await updateSeenAt('yesterday-ish')).status, 400, 'a value that is not a date must be refused')
+  assert.equal((await storedSeenAt())?.toISOString(), seen, 'a refused value must leave the stored date alone')
+})
+
 // The line between "logged out" and "silently let in". Once the route boundary
 // exists, whatever getSessionUser returns IS the gate — so a session the
 // database considers expired must resolve to nothing, not merely be tidied up

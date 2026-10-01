@@ -1,12 +1,11 @@
 'use client'
 
 import { type DiffOnMount, Editor, loader, DiffEditor as MonacoDiffEditor, type OnMount } from '@monaco-editor/react'
+import { cn } from 'cn'
 import { Columns2, Rows2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from 'ui/button'
-
-import { cn } from '@/lib/utils'
 
 // The host's single code editor, shared with extensions through the extension
 // UI surface (`legacy.CodeEditor`) rather than imported by each extension.

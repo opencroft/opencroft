@@ -21,7 +21,9 @@ async function freshSpaceWithSecretsStoreNode(slug: string): Promise<string> {
   await registry.ensureLoaded()
   const nodeId = `${slug}-node`
   await registry.create(slug, slug, {
-    nodes: [{ id: nodeId, type: 'core-secrets-store', position: { x: 0, y: 0 }, data: { secretKeys: [] } }],
+    nodes: [
+      { id: nodeId, type: 'builtin.core.core-secrets-store', position: { x: 0, y: 0 }, data: { secretKeys: [] } },
+    ],
     edges: [],
   })
   return nodeId

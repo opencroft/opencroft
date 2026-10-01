@@ -3,7 +3,7 @@
 import { forwardRef } from 'react'
 import type { ComponentPropsWithoutRef } from 'react'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Without-ref on purpose: `forwardRef` below already contributes the ref to
 // the public props, and carrying it in both places is how the two definitions

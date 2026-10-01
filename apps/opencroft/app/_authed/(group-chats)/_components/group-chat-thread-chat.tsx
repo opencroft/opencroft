@@ -3,6 +3,7 @@
 import { AgentChat } from 'agent-chat/agent-chat'
 import type { AgentComposerHandle } from 'agent-chat/agent-command-bar'
 import { Approvals } from 'agent-chat/approvals'
+import type { PlanEntry } from 'agent-chat/components/agent-plan-control'
 import { WORK_ID_ATTR } from 'agent-chat/components/chat-turn'
 import { useClearControl } from 'agent-chat/use-clear-control'
 import type { CompactStatus } from 'agent-chat/use-compact-control'
@@ -59,16 +60,22 @@ import {
 // embedded variant takes the default frame below — same scroll and
 // sticky-composer arrangement, no group-chat chrome.
 
+/** The session's header controls, for a frame or host with a header to put
+ *  them in: `work` is the delegated-work summary (subagents and background
+ *  tasks, with a jump to each one's block), `plan` the agent's current plan
+ *  (empty while it has none). */
+export interface ThreadHeaderControls {
+  work: ThreadWork
+  plan: PlanEntry[]
+}
+
 /** The parts a frame arranges. The composer must stay pinned while the
  *  conversation scrolls — see the default frame for the arrangement a frame
- *  is expected to keep. `work` is the session's delegated-work summary
- *  (subagents and background tasks, with a jump to each one's block) for a
- *  frame with a header to put it in; the default frame has none and simply
- *  doesn't read it. */
-export interface ThreadChatParts {
+ *  is expected to keep. The default frame has no header and simply doesn't
+ *  read the header controls. */
+export interface ThreadChatParts extends ThreadHeaderControls {
   conversation: ReactNode
   composer: ReactNode
-  work: ThreadWork
 }
 
 interface GroupChatThreadChatProps {
@@ -89,12 +96,12 @@ interface GroupChatThreadChatProps {
    *  default frame renders them as a plain column: conversation scrolling,
    *  composer pinned beneath — the embedded arrangement. */
   renderFrame?: (parts: ThreadChatParts) => ReactNode
-  /** Reports the session's delegated-work summary — the same `work` the frame
-   *  contract carries — whenever it changes, for a host whose header lives
-   *  OUTSIDE this component: the dock window already has one per arrangement,
-   *  and a second one inside the surface read as two. Read through a ref, so
-   *  an inline callback never re-arms the effect. */
-  onWorkChange?: (work: ThreadWork) => void
+  /** Reports the session's header controls — the same `work` and `plan` the
+   *  frame contract carries — whenever they change, for a host whose header
+   *  lives OUTSIDE this component: the dock window already has one per
+   *  arrangement, and a second one inside the surface read as two. Read
+   *  through a ref, so an inline callback never re-arms the effect. */
+  onHeaderChange?: (controls: ThreadHeaderControls) => void
 }
 
 // The two halves of the selection in the composer: the quotation that rides in
@@ -126,7 +133,7 @@ export function GroupChatThreadChat({
   onTurnSettled,
   onThreadForked,
   renderFrame,
-  onWorkChange,
+  onHeaderChange,
 }: GroupChatThreadChatProps) {
   // Memoised on the two values that identify the session, not rebuilt each
   // render: `useAcpSession` keys its effects on this object, so a fresh
@@ -366,13 +373,15 @@ export function GroupChatThreadChat({
     [workItems, jumpToWork],
   )
 
-  // Hand the summary out as it changes. `work` is memoized above, so this
+  const headerControls = useMemo<ThreadHeaderControls>(() => ({ work, plan: acp.plan }), [work, acp.plan])
+
+  // Hand the controls out as they change. They are memoized above, so this
   // fires once per real change and a host may hold what it gets in state.
-  const onWorkChangeRef = useRef(onWorkChange)
-  onWorkChangeRef.current = onWorkChange
+  const onHeaderChangeRef = useRef(onHeaderChange)
+  onHeaderChangeRef.current = onHeaderChange
   useEffect(() => {
-    onWorkChangeRef.current?.(work)
-  }, [work])
+    onHeaderChangeRef.current?.(headerControls)
+  }, [headerControls])
 
   // Compacts and clears THIS thread, membership-checked (see clearThread's
   // own comment in model.ts for why clearSession -- generic across both
@@ -545,7 +554,7 @@ export function GroupChatThreadChat({
   )
 
   if (renderFrame) {
-    return <>{renderFrame({ conversation, composer, work })}</>
+    return <>{renderFrame({ conversation, composer, ...headerControls })}</>
   }
   // The default (embedded) frame: the same scroll-and-pin arrangement the
   // kit's thread framing keeps, minus its chrome. The scroll area's viewport

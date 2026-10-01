@@ -26,9 +26,7 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/app/$app')({
     // Which of the App's pages draw without the host's chrome. Loaded here,
     // from the manifest, so the shell knows before the App's own bundle does
     // and the first paint of such a page is already bare.
-    const fullPageRoutes = await appFullPageRoutes({
-      data: { extensionId: instance.extensionId, appSlug: instance.appSlug },
-    })
+    const fullPageRoutes = await appFullPageRoutes({ data: { type: instance.type } })
     return { space, instance, fullPageRoutes }
   },
   // Both slugs are the fallback: `head` also runs before the loader resolves,

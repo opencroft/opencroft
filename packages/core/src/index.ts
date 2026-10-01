@@ -50,7 +50,7 @@ export type ExecutionMode = 'sync' | 'awaitable' | 'async'
  * An action one instance of an App exposes to agents (via the host's
  * `list_apps`/`app_call` MCP tools). Declared in the manifest so the host can
  * list it without loading the extension; the handler lives in the server
- * module's `apps[slug].actions[id]`.
+ * module's `apps[<bare type>].actions[id]`.
  */
 export interface AppActionMeta {
   id: string
@@ -66,12 +66,19 @@ export interface AppActionMeta {
  * A context SOURCE one instance of an App exposes, addressable as
  * `<instanceId>/<handleId>` everywhere a node's `<nodeId>/<handleId>` target
  * is accepted. A `dynamic` entry's id is a PREFIX; the live ids are asked of
- * the server module's `apps[slug].listHandles`, and each handle's value of
- * `apps[slug].getHandleContext`.
+ * the server module's `apps[<bare type>].listHandles`, and each handle's value
+ * of `apps[<bare type>].getHandleContext`.
  */
 export interface AppHandle {
   id: string
-  contextType: string
+  /**
+   * What the handle carries. Declared bare for one of the extension's own
+   * handle types, qualified (`<owner>.<extension>.<type>`) for another
+   * extension's; qualified in every manifest the host has read.
+   */
+  handleType: string
+  /** @deprecated Declare `handleType`. Read only when `handleType` is absent. */
+  contextType?: string
   label?: string
   dynamic?: boolean
 }
@@ -83,7 +90,15 @@ export interface AppHandle {
  * see `AppDefinition` in `@opencroft/client`.
  */
 export interface AppEntry {
-  slug: string
+  /**
+   * The App's type. Declared bare (`tasks`), a slug unique among the
+   * extension's Apps; qualified with the extension's id
+   * (`acme.widgets.tasks`) wherever the host hands an entry back, and that
+   * qualified form is what an added instance stores.
+   */
+  type: string
+  /** @deprecated Declare `type`. Read only when `type` is absent. */
+  slug?: string
   title: string
   description?: string
   /** Lucide icon name, shown in App lists. */

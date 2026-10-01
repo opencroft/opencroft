@@ -80,8 +80,8 @@ const SPACE_SLUG = 'a-space'
 
 const INSTANCE: SpaceAppInstance = {
   id: 'an-instance-id',
-  extensionId: 'local/example',
-  appSlug: 'example',
+  type: 'acme.example.example',
+  provided: true,
   name: 'An instance',
   slug: 'an-instance',
   params: {},
@@ -89,7 +89,7 @@ const INSTANCE: SpaceAppInstance = {
   updatedAt: '2026-01-01T00:00:00.000Z',
 }
 
-const APP: AppMeta = { extensionId: INSTANCE.extensionId, slug: INSTANCE.appSlug, title: 'Example' }
+const APP: AppMeta = { extensionId: 'acme.example', type: INSTANCE.type, title: 'Example' }
 
 // The name that caused the collision, kept as a fixture rather than as a story.
 // "Add" mints the slug `add`, so before the add-app form moved to `~add` this
@@ -258,6 +258,26 @@ test('an app named "Add" opens its own settings, and the add form keeps its own 
   }
 })
 
+test('an instance whose extension is missing is still listed, naming the extension it belongs to', async () => {
+  const missing: SpaceAppInstance = {
+    ...INSTANCE,
+    id: 'a-missing-instance',
+    type: 'acme.gone.board',
+    provided: false,
+    name: 'Old board',
+    slug: 'old-board',
+  }
+  const { unmount } = await mountInstalledTab([missing])
+
+  try {
+    const rowLink = [...dom.container.querySelectorAll('a')].find((anchor) => anchor.textContent?.includes('Old board'))
+    assert.ok(rowLink, 'the row rendered, with its settings still reachable')
+    assert.match(rowLink.textContent ?? '', /Missing extension acme\.gone/)
+  } finally {
+    await unmount()
+  }
+})
+
 test('the add-app catalog links to the form at its own address, which no name can mint', async () => {
   const { unmount } = await mountInstalledTab([ADD_INSTANCE], 'add')
 
@@ -268,7 +288,7 @@ test('the add-app catalog links to the form at its own address, which no name ca
     assert.ok(catalogLink, 'the catalog rendered a row to add from')
     assert.equal(
       catalogLink.getAttribute('href'),
-      `/space/${SPACE_SLUG}/settings/app/~add?app=example.example`,
+      `/space/${SPACE_SLUG}/settings/app/~add?app=acme.example.example`,
       'the form is addressed by a segment slugify cannot produce',
     )
     assert.notEqual(

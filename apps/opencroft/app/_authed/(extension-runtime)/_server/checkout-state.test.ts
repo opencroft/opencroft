@@ -17,12 +17,10 @@ import { promisify } from 'node:util'
 import {
   type CheckoutState,
   COMPILE_OVERRIDE_PARAM,
-  classifyDirtyEntries,
   parseStatusLines,
   readCheckoutState,
   refuseCompile,
 } from './checkout-state'
-import { isStagingArtifactPath, stagingName } from './paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -58,7 +56,6 @@ function state(overrides: Partial<CheckoutState> = {}): CheckoutState {
     sourceCommit: 'abc1234',
     sourceDirty: false,
     sourceDirtyPaths: [],
-    artifactPaths: [],
     branch: 'main',
     defaultBranch: 'main',
     ...overrides,
@@ -84,51 +81,6 @@ test('parseStatusLines strips the quoting git adds around unusual paths', () => 
 
 test('parseStatusLines ignores blank lines rather than emitting empty entries', () => {
   assert.deepEqual(parseStatusLines('\n\n'), [])
-})
-
-// ── classifyDirtyEntries ──────────────────────────────────────────────
-
-test('generated files are not authored changes', () => {
-  const { sourcePaths, artifactPaths } = classifyDirtyEntries('?? package-lock.json\n?? installed.json\n')
-  assert.deepEqual(sourcePaths, [], 'a folder holding only build output has nobody working in it')
-  assert.deepEqual(artifactPaths, ['package-lock.json', 'installed.json'])
-})
-
-test('an authored change alongside generated files is still an authored change', () => {
-  const { sourcePaths, artifactPaths } = classifyDirtyEntries('?? package-lock.json\n M server/index.ts\n')
-  assert.deepEqual(sourcePaths, ['server/index.ts'])
-  assert.deepEqual(artifactPaths, ['package-lock.json'])
-})
-
-test('a generated name deeper in the tree is an authored change, not build output', () => {
-  // The generated files are written at the checkout root. A source file that
-  // happens to share the name is somebody's code.
-  const { sourcePaths, artifactPaths } = classifyDirtyEntries(' M src/fixtures/package-lock.json')
-  assert.deepEqual(sourcePaths, ['src/fixtures/package-lock.json'])
-  assert.deepEqual(artifactPaths, [])
-})
-
-test("the compiler's own staging directory is build machinery, not authored work", () => {
-  // The client build stages beside dist/ under a per-attempt name, so it is
-  // visible to git for exactly as long as a build is running — or forever, if
-  // that build was killed. Either way nobody authored it.
-  const { sourcePaths, artifactPaths } = classifyDirtyEntries('?? dist.building-100-123/\n')
-  assert.deepEqual(sourcePaths, [])
-  assert.deepEqual(artifactPaths, ['dist.building-100-123/'])
-})
-
-test('a staging-directory lookalike anywhere else stays an authored change', () => {
-  const { sourcePaths, artifactPaths } = classifyDirtyEntries(
-    '?? src/dist.building-1-2/\n?? dist.building-x-1/\n?? dist.building/\n',
-  )
-  assert.deepEqual(sourcePaths, ['src/dist.building-1-2/', 'dist.building-x-1/', 'dist.building/'])
-  assert.deepEqual(artifactPaths, [])
-})
-
-test('the discount matches the name the compiler actually stages under', () => {
-  // Pins the classifier to the naming scheme: if the staging name ever changes
-  // shape, this fails here rather than as refused rebuilds in production.
-  assert.ok(isStagingArtifactPath(`${path.basename(stagingName('dist', 7))}/`))
 })
 
 // ── refuseCompile ─────────────────────────────────────────────────────
@@ -178,13 +130,6 @@ test('an unknown default branch alone is not a mismatch', () => {
   assert.equal(refuseCompile(state({ branch: 'dev/some-work', defaultBranch: null }), false), null)
 })
 
-test('a folder full of build output still compiles', () => {
-  // The whole point of separating generated files from authored ones: this is
-  // the state most checkouts are in, and it must not be a refusal.
-  const built = state({ sourceDirty: false, artifactPaths: ['package-lock.json'] })
-  assert.equal(refuseCompile(built, false), null)
-})
-
 // ── readCheckoutState, against real git ───────────────────────────────
 
 test('a directory that is not a checkout reports unknown rather than raising', async () => {
@@ -194,7 +139,6 @@ test('a directory that is not a checkout reports unknown rather than raising', a
     sourceCommit: null,
     sourceDirty: null,
     sourceDirtyPaths: [],
-    artifactPaths: [],
     branch: null,
     defaultBranch: null,
   })
@@ -230,20 +174,19 @@ test('an uncommitted edit to a tracked file reports dirty against the same commi
   assert.deepEqual(result.sourceDirtyPaths, ['extension.json'])
 })
 
-test('a checkout dirtied only by a build reports clean, and says what it discounted', async () => {
-  const dir = await makeRepo('artifact-repo')
+test('an untracked file makes a checkout dirty: nothing is discounted as build output', async () => {
+  const dir = await makeRepo('untracked-repo')
   await fs.writeFile(path.join(dir, 'extension.json'), '{}')
   await commitAll(dir, 'initial')
 
-  // Exactly what running a build leaves behind, and the state most of these
-  // folders are in at any moment.
+  // The host writes nothing into a checkout outside dist/ and node_modules/,
+  // both ignored by extension repositories, so an untracked file at the root is
+  // somebody's work whatever its name.
   await fs.writeFile(path.join(dir, 'package-lock.json'), '{}')
-  await fs.writeFile(path.join(dir, 'installed.json'), '{}')
 
   const result = await readCheckoutState(dir)
-  assert.equal(result.sourceDirty, false, 'a build having run is not somebody working here')
-  assert.deepEqual(result.artifactPaths.sort(), ['installed.json', 'package-lock.json'])
-  assert.deepEqual(result.sourceDirtyPaths, [])
+  assert.equal(result.sourceDirty, true)
+  assert.deepEqual(result.sourceDirtyPaths, ['package-lock.json'])
 })
 
 test('a detached checkout reports HEAD as its branch, which is not the default one', async () => {

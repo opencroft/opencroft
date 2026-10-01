@@ -13,7 +13,13 @@ import { Separator } from 'ui/separator'
 
 import { McpRequestList } from '@/app/_authed/(approvals)/_components/mcp-request-list'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
-import { extensionRegistry, type ResolvedNode } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { NodeCommentTab } from '@/app/_authed/(dashboard)/_canvas/node-comment-tab'
+import { InstallMissingExtension, missingTypeLabel } from '@/app/_authed/(extension-runtime)/_client/missing-extension'
+import {
+  editableFolderOf,
+  extensionRegistry,
+  type ResolvedNode,
+} from '@/app/_authed/(extension-runtime)/_client/registry'
 import type { NodeData } from '@/app/_authed/(extension-runtime)/_types'
 import { useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
 
@@ -37,8 +43,8 @@ function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
   return map
 }
 
-function handlePaletteDragStart(e: DragEvent<HTMLButtonElement>, typeId: string) {
-  e.dataTransfer.setData('application/dashboard-extension', typeId)
+function handlePaletteDragStart(e: DragEvent<HTMLButtonElement>, type: string) {
+  e.dataTransfer.setData('application/dashboard-extension', type)
   e.dataTransfer.effectAllowed = 'move'
 }
 
@@ -48,7 +54,7 @@ interface NodeInspectorProps {
   override?: ReactNode
   updateNodeData: (nodeId: string, patch: Partial<NodeData>) => void
   onDeselect: () => void
-  onEditExtension: (extensionId: string) => void
+  onEditExtension: (folder: string) => void
   onExpandedChange: (next: boolean) => void
 }
 
@@ -91,32 +97,31 @@ export function NodeInspector({
   if (!resolved) {
     return (
       <Flex expanded className='w-full h-full bg-card p-3'>
-        <p className='text-destructive text-xs'>Unknown extension: {node.type}</p>
+        <p className='text-destructive text-xs'>{missingTypeLabel(node.type ?? '')}</p>
+        {node.type ? <InstallMissingExtension type={node.type} className='mt-2 self-start' /> : null}
       </Flex>
     )
   }
 
   const Icon = resolved.icon
   const Inspector = resolved.inspector
-  const inspectorTabs = resolved.inspectorTabs
-  const isLocal = resolved.extension.manifest.id.startsWith('local/')
-  const hasTabs = inspectorTabs && inspectorTabs.length > 0
+  const editableFolder = editableFolderOf(resolved)
 
-  const tabs = hasTabs
-    ? [
-        { id: 'details', label: 'Details', icon: 'Settings' as const, fullHeight: false, component: Inspector },
-        ...inspectorTabs.map((tab) => ({ ...tab, fullHeight: Boolean(tab.fullHeight) })),
-      ]
-    : []
+  // Every node has Details first and Comment last, whatever its type; the
+  // type's own tabs go between them.
+  const tabs = [
+    { id: 'details', label: 'Details', icon: 'Settings', fullHeight: false, component: Inspector },
+    ...(resolved.inspectorTabs ?? []).map((tab) => ({ ...tab, fullHeight: Boolean(tab.fullHeight) })),
+    { id: 'comment', label: 'Comment', icon: 'MessageSquare', fullHeight: false, component: NodeCommentTab },
+  ]
 
   // The node's tab lives in the intent store, not in state here: the node's
   // own buttons write it, the tab strip below writes it, and this reads it.
   // A copy in state was what reopened the terminal on every reselection: the
   // button's request outlived the user's later pick of Details.
-  const activeTab = hasTabs && tabs.some((t) => t.id === intent.tab) ? (intent.tab as string) : 'details'
-  const activeEntry = hasTabs ? tabs.find((t) => t.id === activeTab) : null
-  const ActiveComponent = activeEntry?.component ?? Inspector
-  const fillHeight = activeEntry?.fullHeight ?? false
+  const activeEntry = tabs.find((t) => t.id === intent.tab) ?? tabs[0]
+  const ActiveComponent = activeEntry.component
+  const fillHeight = activeEntry.fullHeight
 
   const inspectorProps = {
     nodeId: node.id,
@@ -161,12 +166,12 @@ export function NodeInspector({
             {node.id}
           </button>
         </div>
-        {isLocal && (
+        {editableFolder && (
           <Button
             variant='ghost'
             size='icon'
             title='Edit extension source'
-            onClick={() => onEditExtension(resolved.extension.manifest.id)}
+            onClick={() => onEditExtension(editableFolder)}
           >
             <Pencil />
           </Button>
@@ -185,13 +190,11 @@ export function NodeInspector({
         </Button>
       </Flex>
       <Separator />
-      {hasTabs && (
-        <PanelTabStrip
-          tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label, icon: resolveIcon(tab.icon) }))}
-          activeId={activeTab}
-          onSelect={(id) => inspectorIntent.setTab(node.id, id)}
-        />
-      )}
+      <PanelTabStrip
+        tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label, icon: resolveIcon(tab.icon) }))}
+        activeId={activeEntry.id}
+        onSelect={(id) => inspectorIntent.setTab(node.id, id)}
+      />
       {body}
     </Flex>
   )
@@ -202,7 +205,7 @@ interface NodeBrowserProps {
   extensions: ResolvedNode[]
   graphNodes: Node<NodeData>[]
   onTabChange: (tab: BrowserTab) => void
-  onEditExtension: (extensionId: string) => void
+  onEditExtension: (folder: string) => void
   onFocusNode: (nodeId: string) => void
 }
 
@@ -293,7 +296,7 @@ function PaletteTab({
   onEditExtension,
 }: {
   extensions: ResolvedNode[]
-  onEditExtension: (extensionId: string) => void
+  onEditExtension: (folder: string) => void
 }) {
   const groups = groupByCategory(extensions)
 
@@ -312,26 +315,26 @@ function PaletteTab({
           <div className='px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground'>{category}</div>
           {items.map((node) => {
             const Icon = node.icon
-            const isLocal = node.extension.manifest.id.startsWith('local/')
+            const editableFolder = editableFolderOf(node)
             return (
-              <div key={node.typeId} className='group relative flex items-center hover:bg-accent/50'>
+              <div key={node.type} className='group relative flex items-center hover:bg-accent/50'>
                 <button
                   type='button'
                   title={node.description ?? node.name}
                   draggable
-                  onDragStart={(e) => handlePaletteDragStart(e, node.typeId)}
+                  onDragStart={(e) => handlePaletteDragStart(e, node.type)}
                   className='flex-1 flex items-center gap-2 px-3 py-1.5 text-xs text-left'
                 >
                   <Icon className='size-3.5 shrink-0' style={{ color: node.accent }} />
                   <span className='truncate'>{node.name}</span>
                 </button>
-                {isLocal && (
+                {editableFolder && (
                   <Button
                     size='icon'
                     variant='ghost'
                     className='size-5 mr-1 opacity-0 group-hover:opacity-100'
                     title='Edit extension'
-                    onClick={() => onEditExtension(node.extension.manifest.id)}
+                    onClick={() => onEditExtension(editableFolder)}
                   >
                     <Pencil className='size-3' />
                   </Button>

@@ -27,7 +27,9 @@ import {
   promptLocalImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { SEND_MESSAGE_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { LOG_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import { updateNodeData } from '@/app/_authed/(extension-runtime)/_server/node-data'
 import { reportSendFailure } from '@/app/_authed/(extension-runtime)/_server/send-failure-report'
 import { tryParseJsonMessage } from '@/app/_authed/(extension-runtime)/_server/send-message-helpers'
@@ -179,7 +181,7 @@ async function persistToDownstreamLogs(
       continue
     }
     const target = nodes.find((n) => n.id === edge.target)
-    if (target?.type !== 'log') {
+    if (target?.type !== LOG_NODE_TYPE) {
       continue
     }
     const max =
@@ -243,7 +245,7 @@ async function dispatchToHandleAction(
   const metaByType = new Map<string, NodeMetadata>()
   for (const manifest of await loadAllManifests()) {
     for (const node of manifest.nodes ?? []) {
-      metaByType.set(node.typeId, node)
+      metaByType.set(node.type, node)
     }
   }
   for (const edge of outgoing) {
@@ -317,7 +319,7 @@ async function persistToDownstreamSendMessages(
       continue
     }
     const target = nodes.find((n) => n.id === edge.target)
-    if (target?.type !== 'send-message') {
+    if (target?.type !== SEND_MESSAGE_NODE_TYPE) {
       continue
     }
     try {

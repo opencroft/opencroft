@@ -23,7 +23,7 @@ import { sseEventsStore, useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-event
 import { RenderBoundary } from '@/components/render-boundary'
 import { AppToolViewHost } from '@/components/tool-views/app-tool-view-host'
 import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
-import { cn } from '@/lib/utils'
+import { cn } from 'cn'
 
 export interface PendingRequestEntry {
   id: string
@@ -193,7 +193,7 @@ function AskUserDetail({ request }: { request: PendingAskUser }) {
   }, [request.id])
 
   return (
-    <div className='shrink-0 border-t max-h-96 overflow-y-auto'>
+    <div data-slot='ask-user-request' className='shrink-0 border-t max-h-96 overflow-y-auto'>
       <AskUser message={message} schema={schema} onSubmit={onSubmit} onCancel={onCancel} pending={pending} />
     </div>
   )

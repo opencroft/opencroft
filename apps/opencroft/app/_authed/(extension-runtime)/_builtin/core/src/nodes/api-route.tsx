@@ -109,7 +109,7 @@ export function ApiRouteInspector({
 }
 
 export const API_ROUTE_HANDLES = [
-  { id: 'exec-out', contextType: 'execution-context', role: 'source' as const, label: 'Handler' },
+  { id: 'exec-out', handleType: 'execution-context', role: 'source' as const, label: 'Handler' },
 ]
 
 export function apiRouteExposeOutput(handleId: string, data: unknown): { path: string; methods: string[] } | undefined {

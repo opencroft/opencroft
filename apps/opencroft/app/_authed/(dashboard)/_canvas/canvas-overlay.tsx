@@ -1,5 +1,6 @@
 'use client'
 
+import { cn } from 'cn'
 import * as lucideIcons from 'lucide-react'
 import { type LucideIcon, X } from 'lucide-react'
 import type * as React from 'react'
@@ -18,7 +19,6 @@ import {
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { cn } from '@/lib/utils'
 
 interface CanvasOverlayProps {
   nodes: CommandNodeEntry[]

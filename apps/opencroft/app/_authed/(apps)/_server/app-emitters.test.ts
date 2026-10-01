@@ -23,9 +23,10 @@ import test, { after } from 'node:test'
 
 import { db, spaceApp } from '@opencroft/db'
 
+import { qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-import { GRAPH_APP_EXTENSION_ID, GRAPH_APP_SLUG } from '@/app/_authed/(space)/_server/types'
-import { appDetail, listAppActions, listAppCatalog, listSpaceApps } from './runtime'
+import { GRAPH_APP_TYPE } from '@/app/_authed/(space)/_server/types'
+import { appDetail, callAppAction, listAppActions, listAppCatalog, listSpaceApps, renameSpaceAppImpl } from './runtime'
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
 
@@ -37,27 +38,35 @@ const spaceSlug = `app-emitters-${suffix}`
 // picked from the extensions an instance has installed: those live under a
 // gitignored data directory, so a fresh checkout has none, and a test that
 // borrowed one passed only on a machine where something had been installed.
-// Both extension roots point into the scratch root, so whatever IS installed on
+// The extension root follows the scratch data dir, so whatever IS installed on
 // the machine running this cannot join the population either. Two actions, so
 // that asking for one of them is a real selection rather than the whole list.
 const root = mkdtempSync(join(tmpdir(), 'app-emitters-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = join(root, 'local')
-process.env.OPENCROFT_INSTALLED_EXT_ROOT = join(root, 'installed')
-after(() => rmSync(root, { recursive: true, force: true }))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
+after(() => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
+  rmSync(root, { recursive: true, force: true })
+})
 
 const FIXTURE_EXTENSION = `emitfix-${suffix}`
-const FIXTURE_APP = `${FIXTURE_EXTENSION}-app`
-mkdirSync(join(root, 'local', FIXTURE_EXTENSION), { recursive: true })
+const FIXTURE_FOLDER = `local.${FIXTURE_EXTENSION}`
+const FIXTURE_APP = qualifyType(FIXTURE_FOLDER, 'app')
+mkdirSync(join(root, 'extensions', FIXTURE_FOLDER), { recursive: true })
 writeFileSync(
-  join(root, 'local', FIXTURE_EXTENSION, 'extension.json'),
+  join(root, 'extensions', FIXTURE_FOLDER, 'extension.json'),
   JSON.stringify({
-    id: `local/${FIXTURE_EXTENSION}`,
+    id: FIXTURE_FOLDER,
     name: 'App-emitters fixture',
     version: '0.0.0',
     provides: {
       apps: [
         {
-          slug: FIXTURE_APP,
+          type: 'app',
           title: 'Fixture app',
           actions: [
             { id: 'deploy', label: 'Deploy' },
@@ -76,8 +85,7 @@ const [row] = await db
   .insert(spaceApp)
   .values({
     spaceId: space.id,
-    extensionId: GRAPH_APP_EXTENSION_ID,
-    appSlug: GRAPH_APP_SLUG,
+    type: GRAPH_APP_TYPE,
     name: 'Reports',
     slug: 'reports',
   })
@@ -89,24 +97,32 @@ const address = `${spaceSlug}.${row.slug}`
 // unset, and the tests below then fail on the guard instead of passing over
 // nothing.
 const catalog = await listAppCatalog()
-const fixture = catalog.find((entry) => entry.appSlug === FIXTURE_APP)
-let acting: { appSlug: string; extensionId: string; ids: string[] } | undefined
+const fixture = catalog.find((entry) => entry.type === FIXTURE_APP)
+let acting: { type: string; ids: string[] } | undefined
 if (fixture) {
-  const actions = await listAppActions(fixture.appSlug)
-  acting = { appSlug: fixture.appSlug, extensionId: fixture.extensionId, ids: actions.map((action) => action.id) }
+  const actions = await listAppActions(fixture.type)
+  acting = { type: fixture.type, ids: actions.map((action) => action.id) }
 }
 if (acting) {
-  const { extensionId, appSlug } = acting
+  const { type } = acting
   await db.insert(spaceApp).values(
     ['first', 'second'].map((slug) => ({
       spaceId: space.id,
-      extensionId,
-      appSlug,
+      type,
       name: `Acting ${slug}`,
       slug: `acting-${slug}`,
     })),
   )
 }
+
+// An instance of an App whose extension is not installed: it stays, as a row
+// and an address, in the missing-extension state.
+const MISSING_APP = qualifyType(`acme.gone-${suffix}`, 'board')
+const [missingRow] = await db
+  .insert(spaceApp)
+  .values({ spaceId: space.id, type: MISSING_APP, name: 'Old board', slug: 'old-board' })
+  .returning()
+const missingAddress = `${spaceSlug}.${missingRow.slug}`
 
 /** The chosen App, or the reason the tests below could not have meant anything. */
 function actingApp() {
@@ -129,7 +145,7 @@ test('app_list keys every app by its address', async () => {
   const listing = await listSpaceApps(spaceSlug)
   const reports = listing.apps[address]
   assert.ok(reports, `the app is listed under ${address}`)
-  assert.equal(reports.type, GRAPH_APP_SLUG, 'carrying the App it is an instance of')
+  assert.equal(reports.type, GRAPH_APP_TYPE, 'carrying the App it is an instance of, qualified')
   assert.equal(reports.name, row.name, 'and the name its user gave it')
 })
 
@@ -149,9 +165,9 @@ test('app_list hands out no uuid, in any field', async () => {
 test('app_list declares a type’s actions once, however many apps have that type', async () => {
   const chosen = actingApp()
   const listing = await listSpaceApps(spaceSlug)
-  const sameType = Object.values(listing.apps).filter((app) => app.type === chosen.appSlug)
+  const sameType = Object.values(listing.apps).filter((app) => app.type === chosen.type)
   assert.equal(sameType.length, 2, 'the space holds two apps of that type')
-  assert.deepEqual(listing.actions[chosen.appSlug], chosen.ids, 'named once, under the type')
+  assert.deepEqual(listing.actions[chosen.type], chosen.ids, 'named once, under the type')
   for (const app of Object.values(listing.apps)) {
     assert.ok(!('actions' in app), 'and never repeated on an app')
   }
@@ -160,6 +176,10 @@ test('app_list declares a type’s actions once, however many apps have that typ
 test('app_list names exactly the action ids app_actions loads', async () => {
   const listing = await listSpaceApps(spaceSlug)
   for (const [type, ids] of Object.entries(listing.actions)) {
+    if (type === MISSING_APP) {
+      // Nothing provides it, so nothing declares its actions; see below.
+      continue
+    }
     const loaded = await listAppActions(type)
     assert.deepEqual(
       ids,
@@ -170,7 +190,7 @@ test('app_list names exactly the action ids app_actions loads', async () => {
 })
 
 test('app_actions answers an app’s address the same as its type', async () => {
-  const byType = await listAppActions(actingApp().appSlug)
+  const byType = await listAppActions(actingApp().type)
   const byAddress = await listAppActions(`${spaceSlug}.acting-first`)
   assert.deepEqual(byAddress, byType, 'actions belong to the App, so both spellings reach the same ones')
 })
@@ -178,7 +198,7 @@ test('app_actions answers an app’s address the same as its type', async () => 
 test('app_actions loads only the actions asked for', async () => {
   const chosen = actingApp()
   const [first] = chosen.ids
-  const loaded = await listAppActions(chosen.appSlug, [first])
+  const loaded = await listAppActions(chosen.type, [first])
   assert.deepEqual(
     loaded.map((action) => action.id),
     [first],
@@ -192,13 +212,18 @@ test('app_actions refuses an unknown type rather than reporting no actions', asy
 })
 
 test('app_actions refuses an action the App does not declare', async () => {
-  await assert.rejects(() => listAppActions(GRAPH_APP_SLUG, ['no-such-action']), /no action/)
+  await assert.rejects(() => listAppActions(GRAPH_APP_TYPE, ['no-such-action']), /no action/)
+})
+
+test('app_actions takes only a qualified type: a bare name names no App', async () => {
+  await assert.rejects(() => listAppActions('graph'), /No App type "graph"/)
 })
 
 test('app_get carries the parameters app_list leaves out', async () => {
   const detail = await appDetail(address)
   assert.equal(detail.address, address, 'addressed <space>.<slug>')
-  assert.equal(detail.extensionId, GRAPH_APP_EXTENSION_ID, 'and says which extension provides its App')
+  assert.equal(detail.extensionId, 'builtin.core', 'and says which extension provides its App')
+  assert.equal(detail.provided, true)
   assert.deepEqual(detail.params, {}, 'with the values it was added with')
   assert.ok(Array.isArray(detail.parameters), 'and the fields those values fill')
   const listing = await listSpaceApps(spaceSlug)
@@ -207,6 +232,27 @@ test('app_get carries the parameters app_list leaves out', async () => {
 
 test('app_get refuses a reference that names no app', async () => {
   await assert.rejects(() => appDetail(`${spaceSlug}.no-such-app`), /Unknown app/)
+})
+
+// ── an app whose extension is missing ────────────────────────────────
+
+test('an app whose extension is missing is still listed and described, as not provided', async () => {
+  const listing = await listSpaceApps(spaceSlug)
+  assert.equal(listing.apps[missingAddress]?.type, MISSING_APP)
+  const detail = await appDetail(missingAddress)
+  assert.equal(detail.provided, false)
+  assert.equal(detail.extensionId, `acme.gone-${suffix}`, 'naming the extension it waits for')
+})
+
+test('an app whose extension is missing can still be renamed: it has no hooks to run, not a failure', async () => {
+  const renamed = await renameSpaceAppImpl(missingRow.id, 'Older board')
+  assert.equal(renamed.slug, 'older-board')
+  assert.equal(renamed.type, MISSING_APP, 'and it keeps the type it waits for')
+  await renameSpaceAppImpl(missingRow.id, missingRow.name)
+})
+
+test('an action on an app whose extension is missing is refused, naming the extension', async () => {
+  await assert.rejects(() => callAppAction(missingAddress, 'deploy', {}), new RegExp(`acme\\.gone-${suffix}`))
 })
 
 // `list_spaces` is the other emitter that used to hand out an App instance id —

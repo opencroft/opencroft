@@ -4,6 +4,7 @@ import test from 'node:test'
 import { DEFAULT_PRESENCE } from 'agent-client/presence'
 import type { AsyncTaskInfo, ChatEvent } from 'agent-client/types'
 
+import { buildBlocks } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { fold } from './use-acp-session'
 
 function turn(userText: string, replyText: string): ChatEvent[] {
@@ -331,39 +332,42 @@ const PLAN_EVENTS: ChatEvent[] = [
   },
 ]
 
-test('plan updates fold to one plan part, patched in place at its first event', () => {
-  // Every plan event carries the FULL entry list, so one event per update must
-  // not stack one checklist per update — the later event patches the part the
-  // first anchored, and the checklist stays in the transcript where it began.
-  const { messages } = fold(PLAN_EVENTS, 0)
-  const plans = messages.flatMap((m) => m.parts.filter((p) => p.type === 'plan'))
-  assert.equal(plans.length, 1)
+test('the plan is session state: the latest list wins and the transcript carries no part for it', () => {
+  // Every plan event carries the FULL entry list; the header's plan control
+  // reads it, so the transcript holds only what the agent said around it.
+  const folded = fold(PLAN_EVENTS, 0)
+  assert.deepEqual(folded.plan, [
+    { content: 'read the code', status: 'completed', priority: 'high' },
+    { content: 'fix the fold', status: 'in_progress', priority: 'high' },
+  ])
   assert.deepEqual(
-    plans.map((p) => (p.type === 'plan' ? p.entries : null)),
-    [
-      [
-        { content: 'read the code', status: 'completed', priority: 'high' },
-        { content: 'fix the fold', status: 'in_progress', priority: 'high' },
-      ],
-    ],
+    folded.messages.map((m) => m.parts.map((p) => p.type)),
+    [['text']],
   )
-  // The part carries the anchor event's absolute index, so React keeps the
-  // checklist node while later events patch it.
-  const owner = messages.find((m) => m.parts.some((p) => p.type === 'plan'))
-  assert.ok(owner)
-  assert.equal(owner.parts.find((p) => p.type === 'plan')?.id, 0)
 })
 
-test('an empty plan clears the part, and the next plan anchors fresh', () => {
+test('an empty plan clears it, and the next plan replaces it', () => {
   const cleared: ChatEvent[] = [...PLAN_EVENTS, { kind: 'plan', entries: [] }]
-  assert.equal(fold(cleared, 0).messages.flatMap((m) => m.parts.filter((p) => p.type === 'plan')).length, 0)
-  const reanchored: ChatEvent[] = [
+  assert.deepEqual(fold(cleared, 0).plan, [])
+  const replanned: ChatEvent[] = [
     ...cleared,
     { kind: 'plan', entries: [{ content: 'fresh plan', status: 'in_progress', priority: 'high' }] },
   ]
-  const plans = fold(reanchored, 0).messages.flatMap((m) => m.parts.filter((p) => p.type === 'plan'))
-  assert.equal(plans.length, 1)
-  assert.deepEqual(plans[0].type === 'plan' ? plans[0].entries : null, [
-    { content: 'fresh plan', status: 'in_progress', priority: 'high' },
+  assert.deepEqual(fold(replanned, 0).plan, [{ content: 'fresh plan', status: 'in_progress', priority: 'high' }])
+})
+
+test('a notice draws as a notice item in its turn, between the text around it rather than merged into it', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'go' },
+    { kind: 'agent_message', text: 'Working' },
+    { kind: 'notice', notice: { severity: 'error', title: 'Hook blocked the turn', description: 'Policy says no.' } },
+    { kind: 'agent_message', text: 'Stopped.' },
+  ]
+  const details = buildBlocks(fold(events, 0).messages).find((block) => block.kind === 'details')
+  assert.ok(details && details.kind === 'details')
+  assert.deepEqual(details.items, [
+    { kind: 'assistant-text', text: 'Working' },
+    { kind: 'notice', severity: 'error', title: 'Hook blocked the turn', description: 'Policy says no.' },
+    { kind: 'assistant-text', text: 'Stopped.' },
   ])
 })

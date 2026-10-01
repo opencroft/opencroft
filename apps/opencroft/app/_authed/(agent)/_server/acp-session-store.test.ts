@@ -10,6 +10,7 @@ import {
   copyTabKeys,
   dropTabKeys,
   readLastKnownUsage,
+  readLastKnownUsages,
   readPersistedConfigOptions,
   readPersistedPresence,
   readPersistedSession,
@@ -43,6 +44,20 @@ test("readLastKnownUsage is null when the pointer's session never reported usage
 
   const usage = await readLastKnownUsage(sessionKey)
   assert.equal(usage, null, 'a pointer with nothing persisted under its session id is exactly as unknown as no pointer')
+})
+
+test('readLastKnownUsages answers every key in one call and leaves out those with nothing to report', async () => {
+  const reported = `batch-usage-${crypto.randomUUID()}`
+  const reportedId = `session-${crypto.randomUUID()}`
+  const silent = `batch-no-usage-${crypto.randomUUID()}`
+  const unknown = `batch-never-seen-${crypto.randomUUID()}`
+  await writePersistedSession(reported, reportedId, true)
+  await writePersistedUsage(reportedId, { used: 4_321, size: 100_000 })
+  await writePersistedSession(silent, `session-${crypto.randomUUID()}`, true)
+
+  const usages = await readLastKnownUsages([reported, silent, unknown])
+  assert.deepEqual([...usages.keys()], [reported], 'a key with no pointer or no reading is left out')
+  assert.equal(usages.get(reported)?.used, 4_321)
 })
 
 // MOVING A TAB KEY. `copyTabKeys` runs TWICE -- once before the rename that

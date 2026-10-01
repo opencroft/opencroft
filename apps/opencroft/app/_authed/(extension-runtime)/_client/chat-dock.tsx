@@ -1,6 +1,7 @@
 'use client'
 
 import { useSession } from '@opencroft/auth/client'
+import { AgentPlanControl } from 'agent-chat/components/agent-plan-control'
 import { PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
@@ -21,7 +22,7 @@ import { useIsMobile } from 'ui/hooks/use-mobile'
 import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
 import { BackButton } from 'ui/utils/back-button'
 
-import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import type {
   EmbeddedChatSelection,
   EmbeddedThreadContext,
@@ -285,8 +286,8 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // The chat's threads waiting on someone -- a permission to grant or a
   // question to answer -- for the launcher's badge, off the same pushed
   // session activity every chat list reads.
-  const { pendingKeys } = useSessionActivityKeys()
-  const waitingCount = countChatThreadKeys(pendingKeys, space)
+  const { pending } = useSessionActivity()
+  const waitingCount = countChatThreadKeys(pending, space)
 
   const beginFloatGesture = (
     event: React.PointerEvent,
@@ -414,6 +415,10 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // thread has delegated something to list.
   const workButton = (buttonSize: 'icon' | 'icon-sm') =>
     threadContext ? <ThreadWorkControl work={threadContext.work} size={buttonSize} /> : null
+  // The agent's plan, beside the work control and in its size. It draws
+  // nothing while the plan is empty.
+  const planButton = (buttonSize: 'icon' | 'icon-sm') =>
+    threadContext ? <AgentPlanControl entries={threadContext.plan} size={buttonSize} /> : null
   // The thread's notes, just ahead of the work control and in its size. Like
   // it, drawn only for an open thread and only once there is a note to list.
   const artifactButton = (buttonSize: 'icon' | 'icon-sm') =>
@@ -462,6 +467,7 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
           {homeActions}
           {artifactButton(arrangement.buttonSize)}
           {workButton(arrangement.buttonSize)}
+          {planButton(arrangement.buttonSize)}
         </>
       }
       trailing={

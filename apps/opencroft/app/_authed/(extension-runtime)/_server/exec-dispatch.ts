@@ -8,15 +8,16 @@
 // result (stable across graph re-saves) plus the outcome of every target.
 //
 // Target resolution order, per connected node:
-//   1. Its owning extension exports a `nodeActions[typeId].handle` action
+//   1. Its owning extension exports a `nodeActions[<bare type>].handle` action
 //      (the same mechanism gitea-handler and other extensions already use
 //      for Agent Tool calls) -> dispatched via `dispatchNodeAction`.
 //   2. It is a built-in script node (`data.language` is one of the script
-//      languages) -> dispatched via the `builtin/core` extension's
+//      languages) -> dispatched via the `builtin.core` extension's
 //      `handler.run` action, unchanged from today's per-producer behavior.
 //   3. Neither -> the same "Unsupported handler language" error producers
 //      have always returned, scoped to that one target.
 
+import { CORE_EXTENSION_ID, parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { invokeExtensionActionImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { dispatchNodeActionImpl } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
@@ -135,17 +136,18 @@ async function findSpaceWithNode(
   }
 }
 
-async function hasHandleAction(typeId: string | undefined): Promise<boolean> {
-  if (!typeId) {
+async function hasHandleAction(type: string | undefined): Promise<boolean> {
+  const bare = type ? parseType(type)?.bare : undefined
+  if (!bare) {
     return false
   }
   const manifests = await loadAllManifests()
-  const owning = manifests.find((m) => m.nodes?.some((n) => n.typeId === typeId))
+  const owning = manifests.find((m) => m.nodes?.some((n) => n.type === type))
   if (!owning) {
     return false
   }
   const mod = await getExtensionModule(owning.id)
-  return Boolean(mod.nodeActions?.[typeId]?.handle)
+  return Boolean(mod.nodeActions?.[bare]?.handle)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -207,7 +209,7 @@ async function dispatchToTarget(
   let result: ExecDispatchResult
   try {
     result = ((await invokeExtensionActionImpl({
-      extensionId: 'builtin/core',
+      extensionId: CORE_EXTENSION_ID,
       actionName: 'handler.run',
       args: [{ script: (data.script as string) ?? '', language, context: context ?? { type: 'local' }, event, env }],
     })) ?? {}) as ExecDispatchResult

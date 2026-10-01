@@ -507,7 +507,8 @@ export interface AppFormProps {
 /**
  * The client half of an App: the manifest's `provides.apps` entry plus the
  * React component. Declared under the same `apps` point in the client
- * `provides` of `defineExtension`, so the two halves are matched by slug.
+ * `provides` of `defineExtension`, with the same bare `type`: the host
+ * qualifies both with the extension's id and matches the two halves by it.
  */
 export interface AppDefinition extends AppEntry {
   component: ComponentType<AppComponentProps>

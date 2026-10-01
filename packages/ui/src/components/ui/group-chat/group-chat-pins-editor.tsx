@@ -4,7 +4,7 @@ import { Plus, X } from 'lucide-react'
 import { useState } from 'react'
 
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from 'ui/components/ui/input-group'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Word for word the server's `pin-limit` refusal. The editor stops the press
 // early where it can, but two members pinning at the same instant both pass

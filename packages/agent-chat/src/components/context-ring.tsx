@@ -1,13 +1,13 @@
 'use client'
 
 import { Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { Slider } from 'ui/components/ui/slider'
 import { UsageCost, type UsageTokens } from './usage-cost'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface ContextRingProps {
   // Tokens consumed so far.
@@ -254,6 +254,62 @@ function RateLimitRow({
   )
 }
 
+type UsageState = ReturnType<typeof usageState>
+
+// Everything a reading says, decided once for every surface that draws one.
+function readUsage(usedTokens: number, contextLimit: number, warnAtPercent: number, dangerAtPercent: number) {
+  const hasLimit = contextLimit > 0
+  const ratio = hasLimit ? Math.min(1, Math.max(0, usedTokens / contextLimit)) : 0
+  const pct = Math.round(ratio * 100)
+  const counts = hasLimit ? `${formatTokens(usedTokens)} / ${formatTokens(contextLimit)}` : formatTokens(usedTokens)
+  const label = hasLimit
+    ? `Context usage: ${counts} (${pct}%)`
+    : `Context usage: ${counts} used, window size not reported`
+  return { hasLimit, ratio, pct, state: usageState(pct, warnAtPercent, dangerAtPercent), counts, label }
+}
+
+// The ring's track and fill, laid over a `relative` size-7 box its host draws.
+function RingFill({ ratio, state }: { ratio: number; state: UsageState }) {
+  const stroke =
+    state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
+  const radius = 9
+  const circumference = 2 * Math.PI * radius
+  const dash = circumference * ratio
+  return (
+    <svg aria-hidden='true' className='pointer-events-none absolute inset-0 size-7 -rotate-90' viewBox='0 0 24 24'>
+      <circle cx='12' cy='12' r={radius} fill='none' strokeWidth='2.5' style={{ stroke: 'var(--border)' }} />
+      <circle
+        cx='12'
+        cy='12'
+        r={radius}
+        fill='none'
+        strokeWidth='2.5'
+        strokeLinecap='round'
+        strokeDasharray={`${dash} ${circumference - dash}`}
+        style={{ stroke }}
+      />
+    </svg>
+  )
+}
+
+// The figure in the centre. It follows the ring only into danger. Warning is an
+// amber token, and amber text at 10px is a contrast problem rather than a
+// signal -- the ring itself carries that state, where a 2.5px stroke against
+// the track has the contrast to spare.
+function RingNumeral({ state, children }: { state: UsageState; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        'pointer-events-none relative tabular-nums',
+        state === 'danger' ? 'font-medium text-destructive' : 'text-muted-foreground',
+      )}
+      style={{ fontSize: 10 }}
+    >
+      {children}
+    </span>
+  )
+}
+
 // A circular context-usage indicator for an agent chat: the fraction of the
 // window in use drawn as a ring, the integer percentage written in the centre,
 // and the counts -- plus Compact -- in a popover on press.
@@ -305,24 +361,12 @@ export function ContextRing({
   defaultOpen,
   className,
 }: ContextRingProps) {
-  const hasLimit = contextLimit > 0
-  const ratio = hasLimit ? Math.min(1, Math.max(0, usedTokens / contextLimit)) : 0
-  const pct = Math.round(ratio * 100)
-
-  const state = usageState(pct, warnAtPercent, dangerAtPercent)
-  const stroke =
-    state === 'danger' ? 'var(--destructive)' : state === 'warning' ? 'var(--warning)' : 'var(--primary)'
-
-  const radius = 9
-  const circumference = 2 * Math.PI * radius
-  const dash = circumference * ratio
-
-  const counts = hasLimit
-    ? `${formatTokens(usedTokens)} / ${formatTokens(contextLimit)}`
-    : formatTokens(usedTokens)
-  const label = hasLimit
-    ? `Context usage: ${counts} (${pct}%)`
-    : `Context usage: ${counts} used, window size not reported`
+  const { hasLimit, ratio, pct, state, counts, label } = readUsage(
+    usedTokens,
+    contextLimit,
+    warnAtPercent,
+    dangerAtPercent,
+  )
   const freshness = asOf ? formatAsOf(asOf) : null
   // The freshness reaches the accessible name too: the dimming is the visual
   // channel for it and a screen reader has no access to that one, so without
@@ -359,23 +403,7 @@ export function ContextRing({
             same attribute once React renders them, but the a11y lint only
             recognises the explicit form and reads the bare one as no
             annotation at all. */}
-        <svg aria-hidden='true' className='pointer-events-none absolute inset-0 size-7 -rotate-90' viewBox='0 0 24 24'>
-          <circle cx='12' cy='12' r={radius} fill='none' strokeWidth='2.5' style={{ stroke: 'var(--border)' }} />
-          <circle
-            cx='12'
-            cy='12'
-            r={radius}
-            fill='none'
-            strokeWidth='2.5'
-            strokeLinecap='round'
-            strokeDasharray={`${dash} ${circumference - dash}`}
-            style={{ stroke }}
-          />
-        </svg>
-        {/* The numeral follows the ring only into danger. Warning is an amber
-            token, and amber text at 10px is a contrast problem rather than a
-            signal -- the ring itself carries that state, where a 2.5px stroke
-            against the track has the contrast to spare. */}
+        <RingFill ratio={ratio} state={state} />
         {compacting ? (
           // The ring's own loader, in place of the numerals -- reusing the
           // spinner compaction already shows elsewhere rather than adding a
@@ -383,15 +411,7 @@ export function ContextRing({
           // underneath it, so the ring itself never goes blank.
           <Loader2 aria-hidden className='pointer-events-none relative size-3 animate-spin text-muted-foreground' />
         ) : (
-          <span
-            className={cn(
-              'pointer-events-none relative tabular-nums',
-              state === 'danger' ? 'font-medium text-destructive' : 'text-muted-foreground',
-            )}
-            style={{ fontSize: 10 }}
-          >
-            {pct}
-          </span>
+          <RingNumeral state={state}>{pct}</RingNumeral>
         )}
       </PopoverTrigger>
       <PopoverContent align='start' side='top' className='w-56 gap-0 p-0'>
@@ -486,5 +506,56 @@ export function ContextRing({
         </div>
       </PopoverContent>
     </Popover>
+  )
+}
+
+export interface ContextReadingProps {
+  usedTokens: number
+  // The window's size; null, 0 or unset when the harness names none.
+  contextLimit?: number | null
+  // Same meaning as ContextRing's: present only on a last-known reading, which
+  // is drawn dimmed and says when it is from.
+  asOf?: number
+  warnAtPercent?: number
+  dangerAtPercent?: number
+  className?: string
+}
+
+// A context reading to glance at rather than act on -- for a list of sessions,
+// where a row is already the thing that is pressed. ContextRing's ring, figure
+// and thresholds, without its popover.
+//
+// Where no window is reported the ring has no fraction to draw, and a list of
+// rings reading 0 would say every session is empty. The tokens held are written
+// instead, so the one figure that is known is the one shown.
+export function ContextReading({
+  usedTokens,
+  contextLimit,
+  asOf,
+  warnAtPercent = 70,
+  dangerAtPercent = 90,
+  className,
+}: ContextReadingProps) {
+  const { hasLimit, ratio, pct, state, label } = readUsage(
+    usedTokens,
+    contextLimit ?? 0,
+    warnAtPercent,
+    dangerAtPercent,
+  )
+  const fullLabel = asOf ? `${label} — ${formatAsOf(asOf)}` : label
+  return (
+    <span
+      role='img'
+      aria-label={fullLabel}
+      title={fullLabel}
+      className={cn(
+        'relative inline-flex h-7 min-w-7 shrink-0 items-center justify-center',
+        asOf ? 'opacity-60' : null,
+        className,
+      )}
+    >
+      {hasLimit ? <RingFill ratio={ratio} state={state} /> : null}
+      <RingNumeral state={state}>{hasLimit ? pct : formatTokens(usedTokens)}</RingNumeral>
+    </span>
   )
 }

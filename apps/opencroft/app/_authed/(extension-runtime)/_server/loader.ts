@@ -4,16 +4,19 @@ import path from 'node:path'
 
 import type * as opencroft from '@opencroft/server'
 
+import { isBuiltinFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { readCheckoutState, refuseCompile } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import {
   buildExtension,
   CLIENT_ENTRY_CANDIDATES,
   SERVER_ENTRY_CANDIDATES,
 } from '@/app/_authed/(extension-runtime)/_server/compiler'
+import { listAllExtensionIds, MANIFEST_FILE } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
-import { listAllExtensionIds, readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
-import { extDir, extDistFile, projectRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
-import type { ExtensionManifest, ExtensionRoute } from '@/app/_authed/(extension-runtime)/_types'
+import { readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
+import { extDir, extDistFile, folderOf } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { newestMtime, sourceMtime, statMaybe } from '@/app/_authed/(extension-runtime)/_server/source-mtime'
+import type { ExposeOutputFn, ExtensionManifest, ExtensionRoute } from '@/app/_authed/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
 
 export type NodeActionHandler = (ctx: unknown) => Promise<unknown>
@@ -30,13 +33,14 @@ interface CachedModule {
   actions: Record<string, (...args: unknown[]) => Promise<unknown>>
   /** Per-action authorization policy declared by the extension alongside `actions`; an action it does not list is 'signed-in'. */
   actionAccess?: Record<string, ActionAccess>
-  exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+  exposeOutput?: ExposeOutputFn
+  /** Keyed by the extension's own bare node type, then action id. */
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
-  /** Per-node-action authorization policy, keyed typeId then actionId, declared alongside `nodeActions`; an action it does not list is 'signed-in'. */
+  /** Per-node-action authorization policy, keyed like `nodeActions`, declared alongside it; an action it does not list is 'signed-in'. */
   nodeActionAccess?: Record<string, Record<string, ActionAccess>>
   routes?: Record<string, ExtensionRoute>
   tools?: ExtensionToolHandlers
-  /** Per-App server lifecycle hooks, keyed by App slug — see `AppsExport` in `@opencroft/server`. */
+  /** Per-App server lifecycle hooks, keyed by the App's bare type — see `AppsExport` in `@opencroft/server`. */
   apps?: opencroft.AppsExport
   load?: ExtensionLifecycle
   unload?: ExtensionLifecycle
@@ -86,82 +90,6 @@ function manifestCache(): Map<string, ExtensionManifest> {
   return globalThis.__EXT_MANIFEST_CACHE__
 }
 
-async function statMaybe(file: string): Promise<number> {
-  try {
-    const stat = await fs.stat(file)
-    return stat.mtimeMs
-  } catch {
-    return 0
-  }
-}
-
-// Extensions can import any workspace package (agent-client, agent-chat, …)
-// via the monorepo's shared node_modules symlinks — esbuild resolves and
-// bundles their TS source directly into the extension (see
-// ALWAYS_BUNDLED_PACKAGES in compiler.ts; that list isn't exhaustive — any
-// workspace package actually imported gets bundled the same way). A merge
-// touching only packages/* never changes anything under an extension's own
-// directory, so sourceMtime alone can't see it — walk every workspace
-// package's source too. Conservative on purpose: any package change
-// invalidates every extension's cache, even ones that don't import it,
-// rather than risk missing one that does — the walk itself is cheap (a
-// handful of top-level dirs, same cost class as walking one extension's src).
-async function workspacePackagesMtime(): Promise<number> {
-  const dir = path.join(projectRoot(), '..', '..', 'packages')
-  let entries: string[]
-  try {
-    entries = await fs.readdir(dir)
-  } catch {
-    return 0
-  }
-  let max = 0
-  for (const entry of entries) {
-    max = Math.max(max, await walkMtime(path.join(dir, entry, 'src')))
-    max = Math.max(max, await statMaybe(path.join(dir, entry, 'package.json')))
-  }
-  return max
-}
-
-async function sourceMtime(extensionId: string): Promise<number> {
-  const dir = extDir(extensionId)
-  const candidates = [
-    path.join(dir, 'extension.json'),
-    path.join(dir, 'package.json'),
-    path.join(dir, 'src'),
-    path.join(dir, 'server'),
-    path.join(dir, 'extension.ts'),
-    path.join(dir, 'extension.tsx'),
-  ]
-  let max = await workspacePackagesMtime()
-  for (const p of candidates) {
-    max = Math.max(max, await walkMtime(p))
-  }
-  return max
-}
-
-async function walkMtime(start: string): Promise<number> {
-  try {
-    const stat = await fs.stat(start)
-    if (stat.isFile()) {
-      return stat.mtimeMs
-    }
-    if (stat.isDirectory()) {
-      const entries = await fs.readdir(start)
-      let max = stat.mtimeMs
-      for (const entry of entries) {
-        if (entry === 'node_modules' || entry === 'dist') {
-          continue
-        }
-        max = Math.max(max, await walkMtime(path.join(start, entry)))
-      }
-      return max
-    }
-    return 0
-  } catch {
-    return 0
-  }
-}
-
 async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Promise<void> {
   const srcMtime = await sourceMtime(extensionId)
   const serverMtime = await statMaybe(extDistFile(extensionId, 'server.js'))
@@ -188,12 +116,27 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
   }
   const bundleMtime = Math.min(...expectedMtimes)
   if (bundleMtime > 0 && bundleMtime >= srcMtime) {
+    unbuildable.delete(extensionId)
     return
   }
   // Every expected side has a (possibly stale) bundle on disk — the fallback
   // both the refusal and a failed build keep serving rather than leaving
   // nothing.
   const hasExistingBundle = expectedMtimes.every((mtime) => mtime > 0)
+
+  // Consulted on every page load, so an outcome that cannot change until its
+  // inputs do is not attempted, nor announced to everyone, again.
+  const remembered = unbuildable.get(extensionId)
+  if (
+    remembered &&
+    (remembered.retryAt === undefined || Date.now() < remembered.retryAt) &&
+    remembered.key === (await unbuildableKey(remembered.kind, extensionId, srcMtime))
+  ) {
+    if (hasExistingBundle) {
+      return
+    }
+    throw new Error(remembered.message)
+  }
 
   // A rebuild here republishes whatever the registered checkout currently holds,
   // and this path fires on ANY write into it -- an edit, a `git checkout`, a
@@ -215,7 +158,7 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
   // whatever branch the app itself is deployed from. That state says nothing
   // about an unreviewed extension parked in a dev checkout, which is the only
   // thing this refusal is about; a builtin simply tracks the app it ships in.
-  const isRegisteredCheckout = extensionId.split('/')[0] !== 'builtin'
+  const isRegisteredCheckout = !isBuiltinFolder(folderOf(extensionId))
   const refusal = isRegisteredCheckout ? refuseCompile(await readCheckoutState(extDir(extensionId)), false) : null
   if (refusal) {
     // Loud in BOTH directions. A silent refusal only trades an unnoticed deploy
@@ -228,13 +171,15 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
       toastType: 'error',
       message: `${extensionId} was not rebuilt. ${refusal.message}`,
     })
-    if (hasExistingBundle) {
-      return
-    }
     // Nothing built to fall back on, and this tree may not be published
     // automatically: fail loudly rather than silently building it anyway. Mirrors
     // the no-bundle branch of the build-failure handling just below.
-    throw new Error(`Extension ${extensionId} was not built: ${refusal.message}`)
+    const message = `Extension ${extensionId} was not built: ${refusal.message}`
+    await rememberUnbuildable(extensionId, 'refused', srcMtime, message)
+    if (hasExistingBundle) {
+      return
+    }
+    throw new Error(message)
   }
 
   const result = await buildExtension(extensionId, manifest)
@@ -245,18 +190,91 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
       toastType: 'error',
       message: `${extensionId} build failed:\n${summary}`,
     })
+    const message = `Extension ${extensionId} failed to build:\n${summary}`
+    await rememberUnbuildable(extensionId, 'failed', srcMtime, message)
     if (hasExistingBundle) {
       console.error(`[ext] ${extensionId} rebuild failed, keeping previous bundle:\n${summary}`)
       return
     }
-    throw new Error(`Extension ${extensionId} failed to build:\n${summary}`)
+    throw new Error(message)
   }
+  unbuildable.delete(extensionId)
+}
+
+/** An auto-rebuild that was refused or failed, and what decided it. */
+interface Unbuildable {
+  kind: 'refused' | 'failed'
+  key: string
+  message: string
+  /** When a failure is attempted again even though its key is unchanged. */
+  retryAt?: number
+}
+
+const unbuildable = new Map<string, Unbuildable>()
+
+// A build can fail for a reason outside the sources, such as a dependency
+// install that hit the network or timed out, so a failure is kept only this
+// long before it is attempted once more.
+const FAILED_BUILD_RETRY_MS = 5 * 60 * 1000
+
+// What an outcome depends on, so it is kept only while that is unchanged. A
+// build reads the sources, so a failure stands while they do. A refusal reads
+// the checkout's git state: a commit, checkout or reset moves the index or the
+// HEAD reflog without touching a source, and adding or removing an untracked
+// file anywhere moves the tree. Null when the git files cannot be read, and
+// the refusal is not kept.
+async function unbuildableKey(
+  kind: Unbuildable['kind'],
+  extensionId: string,
+  srcMtime: number,
+): Promise<string | null> {
+  if (kind === 'failed') {
+    return String(srcMtime)
+  }
+  const dir = extDir(extensionId)
+  const gitDir = await gitDirOf(dir)
+  const [tree, ...gitFiles] = await Promise.all([
+    newestMtime(dir),
+    statMaybe(path.join(gitDir, 'HEAD')),
+    statMaybe(path.join(gitDir, 'index')),
+    statMaybe(path.join(gitDir, 'logs', 'HEAD')),
+  ])
+  return gitFiles.every((mtime) => mtime > 0) ? `${srcMtime}|${tree}|${gitFiles.join('|')}` : null
+}
+
+/** The checkout's git directory: `.git` itself, or where a linked worktree's `.git` file points. */
+async function gitDirOf(dir: string): Promise<string> {
+  const dotGit = path.join(dir, '.git')
+  const pointer = await fs.readFile(dotGit, 'utf-8').catch(() => null)
+  const target = pointer?.match(/^gitdir: (.+)$/m)?.[1].trim()
+  return target ? path.resolve(dir, target) : dotGit
+}
+
+// Keyed after the outcome was decided, so a `.git/index` that git refreshed
+// while reading the state is part of the key rather than a change to it.
+async function rememberUnbuildable(
+  extensionId: string,
+  kind: Unbuildable['kind'],
+  srcMtime: number,
+  message: string,
+): Promise<void> {
+  const key = await unbuildableKey(kind, extensionId, srcMtime)
+  if (key === null) {
+    unbuildable.delete(extensionId)
+    return
+  }
+  unbuildable.set(extensionId, {
+    kind,
+    key,
+    message,
+    retryAt: kind === 'failed' ? Date.now() + FAILED_BUILD_RETRY_MS : undefined,
+  })
 }
 
 interface ExtensionServerModule {
   actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
   actionAccess?: Record<string, ActionAccess>
-  exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+  exposeOutput?: ExposeOutputFn
   nodeActions?: Record<string, Record<string, NodeActionHandler>>
   nodeActionAccess?: Record<string, Record<string, ActionAccess>>
   routes?: Record<string, ExtensionRoute>
@@ -267,7 +285,7 @@ interface ExtensionServerModule {
   default?: {
     actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
     actionAccess?: Record<string, ActionAccess>
-    exposeOutput?: (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+    exposeOutput?: ExposeOutputFn
     nodeActions?: Record<string, Record<string, NodeActionHandler>>
     nodeActionAccess?: Record<string, Record<string, ActionAccess>>
     routes?: Record<string, ExtensionRoute>
@@ -411,7 +429,7 @@ async function getExtensionModuleExclusive(extensionId: string): Promise<CachedM
 }
 
 async function manifestMtime(extensionId: string): Promise<number> {
-  return statMaybe(path.join(extDir(extensionId), 'extension.json'))
+  return statMaybe(path.join(extDir(extensionId), MANIFEST_FILE))
 }
 
 const manifestMtimeCache = new Map<string, number>()
@@ -521,6 +539,7 @@ export function flushCache(extensionId?: string): void {
     moduleCache().delete(extensionId)
     manifestCache().delete(extensionId)
     manifestMtimeCache.delete(extensionId)
+    unbuildable.delete(extensionId)
     return
   }
   for (const id of moduleCache().keys()) {
@@ -529,4 +548,5 @@ export function flushCache(extensionId?: string): void {
   moduleCache().clear()
   manifestCache().clear()
   manifestMtimeCache.clear()
+  unbuildable.clear()
 }

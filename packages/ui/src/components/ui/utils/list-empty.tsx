@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Literal lookup rather than a composed class name: a class built from a prop
 // is a string no scanner ever sees, so the variant renders inert. Same rule as

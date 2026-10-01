@@ -1,9 +1,9 @@
 import {
   routeHandleId,
-  TERMINAL_ROUTER_TYPE,
   type TerminalRouterData,
 } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
-import { assertUniqueNodeTypeIds, manifestOwners } from '@/app/_authed/(extension-runtime)/_node-type-guard'
+import { TERMINAL_ROUTER_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
+import { parseType, qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { invokeExtensionActionImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 
@@ -13,7 +13,7 @@ import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 // would change what each currently sees.
 interface ManifestLike {
   id: string
-  nodes?: Array<{ typeId: string; handles?: ExtensionHandle[] }>
+  nodes?: Array<{ type: string; handles?: ExtensionHandle[] }>
 }
 
 export interface NodeTypeHandles {
@@ -24,15 +24,14 @@ export interface NodeTypeHandles {
 // Which extension owns each node type, and what handles that type declares.
 // Pure, so each caller keeps its own manifest source while sharing the mapping.
 //
-// Two manifests declaring the same type id is a configuration error, not a
-// pick-one situation — asserted up front rather than left to whichever
-// manifest happened to iterate last silently winning.
+// Keyed by the qualified type, which carries its extension's id, so two
+// extensions declaring the same bare name land on two keys; the manifest
+// normalization has already refused one extension declaring a name twice.
 export function buildNodeTypeHandles(manifests: ManifestLike[]): Map<string, NodeTypeHandles> {
-  assertUniqueNodeTypeIds(manifestOwners(manifests))
   const map = new Map<string, NodeTypeHandles>()
   for (const manifest of manifests) {
     for (const node of manifest.nodes ?? []) {
-      map.set(node.typeId, { extensionId: manifest.id, handles: node.handles ?? [] })
+      map.set(node.type, { extensionId: manifest.id, handles: node.handles ?? [] })
     }
   }
   return map
@@ -44,10 +43,18 @@ interface DynamicHandleNode {
   data?: Record<string, unknown>
 }
 
-// The extension owning the 'docker' node type, or null. Resolved once by the
-// caller and passed to expandDynamicHandles, rather than re-derived per node.
+// The extension declaring a node type under the bare name `docker`, or null.
+// Looked up by that name rather than by a fixed owner: the host does not know
+// where the docker extension was installed from, and a local development copy
+// runs under whatever id its manifest claims. Resolved once by the caller and
+// passed to expandDynamicHandles, rather than re-derived per node.
 export function findDockerExtensionId(manifests: ManifestLike[]): string | null {
-  return manifests.find((m) => m.nodes?.some((n) => n.typeId === 'docker'))?.id ?? null
+  return manifests.find((m) => m.nodes?.some((n) => parseType(n.type)?.bare === 'docker'))?.id ?? null
+}
+
+/** The docker extension's application node type as graphs store it, or null without a docker extension. */
+export function dockerApplicationType(dockerExtensionId: string | null): string | null {
+  return dockerExtensionId === null ? null : qualifyType(dockerExtensionId, 'application')
 }
 
 // Live ids for a node's dynamic source handles — a declared dynamic handle is
@@ -72,13 +79,13 @@ export async function expandDynamicHandles(
   declared: ExtensionHandle[],
   dockerExtensionId: string | null,
 ): Promise<string[]> {
-  if (node.type === TERMINAL_ROUTER_TYPE) {
+  if (node.type === TERMINAL_ROUTER_NODE_TYPE) {
     // One output per route whose target resolved — an unresolved route's
     // handle has no context for terminal.getContext to hand back.
     const routes = (node.data as TerminalRouterData | undefined)?.routes ?? []
     return routes.filter((route) => route.context != null).map(routeHandleId)
   }
-  if (node.type !== 'application') {
+  if (!dockerExtensionId || node.type !== dockerApplicationType(dockerExtensionId)) {
     return []
   }
   const dynamic = declared.find((h) => h.dynamic && h.role === 'source')
@@ -95,7 +102,7 @@ export async function expandDynamicHandles(
   }
   const resolved = node.data?.__resolvedContexts as Record<string, { sourceNodeId?: string }> | undefined
   const dockerNodeId = resolved?.['docker-in']?.sourceNodeId
-  if (!dockerNodeId || !dockerExtensionId) {
+  if (!dockerNodeId) {
     return []
   }
   const service = (node.data?.name as string) || node.id

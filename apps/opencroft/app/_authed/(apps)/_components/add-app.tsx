@@ -34,9 +34,9 @@ export function AddApp({ spaceSlug, app }: Props) {
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
   // The extensions' client halves, for Apps that ship a custom parameter
-  // form. Matched by slug, as the App's component is.
+  // form. Matched by type, as the App's component is.
   const { items: definitions } = useProvided<AppDefinition>('apps', loadAllExtensions)
-  const CustomForm = definitions.find((d) => d.slug === app.slug)?.form
+  const CustomForm = definitions.find((d) => d.type === app.type)?.form
   const Icon = resolveIcon(app.icon)
   const previewSlug = name.trim() ? instanceSlugFor(name) : '…'
 
@@ -55,7 +55,7 @@ export function AddApp({ spaceSlug, app }: Props) {
     setSaving(true)
     try {
       await addSpaceApp({
-        data: { spaceSlug, extensionId: app.extensionId, appSlug: app.slug, name: trimmed, params: values },
+        data: { spaceSlug, type: app.type, name: trimmed, params: values },
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

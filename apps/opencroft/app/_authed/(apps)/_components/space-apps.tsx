@@ -8,8 +8,8 @@ import { Input } from 'ui/input'
 import { Flex } from 'ui/layout/flex'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from 'ui/tabs'
 
-import { appRefFor } from '@/app/_authed/(apps)/_lib/app-ref'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
+import { InstallMissingExtension, missingTypeLabel } from '@/app/_authed/(extension-runtime)/_client/missing-extension'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 interface Props {
@@ -43,7 +43,7 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
   const query = search.trim().toLowerCase()
   const catalog = query
     ? apps.filter((app) =>
-        [app.title, app.description ?? '', app.slug].some((text) => text.toLowerCase().includes(query)),
+        [app.title, app.description ?? '', app.type].some((text) => text.toLowerCase().includes(query)),
       )
     : apps
 
@@ -63,12 +63,12 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
           ) : (
             <Flex withGaps className='w-full'>
               {instances.map((instance) => {
-                const meta = apps.find(
-                  (app) => app.extensionId === instance.extensionId && app.slug === instance.appSlug,
-                )
+                const meta = apps.find((app) => app.type === instance.type)
                 const Icon = resolveIcon(meta?.icon)
                 const summary = paramsSummary(instance, meta)
-                const subtitle = [meta?.title ?? instance.appSlug, summary].filter(Boolean).join(' · ')
+                const subtitle = instance.provided
+                  ? [meta?.title ?? instance.type, summary].filter(Boolean).join(' · ')
+                  : missingTypeLabel(instance.type)
                 return (
                   <Flex key={instance.id} row withGaps align='center' className='w-full rounded-md border p-3'>
                     <Link
@@ -82,6 +82,7 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                         <span className='truncate text-xs text-muted-foreground'>{subtitle}</span>
                       </Flex>
                     </Link>
+                    {instance.provided ? null : <InstallMissingExtension type={instance.type} />}
                     {/* The row's ONE action: the App itself, in a new tab, so
                         the icon is literal and the settings this row leads to
                         stay open behind it. The target is what carries that:
@@ -129,10 +130,10 @@ export function SpaceApps({ spaceSlug, apps, instances, tab, onTabChange }: Prop
                 const Icon = resolveIcon(app.icon)
                 return (
                   <Link
-                    key={`${app.extensionId}/${app.slug}`}
+                    key={app.type}
                     to='/space/$slug/settings/app/~add'
                     params={{ slug: spaceSlug }}
-                    search={{ app: appRefFor(app) }}
+                    search={{ app: app.type }}
                     className='flex w-full items-center gap-3 rounded-md border p-3 text-left hover:bg-accent'
                   >
                     <Icon className='size-5 shrink-0 text-muted-foreground' />

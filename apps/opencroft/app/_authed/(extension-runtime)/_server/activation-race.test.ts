@@ -11,12 +11,18 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-activation-race-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
+import { flushCache, getExtensionModule } from './loader'
 
-const { getExtensionModule, flushCache } = await import('./loader')
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-activation-race-'))
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -33,9 +39,9 @@ async function makeFixture(): Promise<{
   logFile: string
 }> {
   seq += 1
-  const slug = `activation-sample-${seq}`
-  const dir = path.join(root, slug)
-  const logFile = path.join(root, `${slug}-load-log.txt`)
+  const id = `local.activation-sample-${seq}`
+  const dir = path.join(root, 'extensions', id)
+  const logFile = path.join(root, `${id}-load-log.txt`)
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.mkdir(path.join(dir, 'server'), { recursive: true })
   await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default {}\n')
@@ -55,9 +61,9 @@ export async function load() {
 export const actions = {}
 `,
   )
-  const manifest = { id: `local/${slug}`, name: slug, version: '0.0.0' }
+  const manifest = { id, name: id, version: '0.0.0' }
   await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
-  return { id: `local/${slug}`, manifest, logFile }
+  return { id, manifest, logFile }
 }
 
 async function loadCount(logFile: string): Promise<number> {

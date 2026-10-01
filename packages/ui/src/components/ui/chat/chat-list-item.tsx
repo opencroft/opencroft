@@ -2,6 +2,7 @@
 
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { Archive, ArchiveRestore, Pencil, Square, X } from 'lucide-react'
+import { ContextReading } from 'agent-chat/components/context-ring'
 
 import { AgentAvatar } from '../media/agent-avatar'
 import { ListRow } from '../utils/list-row'
@@ -17,7 +18,15 @@ export interface ChatListItemAction {
 
 // The row's process state. A single `status` drives BOTH the status word shown
 // in the description line and the status dot, so they can never disagree.
-export type ChatStatus = 'offline' | 'idle' | 'working' | 'waiting'
+export type ChatStatus = 'offline' | 'idle' | 'queued' | 'working' | 'waiting'
+
+// How much context the row's session holds. `contextLimit` is null when the
+// harness names no window; `asOf` is present only on a last-known reading.
+export interface ChatContextUsage {
+  usedTokens: number
+  contextLimit: number | null
+  asOf?: number
+}
 
 interface ChatListItemProps {
   id: string
@@ -31,6 +40,9 @@ interface ChatListItemProps {
   // it (sending) is gated elsewhere.
   disabled?: boolean
   status?: ChatStatus
+  // Drawn at the row's end, so a session near its limit shows before it is
+  // opened. Absent draws nothing -- unknown is not zero.
+  context?: ChatContextUsage
   hasDraft?: boolean
   onSelect?: (id: string) => void
   onRename?: (id: string) => void
@@ -69,12 +81,16 @@ interface ChatListItemProps {
 }
 
 // The description line carries the process state as text, and a status dot is
-// shown only for the two *active* states. `status` derives both:
-//   offline  -> no process          -> "Offline",  no dot
-//   idle     -> process alive/idle  -> "Idle",     no dot
-//   working  -> active turn         -> "Working",  green (success) dot
-//   waiting  -> needs someone       -> "Waiting",  blue (primary) dot
+// shown only for the states where something is pending. `status` derives both:
+//   offline  -> no process             -> "Offline",   no dot
+//   idle     -> process alive, nothing -> "Idle",      no dot
+//   queued   -> no turn, messages held -> "Queued",    amber (warning) dot
+//               for a later one
+//   working  -> active turn            -> "Working",   green (success) dot
+//   waiting  -> needs someone          -> "Needs you", blue (primary) dot
 //               (a permission to grant or a question to answer)
+// Idle is the state the others exist to set apart: a session with nothing to
+// do looks exactly like one hard at work unless the row says which it is.
 // The concrete dot colours live in the shared status-indicator primitive.
 //
 // Exported because this row's status line is THE vocabulary for a session's
@@ -85,18 +101,20 @@ interface ChatListItemProps {
 export const STATUS_WORD: Record<ChatStatus, string> = {
   offline: 'Offline',
   idle: 'Idle',
+  queued: 'Queued',
   working: 'Working',
-  waiting: 'Waiting',
+  waiting: 'Needs you',
 }
-// A dot is shown only for the active states; offline/idle rely on the text.
+// A dot is shown only where something is pending; offline/idle rely on the text.
 export const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
+  queued: 'warning',
   working: 'success',
   waiting: 'primary',
 }
 
 // A single row in a chat list: an avatar (with an optional status dot), a title
-// and dimmed description, an optional unsent-draft pencil indicator, and an
-// optional actions menu (Rename / Stop process / Close / Delete, plus any extra
+// and dimmed description, an optional unsent-draft pencil indicator, an optional
+// context reading at the end, and an optional actions menu (Rename / Stop process / Close / Delete, plus any extra
 // `actions`) built on the shadcn context-menu primitive.
 //
 // The row body itself is ListRow, the shared shell a group-chat row also draws.
@@ -124,7 +142,7 @@ export const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, context, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
   // Derive the dot and the description's status word from the single `status`.
   const dot = status ? STATUS_DOT[status] : undefined
   const statusWord = status ? STATUS_WORD[status] : null
@@ -142,10 +160,17 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
       onSelect={() => onSelect?.(id)}
       onPointerDown={onPointerDown}
       trailing={
-        hasDraft ? (
-          <span title='Unsent draft' className='ml-auto inline-flex items-center text-muted-foreground'>
-            <Pencil className='size-3.5' aria-hidden />
-            <span className='sr-only'>Unsent draft</span>
+        hasDraft || context ? (
+          <span className='ml-auto inline-flex shrink-0 items-center gap-1'>
+            {hasDraft ? (
+              <span title='Unsent draft' className='inline-flex items-center text-muted-foreground'>
+                <Pencil className='size-3.5' aria-hidden />
+                <span className='sr-only'>Unsent draft</span>
+              </span>
+            ) : null}
+            {context ? (
+              <ContextReading usedTokens={context.usedTokens} contextLimit={context.contextLimit} asOf={context.asOf} />
+            ) : null}
           </span>
         ) : null
       }

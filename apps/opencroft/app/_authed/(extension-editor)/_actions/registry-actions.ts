@@ -1,11 +1,8 @@
 import { createServerFn } from '@tanstack/react-start'
 
-import {
-  type InstalledExtensionRecord,
-  installExtensionFromUrl,
-} from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
+import { installFromRegistry } from '@/app/_authed/(extension-runtime)/_server/install'
 import type { RegistryExtension, ResolvedRegistry } from '@/app/_authed/(extension-runtime)/_server/registry'
-import { fetchAllRegistries, resolveExtensionRepo, searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
+import { fetchAllRegistries, searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
 
 export const listRegistryExtensions = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((query?: string) => query)
@@ -13,15 +10,15 @@ export const listRegistryExtensions = createServerFn({ method: 'POST', strict: {
     return searchRegistries(query)
   })
 
+/**
+ * Install the extension a registry lists under `extensionId`, into the folder of
+ * that id — or with `asLocal` as a development checkout in `local.<extension>`.
+ */
 export const installRegistryExtension = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { extensionId: string; ref?: string }) => data)
-  .handler(async ({ data }): Promise<InstalledExtensionRecord> => {
-    const { extensionId, ref } = data
-    const resolved = await resolveExtensionRepo({ id: extensionId })
-    if (!resolved) {
-      throw new Error(`Extension "${extensionId}" not found in any registry`)
-    }
-    return installExtensionFromUrl({ data: { url: resolved.repository, ref, auth: resolved.auth } })
+  .inputValidator((data: { extensionId: string; ref?: string; asLocal?: boolean }) => data)
+  .handler(async ({ data }): Promise<{ folder: string }> => {
+    const row = await installFromRegistry(data.extensionId, { ref: data.ref, asLocal: data.asLocal })
+    return { folder: row.folder }
   })
 
 export const getRegistries = createServerFn({ strict: { output: false } }).handler(

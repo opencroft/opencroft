@@ -211,6 +211,7 @@ async function mountHarness(nodesDraggable: boolean): Promise<Harness> {
         createElement(NodeContextMenu, {
           position: nodeMenu.screen,
           node: { id: nodeMenu.nodeId, type: 'default', position: { x: 0, y: 0 }, data: {}, selected: true },
+          contexts: {},
           onCopy: () => {},
           onDelete: () => {},
           onClose: () => setNodeMenu(null),

@@ -17,5 +17,5 @@ export {
   type SshKeyType,
 } from './ssh-key-format'
 export { type SshKey, setPermissions, sshKeys } from './ssh-keys'
-export type { StreamHandle } from './stream-handle'
+export type { OutputFilter, StreamHandle } from './stream-handle'
 export { terminalExec, terminalExecResult, terminalRun, terminalRunResult } from './terminal'

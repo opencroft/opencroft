@@ -1,12 +1,11 @@
 'use client'
 
+import { cn } from 'cn'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { RowContextMenu } from 'ui/utils/row-context-menu'
-
-import { cn } from '@/lib/utils'
 
 export const MANIFEST_PATH = 'extension.json'
 

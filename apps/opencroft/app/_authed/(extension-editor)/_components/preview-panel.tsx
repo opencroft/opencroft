@@ -8,20 +8,21 @@ import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 interface PreviewPanelProps {
-  previewTypeId: string | null
+  /** The qualified type of the node to preview. */
+  previewType: string | null
   version: number
 }
 
-export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
+export function PreviewPanel({ previewType, version }: PreviewPanelProps) {
   const resolved = useMemo(
-    () => (previewTypeId ? extensionRegistry.resolveNode(previewTypeId) : undefined),
+    () => (previewType ? extensionRegistry.resolveNode(previewType) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [previewTypeId, version],
+    [previewType, version],
   )
 
   // The preview graph holds exactly one node, of this type — so the map covers
   // the graph, same rule as the canvas.
-  const nodeTypes = useMemo(() => (resolved ? buildNodeTypes([resolved.typeId]) : {}), [resolved])
+  const nodeTypes = useMemo(() => (resolved ? buildNodeTypes([resolved.type]) : {}), [resolved])
 
   const nodes: Node[] = useMemo(() => {
     if (!resolved) {
@@ -30,7 +31,7 @@ export function PreviewPanel({ previewTypeId, version }: PreviewPanelProps) {
     return [
       {
         id: 'preview',
-        type: resolved.typeId,
+        type: resolved.type,
         position: { x: 0, y: 0 },
         data: { ...resolved.defaultData },
         selected: true,

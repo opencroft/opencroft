@@ -66,6 +66,25 @@ test('a thought and a message under the same id stay apart, and in order', () =>
   ])
 })
 
+test('the agent plan is session state: it draws no transcript row and splits no message', () => {
+  const plan = (content: string): ChatEvent => ({
+    kind: 'plan',
+    entries: [{ content, status: 'in_progress', priority: 'high' }],
+  })
+  assert.deepEqual(shape([say('Hel'), plan('a'), say('lo'), plan('b'), { kind: 'plan', entries: [] }]), [
+    'assistant:Hello',
+  ])
+})
+
+test('a notice is its own row at its position, and splits the reply it arrived in', () => {
+  const notice: ChatEvent = { kind: 'notice', notice: { severity: 'warning', title: 'Model fallback' } }
+  assert.deepEqual(shape([say('Hel'), notice, say('lo')]), ['assistant:Hel', 'notice', 'assistant:lo'])
+  assert.deepEqual(
+    foldEvents([notice]).map(({ id: _, ...message }) => message),
+    [{ kind: 'notice', severity: 'warning', title: 'Model fallback' }],
+  )
+})
+
 test('a turn boundary closes every block: an id seen again next turn opens a new one', () => {
   assert.deepEqual(shape([say('One.', 'm1'), turnEnd, user('again'), say('Two.', 'm1')]), [
     'assistant:One.',

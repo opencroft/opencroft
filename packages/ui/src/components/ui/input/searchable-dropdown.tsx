@@ -7,7 +7,7 @@ import { Button } from 'ui/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from 'ui/components/ui/command'
 import { Label } from 'ui/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 interface SearchableDropdownSubgroup {
   label: string

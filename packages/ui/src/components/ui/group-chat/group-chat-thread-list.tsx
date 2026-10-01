@@ -1,7 +1,7 @@
 'use client'
 
-import { ChatListItem, type ChatStatus } from 'ui/components/ui/chat/chat-list-item'
-import { cn } from 'ui/lib/utils'
+import { type ChatContextUsage, ChatListItem, type ChatStatus } from 'ui/components/ui/chat/chat-list-item'
+import { cn } from 'cn'
 
 export interface AgentRef {
   nodeId: string
@@ -22,21 +22,25 @@ export interface GroupChatThreadListItem {
   // row stays (the conversation is still readable) but reads as inactive, and
   // acting on it is gated by the host. Set by the host from membership.
   disabled?: boolean
-  // What the thread's agent is doing right now. Same four values, same meanings
-  // and the same type as an ordinary chat row -- a thread IS a session, so it
-  // gets the session vocabulary rather than one of its own:
+  // What the thread's agent is doing right now. Same values, same meanings and
+  // the same type as an ordinary chat row -- a thread IS a session, so it gets
+  // the session vocabulary rather than one of its own:
   //
   //   waiting  blocked on a person -- a permission to grant or a question to
   //            answer
   //   working  a turn is actively running
-  //   idle     the agent process is alive but not busy
+  //   queued   no turn, but messages are held for one
+  //   idle     the agent process is alive and has nothing to do
   //   offline  no process
   //
   // Domain truth: this list has nothing to derive it from and never guesses.
-  // Where several could apply the host resolves it, waiting > working > idle >
-  // offline. `offline` is a real state that is shown, not the absence of one --
-  // absence is `undefined`, which shows nothing.
+  // Where several could apply the host resolves it, waiting > working > queued
+  // > idle > offline. `offline` is a real state that is shown, not the absence
+  // of one -- absence is `undefined`, which shows nothing.
   status?: ChatStatus
+  // How much context the thread's session holds, forwarded to ChatListItem's
+  // own reading unchanged.
+  context?: ChatContextUsage
   // Unsent composer text exists for this thread. Forwarded to ChatListItem's
   // own pencil indicator unchanged -- this list has no draft storage of its
   // own, the host does.
@@ -121,6 +125,7 @@ export function GroupChatThreadList({
           // that governs what the reader can do next -- a second state beside
           // it would only make the row argue with itself.
           status={t.disabled ? undefined : t.status}
+          context={t.disabled ? undefined : t.context}
           hasDraft={t.hasDraft}
           avatarUrl={t.agent.avatarUrl}
           active={t.id === activeId}

@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 import { BRAND_ACCENT, Logo } from 'ui/components/ui/logo'
 

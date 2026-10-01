@@ -76,7 +76,7 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
 
   // The extension's client half, for Apps that ship a custom parameter form.
   const { items: definitions } = useProvided<AppDefinition>('apps', loadAllExtensions)
-  const CustomForm = meta ? definitions.find((d) => d.slug === meta.slug)?.form : undefined
+  const CustomForm = meta ? definitions.find((d) => d.type === meta.type)?.form : undefined
   const Icon = resolveIcon(meta?.icon)
 
   const backToApps = () =>
@@ -168,7 +168,7 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
       <Flex row withGaps align='center' className='w-full'>
         <Icon className='size-5 shrink-0 text-muted-foreground' />
         <Flex className='min-w-0 flex-1'>
-          <span className='font-medium'>{meta?.title ?? instance.appSlug}</span>
+          <span className='font-medium'>{meta?.title ?? instance.type}</span>
           {/* The instance's public address, minted from its name. A rename moves
               it, which is why the Name field below says so: the old address stops
               resolving rather than redirecting. */}

@@ -1,9 +1,9 @@
 'use client'
 
+import { cn } from 'cn'
 import { useState } from 'react'
 
 import { useVideoLoop } from '@/components/hooks/use-video-loop'
-import { cn } from '@/lib/utils'
 
 export interface VideoLoopProps {
   videos: string[]

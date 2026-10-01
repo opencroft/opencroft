@@ -1,7 +1,8 @@
 import { legacy } from '@opencroft/client'
-const { Badge, Button, Input, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Terminal, icons, inspectorIntent, invoke, toast, useGraphNodes, useReactFlow } = legacy
+const { Badge, Button, Input, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Terminal, extensionId, icons, inspectorIntent, invoke, toast, useGraphNodes, useReactFlow } = legacy
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
+import { storedType } from './stored-type'
 
 void Badge
 
@@ -65,7 +66,7 @@ function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v:
   const [keys, setKeys] = useState<KeyRef[] | null>(null)
 
   useEffect(() => {
-    const stores = nodes.filter((n) => n.type === 'core-key-store')
+    const stores = nodes.filter((n) => n.type === storedType(extensionId, 'core-key-store'))
     if (stores.length === 0) {
       setKeys([])
       return

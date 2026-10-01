@@ -5,7 +5,7 @@ import { useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 /** One of the thread's background tasks, as its transcript carries it: a
  * subagent or a task, named by the id its transcript block is marked with.

@@ -29,13 +29,21 @@ import {
 } from '@opencroft/terminal/server'
 import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
 import type { ChatEvent } from 'agent-client/types'
-import { asc, eq } from 'drizzle-orm'
+import { asc } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { queryChatUsageTurnsBySessionKey } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
+import { SEND_MESSAGE_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
+import { declaredTypesOf, namesCoreType, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
+import {
+  extensionUrl,
+  extensionUrlBase,
+  parseType,
+  resolveTypeRef,
+} from '@/app/_authed/(extension-runtime)/_extension-id'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
@@ -147,15 +155,17 @@ export interface HandleInfo {
   // listNodes flattens spaces; handle discovery doesn't, because a picker has
   // to be able to say which space a source came from.
   spaceSlug: string
-  typeId: string
-  // node.data.name, falling back to the type id — for pickers.
+  /** The node's stored, qualified type; `app:<type>` for an App instance's handle. */
+  type: string
+  // node.data.name, falling back to the type — for pickers.
   nodeName: string
   // The live id, resolvable by terminal.getContext. For a dynamic handle this
   // is the expanded runtime id, not the declared prefix.
   handleId: string
   // The manifest id — the prefix form for a dynamic handle.
   declaredId: string
-  contextType: string
+  /** The qualified handle type. */
+  handleType: string
   role: 'source' | 'target'
   label?: string
   dynamic: boolean
@@ -163,13 +173,19 @@ export interface HandleInfo {
 
 export interface ListHandlesFilter {
   role?: 'source' | 'target'
-  contextType?: string
+  /** Qualified here; an extension's host resolves a bare one to its own first. */
+  handleType?: string
 }
 
+/**
+ * The graph as one extension's host hands it out. Nodes come back with their
+ * stored, qualified types; a type an extension passes IN follows the rule for
+ * type references — bare for one of its own, qualified for any extension's.
+ */
 export interface HostGraphApi {
   listNodes(): Promise<GraphNodeRecord[]>
   getNode(nodeId: string): Promise<GraphNodeRecord | null>
-  listNodesByType(typeId: string): Promise<GraphNodeRecord[]>
+  listNodesByType(type: string): Promise<GraphNodeRecord[]>
   listEdges(): Promise<GraphEdgeRecord[]>
   // Every handle declared by a node type, across all spaces, with dynamic
   // source handles expanded to their live ids. Read-on-demand and uncached:
@@ -180,13 +196,38 @@ export interface HostGraphApi {
   /** On the graph at `address` — a space slug (its default graph) or `<space>.<graph>`. */
   createNode(
     address: string,
-    typeId: string,
+    type: string,
     data: Record<string, unknown>,
     position: { x: number; y: number },
   ): Promise<GraphNodeRecord>
   deleteNode(nodeId: string): Promise<void>
 }
 
+/** `graphApi` for one extension: the type references it passes resolve against its own id. */
+function graphApiFor(extensionId: string): HostGraphApi {
+  const typeRef = async (type: string) => {
+    if (!namesCoreType(type)) {
+      return resolveCodeTypeRef(extensionId, type, () => false)
+    }
+    // Imported on use: the loader builds hosts, so it imports this module.
+    const { getManifest } = await import('@/app/_authed/(extension-runtime)/_server/loader')
+    // An extension whose manifest cannot be read declares nothing.
+    const manifest = await getManifest(extensionId).catch(() => null)
+    const declared = manifest ? declaredTypesOf(manifest) : new Set<string>()
+    return resolveCodeTypeRef(extensionId, type, (qualified) => declared.has(qualified))
+  }
+  return {
+    ...graphApi,
+    listNodesByType: async (type) => graphApi.listNodesByType(await typeRef(type)),
+    listHandles: async (filter) =>
+      graphApi.listHandles(filter?.handleType ? { ...filter, handleType: await typeRef(filter.handleType) } : filter),
+    createNode: async (address, type, data, position) =>
+      graphApi.createNode(address, await typeRef(type), data, position),
+  }
+}
+
+// Takes and returns types in their stored, qualified form: what host code
+// outside any extension holds.
 const graphApi: HostGraphApi = {
   async listNodes() {
     return (await readGraph()).nodes
@@ -198,9 +239,9 @@ const graphApi: HostGraphApi = {
     const node = ref?.graph.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
     return (node as unknown as GraphNodeRecord) ?? null
   },
-  async listNodesByType(typeId) {
+  async listNodesByType(type) {
     const graph = await readGraph()
-    return graph.nodes.filter((n) => n.type === typeId)
+    return graph.nodes.filter((n) => n.type === type)
   },
   async listEdges() {
     return (await readGraph()).edges
@@ -219,25 +260,25 @@ const graphApi: HostGraphApi = {
     const [graphs, manifests] = await Promise.all([loadAllGraphs(), listExtensionManifestsImpl()])
     const byType = buildNodeTypeHandles(manifests)
     const dockerExtensionId = findDockerExtensionId(manifests)
-    const wanted = (handle: { role: string; contextType: string }) =>
+    const wanted = (handle: { role: string; handleType: string }) =>
       (filter?.role === undefined || handle.role === filter.role) &&
-      (filter?.contextType === undefined || handle.contextType === filter.contextType)
+      (filter?.handleType === undefined || handle.handleType === filter.handleType)
 
     const results: HandleInfo[] = []
     for (const entry of graphs) {
       for (const raw of entry.graph.nodes as unknown as GraphNodeRecord[]) {
-        const typeId = raw.type
-        if (!typeId) {
+        const type = raw.type
+        if (!type) {
           continue
         }
-        const declared = byType.get(typeId)?.handles ?? []
-        const nodeName = (raw.data?.name as string) || typeId
-        const base = { nodeId: raw.id, spaceSlug: entry.spaceSlug, typeId, nodeName }
+        const declared = byType.get(type)?.handles ?? []
+        const nodeName = (raw.data?.name as string) || type
+        const base = { nodeId: raw.id, spaceSlug: entry.spaceSlug, type, nodeName }
 
         const matching = declared.filter(wanted)
         // Expansion costs a docker.ps per node, so do it once and only when a
         // dynamic handle actually survived the filter — a caller asking for
-        // targets, or for some other contextType, pays nothing.
+        // targets, or for some other handle type, pays nothing.
         const liveIds = matching.some((handle) => handle.dynamic)
           ? await expandDynamicHandles(raw, declared, dockerExtensionId)
           : []
@@ -248,7 +289,7 @@ const graphApi: HostGraphApi = {
               ...base,
               handleId: handle.id,
               declaredId: handle.id,
-              contextType: handle.contextType,
+              handleType: handle.handleType,
               role: handle.role,
               label: handle.label,
               dynamic: false,
@@ -263,7 +304,7 @@ const graphApi: HostGraphApi = {
               ...base,
               handleId: liveId,
               declaredId: handle.id,
-              contextType: handle.contextType,
+              handleType: handle.handleType,
               role: handle.role,
               label: handle.label,
               dynamic: true,
@@ -276,15 +317,15 @@ const graphApi: HostGraphApi = {
     // and only as sources — an App consumes contexts through its parameters.
     if (filter?.role === undefined || filter.role === 'source') {
       const { listAppHandles } = await import('@/app/_authed/(apps)/_server/runtime')
-      for (const handle of await listAppHandles(filter?.contextType)) {
+      for (const handle of await listAppHandles(filter?.handleType)) {
         results.push({
           nodeId: handle.instanceId,
           spaceSlug: handle.spaceSlug,
-          typeId: `app:${handle.appSlug}`,
+          type: `app:${handle.type}`,
           nodeName: handle.title,
           handleId: handle.handleId,
           declaredId: handle.declaredId,
-          contextType: handle.contextType,
+          handleType: handle.handleType,
           role: 'source',
           label: handle.label,
           dynamic: handle.dynamic,
@@ -313,7 +354,7 @@ const graphApi: HostGraphApi = {
     })
     return updated
   },
-  async createNode(address, typeId, data, position) {
+  async createNode(address, type, data, position) {
     const r = getSpacesRegistry()
     await r.ensureLoaded()
     const ref = r.resolveGraph(address)
@@ -321,7 +362,7 @@ const graphApi: HostGraphApi = {
       throw new Error(`Graph not found: ${address}`)
     }
     const id = newGraphId()
-    const node: GraphNodeRecord = { id, type: typeId, data, position }
+    const node: GraphNodeRecord = { id, type, data, position }
     ref.graph.graph.nodes.push(node as unknown as Record<string, unknown>)
     await r.saveGraph(r.addressOf(ref), ref.graph.graph)
     return node
@@ -389,7 +430,7 @@ export interface TurnsPage {
   nextBeforeIndex: number | null
   // The session's own status (see deriveSessionStatus). An empty `turns`
   // array means two different things depending on this: a genuinely empty
-  // (never-prompted) session at idle/working/waiting, vs. an offline session
+  // (never-prompted) session at idle/queued/working/waiting, vs. an offline session
   // whose history isn't loaded in memory at all — a caller must be able to
   // tell them apart without having read this action's description.
   sessionStatus: SessionStatus
@@ -592,7 +633,7 @@ const sendMessageApi: HostSendMessageApi = {
       throw new Error('"message" is required and must be a non-empty string')
     }
     const found = await findSendMessageNode(nodeId)
-    if (!found || found.node.type !== 'send-message') {
+    if (!found || found.node.type !== SEND_MESSAGE_NODE_TYPE) {
       throw new Error(`Send Message node not found: ${nodeId}`)
     }
     // Established before anything is delivered, so an unattributable send
@@ -626,13 +667,14 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   }
   const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')
   const manifests = await listExtensionManifestsImpl()
-  const manifest = manifests.find((m) => m.nodes?.some((n) => n.typeId === node.type))
-  if (!manifest) {
+  const manifest = manifests.find((m) => m.nodes?.some((n) => n.type === node.type))
+  const bare = parseType(node.type)?.bare
+  if (!manifest || !bare) {
     throw new Error(`No extension provides node type: ${node.type}`)
   }
   const { getExtensionModule } = await import('@/app/_authed/(extension-runtime)/_server/loader')
   const mod = await getExtensionModule(manifest.id)
-  const value = mod.exposeOutput?.(handleId, node.data, node.type)
+  const value = mod.exposeOutput?.(handleId, node.data, bare)
   if (value === undefined || value === null) {
     throw new Error(`No context value for ${nodeId}/${handleId}`)
   }
@@ -873,6 +915,18 @@ function storageApi(extensionId: string): ExtensionStorageApi {
 
 export interface ExtensionHost {
   extensionId: string
+  /** Where the host serves this extension: `/api/ext/<extensionId>`. */
+  urlBase: string
+  /** The URL of a static file under the extension's `assets/` folder. */
+  assetUrl: (path: string) => string
+  /** The URL of one of the extension's declared HTTP `routes`. */
+  routeUrl: (path: string) => string
+  /**
+   * An instance-relative URL (`urlBase`, `assetUrl(…)`, `routeUrl(…)`) in
+   * absolute form, for a link handed outside the instance. There is no
+   * instance-origin setting, so the origin is the one `request` arrived on.
+   */
+  absoluteUrl: (request: Request, url?: string) => string
   fs: typeof fsPromises
   os: typeof nodeOs
   path: typeof nodePath
@@ -959,6 +1013,9 @@ function hostSetSetting(opts: { data: { id: string; data: Record<string, unknown
 /** One added App instance, as reported to the providing extension. */
 export interface HostAppInstance {
   instanceId: string
+  /** The App's bare type, as the providing extension declared it. */
+  type: string
+  /** @deprecated Read `type`, which holds the same bare value. */
   appSlug: string
   spaceSlug: string
   /** The instance's display name — the host's field, required at add time. */
@@ -971,8 +1028,8 @@ export interface HostAppInstance {
 }
 
 export interface HostAppsApi {
-  /** The calling extension's added App instances, oldest first; optionally one App's only. */
-  listInstances(appSlug?: string): Promise<HostAppInstance[]>
+  /** The calling extension's added App instances, oldest first; optionally one App's only, named by its bare type. */
+  listInstances(type?: string): Promise<HostAppInstance[]>
 }
 
 // Read from the database rather than the (apps) runtime's in-memory load
@@ -981,31 +1038,41 @@ export interface HostAppsApi {
 // happened to witness.
 function appsApi(extensionId: string): HostAppsApi {
   return {
-    listInstances: async (appSlug) => {
-      const rows = await db.query.spaceApp.findMany({
-        where: eq(spaceApp.extensionId, extensionId),
-        orderBy: asc(spaceApp.createdAt),
-      })
+    listInstances: async (type) => {
+      const wanted = type ? resolveTypeRef(extensionId, type) : undefined
+      const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
       const spaces = await db.query.space.findMany({ columns: { id: true, slug: true } })
       const slugById = new Map(spaces.map((s) => [s.id, s.slug]))
-      return rows
-        .filter((row) => !appSlug || row.appSlug === appSlug)
-        .map((row) => ({
-          instanceId: row.id,
-          appSlug: row.appSlug,
-          spaceSlug: slugById.get(row.spaceId) ?? '',
-          name: row.name,
-          slug: row.slug,
-          params: JSON.parse(row.params) as Record<string, string>,
-          dataDir: appInstanceDataDir(extensionId, row.id),
-        }))
+      return rows.flatMap((row) => {
+        const parsed = parseType(row.type)
+        if (parsed?.extensionId !== extensionId || (wanted && row.type !== wanted)) {
+          return []
+        }
+        return [
+          {
+            instanceId: row.id,
+            type: parsed.bare,
+            appSlug: parsed.bare,
+            spaceSlug: slugById.get(row.spaceId) ?? '',
+            name: row.name,
+            slug: row.slug,
+            params: JSON.parse(row.params) as Record<string, string>,
+            dataDir: appInstanceDataDir(extensionId, row.id),
+          },
+        ]
+      })
     },
   }
 }
 
 export function createHost(extensionId: string): ExtensionHost {
+  const urlBase = extensionUrlBase(extensionId)
   return {
     extensionId,
+    urlBase,
+    assetUrl: (path) => extensionUrl(extensionId, 'assets', path),
+    routeUrl: (path) => extensionUrl(extensionId, 'http', path),
+    absoluteUrl: (request, url = urlBase) => new URL(url, request.url).href,
     fs: fsPromises,
     os: nodeOs,
     path: nodePath,
@@ -1017,7 +1084,7 @@ export function createHost(extensionId: string): ExtensionHost {
     db,
     secrets,
     settings: { get: hostGetSetting, set: hostSetSetting },
-    graph: graphApi,
+    graph: graphApiFor(extensionId),
     storage: storageApi(extensionId),
     apps: appsApi(extensionId),
     sendMessage: sendMessageApi,

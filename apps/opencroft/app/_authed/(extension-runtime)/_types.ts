@@ -16,7 +16,14 @@ export interface ResolvedContext<V = unknown> {
 
 export interface ExtensionHandle {
   id: string
-  contextType: string
+  /**
+   * What a connection on this handle carries. Declared bare for one of the
+   * extension's own handle types, qualified (`<owner>.<extension>.<type>`) for
+   * another extension's; qualified in every declaration the runtime has read.
+   */
+  handleType: string
+  /** @deprecated Declare `handleType`. Read only when `handleType` is absent. */
+  contextType?: string
   role: 'source' | 'target'
   label?: string
   /** When true, `id` is treated as a prefix matching dynamically-rendered handle ids (e.g. per-instance outputs). */
@@ -51,12 +58,16 @@ export function findExtensionHandle(
   })
 }
 
-export interface ExtensionContextType {
+/** A handle type an extension declares: bare in the declaration, qualified with the extension's id once read. */
+export interface ExtensionHandleType {
   id: string
   label: string
   color: string
   description?: string
 }
+
+/** @deprecated Renamed `ExtensionHandleType`. */
+export type ExtensionContextType = ExtensionHandleType
 
 export interface NodeAction {
   id: string
@@ -69,7 +80,14 @@ export interface NodeAction {
 }
 
 export interface NodeMetadata {
-  typeId: string
+  /**
+   * The node's type. Declared bare (`gauge`), a slug unique among the
+   * extension's nodes; qualified with the extension's id (`acme.widgets.gauge`)
+   * in every manifest the runtime has read, which is also what graphs store.
+   */
+  type: string
+  /** @deprecated Declare `type`. Read only when `type` is absent. */
+  typeId?: string
   name: string
   category?: string
   description?: string
@@ -95,9 +113,14 @@ export interface ExtensionManifest {
   description?: string
   extensionDependencies?: string[]
   nodes?: NodeMetadata[]
-  contexts?: ExtensionContextType[]
+  /** The handle types this extension declares, bare; see `ExtensionHandle.handleType`. */
+  handleTypes?: ExtensionHandleType[]
+  /** @deprecated Declare `handleTypes`. Read only when `handleTypes` is absent. */
+  contexts?: ExtensionHandleType[]
   /** Generic, feature-defined provider points (e.g. `apps`). The runtime
-   *  stores these opaquely; features read them via getProvided. */
+   *  stores these opaquely — except `apps`, whose entries are types like
+   *  nodes and are qualified the same way (`AppEntry.type`); features read
+   *  them via getProvided. */
   provides?: Record<string, unknown[]>
   main?: string
   exports?: ExtensionExports
@@ -119,6 +142,12 @@ export interface ExtensionManifest {
 
 /** A manifest plus runtime-computed flags, as sent to the client loader. */
 export interface ExtensionManifestInfo extends ExtensionManifest {
+  /**
+   * The folder under `extensions/` this extension runs from. It differs from
+   * `id` for a local copy standing in for another extension, and its owner is
+   * what says whether the extension is editable here.
+   */
+  folder: string
   /** Whether the extension ships a client bundle the browser should import. */
   hasClient: boolean
   /** Version of the built client artifacts, used to key their URLs so an
@@ -134,7 +163,8 @@ export interface ExtensionRecord {
   updatedAt: number
 }
 
-export type ExposeOutputFn = (handleId: string, nodeData: Record<string, unknown>, typeId: string) => unknown
+/** An extension's output resolver. `type` is the node's BARE type, the name the extension declared it under. */
+export type ExposeOutputFn = (handleId: string, nodeData: Record<string, unknown>, type: string) => unknown
 
 export interface ConnectedSource {
   nodeId: string
@@ -146,6 +176,9 @@ export interface ConnectedSource {
 export interface ResolvedInput<T = unknown> {
   sourceNodeId: string
   sourceHandleId: string
+  /** The qualified handle type of the source handle. */
+  handleType: string
+  /** @deprecated Read `handleType`, which holds the same value. */
   contextType: string
   value: T
 }
@@ -165,13 +198,22 @@ export interface Stream<T> {
 
 export interface NodeActionCtx {
   nodeId: string
+  /** The node's BARE type — the name the extension running the action declared it under. */
+  type: string
+  /** @deprecated Read `type`, which holds the same bare value. */
   typeId: string
   data: Record<string, unknown>
   params: Record<string, unknown>
   input<T = unknown>(handleId: string): T | undefined
   inputSource<T = unknown>(handleId: string): ResolvedInput<T> | undefined
+  /** The nodes wired into `handleId`, each with the qualified `type` the graph stores. */
   connectedSources(handleId: string): ConnectedSource[]
-  containingNodes(typeId?: string): NodeActionCtxNode[]
+  /**
+   * The nodes whose area holds this one, each with its stored, qualified
+   * `type`. `type` narrows them: bare for one of the calling extension's own
+   * types, qualified for any extension's.
+   */
+  containingNodes(type?: string): NodeActionCtxNode[]
   output<T = unknown>(handleId: string): Stream<T>
   /** Persist a patch to this node's stored data (e.g. assign a key). */
   updateData(patch: Record<string, unknown>): void
@@ -201,7 +243,8 @@ export interface NodeActionCtx {
 
 export interface NodeActionDescriptor {
   nodeId: string
-  typeId: string
+  /** The node's qualified type. */
+  type: string
   extensionId: string
   actionId: string
   label: string

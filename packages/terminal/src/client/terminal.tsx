@@ -4,7 +4,8 @@ import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal as Xterm } from '@xterm/xterm'
 import * as React from 'react'
 
-import type { ClientMessage, TerminalConfig } from '../types'
+import type { TerminalConfig } from '../types'
+import { openingMessage, sessionGoneMessage, type TerminalSource } from './session-messages'
 import { terminalTheme } from './theme'
 
 export type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -12,14 +13,11 @@ export type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'erro
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 8000
 
-export interface TerminalProps {
+interface ConnectSourceProps {
   /** What to connect to: an SSH host, a local shell, or a WSL distro. */
   connection: TerminalConfig
   /** Command to run instead of an interactive shell (e.g. `docker logs -f …`). */
   command?: string
-  /** Render output only — keystrokes and clipboard pastes are not sent. */
-  readOnly?: boolean
-  fontSize?: number
   /**
    * Opaque key identifying this logical session across reconnects (e.g. a terminal node id).
    * When set, the server keeps the shell alive across a socket drop (page refresh, network
@@ -32,6 +30,29 @@ export interface TerminalProps {
    * for a "restart session" affordance. No-op on the initial render.
    */
   restartToken?: string | number
+  attachKey?: never
+}
+
+interface AttachSourceProps {
+  /**
+   * Watch the session this key names — output started by server code — and nothing else.
+   *
+   * The component never opens a session in this mode: every socket, the first and each one after
+   * a drop, only asks to attach. When the session no longer exists it stops and calls
+   * `onSessionGone`; there is no reconnect button, since reconnecting could only find the same
+   * nothing. To watch something new, mount again with the new key.
+   */
+  attachKey: string
+  connection?: never
+  command?: never
+  sessionKey?: never
+  restartToken?: never
+}
+
+interface TerminalCommonProps {
+  /** Render output only — keystrokes and clipboard pastes are not sent. */
+  readOnly?: boolean
+  fontSize?: number
   /**
    * This terminal is displaying the output of something, not offering a shell to type into.
    *
@@ -45,63 +66,59 @@ export interface TerminalProps {
    */
   logView?: boolean
   onStatusChange?: (status: TerminalStatus) => void
+  /**
+   * With `attachKey`: the session no longer exists on the server — it ended and was reclaimed,
+   * or the key never named one. Status is then `disconnected`; this says why.
+   */
+  onSessionGone?: (message: string) => void
 }
+
+export type TerminalProps = TerminalCommonProps & (ConnectSourceProps | AttachSourceProps)
 
 function createWebSocket(path: string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return new WebSocket(`${protocol}//${window.location.host}${path}`)
 }
 
-function connectMessage(
-  connection: TerminalConfig,
-  command: string | undefined,
-  cols: number,
-  rows: number,
-  sessionKey: string | undefined,
-): ClientMessage {
-  const extra: Record<string, unknown> = {}
-  if (command) {
-    extra.command = command
+function sourceOf(props: TerminalProps): TerminalSource {
+  if (props.attachKey !== undefined) {
+    return { kind: 'attach', sessionKey: props.attachKey }
   }
-  if (sessionKey) {
-    extra.sessionKey = sessionKey
-  }
-  if (connection.type === 'ssh') {
-    return { type: 'connect', payload: { ...connection.config, ...extra, cols, rows } }
-  }
-  if (connection.type === 'wsl') {
-    return { type: 'wsl', payload: { ...connection.config, ...extra, cols, rows } }
-  }
-  return { type: 'local', payload: { ...connection.config, ...extra, cols, rows } }
+  return { kind: 'connect', connection: props.connection, command: props.command, sessionKey: props.sessionKey }
 }
 
 /** Embeddable xterm terminal. Connects over the `/api/ws/terminal` WebSocket. */
-export function Terminal({
-  connection,
-  command,
-  readOnly,
-  fontSize = 12,
-  sessionKey,
-  restartToken,
-  logView,
-  onStatusChange,
-}: TerminalProps) {
+export function Terminal(props: TerminalProps) {
+  const {
+    command,
+    readOnly,
+    fontSize = 12,
+    sessionKey,
+    restartToken,
+    logView,
+    onStatusChange,
+    onSessionGone,
+    attachKey,
+  } = props
+  const attachOnly = attachKey !== undefined
   const containerRef = React.useRef<HTMLDivElement>(null)
   const termRef = React.useRef<Xterm | null>(null)
   const wsRef = React.useRef<WebSocket | null>(null)
   const [status, setStatus] = React.useState<TerminalStatus>('connecting')
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null)
   const [reconnectTick, setReconnectTick] = React.useState(0)
-  const connectionRef = React.useRef(connection)
-  connectionRef.current = connection
+  const sourceRef = React.useRef<TerminalSource>(sourceOf(props))
+  sourceRef.current = sourceOf(props)
   const readOnlyRef = React.useRef(readOnly)
   readOnlyRef.current = readOnly
-  const sessionKeyRef = React.useRef(sessionKey)
-  sessionKeyRef.current = sessionKey
+  const sessionKeyRef = React.useRef(attachKey ?? sessionKey)
+  sessionKeyRef.current = attachKey ?? sessionKey
   const logViewRef = React.useRef(logView)
   logViewRef.current = logView
   const statusCallbackRef = React.useRef(onStatusChange)
   statusCallbackRef.current = onStatusChange
+  const sessionGoneCallbackRef = React.useRef(onSessionGone)
+  sessionGoneCallbackRef.current = onSessionGone
 
   React.useEffect(() => {
     statusCallbackRef.current?.(status)
@@ -131,7 +148,7 @@ export function Terminal({
     reconnect()
   }, [restartToken, reconnect])
 
-  // Terminal lifecycle is intentionally keyed on reconnectTick + command + fontSize only.
+  // Terminal lifecycle is intentionally keyed on reconnectTick + command + attachKey + fontSize only.
   React.useEffect(() => {
     const el = containerRef.current
     if (!el) {
@@ -235,25 +252,11 @@ export function Terminal({
 
           ws.onopen = () => {
             reconnectAttempt = 0
-            if (attemptingReattach && (sessionId || sessionKeyRef.current)) {
-              ws.send(
-                JSON.stringify({
-                  type: 'attach',
-                  payload: {
-                    sessionId: sessionId ?? undefined,
-                    sessionKey: sessionKeyRef.current,
-                    cols: term.cols,
-                    rows: term.rows,
-                  },
-                }),
-              )
-            } else {
-              ws.send(
-                JSON.stringify(
-                  connectMessage(connectionRef.current, command, term.cols, term.rows, sessionKeyRef.current),
-                ),
-              )
-            }
+            ws.send(
+              JSON.stringify(
+                openingMessage(sourceRef.current, { attemptingReattach, sessionId }, term.cols, term.rows),
+              ),
+            )
           }
           ws.onmessage = (e) => {
             try {
@@ -270,16 +273,20 @@ export function Terminal({
                 return
               }
               if (msg.type === 'session-gone') {
-                // Our stored identity is stale server-side — fall back to a fresh connect on the
-                // same socket rather than spawning yet another reconnect round trip.
+                // Our stored identity is stale server-side. A connect source falls back to a fresh
+                // connect on the same socket rather than another reconnect round trip; an attach
+                // source has nothing to fall back to, and stops.
                 sessionId = null
                 attemptingReattach = false
+                const next = sessionGoneMessage(sourceRef.current, term.cols, term.rows)
+                if (!next) {
+                  terminated = true
+                  setStatus('disconnected')
+                  sessionGoneCallbackRef.current?.(msg.payload.message)
+                  return
+                }
                 if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(
-                    JSON.stringify(
-                      connectMessage(connectionRef.current, command, term.cols, term.rows, sessionKeyRef.current),
-                    ),
-                  )
+                  ws.send(JSON.stringify(next))
                 }
                 return
               }
@@ -366,7 +373,7 @@ export function Terminal({
       }
       termRef.current = null
     }
-  }, [reconnectTick, command, fontSize])
+  }, [reconnectTick, command, attachKey, fontSize])
 
   return (
     <div className='relative flex flex-col h-full w-full bg-black p-2'>
@@ -377,7 +384,7 @@ export function Terminal({
             <span>
               {status === 'connecting' ? 'connecting…' : status === 'error' ? `error: ${errorMsg}` : 'disconnected'}
             </span>
-            {status !== 'connecting' ? (
+            {status !== 'connecting' && !attachOnly ? (
               <button
                 type='button'
                 onClick={reconnect}

@@ -2,20 +2,31 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  AGENT_NODE_TYPE,
+  AGENT_TOOL_NODE_TYPE,
   agentInstructionName,
   agentInstructionText,
   agentNodeAvatar,
   agentNodeName,
   isAgentInstructionNode,
   isAgentNode,
+  SEND_MESSAGE_NODE_TYPE,
 } from './agent-node-shape'
 
 test('isAgentNode/isAgentInstructionNode match only their own type', () => {
-  assert.equal(isAgentNode({ type: 'agent' }), true)
-  assert.equal(isAgentNode({ type: 'agent-instruction' }), false)
-  assert.equal(isAgentInstructionNode({ type: 'agent-instruction' }), true)
-  assert.equal(isAgentInstructionNode({ type: 'agent' }), false)
+  assert.equal(isAgentNode({ type: 'builtin.core.agent' }), true)
+  assert.equal(isAgentNode({ type: 'builtin.core.agent-instruction' }), false)
+  assert.equal(isAgentInstructionNode({ type: 'builtin.core.agent-instruction' }), true)
+  assert.equal(isAgentInstructionNode({ type: 'builtin.core.agent' }), false)
   assert.equal(isAgentNode({}), false)
+})
+
+test("the agent types are core's, qualified: neither a bare name nor another extension's is one", () => {
+  assert.equal(AGENT_NODE_TYPE, 'builtin.core.agent')
+  assert.equal(AGENT_TOOL_NODE_TYPE, 'builtin.core.agent-tool')
+  assert.equal(SEND_MESSAGE_NODE_TYPE, 'builtin.core.send-message')
+  assert.equal(isAgentNode({ type: 'agent' }), false)
+  assert.equal(isAgentNode({ type: 'acme.widgets.agent' }), false)
 })
 
 test('agentNodeName trims and defaults to empty, never throws on missing data', () => {
@@ -32,7 +43,7 @@ test('agentNodeAvatar returns undefined rather than an empty string when absent'
 })
 
 test('agentInstructionName/agentInstructionText read their own fields independently', () => {
-  const instr = { type: 'agent-instruction', data: { name: 'Tone', instruction: 'Be terse.' } }
+  const instr = { type: 'builtin.core.agent-instruction', data: { name: 'Tone', instruction: 'Be terse.' } }
   assert.equal(agentInstructionName(instr), 'Tone')
   assert.equal(agentInstructionText(instr), 'Be terse.')
   assert.equal(agentInstructionName({}), '')

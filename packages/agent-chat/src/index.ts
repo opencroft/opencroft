@@ -15,7 +15,6 @@ export {
   type MessageHandlers,
   MessageView,
   PermissionRequest,
-  PlanView,
   statusVariant,
   ToolView,
 } from './messages'

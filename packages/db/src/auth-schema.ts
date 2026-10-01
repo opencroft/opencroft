@@ -44,6 +44,15 @@ export const user = pgTable('user', {
   // account is disabled -- exactly the account an administrator most needs
   // this fact about. A column on the user row survives that deletion.
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true, mode: 'date' }),
+  // The colour theme the person chose. Declared to Better Auth as an additional
+  // user field in packages/auth, which owns the allowed values, so it travels
+  // with the session and is written through its update-user endpoint. Null
+  // until they choose one.
+  theme: text('theme'),
+  // When the person last closed the sponsorship thank-you. Declared to Better
+  // Auth as an additional user field in packages/auth, like `theme`, so every
+  // browser they use knows it was seen. Null until they first close it.
+  sponsorPromptSeenAt: timestamp('sponsor_prompt_seen_at', { withTimezone: true, mode: 'date' }),
 })
 
 export const session = pgTable(

@@ -51,7 +51,7 @@ function firstEditablePath(files: Record<string, string>): string {
 // it is the same work: one header naming what is open and the way back, then
 // files, code and a live preview of what the code builds.
 //
-// Mount it keyed on the extension id — the buffer is initialised from the
+// Mount it keyed on the extension's folder — the buffer is initialised from the
 // record it opens with, and a key is what makes switching extensions a fresh
 // editor rather than a reconciliation between two sets of files.
 export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSourceEditorProps) {
@@ -66,14 +66,14 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<CompileError[]>([])
   const [warnings, setWarnings] = useState<CompileError[]>([])
-  const [previewTypeId, setPreviewTypeId] = useState<string | null>(null)
+  const [previewType, setPreviewType] = useState<string | null>(null)
   const [previewVersion, setPreviewVersion] = useState(0)
   const [previewOpen, setPreviewOpen] = useState(true)
   const [tab, setTab] = useState<'files' | 'code' | 'preview'>('code')
   const lastAutoSignature = useRef<string>(fileSignature(record.files))
 
   const dirty = useMemo(() => fileSignature(files) !== savedSignature, [files, savedSignature])
-  const extensionId = record.id
+  const folder = record.folder
 
   // Rebuild what this instance is running, and point the preview at whatever
   // the build produced. Shared by the two things that move the files on disk —
@@ -81,20 +81,20 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
   // until somebody happens to type again.
   const compileAndPreview = useCallback(
     async (manifest: ExtensionManifest) => {
-      const result = await compileLocalExtension({ data: extensionId })
+      const result = await compileLocalExtension({ data: folder })
       setErrors(result.errors)
       setWarnings(result.warnings)
       if (!result.success) {
         return
       }
-      const declaration = await loadExtension(manifest)
+      const declaration = await loadExtension({ ...manifest, folder })
       const node = declaration?.nodes?.[0]
       if (node) {
-        setPreviewTypeId(node.typeId)
+        setPreviewType(node.type)
         setPreviewVersion((version) => version + 1)
       }
     },
-    [extensionId],
+    [folder],
   )
 
   const persistAndCompile = useCallback(async () => {
@@ -117,7 +117,7 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
     setErrors([])
     setWarnings([])
     try {
-      const saved = await updateLocalExtension({ data: { extensionId, files } })
+      const saved = await updateLocalExtension({ data: { folder, files } })
       setSavedSignature(fileSignature(saved.files))
       onSaved(saved)
       await compileAndPreview(saved.manifest)
@@ -126,7 +126,7 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
     } finally {
       setBusy(false)
     }
-  }, [extensionId, files, onSaved, compileAndPreview])
+  }, [folder, files, onSaved, compileAndPreview])
 
   useEffect(() => {
     if (readOnly || !dirty) {
@@ -163,7 +163,7 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
       }
       setBusy(true)
       try {
-        const saved = await deleteLocalExtensionFile({ data: { extensionId, path } })
+        const saved = await deleteLocalExtensionFile({ data: { folder, path } })
         const signature = fileSignature(saved.files)
         setSavedSignature(signature)
         // What is on disk now, so the autosave does not immediately re-save an
@@ -177,7 +177,7 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
         setBusy(false)
       }
     },
-    [extensionId, readOnly, onSaved, compileAndPreview],
+    [folder, readOnly, onSaved, compileAndPreview],
   )
 
   const paths = Object.keys(files)
@@ -231,7 +231,7 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
         <span className='min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground'>Preview</span>
       </div>
       <div className='min-h-0 flex-1'>
-        <PreviewPanel previewTypeId={previewTypeId} version={previewVersion} />
+        <PreviewPanel previewType={previewType} version={previewVersion} />
       </div>
     </div>
   )

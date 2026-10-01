@@ -41,8 +41,8 @@ await db.insert(space).values({
   name: 'Test Space',
   data: JSON.stringify({
     nodes: [
-      { id: 'agent-a', type: 'agent', data: { name: 'Agent A', avatar: 'https://example.test/a.png' } },
-      { id: 'agent-b', type: 'agent', data: { name: 'Agent B' } },
+      { id: 'agent-a', type: 'builtin.core.agent', data: { name: 'Agent A', avatar: 'https://example.test/a.png' } },
+      { id: 'agent-b', type: 'builtin.core.agent', data: { name: 'Agent B' } },
     ],
     edges: [],
   }),

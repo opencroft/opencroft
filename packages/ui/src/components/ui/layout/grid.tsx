@@ -1,4 +1,4 @@
-import { cn } from 'ui/lib/utils';
+import { cn } from 'cn';
 
 export type GridSize = 'tiny' | 'small' | 'medium' | 'large';
 

@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // A sticky header whose content scrolls away like ordinary content and hands
 // over to a short preview only at the very end.

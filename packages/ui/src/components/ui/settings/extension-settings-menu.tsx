@@ -4,7 +4,7 @@ import { ChevronRight, Puzzle } from 'lucide-react'
 import type React from 'react'
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from 'ui/components/ui/collapsible'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface ExtensionSettingsPageEntry {
   id: string

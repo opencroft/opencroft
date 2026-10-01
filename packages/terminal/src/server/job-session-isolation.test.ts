@@ -21,7 +21,7 @@ const SERVER_DIR = new URL('./', import.meta.url)
  * the whole importer set against this list closes that — adding a name here is a deliberate act
  * with a reviewer attached, which is the point.
  */
-const ALLOWED_IMPORTERS = ['index.ts', 'job-session.test.ts']
+const ALLOWED_IMPORTERS = ['index.ts', 'job-session.test.ts', 'stream-handle.test.ts']
 
 test('the client message path does not import the job entry point', async () => {
   const source = await readFile(SOCKET, 'utf8')

@@ -11,7 +11,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'u
 
 import {
   type InstallAuth,
-  type InstalledExtensionRecord,
   installExtensionFromUrl,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import { listSecretStores, type SecretStoreSummary } from '@/app/_authed/(secrets-store)/_server/actions'
@@ -19,13 +18,15 @@ import { listSecretStores, type SecretStoreSummary } from '@/app/_authed/(secret
 interface InstallExtensionDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onInstalled: (record: InstalledExtensionRecord) => void
+  /** The install landed: the folder it went into. */
+  onInstalled: (folder: string) => void
 }
 
 const NO_AUTH = '__none__'
 
 export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: InstallExtensionDialogProps) {
   const [url, setUrl] = useState('')
+  const [extensionId, setExtensionId] = useState('')
   const [ref, setRef] = useState('')
   const [storeId, setStoreId] = useState<string>(NO_AUTH)
   const [stores, setStores] = useState<SecretStoreSummary[]>([])
@@ -42,6 +43,7 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
 
   function reset() {
     setUrl('')
+    setExtensionId('')
     setRef('')
     setStoreId(NO_AUTH)
     setBusy(false)
@@ -55,15 +57,16 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
     setBusy(true)
     try {
       const auth: InstallAuth | undefined = storeId === NO_AUTH ? undefined : { type: 'secret', storeId }
-      const record = await installExtensionFromUrl({
+      const { folder } = await installExtensionFromUrl({
         data: {
           url: trimmedUrl,
+          id: extensionId.trim() || undefined,
           ref: ref.trim() || undefined,
           auth,
         },
       })
-      toast.success(`Installed ${record.manifest.name ?? record.id} (${record.sidecar.ref})`)
-      onInstalled(record)
+      toast.success(`Installed ${folder}`)
+      onInstalled(folder)
       reset()
       onOpenChange(false)
     } catch (err) {
@@ -110,6 +113,21 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
               disabled={busy}
               autoFocus
             />
+          </div>
+          <div className='flex flex-col gap-1.5'>
+            <Label htmlFor='install-id'>Extension id (optional)</Label>
+            <Input
+              id='install-id'
+              value={extensionId}
+              onChange={(e) => setExtensionId(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder='owner.extension'
+              disabled={busy}
+            />
+            <p className='text-[10px] text-muted-foreground'>
+              Leave empty to use <code>owner.repo</code> from the URL. Required when the URL path is not exactly{' '}
+              <code>owner/repo</code>.
+            </p>
           </div>
           <div className='flex flex-col gap-1.5'>
             <Label htmlFor='install-ref'>Tag or branch (optional)</Label>

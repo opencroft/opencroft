@@ -5,6 +5,8 @@ import { MarkdownResolversHost } from '@/app/_authed/(extension-runtime)/_client
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
 import { AppShell } from '@/app/_shell/app-shell'
+import { SponsorPrompt } from '@/app/_shell/sponsor-prompt'
+import { ThemePreferenceSync } from '@/app/_shell/theme-preference'
 import { getAuthState } from '@/app/(auth)/_server/session'
 
 // Path prefixes reachable only by an administrator. Checked here rather than
@@ -65,9 +67,11 @@ function AuthedLayout() {
   return (
     <SSEProvider>
       <MarkdownResolversHost />
+      <ThemePreferenceSync />
       <AppShell spaces={spaces} chrome={!fullPage}>
         <Outlet />
       </AppShell>
+      <SponsorPrompt />
     </SSEProvider>
   )
 }

@@ -64,6 +64,7 @@ import {
 import { type PermissionHandler, permissionContext } from './permission-context'
 import { type ResolvedPermissions, toolKey } from './permissions'
 import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
+import { blockBytes, PROMPT_BLOCK_BUDGET, promptBudget } from './prompt-size'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
 import { buildSpawnConfig, findAdapter, findProvider, isNativeSelection } from './resolve'
 import { foldRestoredState, restorableEvents } from './session-restore'
@@ -88,6 +89,7 @@ import type {
   SessionUsage,
   SpawnConfig,
   SubagentInfo,
+  ToolDiff,
   TurnQuota,
   TurnTokenUsage,
 } from './types'
@@ -136,6 +138,12 @@ export interface AgentClientOptions {
   //
   // Absent means a host with no attachment store: a prompt's attachments are
   // then reported as not having travelled, and the text goes alone.
+  //
+  // Called with ONE id at a time, in the order the message names them, and
+  // not at all for an attachment past the prompt budget: an image is up to a
+  // few megabytes of base64, and a store that answers several in one read can
+  // run out of memory doing it (see promptBlocks). A host should read the one
+  // row it is asked for, not batch them.
   loadAttachments?: (request: { sessionKey?: string; ids: readonly string[] }) => Promise<readonly PromptAttachment[]>
   tools?: ToolsInput
   skills?: SkillsInput
@@ -532,6 +540,17 @@ interface SessionState {
   // prompt is streaming over. settleTurn applies the deferred resume once the
   // turn that was running actually finishes, and clears this.
   pendingMcpRefresh?: boolean
+  // The subprocess connection the harness holds this session on: the one that
+  // last created, loaded, resumed or forked it. A session lives in the process
+  // that opened it, and a process that exits or closes its connection takes
+  // the session with it — the next process answers its id with "Session not
+  // found". connectionForSession compares this with the live connection and
+  // resumes the session on a new one before using it. Absent for the native
+  // harness, which is rebuilt on every call over a shared session map.
+  attachedTo?: AgentConnection
+  // The resume that attaches this session to a new connection, while one is in
+  // flight, so calls that arrive together share it.
+  reattaching?: Promise<AgentConnection>
   // The agent's execution plan (ACP `plan` session update), mirrored here (like
   // usage/modes/queue) so a windowed subscribe/getEventsWindow can synthesize
   // it when the cut fell before every plan event — see the SNAPSHOT_KINDS
@@ -795,6 +814,17 @@ function toolOutputText(content: ToolCallContent[] | null | undefined, rawOutput
   }
   const text = blockText(rawOutput)
   return text !== null ? stripCodeFence(text) : JSON.stringify(rawOutput, null, 2)
+}
+
+// The file changes among a tool call's `content` blocks, as an event's
+// `diffs` — nothing when it carries none. Nothing rather than an empty list for
+// content without a diff: the tool's text result arrives in the same field,
+// and it does not retract the change reported before it.
+function toolDiffs(content: ToolCallContent[] | null | undefined): { diffs?: ToolDiff[] } {
+  const diffs = (content ?? []).flatMap((block) =>
+    block.type === 'diff' ? [{ path: block.path, oldText: block.oldText ?? null, newText: block.newText }] : [],
+  )
+  return diffs.length > 0 ? { diffs } : {}
 }
 
 // Whether a replayed transcript's last conversation event shows work that had
@@ -1181,6 +1211,7 @@ function childEventOf(update: SessionNotification['update']): ChatEvent | null {
         toolKind: update.kind,
         input: update.rawInput,
         ...toolName(update as unknown as Record<string, unknown>),
+        ...toolDiffs(update.content),
       }
     case 'tool_call_update':
       return {
@@ -1190,6 +1221,7 @@ function childEventOf(update: SessionNotification['update']): ChatEvent | null {
         status: update.status ?? undefined,
         input: update.rawInput ?? undefined,
         output: toolOutputText(update.content, update.rawOutput),
+        ...toolDiffs(update.content),
       }
     default:
       return null
@@ -1466,10 +1498,24 @@ export function handleUpdate(notification: SessionNotification): void {
   if (handleExtensionUpdate(sessionId, update as unknown as Record<string, unknown> & { sessionUpdate: string })) {
     return
   }
+  const route = subagentRoute(sessionId)
+  // A notice is addressed to the reader, whichever session raised it, so one
+  // from a subagent lands in the session itself rather than inside the
+  // subagent's collapsed transcript.
+  if (update.sessionUpdate === 'notice') {
+    emit(route.rootId, {
+      kind: 'notice',
+      notice: {
+        severity: update.severity,
+        title: update.title,
+        ...(update.description ? { description: update.description } : {}),
+      },
+    })
+    return
+  }
   // A notification addressed to a subagent's own session id is one step of
   // that subagent's transcript, nested into the session's log — the session
   // is what a subscriber is actually watching.
-  const route = subagentRoute(sessionId)
   if (route.chain.length > 0) {
     const childEvent = childEventOf(update)
     if (childEvent) {
@@ -1528,6 +1574,7 @@ export function handleUpdate(notification: SessionNotification): void {
         toolKind: update.kind,
         input: update.rawInput,
         ...toolName(update as unknown as Record<string, unknown>),
+        ...toolDiffs(update.content),
       })
       break
     }
@@ -1539,6 +1586,7 @@ export function handleUpdate(notification: SessionNotification): void {
         status: update.status ?? undefined,
         input: update.rawInput ?? undefined,
         output: toolOutputText(update.content, update.rawOutput),
+        ...toolDiffs(update.content),
       })
       break
     }
@@ -1890,7 +1938,20 @@ export function buildClient(
       // steps are nested there (see handleUpdate). Emitting to the child id
       // would drop the event on the floor and leave the harness waiting on an
       // answer nobody can give.
-      const sessionId = subagentRoute(request.sessionId).rootId
+      const route = subagentRoute(request.sessionId)
+      const sessionId = route.rootId
+      // The request's tool call is an update to the call it names (ACP), and
+      // the change it asks to make may be reported here and nowhere else — a
+      // harness can send the exact approval patch only with the request. The
+      // change goes onto the call's own row, where it is drawn, whatever the
+      // answer turns out to be.
+      const diffs = toolDiffs(request.toolCall.content)
+      if (diffs.diffs) {
+        emit(
+          sessionId,
+          nestUnder(route.chain, { kind: 'tool_update', toolCallId: request.toolCall.toolCallId, ...diffs }),
+        )
+      }
       const perms = store.sessions.get(sessionId)?.permissions
       const title = request.toolCall.title ?? ''
       if (isAlwaysAllowed(perms, title)) {
@@ -2327,6 +2388,11 @@ function largestQuotaModel(quota: TurnQuota | undefined): string | undefined {
 // so it is never dropped in favour of a bare plural.
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
+// A byte count as the reader reads a file size: MiB, one decimal.
+function mebibytes(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1)
 }
 
 // The Claude Code bridge ships with extended thinking off unless a session
@@ -2837,6 +2903,23 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         }
       }
     })
+    // The connection can close with the process still running: a line the
+    // SDK refuses (see prompt-size) or a stream error closes it on either
+    // side. Nothing can be sent over it again, so it leaves the map at once
+    // and the next call starts a new process instead of meeting "ACP
+    // connection closed". The process is stopped after the same grace the
+    // handshake gives it, so one that is exiting on its own reports its own
+    // exit rather than our signal.
+    const retireClosed = () => {
+      if (ownsEntry()) {
+        store.connections.delete(key)
+      }
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill()
+        }
+      }, EXIT_GRACE_MS).unref()
+    }
     const stream = interceptDraftSessionUpdates(
       ndJsonStream(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
@@ -2864,6 +2947,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       initialized: Promise.resolve(),
     }
     store.connections.set(key, entry)
+    void connection.closed.then(retireClosed)
     entry.initialized = (async () => {
       let initResult: InitializeResponse
       try {
@@ -2886,7 +2970,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             // handleUpdate — instead of claude-agent-acp's legacy synthetic
             // "Compact conversation" tool call. Same `{}`-means-supported
             // spelling as elicitation.
-            session: { compaction: {} },
+            //
+            // The notices opt-in (unstable): with it, an agent reports its
+            // advisories to the user (a model fallback, a blocked hook) as
+            // `notice` session updates instead of writing them into the
+            // transcript as agent text.
+            session: { compaction: {}, notices: {} },
             // Two draft opt-ins the SDK's ClientCapabilities type doesn't
             // carry yet (spread past its excess-property check on purpose):
             //
@@ -2981,7 +3070,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         await authenticateConnection(adapter, connection, selection, initResult, secrets).catch((error: unknown) => {
           // The process is alive but unusable for this profile: take it down
           // so the next attempt starts clean instead of reusing it.
-          store.connections.delete(key)
+          if (ownsEntry()) {
+            store.connections.delete(key)
+          }
           child.kill()
           throw error
         })
@@ -3041,6 +3132,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       (live) => live.resumeSession({ sessionId, cwd: session.selection.cwd, mcpServers }),
       sessionId,
     )
+    session.attachedTo = resumed.connection
     await reconcileResumedState(sessionId, resumed.connection, resumed.result, logged)
   }
 
@@ -3163,12 +3255,38 @@ export function createAgentClient(options: AgentClientOptions = {}) {
 
   // Resolve a live connection for an already-created session, using the spawn
   // config of the session's recorded selection.
+  //
+  // One the harness holds the session on. When the process that held it is
+  // gone — it exited, or its connection closed (an oversized line closes it,
+  // and the bridge shuts down with it) — ensureConnection answers with a new
+  // process that has never heard of the session, and every call would be
+  // refused with "Session not found" until something reopened it. So the
+  // session is resumed there first, the way a reopened chat is. A harness that
+  // cannot resume says so instead of the bare refusal.
   async function connectionForSession(sessionId: string): Promise<AgentConnection> {
-    const selection = store.sessions.get(sessionId)?.selection
-    if (!selection) {
+    const session = store.sessions.get(sessionId)
+    if (!session) {
       throw new Error(`Unknown session: ${sessionId}`)
     }
-    return ensureConnection(selection)
+    const connection = await ensureConnection(session.selection)
+    if (isNativeSelection(session.selection) || !session.attachedTo || session.attachedTo === connection) {
+      return connection
+    }
+    session.reattaching ??= reattachSession(sessionId, session).finally(() => {
+      session.reattaching = undefined
+    })
+    return session.reattaching
+  }
+
+  async function reattachSession(sessionId: string, session: SessionState): Promise<AgentConnection> {
+    if (connEntryFor(session.selection)?.resumeSession !== true) {
+      const harness = findAdapter(session.selection.adapterId)?.label ?? 'The agent'
+      throw new Error(
+        `${harness} restarted and cannot resume a session, so this conversation cannot continue on it: start a new chat.`,
+      )
+    }
+    await performResumeSession(sessionId)
+    return session.attachedTo ?? ensureConnection(session.selection)
   }
 
   function emitSessionModes(sessionId: string): void {
@@ -3334,6 +3452,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       session.harnessTurnCancelled = true
     }
     try {
+      // A session whose connection is gone has no turn to stop: the turn
+      // ended with the process. Reaching it through connectionForSession would
+      // start a process and resume the session only to cancel nothing.
+      if (session?.attachedTo && connEntryFor(session.selection)?.connection !== session.attachedTo) {
+        return
+      }
       const connection = await connectionForSession(sessionId)
       await connection.cancel({ sessionId })
     } finally {
@@ -3522,13 +3646,35 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    * as though there were none, and nothing connects the two. Nothing here is a
    * guess about whether something WAS an attachment -- they arrive as a field,
    * never read out of the words -- so every one of these reports is true.
+   *
+   * The whole prompt stays under what the bridge will read (see prompt-size):
+   * images past the budget are held back and reported, and a text that is
+   * over it on its own sends nothing — `blocks` is null then. Either way the
+   * connection, and every session on it, survives the message.
+   *
+   * The bytes are read ONE ATTACHMENT AT A TIME, in the order the message
+   * named them, and reading stops at the first image that would carry the
+   * prompt past the budget. A host store's multi-row read can fail before any
+   * of this runs: an embedded PGlite answering four ~4 MiB images in one query
+   * ran out of wasm memory and failed every query after it, for every user,
+   * until the process restarted. So no read here ever asks for more than one
+   * image, and none asks for an image that could not travel anyway.
    */
   async function promptBlocks(
     session: SessionState,
     text: string,
     attachments: readonly AttachmentRef[],
-  ): Promise<{ blocks: ContentBlock[]; problems: string[] }> {
+  ): Promise<{ blocks: ContentBlock[] | null; problems: string[] }> {
     const blocks: ContentBlock[] = [{ type: 'text', text }]
+    const budget = promptBudget(blocks[0])
+    if (!budget.textFits) {
+      return {
+        blocks: null,
+        problems: [
+          `This message is ${mebibytes(blockBytes(blocks[0]))} MiB, over the ${mebibytes(PROMPT_BLOCK_BUDGET)} MiB one prompt can carry, so it did not go out.`,
+        ],
+      }
+    }
     if (attachments.length === 0) {
       return { blocks, problems: [] }
     }
@@ -3549,31 +3695,47 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         ],
       }
     }
-    let loaded: readonly PromptAttachment[]
-    try {
-      loaded = await options.loadAttachments({
-        sessionKey: session.selection.sessionKey,
-        ids: attachments.map((attachment) => attachment.id),
-      })
-    } catch (error) {
-      return {
-        blocks,
-        problems: [`Attachments could not be read, so the message went without them: ${errorMessage(error)}`],
+    const load = options.loadAttachments
+    const problems: string[] = []
+    let unsendable = 0
+    let heldBack: AttachmentRef[] = []
+    for (const [index, ref] of attachments.entries()) {
+      let loaded: readonly PromptAttachment[]
+      try {
+        loaded = await load({ sessionKey: session.selection.sessionKey, ids: [ref.id] })
+      } catch (error) {
+        problems.push(
+          index === 0
+            ? `Attachments could not be read, so the message went without them: ${errorMessage(error)}`
+            : `${plural(attachments.length - index, 'attachment')} could not be read and did not travel: ${errorMessage(error)}`,
+        )
+        break
       }
-    }
-    for (const attachment of loaded) {
-      if (attachment.data && isImageMime(attachment.mimeType)) {
-        blocks.push({ type: 'image', data: attachment.data, mimeType: attachment.mimeType })
+      const attachment = loaded.find((candidate) => candidate.id === ref.id)
+      if (!attachment?.data || !isImageMime(attachment.mimeType)) {
+        unsendable += 1
+        continue
       }
+      const block: ContentBlock = { type: 'image', data: attachment.data, mimeType: attachment.mimeType }
+      if (!budget.take(block)) {
+        // This one and every image after it stay behind, unread past here.
+        // What could never travel as an image is counted as such instead.
+        const rest = attachments.slice(index)
+        heldBack = rest.filter((candidate) => isImageMime(candidate.mimeType))
+        unsendable += rest.length - heldBack.length
+        break
+      }
+      blocks.push(block)
     }
-    const sent = blocks.length - 1
-    return {
-      blocks,
-      problems:
-        sent < attachments.length
-          ? [`${plural(attachments.length - sent, 'attachment')} could not be sent as an image and did not travel.`]
-          : [],
+    if (unsendable > 0) {
+      problems.push(`${plural(unsendable, 'attachment')} could not be sent as an image and did not travel.`)
     }
+    if (heldBack.length > 0) {
+      problems.push(
+        `${plural(heldBack.length, 'attachment')} did not travel: too large to send together, one prompt carries at most ${mebibytes(PROMPT_BLOCK_BUDGET)} MiB (${heldBack.map((attachment) => attachment.name).join(', ')}).`,
+      )
+    }
+    return { blocks, problems }
   }
 
   async function deliverPrompt(
@@ -3614,9 +3776,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // The blocks are built once, whichever way the delivery goes: a steer that
     // falls back to a prompt hands over the same ones, and reading the
     // attachments twice would report each failure twice.
-    let built: { blocks: ContentBlock[]; problems: string[] } | undefined
+    let built: { blocks: ContentBlock[] | null; problems: string[] } | undefined
     if (steerable && session.activeTurns > 0 && supportsMidTurnInput(session.selection)) {
       built = await promptBlocks(session, deliveredText, attachments)
+      if (!built.blocks) {
+        // Nothing can go: said in the transcript, and nothing was counted yet.
+        emitDelivery(sessionId, deliveredText, attachments, built.problems)
+        return
+      }
       const steer = await steerIntoRunningTurn(
         sessionId,
         session,
@@ -3655,6 +3822,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     built ??= await promptBlocks(session, deliveredText, attachments)
     const prompt = built.blocks
     emitDelivery(sessionId, deliveredText, attachments, built.problems)
+    if (!prompt) {
+      // Refused before it reached the wire, where it would have closed the
+      // connection: the turn counted above ends here, with its error said.
+      settleTurn(sessionId, {})
+      return
+    }
     // The response's usage/quota/failure decorations are read here, at the one
     // place the prompt promise settles, so a host reads them off the turn_end
     // event instead of re-parsing `_meta` — none of it is spec-guaranteed
@@ -4109,7 +4282,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     }
     // Copied rather than kept, so a caller's array changing later cannot
     // change what an entry already holds.
-    const carried = attached.map(({ id, name, mimeType, message }) => ({ id, name, mimeType, message: message ?? 0 }))
+    const carried = attached.map(({ id, name, mimeType, width, height, message }) => ({
+      id,
+      name,
+      mimeType,
+      ...(width && height ? { width, height } : {}),
+      message: message ?? 0,
+    }))
     const attachments = carried.length > 0 ? { attachments: carried } : {}
     if (origin.kind === 'system') {
       return { id: randomUUID(), kind: 'system', text, ...attachments }
@@ -4920,6 +5099,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // A new session has spent nothing yet, so its first priced turn owns
         // the whole of the first reading.
         costAccountedFor: 0,
+        ...(native ? {} : { attachedTo: connection }),
       })
       // A session opened under a key that was holding messages when the last
       // process stopped takes them back, at the cadence it was reading at,
@@ -5058,12 +5238,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         replaying: true,
       })
       try {
-        const { result: response } = await signedInCall(
+        const { result: response, connection: live } = await signedInCall(
           selection,
           connection,
-          (live) => live.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) }),
+          (candidate) =>
+            candidate.loadSession({ sessionId, cwd: selection.cwd, mcpServers, _meta: sessionMeta(selection) }),
           sessionId,
         )
+        const attached = store.sessions.get(sessionId)
+        if (attached) {
+          attached.attachedTo = live
+        }
         // Seed from the response the same way newSession does — the agent may
         // not replay a config_option_update for state it already had before
         // this load, so relying on replay alone can leave configOptions empty.
@@ -5252,6 +5437,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         )
         response = resumed.result
         live = resumed.connection
+        const attached = store.sessions.get(sessionId)
+        if (attached) {
+          attached.attachedTo = live
+        }
       } catch (error) {
         // The agent could not take the session back — unwind the half-registered
         // record so the caller can cleanly fall back to a replay or a fresh
@@ -5523,7 +5712,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // session whose agent was merely not running, and reported an agent that
       // forks perfectly well as one that cannot fork at all. A reader saw
       // `Internal error` on an edit, minutes after editing worked.
-      const connection = await ensureConnection(session.selection)
+      //
+      // Through connectionForSession, so a source session whose process is
+      // gone is resumed on the new one first: the fork is made from what that
+      // process holds.
+      const connection = await connectionForSession(sessionId)
       const entry = native ? undefined : connEntryFor(session.selection)
       if (!native && entry?.forkSupported !== true) {
         throw new Error('Forking is only supported by the in-process native harness.')
@@ -5596,6 +5789,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // set this session to hourly did not ask to be read in realtime because
         // they branched it.
         presence: session.presence,
+        // The fork lives in the process that made it, the source's.
+        ...(native ? {} : { attachedTo: connection }),
       })
       // A fork is a new session to an external harness, and it starts on
       // whatever that harness starts new sessions on: codex-acp 1.13.1 installs
@@ -6024,7 +6219,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     //   how a URL ask's "Done" reads.
     // - a non-empty string — the free-text prompt's reply, delivered under the
     //   `answer` key it has always used;
-    // - undefined or '' — cancel, exactly as before this took objects.
+    // - undefined or '' — the reader dismissed the ask: decline. The reader
+    //   chose not to answer, which is decline's meaning; `cancel` is kept for
+    //   an ask whose turn went away (cancelTurnAsks), and an agent may treat
+    //   it as an aborted call rather than an answer.
     resolveElicitation(requestId: string, answer?: string | Record<string, ElicitationContentValue>): void {
       const pending = store.pendingElicitations.get(requestId)
       if (!pending) {
@@ -6034,7 +6232,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (answer !== undefined && typeof answer !== 'string') {
         pending.resolve({ action: 'accept', content: answer })
       } else {
-        pending.resolve(answer ? { action: 'accept', content: { answer } } : { action: 'cancel' })
+        pending.resolve(answer ? { action: 'accept', content: { answer } } : { action: 'decline' })
       }
       emit(pending.sessionId, { kind: 'ask_user_resolved', requestId })
     },

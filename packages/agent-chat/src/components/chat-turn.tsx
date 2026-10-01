@@ -1,13 +1,14 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, ClipboardList, Copy, Ellipsis, GitFork, Loader2, Maximize2, Minimize2, Pencil, Square, SquareCheckBig, SquarePen, TerminalSquare, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, Loader2, Maximize2, Minimize2, Pencil, Square, TerminalSquare, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
 // so neither is a runtime cycle.
 import { type AuthorRun, authorRuns } from './author-runs'
 import { detailEntryKeys, withHeader } from './detail-entries'
 import { Markdown } from './markdown'
+import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
 import { MessageContextMenu } from './message-context-menu'
 
 import { SelectionBadge } from './selection-badge'
@@ -26,7 +27,7 @@ import {
   CollapsingStickyHeaderContent,
   CollapsingStickyHeaderPinned,
 } from 'ui/components/ui/layouts/collapsing-sticky-header'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // The attribute the host's scroll restore uses to find a block again and
 // measure how far it moved. Exported so the host queries the same name rather
@@ -53,12 +54,6 @@ export type UserText = string & { readonly __userText: unique symbol }
 // The host's own copies satisfy this structurally.
 export type ChainDotVariant = 'default' | 'success' | 'destructive'
 
-// One entry of the agent's plan checklist (ACP `plan` session update, as the
-// host folds it — this component never learns the wire shape). `status` is the
-// agent's own word; the three ACP spellings ('pending' | 'in_progress' |
-// 'completed') get the intended drawing, anything else draws as pending.
-export type PlanEntry = { content: string; status: string; priority: string }
-
 // One item inside a turn's detail chain. The host builds these; this component
 // only renders them.
 //
@@ -74,7 +69,10 @@ export type DetailItem =
   // `toolName` is the PROGRAMMATIC name behind it ("Write"), carried separately
   // because a host that keys a view registry on the displayed name matches
   // nothing whose phrasing contains an argument, which is every file tool.
-  // Absent when the agent named no tool.
+  // Absent when the agent named no tool. `diffs` are the file changes the call
+  // reported, passed through to the host's tool view (oldText null: the before
+  // side was not reported); absent when it reported none. Spelled out here
+  // rather than imported, so this component takes nothing from the client.
   | {
       kind: 'tool'
       id: string
@@ -82,12 +80,8 @@ export type DetailItem =
       toolName?: string
       args: unknown
       result?: { text: string; isError?: boolean }
+      diffs?: { path: string; oldText: string | null; newText: string }[]
     }
-  // The agent's live plan, as one checklist that the host patches in place —
-  // every plan update replaces the entries wholesale, so this item is keyed by
-  // its `id` (like a tool) rather than by position: entries come and go around
-  // it without remounting the rest of the chain.
-  | { kind: 'plan'; id: string; entries: PlanEntry[] }
   // A subagent the turn spawned, drawn as a nested, bordered block: its name
   // and task in a header with a live/terminal state badge, and its OWN reply
   // chain (`items`, built by the host the same way the parent's is) rendered
@@ -112,6 +106,11 @@ export type DetailItem =
       state: string
       onStop?: () => void
     }
+  // An advisory the agent addressed to the reader rather than said in the
+  // reply: a model fallback, a blocked hook. `severity` is the agent's word;
+  // 'warning' and 'error' draw as such and anything else draws as 'info'.
+  // Plain text throughout, so the description is not rendered as markdown.
+  | { kind: 'notice'; severity: string; title: string; description?: string }
 
 export type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
 
@@ -282,6 +281,11 @@ export interface MessageAttachment {
   // alternative text; the host resolves it (a stored URL, typically), because
   // where pictures live is not this component's business either.
   src?: string
+  // The picture's size in pixels as it displays, when the host knows it. With
+  // both, the picture is laid out at its final size before it loads; without,
+  // it takes a fixed box. Either way its arrival moves nothing around it.
+  width?: number
+  height?: number
 }
 
 export interface ChatUserMessagePart {
@@ -769,8 +773,14 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
             <div className='flex min-w-0 flex-wrap gap-1'>
               {part.attachments.map((attachment, index) =>
                 attachment.src ? (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: see the quotation key below -- the same reasoning, the same list.
-                  <SentPicture key={index} src={attachment.src} name={attachment.label} />
+                  <SentPicture
+                    // biome-ignore lint/suspicious/noArrayIndexKey: see the quotation key below -- the same reasoning, the same list.
+                    key={index}
+                    src={attachment.src}
+                    name={attachment.label}
+                    width={attachment.width}
+                    height={attachment.height}
+                  />
                 ) : null,
               )}
             </div>
@@ -810,14 +820,26 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
 // Bounded in height so a tall screenshot does not push the conversation off
 // the screen, and a link to the whole of it for a reader who wants detail.
 //
+// ITS BOX IS SETTLED BEFORE IT LOADS. A picture arriving late -- seconds later
+// on a slow connection -- must not move the reader, so nothing about its box
+// may wait for the bytes. With a known size the width is fixed here and the
+// `width`/`height` attributes give the browser the ratio for the height, which
+// also follows when a narrow column shrinks it. Without one it takes a fixed
+// box on both axes -- the pictures wrap as a row, so a width arriving late
+// could still push one onto the next line -- and is fitted inside it, never
+// enlarged.
+//
 // A picture that cannot be drawn -- its bytes gone, or a host that answered
 // with nothing -- falls back to the quotation with its name, so the message
 // still says something travelled rather than showing a broken image.
-function SentPicture({ src, name }: { src: string; name: string }) {
+const SENT_PICTURE_MAX_HEIGHT = 192
+
+function SentPicture({ src, name, width, height }: { src: string; name: string; width?: number; height?: number }) {
   const [failed, setFailed] = useState(false)
   if (failed) {
     return <SelectionBadge label={name} title={name} />
   }
+  const sized = width && height ? { width, height } : null
   return (
     <a href={src} target='_blank' rel='noopener noreferrer' title={name} className='block max-w-full shrink-0'>
       <img
@@ -825,7 +847,16 @@ function SentPicture({ src, name }: { src: string; name: string }) {
         alt={name}
         loading='lazy'
         onError={() => setFailed(true)}
-        className='block max-h-48 max-w-full rounded-md border bg-muted object-contain'
+        {...(sized
+          ? {
+              ...sized,
+              style: { width: Math.min(sized.width, (SENT_PICTURE_MAX_HEIGHT * sized.width) / sized.height) },
+            }
+          : {})}
+        className={cn(
+          'block max-w-full rounded-md border bg-muted object-scale-down',
+          sized ? 'h-auto' : 'size-48',
+        )}
       />
     </a>
   )
@@ -890,49 +921,13 @@ function AgentMessageText({ text }: { text: string }) {
 }
 
 function toolDotVariant(item: DetailItem): ChainDotVariant {
+  if (item.kind === 'notice') {
+    return item.severity === 'error' ? 'destructive' : 'default'
+  }
   if (item.kind !== 'tool' || !item.result) {
     return 'default'
   }
   return item.result.isError ? 'destructive' : 'success'
-}
-
-// The agent's plan as one checklist. Not interactive — the agent owns the list
-// and rewrites it wholesale on every update; the reader only watches it. The
-// whole point of the drawing is the frontier: done entries strike through, the
-// one in progress carries the amber pen, the rest wait as empty squares.
-function PlanChecklist({ item }: { item: Extract<DetailItem, { kind: 'plan' }> }) {
-  return (
-    <div className='rounded-md border border-border/60 bg-muted/20 px-3 py-2'>
-      <div className='flex items-center gap-1.5 text-xs font-medium text-muted-foreground'>
-        <ClipboardList className='size-3.5 text-blue-500' />
-        Plan
-      </div>
-      <ul className='mt-1.5 flex flex-col gap-1'>
-        {item.entries.map((entry, i) => {
-          const completed = entry.status === 'completed'
-          const inProgress = entry.status === 'in_progress'
-          return (
-            // Position is the only identity a plan entry has: the agent
-            // rewrites the list wholesale and may repeat a line of text, so
-            // neither the content nor anything else on the entry can serve as
-            // a stable key. The same deliberate index key the nested-subagent
-            // renderers below use for host-built, wholesale-replaced lists.
-            // biome-ignore lint/suspicious/noArrayIndexKey: plan entries carry no id and their text may repeat
-            <li key={i} className='flex items-start gap-2 text-sm leading-5'>
-              {completed ? (
-                <SquareCheckBig className='mt-0.5 size-3.5 shrink-0 text-green-500' />
-              ) : inProgress ? (
-                <SquarePen className='mt-0.5 size-3.5 shrink-0 text-amber-500' />
-              ) : (
-                <Square className='mt-0.5 size-3.5 shrink-0 text-foreground' />
-              )}
-              <span className={cn('min-w-0', completed && 'text-muted-foreground line-through')}>{entry.content}</span>
-            </li>
-          )
-        })}
-      </ul>
-    </div>
-  )
 }
 
 // A subagent's nested transcript, in a bordered block under the parent turn.
@@ -1008,11 +1003,14 @@ function SubagentBlock({
             if (child.kind === 'subagent') {
               return <SubagentBlock key={child.id} item={child} renderTool={renderTool} renderers={renderers} />
             }
-            if (child.kind === 'plan') {
-              return <PlanChecklist key={child.id} item={child} />
-            }
             if (child.kind === 'task') {
               return <TaskBlock key={child.id} item={child} />
+            }
+            if (child.kind === 'notice') {
+              // Not produced by a client that lifts notices to the session
+              // itself, as agent-client does; drawn for a host that nests one.
+              // biome-ignore lint/suspicious/noArrayIndexKey: as for the text entry above
+              return <ChatNotice key={i} item={child} />
             }
             return <div key={child.id}>{renderTool(child)}</div>
           })}
@@ -1060,6 +1058,33 @@ function TaskBlock({ item }: { item: Extract<DetailItem, { kind: 'task' }> }) {
       </div>
       {detail ? <div className='mt-1 truncate text-xs text-muted-foreground'>{detail}</div> : null}
     </div>
+  )
+}
+
+// Listed in full, like the callout's own tones: the severities the protocol
+// defines, each on the callout kind that carries its weight.
+const NOTICE_CALLOUT_KINDS: Record<string, MarkdownCalloutKind> = {
+  info: 'note',
+  warning: 'warning',
+  error: 'caution',
+}
+
+// A notice in the reply chain: the documentation callout for its severity,
+// with the notice's own title as the heading. The callout's outer margin is
+// for prose; here the rail spaces the entries, and a margin would drop the
+// heading below the rail's dot. Exported so a host drawing its own chain
+// draws a notice the same way.
+export function ChatNotice({ item }: { item: Extract<DetailItem, { kind: 'notice' }> }) {
+  return (
+    <MarkdownCallout
+      kind={Object.hasOwn(NOTICE_CALLOUT_KINDS, item.severity) ? NOTICE_CALLOUT_KINDS[item.severity] : 'note'}
+      title={item.title}
+      className='my-0'
+    >
+      {item.description ? (
+        <p className='whitespace-pre-wrap wrap-break-word text-sm text-foreground/90'>{item.description}</p>
+      ) : null}
+    </MarkdownCallout>
   )
 }
 
@@ -1141,16 +1166,16 @@ export function ChatTurnDetails({
     if (item.kind === 'subagent') {
       return <SubagentBlock item={item} renderTool={renderTool} renderers={renderers} />
     }
-    if (item.kind === 'plan') {
-      return <PlanChecklist item={item} />
-    }
     if (item.kind === 'task') {
       return <TaskBlock item={item} />
+    }
+    if (item.kind === 'notice') {
+      return <ChatNotice item={item} />
     }
     return renderTool(item)
   }
 
-  // When collapsed, combine last text + last tool call (if tool comes AFTER text)
+  // When collapsed: the last text, then the tool call and notices after it
   if (collapsed) {
     // Find the last assistant-text entry
     let lastTextEntry: DetailEntry | null = null
@@ -1176,6 +1201,39 @@ export function ChatTurnDetails({
       }
     }
 
+    // What follows the last text, in order: the tool call it ended on and
+    // every notice. A notice after the reply is usually the turn's outcome (a
+    // hook that blocked it), so folding it away would read as a normal reply.
+    // With no text at all, the turn's last entry stands in for the reply.
+    const lastEntry = entries[entries.length - 1]
+    const afterText: { key: string; item: DetailItem }[] = []
+    for (let i = lastTextIdx + 1; i < entries.length; i++) {
+      const e = entries[i]
+      if (
+        e.kind === 'item' &&
+        (e.item.kind === 'notice' || e.item === lastToolAfterText || (!lastTextEntry && e === lastEntry))
+      ) {
+        afterText.push({ key: entryKeys[i], item: e.item })
+      }
+    }
+    const renderCollapsed = (item: DetailItem) => {
+      switch (item.kind) {
+        case 'tool':
+          return renderTool(item)
+        case 'task':
+          // Present-tense state: a task that is still running is what the
+          // agent is doing NOW, and its Stop control must not fold away with
+          // the rest.
+          return <TaskBlock item={item} />
+        case 'notice':
+          return <ChatNotice item={item} />
+        case 'assistant-text':
+          return item.text.trim() ? <AgentMessageText text={item.text} /> : null
+        default:
+          return null
+      }
+    }
+
     const hasAvatar = !!agentAvatar
     const marker = hasAvatar ? <AgentAvatar avatar={agentAvatar} name={botName} size='md' /> : <ChainDot />
 
@@ -1197,37 +1255,10 @@ export function ChatTurnDetails({
               lastTextEntry.item.text.trim() && (
                 <AgentMessageText text={lastTextEntry.item.text} />
               )}
-            {/* Tool call — animate on changes */}
-            {lastToolAfterText && lastToolAfterText.kind === 'tool' && (
-              <div key={lastToolAfterText.id}>{renderTool(lastToolAfterText)}</div>
-            )}
-            {/* If no text entry found, show the very last entry */}
-            {!lastTextEntry &&
-              (() => {
-                const last = entries[entries.length - 1]
-                if (last?.kind === 'item') {
-                  if (last.item.kind === 'tool') {
-                    return renderTool(last.item)
-                  }
-                  if (last.item.kind === 'plan') {
-                    // The plan is present-tense state: even folded away, a
-                    // collapsed turn still shows where the agent stands.
-                    return <PlanChecklist item={last.item} />
-                  }
-                  if (last.item.kind === 'task') {
-                    // Present-tense for the same reason as the plan: a task
-                    // that is still running is what the agent is doing NOW,
-                    // and its Stop control must not fold away with the rest.
-                    return <TaskBlock item={last.item} />
-                  }
-                  if (last.item.kind === 'assistant-text') {
-                    return last.item.text.trim() ? (
-                      <AgentMessageText text={last.item.text} />
-                    ) : null
-                  }
-                }
-                return null
-              })()}
+            {/* Keyed per entry, so a tool call that changes remounts */}
+            {afterText.map(({ key, item }) => (
+              <Fragment key={key}>{renderCollapsed(item)}</Fragment>
+            ))}
           </div>
         </Chained>
       </div>

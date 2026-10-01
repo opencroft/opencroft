@@ -28,9 +28,7 @@ import { GroupChatThreadList } from 'ui/group-chat/group-chat-thread-list'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from 'ui/input-group'
 import { Toggle } from 'ui/toggle'
 
-import { useSessionActivityKeys } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { stopProcessLocal } from '@/app/_authed/(agent)/_server/acp'
-import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import {
   GroupChatThreadDeleteDialog,
   GroupChatThreadRenameDialog,
@@ -41,6 +39,7 @@ import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_compo
 import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
+import { useThreadRowStates } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type {
@@ -135,22 +134,7 @@ export function GroupChatDetailScreen({
   // screen — one status vocabulary, one source. A thread's sessionKey is
   // exactly the key that activity already reports on; nothing about it is
   // group-chat-specific.
-  const { pendingKeys, activeKeys, backgroundKeys, aliveKeys } = useSessionActivityKeys()
-  const threadStatusById = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof deriveSessionStatus>>()
-    for (const t of threads) {
-      map.set(
-        t.id,
-        deriveSessionStatus(t.sessionKey, {
-          pending: pendingKeys,
-          active: activeKeys,
-          background: backgroundKeys,
-          alive: aliveKeys,
-        }),
-      )
-    }
-    return map
-  }, [threads, pendingKeys, activeKeys, backgroundKeys, aliveKeys])
+  const threadStateById = useThreadRowStates(threads)
 
   // The active list draws only non-archived threads; an archived one moved to
   // the chat's own archive, drawn in the settings dialog instead. Split here,
@@ -203,7 +187,7 @@ export function GroupChatDetailScreen({
   const threadTree = (
     <GroupChatThreadTree
       threads={activeThreads}
-      statusById={threadStatusById}
+      stateById={threadStateById}
       layout={layout}
       onChange={persist}
       activeId={activeThreadId}
@@ -235,10 +219,10 @@ export function GroupChatDetailScreen({
         agent: t.agent,
         createdAt: new Date(t.createdAt),
         disabled: !t.agentIsMember,
-        status: threadStatusById.get(t.id),
+        ...threadStateById.get(t.id),
         hasDraft: t.hasDraft,
       }))
-  }, [activeThreads, trimmedQuery, threadStatusById])
+  }, [activeThreads, trimmedQuery, threadStateById])
   // The header's two parts, memoized on exactly what they read so a host that
   // holds them in state is told once per real change. While a search is open
   // the field is the whole header: the other controls step aside, and the
@@ -297,7 +281,7 @@ export function GroupChatDetailScreen({
           directory={directory}
           agents={agents}
           archivedThreads={archivedThreads}
-          statusById={threadStatusById}
+          stateById={threadStateById}
           onOpenThread={onOpenThread}
         />
       </>
@@ -313,7 +297,7 @@ export function GroupChatDetailScreen({
     directory,
     agents,
     archivedThreads,
-    threadStatusById,
+    threadStateById,
     onOpenThread,
   ])
   // Reported through a ref so an inline callback never re-arms this, and

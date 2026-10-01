@@ -472,8 +472,27 @@ export async function readPersistedUsage(sessionId: string): Promise<PersistedUs
  * same UNKNOWN a session that has never been loaded reports.
  */
 export async function readLastKnownUsage(sessionKey: string): Promise<PersistedUsage | null> {
-  const pointer = await readPersistedSession(sessionKey)
-  return pointer ? readPersistedUsage(pointer.id) : null
+  return (await readLastKnownUsages([sessionKey])).get(sessionKey) ?? null
+}
+
+/**
+ * readLastKnownUsage for many keys at once. The pointer row and the usage row
+ * are each read once, however many keys are asked: a thread list asks for every
+ * thread it draws. A key with nothing to report is left out.
+ */
+export async function readLastKnownUsages(sessionKeys: readonly string[]): Promise<Map<string, PersistedUsage>> {
+  const [pointerRow, usageRow] = await Promise.all([getSettingImpl(SETTING_ID), getSettingImpl(USAGE_SETTING_ID)])
+  const pointers = pointerRow ? storeFromRaw(pointerRow.data) : {}
+  const usage = usageRow ? usageStoreFromRaw(usageRow.data) : {}
+  const found = new Map<string, PersistedUsage>()
+  for (const sessionKey of sessionKeys) {
+    const sessionId = normalize(pointers[sessionKey])?.id
+    const reading = sessionId ? usage[sessionId] : undefined
+    if (reading) {
+      found.set(sessionKey, reading)
+    }
+  }
+  return found
 }
 
 export async function writePersistedUsage(

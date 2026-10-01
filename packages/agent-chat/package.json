@@ -24,7 +24,7 @@
     "./*": "./src/*.tsx"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.3.0",
+    "@agentclientprotocol/sdk": "^1.5.1",
     "@monaco-editor/react": "^4.7.0",
     "@shikijs/langs": "^4.4.3",
     "@shikijs/themes": "^4.4.3",
@@ -36,6 +36,7 @@
     "@tiptap/starter-kit": "^3.31.3",
     "@tiptap/suggestion": "^3.31.3",
     "agent-client": "*",
+    "cn": "^0.4.0",
     "markdown-it-container": "^4.0.0",
     "mermaid": "^12.0.0",
     "react-markdown": "^10.1.0",

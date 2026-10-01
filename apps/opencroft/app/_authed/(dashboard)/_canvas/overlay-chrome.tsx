@@ -7,12 +7,11 @@
 // shared component directory. The `Chat*` names are older than the modes that
 // use them today.
 
+import { cn } from 'cn'
 import type { ReactNode } from 'react'
 import { Flex, type FlexProps } from 'ui/layout/flex'
 import { StickySection } from 'ui/layouts/sticky-section'
 import { ScrollArea } from 'ui/scroll-area'
-
-import { cn } from '@/lib/utils'
 
 export interface ChatAreaProps {
   children?: ReactNode

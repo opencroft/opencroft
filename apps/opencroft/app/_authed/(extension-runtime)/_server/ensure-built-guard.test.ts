@@ -16,18 +16,24 @@ import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import test, { after } from 'node:test'
+import test, { after, mock } from 'node:test'
 import { promisify } from 'node:util'
+
+import { toastStore } from '@/lib/toast-store'
+import { ensureExtensionBuilt } from './loader'
 
 const run = promisify(execFile)
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-ensurebuilt-'))
-process.env.OPENCROFT_LOCAL_EXTENSIONS = root
-
-const { ensureExtensionBuilt } = await import('./loader')
-const { toastStore } = await import('@/lib/toast-store')
+const savedDataDir = process.env.OPENCROFT_DATA_DIR
+process.env.OPENCROFT_DATA_DIR = root
 
 after(async () => {
+  if (savedDataDir === undefined) {
+    delete process.env.OPENCROFT_DATA_DIR
+  } else {
+    process.env.OPENCROFT_DATA_DIR = savedDataDir
+  }
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -47,16 +53,13 @@ async function makeFixture(opts: { git: boolean; dirty: boolean; bundle: boolean
   distServer: string
 }> {
   seq += 1
-  const slug = `ext-${seq}`
-  const dir = path.join(root, slug)
+  const id = `local.ext-${seq}`
+  const dir = path.join(root, 'extensions', id)
   await fs.mkdir(path.join(dir, 'src'), { recursive: true })
   await fs.mkdir(path.join(dir, 'server'), { recursive: true })
   await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default { hello: "world" }\n')
   await fs.writeFile(path.join(dir, 'server', 'index.ts'), 'export const actions = {}\n')
-  await fs.writeFile(
-    path.join(dir, 'extension.json'),
-    JSON.stringify({ id: `local/${slug}`, name: slug, version: '0.0.0' }),
-  )
+  await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify({ id, name: id, version: '0.0.0' }))
   // dist and node_modules are generated; real extension repos ignore them, which
   // is what keeps a built checkout reading "clean". The fixture matches that so
   // the fake bundle below does not itself register as an authored change.
@@ -65,7 +68,7 @@ async function makeFixture(opts: { git: boolean; dirty: boolean; bundle: boolean
   if (opts.git) {
     await run('git', ['init', '-q'], { cwd: dir })
     await run('git', ['add', '-A'], { cwd: dir })
-    await run('git', ['commit', '-q', '-m', 'init'], { cwd: dir, env: GIT_ENV })
+    await run('git', ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init'], { cwd: dir, env: GIT_ENV })
   }
 
   const distServer = path.join(dir, 'dist', 'server.js')
@@ -86,7 +89,7 @@ async function makeFixture(opts: { git: boolean; dirty: boolean; bundle: boolean
     await fs.appendFile(path.join(dir, 'src', 'client.tsx'), '// edit in progress\n')
   }
 
-  return { id: `local/${slug}`, distServer }
+  return { id, distServer }
 }
 
 function captureToasts(): { events: string[]; stop: () => void } {
@@ -162,11 +165,12 @@ test("a concurrent or crashed build's staging directory neither refuses nor wedg
 
   // What an overlapping consultation sees mid-build, and what a killed build
   // leaves behind for every consultation after it: the compiler's own staging
-  // directory beside dist/. Neither is authored work, so neither may read as
+  // directory, inside dist/. Neither is authored work, so neither may read as
   // an uncommitted change.
-  const stale = path.join(dir, 'dist.building-4-2')
-  const fresh = path.join(dir, 'dist.building-5-3')
-  await fs.mkdir(stale)
+  const dist = path.join(dir, 'dist')
+  const stale = path.join(dist, '.building-4-2')
+  const fresh = path.join(dist, '.building-5-3')
+  await fs.mkdir(stale, { recursive: true })
   await fs.writeFile(path.join(stale, 'client.js'), 'half-written')
   const old = new Date('2020-01-01T00:00:00Z')
   await fs.utimes(stale, old, old)
@@ -184,4 +188,167 @@ test("a concurrent or crashed build's staging directory neither refuses nor wedg
   await assert.rejects(fs.stat(stale), 'a leftover from a dead attempt is swept, not left to accumulate')
   // An attempt young enough to still be running is left alone.
   await fs.stat(fresh)
+})
+
+// Every page load consults every extension, so an outcome that cannot change
+// until its inputs do must not be attempted, nor announced to everyone, again.
+
+async function commitAll(dir: string): Promise<void> {
+  await run('git', ['add', '-A'], { cwd: dir })
+  await run('git', ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'edit'], { cwd: dir, env: GIT_ENV })
+}
+
+async function toastsDuring(body: () => Promise<unknown>): Promise<string[]> {
+  const { events, stop } = captureToasts()
+  try {
+    await body()
+  } finally {
+    stop()
+  }
+  return events
+}
+
+test('a refusal is announced once while nothing it read has changed', async () => {
+  const { id } = await makeFixture({ git: true, dirty: true, bundle: true })
+
+  const events = await toastsDuring(async () => {
+    await ensureExtensionBuilt(id)
+    await ensureExtensionBuilt(id)
+    await ensureExtensionBuilt(id)
+  })
+
+  assert.equal(events.filter((event) => event.includes('was not rebuilt') && event.includes(id)).length, 1)
+})
+
+test('a refused checkout with no bundle keeps failing, with the same reason, without announcing again', async () => {
+  const { id } = await makeFixture({ git: true, dirty: true, bundle: false })
+
+  const events = await toastsDuring(async () => {
+    await assert.rejects(() => ensureExtensionBuilt(id), /was not built/)
+    await assert.rejects(() => ensureExtensionBuilt(id), /was not built/)
+  })
+
+  assert.equal(events.filter((event) => event.includes('was not rebuilt')).length, 1)
+})
+
+test('committing the change lifts a refusal at the next check, though no source file changed', async () => {
+  const { id, distServer } = await makeFixture({ git: true, dirty: true, bundle: true })
+  await ensureExtensionBuilt(id)
+  assert.equal(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER', 'refused while dirty')
+
+  await commitAll(path.dirname(path.dirname(distServer)))
+  await ensureExtensionBuilt(id)
+
+  assert.notEqual(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER', 'built once committed')
+})
+
+test('removing an untracked file lifts a refusal at the next check', async () => {
+  const { id, distServer } = await makeFixture({ git: true, dirty: false, bundle: true })
+  const dir = path.dirname(path.dirname(distServer))
+  await fs.mkdir(path.join(dir, 'notes'))
+  await fs.writeFile(path.join(dir, 'notes', 'scratch.txt'), 'untracked')
+  await ensureExtensionBuilt(id)
+  assert.equal(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER', 'refused while an untracked file is present')
+
+  await fs.rm(path.join(dir, 'notes', 'scratch.txt'))
+  await ensureExtensionBuilt(id)
+
+  assert.notEqual(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER', 'built once the tree is clean')
+})
+
+test('a failed build is attempted and announced once until its sources change', async () => {
+  const { id, distServer } = await makeFixture({ git: true, dirty: false, bundle: true })
+  const dir = path.dirname(path.dirname(distServer))
+  const distClient = path.join(dir, 'dist', 'client.js')
+  await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default {\n')
+  await commitAll(dir)
+
+  const failures = await toastsDuring(async () => {
+    await ensureExtensionBuilt(id)
+    await ensureExtensionBuilt(id)
+  })
+  assert.equal(failures.filter((event) => event.includes('build failed') && event.includes(id)).length, 1)
+  assert.equal(await fs.readFile(distClient, 'utf-8'), 'OLD-CLIENT', 'the previous client bundle is still served')
+
+  await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default { fixed: true }\n')
+  await commitAll(dir)
+  await ensureExtensionBuilt(id)
+
+  assert.match(await fs.readFile(distClient, 'utf-8'), /fixed/, 'the fixed sources are built')
+})
+
+test('a failed dependency install is attempted again after the retry interval, with nothing changed', async (t) => {
+  const hasNpm = await run('npm', ['--version']).then(
+    () => true,
+    () => false,
+  )
+  if (!hasNpm) {
+    t.skip('npm is not installed, and the build installs dependencies with it')
+    return
+  }
+  const { id, distServer } = await makeFixture({ git: true, dirty: false, bundle: true })
+  const dir = path.dirname(path.dirname(distServer))
+  // A local dependency tarball outside the checkout, so providing it later
+  // changes nothing the checkout or its sources are judged by. npm fails on the
+  // missing file and installs the present one without the network.
+  const dependency = path.join(root, `dependency-${seq}.tgz`)
+  await fs.writeFile(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: id, version: '0.0.0', dependencies: { 'local-dependency': `file:${dependency}` } }),
+  )
+  await commitAll(dir)
+
+  mock.timers.enable({ apis: ['Date'], now: Date.now() })
+  try {
+    const failures = await toastsDuring(async () => {
+      await ensureExtensionBuilt(id)
+      await ensureExtensionBuilt(id)
+    })
+    assert.equal(failures.filter((event) => event.includes('build failed') && event.includes(id)).length, 1)
+    assert.equal(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER')
+
+    const packageDir = path.join(root, `dependency-${seq}`)
+    await fs.mkdir(packageDir)
+    await fs.writeFile(
+      path.join(packageDir, 'package.json'),
+      JSON.stringify({ name: 'local-dependency', version: '1.0.0' }),
+    )
+    await run('npm', ['pack', packageDir, '--pack-destination', root], { cwd: root })
+    await fs.rename(path.join(root, 'local-dependency-1.0.0.tgz'), dependency)
+    await ensureExtensionBuilt(id)
+    assert.equal(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER', 'not attempted again within the interval')
+
+    mock.timers.tick(5 * 60 * 1000 + 1)
+    await ensureExtensionBuilt(id)
+  } finally {
+    mock.timers.reset()
+  }
+
+  assert.notEqual(await fs.readFile(distServer, 'utf-8'), 'OLD-SERVER', 'attempted again, and built')
+})
+
+test('a refusal in a linked worktree is announced once too', async () => {
+  seq += 1
+  const main = path.join(root, `main-${seq}`)
+  const id = `local.ext-${seq}`
+  const dir = path.join(root, 'extensions', id)
+  await fs.mkdir(path.join(main, 'src'), { recursive: true })
+  await fs.writeFile(path.join(main, 'src', 'client.tsx'), 'export default {}\n')
+  await fs.writeFile(path.join(main, 'extension.json'), JSON.stringify({ id, name: id, version: '0.0.0' }))
+  await fs.writeFile(path.join(main, '.gitignore'), 'dist/\nnode_modules/\n')
+  await run('git', ['init', '-q'], { cwd: main })
+  await commitAll(main)
+  await run('git', ['worktree', 'add', '-q', dir], { cwd: main })
+  await fs.mkdir(path.join(dir, 'dist'))
+  await fs.writeFile(path.join(dir, 'dist', 'client.js'), 'OLD-CLIENT')
+  const old = new Date('2020-01-01T00:00:00Z')
+  await fs.utimes(path.join(dir, 'dist', 'client.js'), old, old)
+  await fs.appendFile(path.join(dir, 'src', 'client.tsx'), '// edit in progress\n')
+
+  const events = await toastsDuring(async () => {
+    await ensureExtensionBuilt(id)
+    await ensureExtensionBuilt(id)
+  })
+
+  assert.equal(events.filter((event) => event.includes('was not rebuilt') && event.includes(id)).length, 1)
 })

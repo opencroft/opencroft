@@ -139,7 +139,7 @@ async function seed(): Promise<void> {
   })
   await db
     .insert(schema.spaceApp)
-    .values({ id: 'app1', spaceId: 's1', extensionId: 'core', appSlug: 'graph', name: 'Graph', slug: 'graph' })
+    .values({ id: 'app1', spaceId: 's1', type: 'builtin.core.graph', name: 'Graph', slug: 'graph' })
   await db
     .insert(schema.agentSessionEvent)
     .values({ sessionKey: 'k1', position: 0, event: { type: 'turn_end', usage: { input: 1 } } })
@@ -199,6 +199,34 @@ test('column types survive the JSON crossing', async () => {
   // Past 2^32, so a bigint that had been narrowed to int would not come back.
   assert.equal(turn.inputTokens, 9_007_199_254)
   assert.equal(turn.costAmount, 1.25)
+})
+
+// The extension folders in a backup are snapshots or checkouts without their
+// install record; this table is where each came from and, through createdAt,
+// which of two local copies of one extension is served. A restore that lost
+// either would reinstall from nowhere or flip which copy wins.
+test('an extension row keeps its source and the time it first appeared through a backup', async () => {
+  const row = {
+    folder: 'acme.widgets',
+    sourceUrl: 'https://git.example.com/acme/widgets.git',
+    registryName: 'default',
+    authStoreId: 'store-1',
+    authUsernameKey: 'user',
+    authTokenKey: 'token',
+    ref: 'v1.2.0',
+    commit: '0123456789abcdef0123456789abcdef01234567',
+    createdAt: new Date('2026-01-02T03:04:05.000Z'),
+    updatedAt: new Date('2026-02-03T04:05:06.000Z'),
+  }
+  await db.insert(schema.extension).values(row)
+  const onDisk = JSON.parse(JSON.stringify(await createBackup(db))) as Backup
+  assert.ok('Extension' in onDisk.tables, 'the table is carried')
+  await resetDatabase(db)
+  assert.deepEqual(await db.select().from(schema.extension), [])
+
+  await restoreBackup(db, onDisk)
+
+  assert.deepEqual(await db.select().from(schema.extension), [row])
 })
 
 test('a backup that covers only some tables leaves the rest alone', async () => {
@@ -277,4 +305,36 @@ test('a key naming no table is reported rather than restored', async () => {
 
 test('restoring rejects a file that is not a backup', async () => {
   await assert.rejects(() => restoreBackup(db, { formatVersion: 1 } as unknown as Backup), /missing tables/)
+})
+
+// The embedded PGlite builds a whole result in its wasm memory: four rows this
+// size in one SELECT ran it out of memory, and every query after failed until
+// the process restarted. The backup runs on a schedule, so reading the
+// attachment table in one SELECT would take a running instance down by itself.
+test('six attachments at the size ceiling back up and restore, and the database stays usable', async () => {
+  // About 4 MiB of image as base64, the most the attachment store admits.
+  const data = 'R'.repeat(Math.floor((4 * 1024 * 1024 * 4) / 3))
+  const ids = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6']
+  for (const id of ids) {
+    await db.insert(schema.chatAttachment).values({
+      id,
+      sessionKey: 'agent:test:backup',
+      name: `${id}.gif`,
+      mimeType: 'image/gif',
+      data,
+      byteSize: Math.floor((data.length * 3) / 4),
+    })
+  }
+  const backup = await createBackup(db)
+  assert.deepEqual(
+    backup.tables.ChatAttachment.map((row) => [row.id, (row.data as string).length]),
+    ids.map((id) => [id, data.length]),
+  )
+  await resetDatabase(db)
+  const summary = await restoreBackup(db, JSON.parse(JSON.stringify(backup)) as Backup)
+  assert.equal(summary.restored.ChatAttachment, 6)
+  const restored = await db
+    .select({ id: schema.chatAttachment.id, byteSize: schema.chatAttachment.byteSize })
+    .from(schema.chatAttachment)
+  assert.deepEqual(restored.map((row) => row.id).sort(), ids, 'a query after the round trip still runs')
 })

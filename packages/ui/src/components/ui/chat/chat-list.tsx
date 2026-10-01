@@ -3,9 +3,9 @@
 import { useState, useRef, useEffect, type DragEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderPlus, Pencil } from 'lucide-react'
 
-import { ChatListItem, type ChatListItemAction, type ChatStatus } from './chat-list-item'
+import { type ChatContextUsage, ChatListItem, type ChatListItemAction, type ChatStatus } from './chat-list-item'
 import { RowContextMenu } from '../utils/row-context-menu'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 export interface ChatListLeaf {
   id: string
@@ -13,6 +13,7 @@ export interface ChatListLeaf {
   description?: string
   avatarUrl?: string | null
   status?: ChatStatus
+  context?: ChatContextUsage
   hasDraft?: boolean
   // Dim the row without hiding it -- forwarded straight through to the row,
   // which already draws this state. It has to be on the leaf because the row is
@@ -172,7 +173,16 @@ function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState
 // settle. Folder `open` is deliberately excluded: it is view state this
 // component owns, so a change to it is not an upstream change.
 function leafSignature(l: ChatListLeaf) {
-  return [l.id, l.title, l.description ?? '', l.avatarUrl ?? '', l.status ?? '', l.hasDraft ? 1 : 0, l.disabled ? 1 : 0]
+  return [
+    l.id,
+    l.title,
+    l.description ?? '',
+    l.avatarUrl ?? '',
+    l.status ?? '',
+    l.context ? [l.context.usedTokens, l.context.contextLimit, l.context.asOf ?? null] : null,
+    l.hasDraft ? 1 : 0,
+    l.disabled ? 1 : 0,
+  ]
 }
 
 function nodesSignature(nodes: ChatListNode[]): string {
@@ -792,6 +802,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
             description={leaf.description}
             avatarUrl={leaf.avatarUrl}
             status={leaf.status}
+            context={leaf.context}
             hasDraft={leaf.hasDraft}
             disabled={leaf.disabled}
             active={leaf.id === activeId}
@@ -1015,6 +1026,7 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
             description={leaf.description}
             avatarUrl={leaf.avatarUrl}
             status={leaf.status}
+            context={leaf.context}
             hasDraft={leaf.hasDraft}
             disabled={leaf.disabled}
           />

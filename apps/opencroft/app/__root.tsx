@@ -46,8 +46,8 @@ import appCss from '@/app/globals.css?url'
 //                                    gating rather than assumed; gated anyway,
 //                                    since an unauthenticated arbitrary-action
 //                                    invoker costs nothing to close
-//   /api/ext/<scope>/<slug>/<file>,
-//   /api/ext/<scope>/<slug>/assets/* an extension's own compiled bundle and
+//   /api/ext/<extensionId>/<file>,
+//   /api/ext/<extensionId>/assets/*  an extension's own compiled bundle and
 //                                    static assets — loaded by a browser tab
 //                                    that already has a session by the time
 //                                    any extension UI renders
@@ -77,7 +77,7 @@ import appCss from '@/app/globals.css?url'
 //                                    caller its owner configured. Session-
 //                                    gating it would mean no external service
 //                                    could ever reach one again.
-//   /api/ext/<scope>/<slug>/http/*   an extension's own declared HTTP handler.
+//   /api/ext/<extensionId>/http/*    an extension's own declared HTTP handler.
 //                                    Its own file says what it is for:
 //                                    "proxies, webhooks, SSE all work" — same
 //                                    reasoning as /api/route/$, one layer down.

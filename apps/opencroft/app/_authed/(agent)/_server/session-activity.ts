@@ -1,25 +1,21 @@
-// Which chat sessions are waiting, working, or alive: read here and nowhere
-// else, and pushed to each signed-in page over the app's event stream instead
-// of being asked for on a timer.
+// Which chat sessions are waiting, working, holding a queue, or alive, and how
+// much context each live one holds: read here and nowhere else, and pushed to
+// each signed-in page over the app's event stream instead of being asked for on
+// a timer.
 //
-// Two sources move these sets, and both report their changes: the agent engine
+// Two sources move these, and both report their changes: the agent engine
 // (every session opened, dropped, asking, answered, starting or settling a turn,
-// starting or ending background work) and this host's background-task registry
-// (a task running for a session nobody has in memory). Anything else that moved
-// them would need a report of its own here, or pushed readers would miss it.
+// starting or ending background work, its queue or its usage reading changing)
+// and this host's background-task registry (a task running for a session
+// nobody has in memory). Anything else that moved them would need a report of
+// its own here, or pushed readers would miss it.
 
 import { agentClient, subscribeEngineActivity } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import type { SessionActivitySets } from '@/app/_authed/(agent)/_shared/session-status'
 import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
 import { listMemberSessionKeys } from '@/app/_authed/(group-chats)/_server/model'
-import type { SessionActivitySnapshot } from '@/lib/sse-events'
-
-export interface SessionActivitySets {
-  pending: Set<string>
-  active: Set<string>
-  background: Set<string>
-  alive: Set<string>
-}
+import type { LiveContextUsage, SessionActivitySnapshot } from '@/lib/sse-events'
 
 /** Every session's activity on the instance — for a caller that has already decided who may see it. */
 export function sessionActivitySets(): SessionActivitySets {
@@ -27,19 +23,46 @@ export function sessionActivitySets(): SessionActivitySets {
     pending: new Set(agentClient.awaitingUserSessionKeys()),
     active: new Set(agentClient.activeSessionKeys()),
     background: backgroundWorkSessionKeys(),
+    queued: new Set(
+      agentClient
+        .listSessions()
+        .flatMap((meta) => (meta.sessionKey && (meta.queuedMessages ?? 0) > 0 ? [meta.sessionKey] : [])),
+    ),
     alive: new Set(agentClient.aliveSessionKeys()),
   }
 }
 
+/**
+ * The context each live session last reported, by key — the same `listSessions`
+ * reading `group_chat_list` gives an agent. An offline session is absent: what
+ * it held when it stopped is a stored figure, read with the thread list.
+ */
+function liveContextUsage(): Map<string, LiveContextUsage> {
+  const usage = new Map<string, LiveContextUsage>()
+  for (const meta of agentClient.listSessions()) {
+    if (meta.sessionKey && meta.usage) {
+      usage.set(meta.sessionKey, { usedTokens: meta.usage.used, contextLimit: meta.usage.size ?? null })
+    }
+  }
+  return usage
+}
+
 /** The activity of the given sessions only, sorted, so equal pictures serialize equally. */
 export function sessionActivityWithin(keys: ReadonlySet<string>): SessionActivitySnapshot {
+  return activityPicture((key) => keys.has(key))
+}
+
+function activityPicture(includes: (sessionKey: string) => boolean): SessionActivitySnapshot {
   const sets = sessionActivitySets()
-  const within = (set: Set<string>) => [...set].filter((key) => keys.has(key)).sort()
+  const within = (set: ReadonlySet<string>) => [...set].filter(includes).sort()
+  const usage = [...liveContextUsage()].filter(([key]) => includes(key)).sort(([a], [b]) => a.localeCompare(b))
   return {
     pending: within(sets.pending),
     active: within(sets.active),
     background: within(sets.background),
+    queued: within(sets.queued),
     alive: within(sets.alive),
+    usage: Object.fromEntries(usage),
   }
 }
 
@@ -55,9 +78,10 @@ let detachSources: (() => void) | null = null
 let flushScheduled = false
 let lastSeen: string | null = null
 
-function fingerprint(sets: SessionActivitySets): string {
-  const sorted = (set: Set<string>) => [...set].sort()
-  return JSON.stringify([sorted(sets.pending), sorted(sets.active), sorted(sets.background), sorted(sets.alive)])
+// The instance-wide picture, every key included: each person's picture is cut
+// from it, so it changes whenever any of theirs could.
+function fingerprint(): string {
+  return JSON.stringify(activityPicture(() => true))
 }
 
 function scheduleFlush(): void {
@@ -67,7 +91,7 @@ function scheduleFlush(): void {
   flushScheduled = true
   setTimeout(() => {
     flushScheduled = false
-    const seen = fingerprint(sessionActivitySets())
+    const seen = fingerprint()
     if (seen === lastSeen) {
       return
     }
@@ -82,7 +106,7 @@ function scheduleFlush(): void {
 export function subscribeSessionActivity(listener: () => void): () => void {
   listeners.add(listener)
   if (!detachSources) {
-    lastSeen = fingerprint(sessionActivitySets())
+    lastSeen = fingerprint()
     const fromEngine = subscribeEngineActivity(scheduleFlush)
     const fromTasks = backgroundTasks.subscribeRunningSessionKeys(scheduleFlush)
     detachSources = () => {

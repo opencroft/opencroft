@@ -3,7 +3,7 @@
 import { AgentAvatar } from '../media/agent-avatar'
 import { type ChatStatus, STATUS_DOT, STATUS_WORD } from '../chat/chat-list-item'
 import { LIST_ROW_SECONDARY_CLASS, LIST_ROW_TITLE_CLASS } from '../utils/list-row'
-import { cn } from 'ui/lib/utils'
+import { cn } from 'cn'
 
 // Re-exported so a consumer that only draws this cluster can type its status
 // without reaching past it to the row the vocabulary comes from.

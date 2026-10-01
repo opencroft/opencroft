@@ -19,8 +19,14 @@ export interface AppMeta extends AppEntry {
 /** An App added to a space, with the parameter values the user entered. */
 export interface SpaceAppInstance {
   id: string
-  extensionId: string
-  appSlug: string
+  /** The App this is an instance of: its qualified type, which names the providing extension. */
+  type: string
+  /**
+   * Whether anything provides the App now. False while its extension is not
+   * installed: the instance keeps its parameters and data, and shows which
+   * extension it is waiting for.
+   */
+  provided: boolean
   /** The instance's display name — required, editable, and the slug follows it. */
   name: string
   /**

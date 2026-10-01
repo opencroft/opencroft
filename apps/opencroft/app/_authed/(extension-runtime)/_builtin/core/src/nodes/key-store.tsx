@@ -159,19 +159,22 @@ export function KeyStoreInspector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
-  const handleCreate = useCallback(async () => {
-    if (!newName.trim()) {
-      return
-    }
-    try {
-      await invoke('keyStore.createKey', nodeId, newName.trim(), newType)
-      setNewName('')
-      await load()
-      toast.success('Key created')
-    } catch (err) {
-      toast.error(`Could not create key: ${String(err)}`)
-    }
-  }, [newName, newType, nodeId, load])
+  const handleCreate = useCallback(
+    async (name: string) => {
+      if (!name.trim()) {
+        return
+      }
+      try {
+        await invoke('keyStore.createKey', nodeId, name.trim(), newType)
+        setNewName('')
+        await load()
+        toast.success('Key created')
+      } catch (err) {
+        toast.error(`Could not create key: ${String(err)}`)
+      }
+    },
+    [newType, nodeId, load],
+  )
 
   const handleImport = useCallback(
     async (name: string, content: string) => {
@@ -258,7 +261,7 @@ export function KeyStoreInspector({
             <SelectItem value='ecdsa'>ECDSA</SelectItem>
           </SelectContent>
         </Select>
-        <Button size='sm' className='h-7 text-xs' onClick={handleCreate} disabled={!newName.trim()}>
+        <Button size='sm' className='h-7 text-xs' onClick={() => handleCreate(newName)} disabled={!newName.trim()}>
           <icons.Plus className='h-3 w-3' />
         </Button>
       </Flex>
