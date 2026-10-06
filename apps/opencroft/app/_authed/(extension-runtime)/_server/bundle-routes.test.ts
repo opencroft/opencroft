@@ -11,6 +11,8 @@
 // Environment set up exactly as routes.test.ts does it, and for the same
 // reason: `@opencroft/db` opens and migrates its connection at import time.
 
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,9 +20,8 @@ import { join } from 'node:path'
 import test, { after } from 'node:test'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-bundle-routes-test-'))
-const ENV_KEYS = ['PGLITE_PATH', 'OPENCROFT_DATA_DIR', 'DB_MIGRATIONS_DIR', 'DATABASE_URL', 'NODE_ENV'] as const
+const ENV_KEYS = ['OPENCROFT_DATA_DIR', 'DB_MIGRATIONS_DIR', 'DATABASE_URL', 'NODE_ENV'] as const
 const savedEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,

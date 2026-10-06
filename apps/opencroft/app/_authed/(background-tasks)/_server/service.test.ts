@@ -555,6 +555,91 @@ test('a cancel stops the process group; a task that ended first keeps its own en
   assert.equal(node.stops().length, 2)
 })
 
+// ── a cancel by the session that started the task ────────────────────────
+//
+// That session reads the ending in its own cancel's reply, so the ending is
+// recorded as told and no notification goes to it: one sent while the cancel
+// is still out would be steered into the running turn and cut it short. The
+// session's record of the task still moves to its final state.
+
+async function shownEnded(fake: ReturnType<typeof fakeEngine>, taskId: string): Promise<void> {
+  await until(() => fake.upserts.some(({ task }) => task.asyncTaskId === taskId && task.state !== 'running'))
+}
+
+test('a runner task cancelled by its own session is recorded as told, and its session is not notified', async () => {
+  const node = fakeNode()
+  const fake = fakeEngine()
+  const svc = service({ engine: fake.engine, node: node.transport })
+  const started = await runnerTask(svc)
+  assert.equal(await svc.cancel(started.taskId, OWNER), 'stopped')
+
+  const ended = await svc.get(started.taskId)
+  assert.deepEqual([ended?.state, ended?.reason], ['stopped', 'cancelled'])
+  assert.ok(ended?.deliveredAt, 'recorded as told by the cancel itself')
+  await shownEnded(fake, started.taskId)
+  assert.deepEqual(
+    fake.upserts.map(({ sessionId, task }) => [sessionId, task.state]),
+    [
+      ['session-1', 'running'],
+      ['session-1', 'stopped'],
+    ],
+  )
+  // Nothing is left owed for a later tick to send either.
+  await svc.deliverOwed()
+  assert.deepEqual(fake.notified, [])
+  assert.deepEqual([...svc.runningSessionKeys()], [])
+})
+
+test('an in-process task cancelled by its own session is recorded as told, and its session is not notified', async () => {
+  const fake = fakeEngine()
+  const svc = service({ engine: fake.engine })
+  const started = await inProcessTask(svc, () => new Promise(() => {}))
+  assert.equal(await svc.cancel(started.taskId, OWNER), 'requested')
+  await shownEnded(fake, started.taskId)
+  await svc.deliverOwed()
+
+  const ended = await svc.get(started.taskId)
+  assert.deepEqual([ended?.state, ended?.reason], ['stopped', 'cancelled'])
+  assert.ok(ended?.deliveredAt)
+  assert.deepEqual(fake.notified, [])
+})
+
+test('the starting session is recognised by its key after it comes back under a new id', async () => {
+  const fake = fakeEngine()
+  const svc = service({ engine: fake.engine })
+  const started = await inProcessTask(svc, () => new Promise(() => {}))
+  // The session was resumed: same key, a new id.
+  fake.sessions.splice(0, fake.sessions.length, { id: 'session-1-resumed', sessionKey: KEY })
+  assert.equal(await svc.cancel(started.taskId, { agent: 'builder', sessionId: 'session-1-resumed' }), 'requested')
+  assert.ok((await svc.get(started.taskId))?.deliveredAt)
+  await svc.deliverOwed()
+  assert.deepEqual(fake.notified, [])
+})
+
+test('a cancel by another session, or by the chat’s stop, still notifies the session that started the task', async () => {
+  const fake = fakeEngine([
+    { id: 'session-1', sessionKey: KEY },
+    { id: 'session-2', sessionKey: 'group-chat.team.reviewer.main' },
+  ])
+  const svc = service({ engine: fake.engine })
+
+  const byOther = await inProcessTask(svc, () => new Promise(() => {}))
+  assert.equal(await svc.cancel(byOther.taskId, { agent: 'reviewer', sessionId: 'session-2' }), 'requested')
+  await told(svc, byOther.taskId)
+
+  const byChat = await inProcessTask(svc, () => new Promise(() => {}))
+  assert.equal(await svc.requestStop(byChat.taskId), true)
+  await told(svc, byChat.taskId)
+
+  assert.deepEqual(
+    fake.notified.map(({ sessionId, text }) => [sessionId, text.split('\n')[1]]),
+    [
+      ['session-1', `Background task ${byOther.taskId} has ended: stopped.`],
+      ['session-1', `Background task ${byChat.taskId} has ended: stopped.`],
+    ],
+  )
+})
+
 // ── telling the session ──────────────────────────────────────────────────
 
 test('delivery is recorded only when the session took it, and retried when it did not', async () => {

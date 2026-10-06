@@ -41,8 +41,14 @@ import { LogoLoader } from 'ui/logo-loader'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from 'ui/resizable'
 import { useSidebar } from 'ui/sidebar'
 
+import {
+  focusCanvasOnDrop,
+  focusCanvasOnPress,
+  keepFocusOnCanvas,
+} from '@/app/_authed/(dashboard)/_canvas/canvas-key-scope'
+import { undoKeyAction } from '@/app/_authed/(dashboard)/_canvas/canvas-undo-keys'
 import { ExtensionsStateContext } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
-import { persistedNodes, withCurrentSelection } from '@/app/_authed/(dashboard)/_canvas/graph-view-state'
+import { withCurrentSelection } from '@/app/_authed/(dashboard)/_canvas/graph-view-state'
 import { InspectorContext, useInspectorState } from '@/app/_authed/(dashboard)/_canvas/inspector-context'
 import { inspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
 import { NodeContextMenu } from '@/app/_authed/(dashboard)/_canvas/node-context-menu'
@@ -55,13 +61,14 @@ import { useBackIntercept, useOverlay } from '@/app/_authed/(dashboard)/_canvas/
 import { coalesceReload, type ReloadCoalesceState } from '@/app/_authed/(dashboard)/_canvas/reload-coalesce'
 import { useClipboard } from '@/app/_authed/(dashboard)/_canvas/use-clipboard'
 import { useGraphEvents } from '@/app/_authed/(dashboard)/_canvas/use-graph-events'
+import { describeUndoResult, type LiveGraphStart, useLiveGraph } from '@/app/_authed/(dashboard)/_canvas/use-live-graph'
 import { resolveInputContexts } from '@/app/_authed/(dashboard)/_extension-system/context-resolver'
 import { installExtensionApi } from '@/app/_authed/(dashboard)/_extension-system/extension-api'
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
-import { fetchSpaceGraph, saveSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
+import { fetchSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import { findTakenGraphIds } from '@/app/_authed/(space)/_server/actions'
 import { useSSEEvents, useSSEEventsDispatch } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useRememberedLayout } from '@/app/_lib/layout-storage'
@@ -96,35 +103,6 @@ function nodeFrameDefaults(category?: string): Partial<Node> {
     return { style: { width: 800, height: 480 } }
   }
   return {}
-}
-
-function useDebouncedSave(
-  slug: string,
-  delay: number,
-  versionRef: React.MutableRefObject<string | null>,
-  onConflict: () => void,
-) {
-  const timer = useRef<NodeJS.Timeout>(undefined)
-  const save = useCallback(
-    (nodes: Node[], edges: Edge[]) => {
-      clearTimeout(timer.current)
-      timer.current = setTimeout(async () => {
-        const result = await saveSpaceGraph(slug, { nodes: persistedNodes(nodes), edges }, versionRef.current)
-        if (result.ok) {
-          versionRef.current = result.updatedAt
-        } else if (result.conflict) {
-          onConflict()
-        } else {
-          // Leave versionRef untouched — we don't know whether the write landed, so
-          // asserting a version we didn't confirm could mask a real future conflict.
-          toast.error('Failed to save changes. Your next edit will retry.')
-        }
-      }, delay)
-    },
-    [slug, delay, versionRef, onConflict],
-  )
-  useEffect(() => () => clearTimeout(timer.current), [])
-  return save
 }
 
 async function loadLocalExtensions(): Promise<void> {
@@ -167,22 +145,21 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   useEffect(() => inspectorIntent.onOpen(() => setMobileInspectorVisible(true)), [])
   const { resolvedTheme } = useTheme()
   const { screenToFlowPosition, setCenter, deleteElements } = useReactFlow()
-  // Tracks the `updatedAt` this tab last saw for the space's graph row, so
-  // saves can assert they're not overwriting a newer write from another tab
-  // or an MCP tool call (see GraphConflictError in _server/store.ts).
-  const graphVersionRef = useRef<string | null>(null)
+  // Set once the graph is fetched; the canvas writes through the graph's
+  // document from then on.
+  const [liveStart, setLiveStart] = useState<LiveGraphStart | null>(null)
+  const { live, requestWrite } = useLiveGraph({ slug, start: liveStart, nodes, edges, setNodes, setEdges })
+  // The editor (canvas and inspector) and the canvas element, for focus to
+  // return to the canvas when the element holding it is deleted.
+  const [editorElement, setEditorElement] = useState<HTMLDivElement | null>(null)
+  const [canvasElement, setCanvasElement] = useState<HTMLDivElement | null>(null)
+  useEffect(
+    () => (editorElement && canvasElement ? keepFocusOnCanvas(editorElement, canvasElement) : undefined),
+    [editorElement, canvasElement],
+  )
   // Single-flight guard for the SSE-triggered extension reload effect below --
-  // see its own comment for why concurrent reloads can't just run independently.
+  // see reload-coalesce.ts for why concurrent reloads can't just run independently.
   const extensionsReloadRef = useRef<ReloadCoalesceState>({ inFlight: false, pending: false, nextRun: null })
-  const handleSaveConflict = useCallback(() => {
-    toast.warning('This space changed elsewhere — refreshed to the latest version. Redo your last change if needed.')
-    fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
-      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
-      setEdges(graph.edges as Edge[])
-      graphVersionRef.current = updatedAt
-    })
-  }, [slug, setNodes, setEdges])
-  const debouncedSave = useDebouncedSave(slug, 500, graphVersionRef, handleSaveConflict)
   const sse = useSSEEvents()
   useSeedPendingRequests()
 
@@ -347,7 +324,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     setExtensionsSettled(false)
     const extensions = loadLocalExtensions()
     const graphResult = fetchSpaceGraph(slug)
-    graphResult.then(({ graph, updatedAt }) => {
+    setLiveStart(null)
+    graphResult.then(({ graph, live: session }) => {
       // Two results settling separately means two chances for a previous
       // space's response to arrive after the slug changed, where there used to
       // be one. Drop anything belonging to a space already navigated away from.
@@ -356,7 +334,11 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
       }
       setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
       setEdges(graph.edges as Edge[])
-      graphVersionRef.current = updatedAt
+      if (session) {
+        setLiveStart({ session, graph })
+      } else {
+        toast.error('Could not open this graph. Changes made here will not be saved.')
+      }
       setGraphReady(true)
     })
     // loadLocalExtensions reports its own failures and always resolves, so this
@@ -375,49 +357,12 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     }
   }, [slug, setNodes, setEdges])
 
-  useEffect(() => {
-    if (!graphReady || sse.graphVersion === 0) {
-      return
-    }
-    // Same stale-slug hazard as the extension-reload effect below: navigating
-    // away before this resolves must not apply a since-abandoned space's graph
-    // onto the canvas now showing a different one.
-    let current = true
-    fetchSpaceGraph(slug).then(({ graph, updatedAt }) => {
-      if (!current) {
-        return
-      }
-      // graph_updated now also fires from this tab's own saves, so this resync
-      // fetch is frequently a self-echo. Skip applying it when we already have
-      // this exact version — otherwise it clobbers anything typed in the
-      // save-broadcast-fetch window with the (identical, but stale-by-now) data
-      // we just saved.
-      if (updatedAt === graphVersionRef.current) {
-        return
-      }
-      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
-      setEdges(graph.edges as Edge[])
-      graphVersionRef.current = updatedAt
-    })
-    return () => {
-      current = false
-    }
-  }, [slug, sse.graphVersion, graphReady, setNodes, setEdges])
-
+  // The graph's own changes arrive through its document; an extension change
+  // only reloads the registry the nodes are drawn from.
   useEffect(() => {
     if (!graphReady || sse.extensionsVersion === 0) {
       return
     }
-    // `current` guards only the space-graph portion below, not the extension
-    // reload above it: extensions are global, not scoped to this space, so a
-    // stale effect run still owes the app a fresh registry. Only applying a
-    // FETCHED GRAPH under a slug this effect run no longer owns is the actual
-    // cross-space bleed -- the late completion would otherwise
-    // paint the old space's nodes, and stamp its `updatedAt` into
-    // `graphVersionRef`, onto the canvas now showing the space navigated to,
-    // and a subsequent save could then persist one space's content under
-    // another space's slug.
-    let current = true
     void coalesceReload(extensionsReloadRef.current, async () => {
       recordReloadClear() // TEMPORARY diagnostic
       extensionRegistry.clear()
@@ -426,26 +371,20 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
         recordReloadSettled(v + 1) // TEMPORARY diagnostic
         return v + 1
       })
-      const { graph, updatedAt } = await fetchSpaceGraph(slug)
-      if (!current) {
-        return
-      }
-      setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
-      setEdges(graph.edges as Edge[])
-      graphVersionRef.current = updatedAt
     })
-    return () => {
-      current = false
-    }
-  }, [slug, sse.extensionsVersion, graphReady, setNodes, setEdges])
+  }, [sse.extensionsVersion, graphReady])
 
+  // The graph is written from the nodes and edges a render committed, never
+  // from the arrays a handler passes: a multi-delete removes nodes and edges in
+  // separate handlers, each holding a stale copy of the other half, and this
+  // way both land as one step (see useLiveGraph).
   const scheduleSave = useCallback(
-    (n: Node[], e: Edge[]) => {
+    (_nodes: Node[], _edges: Edge[], mergeKey?: string) => {
       if (graphReady) {
-        debouncedSave(n, e)
+        requestWrite(mergeKey)
       }
     },
-    [graphReady, debouncedSave],
+    [graphReady, requestWrite],
   )
 
   useEffect(() => {
@@ -461,7 +400,31 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     copy: copySelectedNodes,
     paste: pasteNodes,
     hasCopiedNodes,
+    onKeyDown: onClipboardKeyDown,
   } = useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, onChange: scheduleSave })
+
+  // Undo and redo take this tab's own steps; until the graph's document is
+  // open there is no history to take them from, and the keys do nothing.
+  const onCanvasKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      const action = live ? undoKeyAction(event.nativeEvent, event.currentTarget) : null
+      if (!live || !action) {
+        onClipboardKeyDown(event)
+        return
+      }
+      event.preventDefault()
+      const result = action === 'undo' ? live.undo() : live.redo()
+      const message = describeUndoResult(
+        result,
+        action,
+        (nodeId) => commandNodes.find((n) => n.id === nodeId)?.label ?? nodeId,
+      )
+      if (message) {
+        toast.info(message)
+      }
+    },
+    [live, onClipboardKeyDown, commandNodes],
+  )
 
   const sectionDrag = useRef<{
     sectionId: string
@@ -594,6 +557,10 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   const handleEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
       onEdgesChange(changes)
+      // Selecting an edge changes nothing to save, as for nodes above.
+      if (changes.every((c) => c.type === 'select')) {
+        return
+      }
       setEdges((current) => {
         scheduleSave(nodes, current)
         return current
@@ -736,12 +703,13 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
   }, [])
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    (e: React.DragEvent<HTMLElement>) => {
       e.preventDefault()
       const type = e.dataTransfer.getData('application/dashboard-extension')
       if (!type) {
         return
       }
+      focusCanvasOnDrop(e)
       addNodeAt(type, screenToFlowPosition({ x: e.clientX, y: e.clientY }))
     },
     [addNodeAt, screenToFlowPosition],
@@ -751,7 +719,8 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     (nodeId: string, patch: Record<string, unknown>) => {
       setNodes((nds) => {
         const next = nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n))
-        scheduleSave(next, edges)
+        // Typing into one field of one node is one undo step.
+        scheduleSave(next, edges, `data:${nodeId}:${Object.keys(patch).sort().join(',')}`)
         return next
       })
     },
@@ -1074,149 +1043,163 @@ export function FlowEditor({ slug, spaceName }: { slug: string; spaceName: strin
     // been written to, and a wrapper resolves its component during render.
     <ExtensionsStateContext.Provider value={extensionsState}>
       <InspectorContext.Provider value={{ setNode: inspector.setNode }}>
-        <ResizablePanelGroup
-          className='h-full w-full'
-          defaultLayout={inspectorLayout.defaultLayout}
-          onLayoutChanged={inspectorLayout.onLayoutChanged}
-        >
-          <ResizablePanel id='canvas' minSize='30%' className='relative min-w-0'>
-            <div
-              role='application'
-              className='dashboard-mvp-flow absolute inset-0'
-              onDragOver={handleDragOver}
-              onDrop={handleDrop}
-              onTouchStart={handleTouchStart}
-              onTouchEnd={handleTouchEnd}
-              onTouchMove={handleTouchMove}
-            >
-              <ReactFlow
-                nodes={nodesForFlow}
-                edges={styledEdges}
-                nodeTypes={nodeTypes}
-                onNodesChange={handleNodesChange}
-                onEdgesChange={handleEdgesChange}
-                onNodeDragStart={onNodeDragStart}
-                onNodeDrag={onNodeDrag}
-                onNodeDragStop={onNodeDragStop}
-                onConnect={onConnect}
-                onConnectEnd={onConnectEnd}
-                isValidConnection={isValidConnection}
-                onPaneContextMenu={onPaneContextMenu}
-                onNodeContextMenu={onNodeContextMenu}
-                onPaneClick={() => {
-                  closeMenu()
-                  setNodeMenu(null)
-                  if (isMobile) {
-                    deselect()
-                    setMobileInspectorVisible(false)
-                  }
-                }}
-                deleteKeyCode={['Backspace', 'Delete']}
-                multiSelectionKeyCode='Shift'
-                selectionKeyCode='Shift'
-                nodesDraggable={isMobile ? nodesMovable : undefined}
-                selectionOnDrag={!isMobile}
-                panOnDrag={isMobile ? true : [1]}
-                selectionMode={isMobile ? undefined : SelectionMode.Partial}
-                colorMode={colorMode}
-                maxZoom={1}
-                minZoom={0.25}
-                fitView
-                proOptions={{ hideAttribution: true }}
+        <div ref={setEditorElement} className='contents'>
+          <ResizablePanelGroup
+            className='h-full w-full'
+            defaultLayout={inspectorLayout.defaultLayout}
+            onLayoutChanged={inspectorLayout.onLayoutChanged}
+          >
+            <ResizablePanel id='canvas' minSize='30%' className='relative min-w-0'>
+              {/* `touch-none`: every touch gesture on the canvas is xyflow's —
+                one finger pans, two pinch. The panel group and panel around it
+                declare `touch-action: pan-y`, which hands vertical drags to the
+                browser: its touchmoves arrive uncancelable, xyflow cannot stop
+                them, and on a phone the pull runs on to the page's
+                pull-to-refresh. touch-action is resolved only up to the nearest
+                scroll container, so a scrollable area inside a node keeps its
+                own native scrolling. */}
+              <div
+                ref={setCanvasElement}
+                role='application'
+                tabIndex={-1}
+                className='dashboard-mvp-flow absolute inset-0 outline-none touch-none'
+                onPointerDownCapture={focusCanvasOnPress}
+                onKeyDown={onCanvasKeyDown}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onTouchMove={handleTouchMove}
               >
-                <Background variant={BackgroundVariant.Dots} gap={10} />
-              </ReactFlow>
-              {/* Node context menu: desktop right-click and mobile long-press */}
-              {nodeMenu &&
-                (() => {
-                  const target = nodes.find((n) => n.id === nodeMenu.nodeId)
-                  if (!target) {
-                    return null
-                  }
-                  return (
-                    <NodeContextMenu
-                      position={nodeMenu.screen}
-                      node={target}
-                      resolvedNode={target.type ? extensionRegistry.resolveNode(target.type) : undefined}
-                      contexts={resolveInputContexts(target.id, { nodes, edges })}
-                      onCopy={() => copySelectedNodes()}
-                      onDelete={onDeleteSelected}
-                      onDetails={
-                        isMobile
-                          ? () => {
-                              openNodeDetails(nodeMenu.nodeId)
-                            }
-                          : undefined
-                      }
-                      onClose={() => setNodeMenu(null)}
-                    />
-                  )
-                })()}
-              {/* Mobile overlay toolbar. Stacked ABOVE the chat launcher in
+                <ReactFlow
+                  nodes={nodesForFlow}
+                  edges={styledEdges}
+                  nodeTypes={nodeTypes}
+                  onNodesChange={handleNodesChange}
+                  onEdgesChange={handleEdgesChange}
+                  onNodeDragStart={onNodeDragStart}
+                  onNodeDrag={onNodeDrag}
+                  onNodeDragStop={onNodeDragStop}
+                  onConnect={onConnect}
+                  onConnectEnd={onConnectEnd}
+                  isValidConnection={isValidConnection}
+                  onPaneContextMenu={onPaneContextMenu}
+                  onNodeContextMenu={onNodeContextMenu}
+                  onPaneClick={() => {
+                    closeMenu()
+                    setNodeMenu(null)
+                    if (isMobile) {
+                      deselect()
+                      setMobileInspectorVisible(false)
+                    }
+                  }}
+                  deleteKeyCode={['Backspace', 'Delete']}
+                  multiSelectionKeyCode='Shift'
+                  selectionKeyCode='Shift'
+                  nodesDraggable={isMobile ? nodesMovable : undefined}
+                  selectionOnDrag={!isMobile}
+                  panOnDrag={isMobile ? true : [1]}
+                  selectionMode={isMobile ? undefined : SelectionMode.Partial}
+                  colorMode={colorMode}
+                  maxZoom={1}
+                  minZoom={0.25}
+                  fitView
+                  proOptions={{ hideAttribution: true }}
+                >
+                  <Background variant={BackgroundVariant.Dots} gap={10} />
+                </ReactFlow>
+                {/* Node context menu: desktop right-click and mobile long-press */}
+                {nodeMenu &&
+                  (() => {
+                    const target = nodes.find((n) => n.id === nodeMenu.nodeId)
+                    if (!target) {
+                      return null
+                    }
+                    return (
+                      <NodeContextMenu
+                        position={nodeMenu.screen}
+                        node={target}
+                        resolvedNode={target.type ? extensionRegistry.resolveNode(target.type) : undefined}
+                        contexts={resolveInputContexts(target.id, { nodes, edges })}
+                        onCopy={() => copySelectedNodes()}
+                        onDelete={onDeleteSelected}
+                        onDetails={
+                          isMobile
+                            ? () => {
+                                openNodeDetails(nodeMenu.nodeId)
+                              }
+                            : undefined
+                        }
+                        onClose={() => setNodeMenu(null)}
+                      />
+                    )
+                  })()}
+                {/* Mobile overlay toolbar. Stacked ABOVE the chat launcher in
                   the bottom right corner, centred on it, and fixed for the
                   same reason the launcher is: they belong to the viewport.
                   An open chat covers the viewport at a higher z, which is
                   what hides these while it is up. */}
-              {isMobile && !overlayActive && (
-                <div className='fixed right-6 bottom-20 z-40 flex flex-col items-center gap-2'>
-                  <button
-                    type='button'
-                    className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesMovable ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
-                    onClick={() => setNodesMovable((v) => !v)}
-                    title={nodesMovable ? 'Pan canvas' : 'Move nodes'}
-                    aria-pressed={nodesMovable}
-                  >
-                    <Move className='size-5' />
-                  </button>
-                </div>
+                {isMobile && !overlayActive && (
+                  <div className='fixed right-6 bottom-20 z-40 flex flex-col items-center gap-2'>
+                    <button
+                      type='button'
+                      className={`size-10 flex items-center justify-center rounded-lg border shadow-sm active:bg-accent ${nodesMovable ? 'bg-primary/20 border-primary' : 'bg-background/80 backdrop-blur'}`}
+                      onClick={() => setNodesMovable((v) => !v)}
+                      title={nodesMovable ? 'Pan canvas' : 'Move nodes'}
+                      aria-pressed={nodesMovable}
+                    >
+                      <Move className='size-5' />
+                    </button>
+                  </div>
+                )}
+              </div>
+              {menu && (
+                <FlowContextMenu
+                  position={menu.screen}
+                  extensions={menuExtensions}
+                  onSelect={onMenuSelect}
+                  onNewExtension={() => openEditor(null)}
+                  onClose={closeMenu}
+                  onPaste={onPasteAtMenu}
+                  canPaste={hasCopiedNodes}
+                />
               )}
-            </div>
-            {menu && (
-              <FlowContextMenu
-                position={menu.screen}
-                extensions={menuExtensions}
-                onSelect={onMenuSelect}
-                onNewExtension={() => openEditor(null)}
-                onClose={closeMenu}
-                onPaste={onPasteAtMenu}
-                canPaste={hasCopiedNodes}
+              <CanvasOverlay
+                nodes={commandNodes}
+                spaceName={spaceName}
+                selectedNodeId={selected?.id ?? null}
+                onFocusNode={focusNode}
+                onActiveChange={isMobile ? setOverlayActive : undefined}
+                extensionsVersion={extensionsVersion}
               />
-            )}
-            <CanvasOverlay
-              nodes={commandNodes}
-              spaceName={spaceName}
-              selectedNodeId={selected?.id ?? null}
-              onFocusNode={focusNode}
-              onActiveChange={isMobile ? setOverlayActive : undefined}
-              extensionsVersion={extensionsVersion}
-            />
-            <McpRequestNotifications onOpen={openMcpRequests} />
-          </ResizablePanel>
-          {/* Over the canvas rather than beside it: the canvas has no edge to push. */}
-          <AppSidebar mode='overlay'>
-            <NodeBrowser
-              tab={browserTab}
-              extensions={allNodes}
-              graphNodes={nodes}
-              onTabChange={setBrowserTab}
-              onEditExtension={openEditor}
-              onFocusNode={(nodeId) => {
-                focusNode(nodeId)
-                // On a phone the sidebar covers the canvas; step aside for the node.
-                if (isMobile) {
-                  setSidebarOpenMobile(false)
-                }
-              }}
-            />
-          </AppSidebar>
-          {inspectorDocked && <ResizableHandle withHandle />}
-          {inspectorDocked && (
-            <ResizablePanel id='inspector' defaultSize='420px' minSize='20rem' maxSize='70%' className='min-w-0'>
-              {inspectorPanel}
+              <McpRequestNotifications onOpen={openMcpRequests} />
             </ResizablePanel>
-          )}
-        </ResizablePanelGroup>
-        {inspectorCovers && <div className='fixed inset-0 z-50'>{inspectorPanel}</div>}
+            {/* Over the canvas rather than beside it: the canvas has no edge to push. */}
+            <AppSidebar mode='overlay'>
+              <NodeBrowser
+                tab={browserTab}
+                extensions={allNodes}
+                graphNodes={nodes}
+                onTabChange={setBrowserTab}
+                onEditExtension={openEditor}
+                onFocusNode={(nodeId) => {
+                  focusNode(nodeId)
+                  // On a phone the sidebar covers the canvas; step aside for the node.
+                  if (isMobile) {
+                    setSidebarOpenMobile(false)
+                  }
+                }}
+              />
+            </AppSidebar>
+            {inspectorDocked && <ResizableHandle withHandle />}
+            {inspectorDocked && (
+              <ResizablePanel id='inspector' defaultSize='420px' minSize='20rem' maxSize='70%' className='min-w-0'>
+                {inspectorPanel}
+              </ResizablePanel>
+            )}
+          </ResizablePanelGroup>
+          {inspectorCovers && <div className='fixed inset-0 z-50'>{inspectorPanel}</div>}
+        </div>
       </InspectorContext.Provider>
     </ExtensionsStateContext.Provider>
   )

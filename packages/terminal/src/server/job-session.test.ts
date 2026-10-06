@@ -99,6 +99,28 @@ test('the key handed back is unguessable, and not derived from anything the call
   assert.match(first.sessionKey, /^job:[0-9a-f]{32}$/, 'and it carries enough randomness to be unguessable')
 })
 
+test('stopping a job signals its process group while it runs, and nothing once it has ended', async (t) => {
+  // An ended job is still stopped when its session is reclaimed. By then its group may be gone
+  // and the id reused, so a signal sent then could reach a process that is not this job's.
+  const signals = t.mock.method(process, 'kill')
+  const child = spawn('sh', ['-c', 'sleep 600'], { detached: true })
+  const handle = pipedProcessHandle(child)
+  const watched = collect(handle)
+  assert.ok(child.pid, 'the job started')
+
+  handle.kill()
+  assert.deepEqual(
+    signals.mock.calls.map((call) => call.arguments),
+    [[-child.pid, 'SIGTERM']],
+    'a running job is stopped through its group',
+  )
+  await watched.done
+
+  signals.mock.resetCalls()
+  handle.kill()
+  assert.equal(signals.mock.callCount(), 0, 'an ended job is not signalled again')
+})
+
 // ── capacity: a job must never cost somebody the terminal they have open ──
 
 function fakeHandle(): SessionHandle {
@@ -386,27 +408,56 @@ test('a job that reaches its time limit is stopped, and the watcher is told why'
   // startJobSession and a real one would never fire inside a test run.
   t.mock.timers.enable({ apis: ['setTimeout'] })
 
+  // The work runs as a child of the shell rather than as the shell itself, which is how `sh -c`
+  // runs a command whenever it does not exec it. Stopping only the shell would leave `sleep`
+  // running and holding the output pipe, and the job would not end until `sleep` did.
   const job = await startJobSession({ type: 'local' } as TerminalContext, {
     command: 'sh',
-    args: ['-c', 'sleep 30'],
+    args: ['-c', 'sleep 600 & echo "pid $!"; wait'],
   })
   const session = sessionManager.get(job.sessionId)
   assert.ok(session, 'the job is registered')
 
   let text = ''
-  session.handle.onData((chunk) => {
-    text += chunk
+  const workPid = new Promise<number>((resolve) => {
+    session.handle.onData((chunk) => {
+      text += chunk
+      const match = /pid (\d+)/.exec(text)
+      if (match) {
+        resolve(Number(match[1]))
+      }
+    })
   })
+  const sleepPid = await workPid
 
-  // Registered before the tick: the command's death is a real process event, so waiting for it is
-  // the only way to assert the kill happened rather than that it was requested.
+  // Registered before the tick: the end of the stream is a real process event, so waiting for it
+  // is the only way to assert the kill happened rather than that it was requested.
   const stopped = new Promise<void>((resolve) => session.handle.onExit(() => resolve()))
 
-  t.mock.timers.tick(MAX_JOB_LIFETIME_MS)
+  try {
+    t.mock.timers.tick(MAX_JOB_LIFETIME_MS)
 
-  assert.match(text, /reached its time limit/, 'the reason is in the stream, not only in a log')
-  assert.match(text, /30 minutes/, 'and it says what the limit was')
+    assert.match(text, /reached its time limit/, 'the reason is in the stream, not only in a log')
+    assert.match(text, /30 minutes/, 'and it says what the limit was')
 
-  await stopped
-  assert.equal(session.handle.isAlive(), false, 'and the command was actually stopped')
+    // The stream ends only once nothing holds its pipe, `sleep` included. The deadline is far
+    // below the command's own duration, so reaching it means the stop missed the command.
+    t.mock.timers.reset()
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    const outcome = await Promise.race([
+      stopped.then(() => 'stopped'),
+      new Promise<string>((resolve) => {
+        deadline = setTimeout(() => resolve('still running'), 20_000)
+      }),
+    ])
+    clearTimeout(deadline)
+    assert.equal(outcome, 'stopped', 'the command the shell started was stopped with it')
+    assert.equal(session.handle.isAlive(), false, 'and the session says so')
+  } finally {
+    try {
+      process.kill(sleepPid, 'SIGKILL')
+    } catch {
+      /* already gone, which is the passing case */
+    }
+  }
 })

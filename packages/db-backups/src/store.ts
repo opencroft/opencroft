@@ -4,7 +4,9 @@ import path from 'node:path'
 import { db, setting } from '@opencroft/db'
 import {
   type Backup,
-  createBackup,
+  backedUpTableNames,
+  backupRows,
+  backupSource,
   type RestoreSummary,
   resetDatabase as resetAllTables,
   restoreBackup,
@@ -20,6 +22,7 @@ import {
   summariseTables,
   writeBackupArchive,
 } from './archive'
+import { stageDatabaseDump } from './database-dump'
 import { BACKUP_FILE_ROOTS } from './file-tree'
 
 export type { ArchiveManifest, ArchiveTrailer, Backup }
@@ -42,7 +45,8 @@ function dataDir(...segments: string[]): string {
 const BACKUPS_DIR = dataDir('backups')
 
 /**
- * Where a backup is assembled before it is a backup.
+ * Where a backup is assembled before it is a backup, and where a restore
+ * stages the rows it read. One user at a time: see `withStaging`.
  *
  * A separate directory rather than a naming convention in the listing's own
  * directory: `listBackupFiles` is what the UI offers as restorable, and
@@ -100,31 +104,72 @@ export async function listBackupFiles(): Promise<BackupFileInfo[]> {
 }
 
 /**
- * Build `filename` off to one side and move it into the listing only once
- * `write` has returned. A failure leaves nothing behind for the UI to offer as
- * a restore.
+ * Run `work` with STAGING_DIR to itself: emptied before, removed after, and
+ * never shared with another call.
+ *
+ * Backups, uploads and archive restores all stage there, and a staged dump is
+ * read back by file name — two at once would read each other's rows and still
+ * produce an archive whose checksum verifies. So the calls queue. Emptying the
+ * directory first is then safe as well as useful: whatever is in it belongs to
+ * a process that was killed mid-write.
+ *
+ * The queue lives on globalThis, as the scheduler's state does, so a module
+ * reloaded in development still waits behind the call the old copy started.
  */
-async function writeStaged(filename: string, write: (stagedPath: string) => Promise<void>): Promise<BackupFileInfo> {
-  // Whatever a killed process left here is unreachable and unreferenced: this
-  // is the only writer, and a finished file has already been renamed away.
-  await fs.rm(STAGING_DIR, { recursive: true, force: true })
-  await fs.mkdir(STAGING_DIR, { recursive: true })
-  const staged = path.join(STAGING_DIR, filename)
-  try {
-    await write(staged)
-    await fs.rename(staged, path.join(BACKUPS_DIR, filename))
-  } finally {
+function withStaging<T>(work: (directory: string) => Promise<T>): Promise<T> {
+  const g = globalThis as { __DB_BACKUP_STAGING__?: Promise<unknown> }
+  const run = (g.__DB_BACKUP_STAGING__ ?? Promise.resolve()).then(async () => {
     await fs.rm(STAGING_DIR, { recursive: true, force: true })
+    await fs.mkdir(STAGING_DIR, { recursive: true })
+    try {
+      return await work(STAGING_DIR)
+    } finally {
+      await fs.rm(STAGING_DIR, { recursive: true, force: true })
+    }
+  })
+  g.__DB_BACKUP_STAGING__ = run.catch(() => undefined)
+  return run
+}
+
+/** `<stem>.<ext>`, or `<stem>-2.<ext>` and on if that is taken, so a write never replaces a listed file. */
+async function freeFilename(stem: string, ext: BackupFormat): Promise<string> {
+  for (let n = 1; ; n++) {
+    const filename = n === 1 ? `${stem}.${ext}` : `${stem}-${n}.${ext}`
+    try {
+      await fs.access(path.join(BACKUPS_DIR, filename))
+    } catch {
+      return filename
+    }
   }
-  return statInfo(filename)
+}
+
+/**
+ * Build a file off to one side and move it into the listing only once `write`
+ * has returned. A failure leaves nothing behind for the UI to offer as a
+ * restore.
+ */
+function writeStaged(
+  stem: string,
+  ext: BackupFormat,
+  write: (stagedPath: string, directory: string) => Promise<void>,
+): Promise<BackupFileInfo> {
+  return withStaging(async (directory) => {
+    const filename = await freeFilename(stem, ext)
+    const staged = path.join(directory, filename)
+    await write(staged, directory)
+    await fs.rename(staged, path.join(BACKUPS_DIR, filename))
+    return statInfo(filename)
+  })
 }
 
 export async function createBackupFile(): Promise<BackupFileInfo> {
-  const backup = await createBackup(db)
-  const filename = `backup-${timestampForFilename(backup.createdAt)}.zip`
-  return writeStaged(filename, (staged) =>
-    writeBackupArchive(staged, { backup, dataDirectory: dataDir(), roots: BACKUP_FILE_ROOTS }).then(() => undefined),
-  )
+  const createdAt = new Date().toISOString()
+  return writeStaged(`backup-${timestampForFilename(createdAt)}`, 'zip', async (staged, directory) => {
+    const database = await stageDatabaseDump(path.join(directory, 'database'), backedUpTableNames(), (table) =>
+      backupRows(db, table),
+    )
+    await writeBackupArchive(staged, { createdAt, database, dataDirectory: dataDir(), roots: BACKUP_FILE_ROOTS })
+  })
 }
 
 function isLegacyBackup(value: unknown): value is Backup {
@@ -183,8 +228,7 @@ export async function saveUploadedBackup(bytes: Buffer, sourceName: string): Pro
   // The uploaded BYTES decide the format, not the name the browser sent.
   const isZip = bytes.subarray(0, 2).toString('latin1') === 'PK'
   const base = sourceName.replace(/\.(zip|json)$/i, '').replace(/[^\w.-]/g, '_') || 'upload'
-  const filename = `${base}-${Date.now()}.${isZip ? 'zip' : 'json'}`
-  return writeStaged(filename, async (staged) => {
+  return writeStaged(`${base}-${Date.now()}`, isZip ? 'zip' : 'json', async (staged) => {
     await fs.writeFile(staged, bytes)
     // Validated before it is allowed to sit in the list looking restorable.
     if (isZip) {
@@ -222,13 +266,15 @@ export async function restoreBackupFile(filename: string): Promise<RestoreResult
   const file = backupFilePath(filename)
   if (formatOf(filename) === 'json') {
     const backup = JSON.parse(await fs.readFile(file, 'utf8')) as Backup
-    const summary = await restoreBackup(db, backup)
+    const summary = await restoreBackup(db, backupSource(backup))
     return { ...summary, restoredRoots: [], filesWritten: 0 }
   }
-  const { backup, manifest, trailer } = await readBackupArchive(file)
-  const summary = await restoreBackup(db, backup)
-  const extracted = await extractBackupFiles(file, dataDir(), { manifest, trailer })
-  return { ...summary, restoredRoots: extracted.roots, filesWritten: extracted.files }
+  return withStaging(async (directory) => {
+    const { database, manifest, trailer } = await readBackupArchive(file, directory)
+    const summary = await restoreBackup(db, database)
+    const extracted = await extractBackupFiles(file, dataDir(), { manifest, trailer })
+    return { ...summary, restoredRoots: extracted.roots, filesWritten: extracted.files }
+  })
 }
 
 export async function deleteBackupFile(filename: string): Promise<void> {

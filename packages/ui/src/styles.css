@@ -9,6 +9,12 @@
 @import './theme.css';
 
 @source './components';
+/* Every colour of Tailwind's palette as a text colour. The icon picker offers
+   them all and builds each class from the colour's id (`text-sky-300`), which
+   no scan of the source would find. The hues and shades are the palette's
+   own, in components/ui/input/color-palette.tsx; its test fails when this
+   list and that one disagree. */
+@source inline('text-{red,orange,amber,yellow,lime,green,emerald,teal,cyan,sky,blue,indigo,violet,purple,fuchsia,pink,rose,slate,gray,zinc,neutral,stone}-{50,{100..900..100},950}');
 
 :root {
   --radius: 0.65rem;
@@ -47,6 +53,12 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.623 0.214 259.815);
+  --node: oklch(1 0 0);
+  /* A selected node: a faint tint of the brand blue over the page --
+     --primary carries the logo accent's hue in this theme. Mixed opaque, so
+     connection lines do not show through the node. */
+  --node-selected: color-mix(in oklab, var(--primary) 6%, var(--background));
+  --node-shadow: oklch(0 0 0 / 25%);
 }
 
 .dark {
@@ -83,6 +95,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.488 0.243 264.376);
+  --node: oklch(0.21 0.006 285.885);
+  --node-selected: var(--node);
+  --node-shadow: oklch(0 0 0 / 50%);
 }
 
 @layer base {

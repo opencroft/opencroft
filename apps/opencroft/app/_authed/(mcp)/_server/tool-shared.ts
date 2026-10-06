@@ -15,10 +15,7 @@ import { fail } from '@/app/_authed/(mcp)/_server/tool-refusal'
 // so every space operation reached from here must be the
 // plain `*Impl`, never the createServerFn wrapper in actions.ts. The wrappers
 // check the session; calling one in-process from a tool throws "Not signed
-// in" for a caller that was never supposed to have a session. That is exactly
-// what happened when the session gate first landed in the shared
-// implementations — it broke the read tools directly, and every graph-write
-// tool indirectly through withGraphConflictRetry's default load/save.
+// in" for a caller that was never supposed to have a session.
 import { resolveSpaceSlugImpl } from '@/app/_authed/(space)/_server/actions-impl'
 import type { AgentRef } from '@/app/_authed/(space)/_server/agents-impl'
 import { parseGraphAddress } from '@/app/_authed/(space)/_server/types'

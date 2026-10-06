@@ -92,14 +92,16 @@ export function AgentPlanList({ entries }: { entries: PlanEntry[] }) {
 }
 
 // The agent's plan as ONE header control, the sibling of the thread's work
-// control: the same ghost icon button in the header's row, and a popover with
-// the current list. Nothing is drawn while the plan is empty -- an agent that
-// has not planned, or has cleared its plan, leaves the header as it was.
+// control: the same ghost icon button in the header's row, with the count of
+// entries not yet completed on its corner, and a popover with the current
+// list. Nothing is drawn while the plan is empty -- an agent that has not
+// planned, or has cleared its plan, leaves the header as it was.
 export function AgentPlanControl({ entries, size = 'icon', className }: AgentPlanControlProps) {
   if (entries.length === 0) {
     return null
   }
   const done = entries.filter((entry) => entry.status === 'completed').length
+  const remaining = entries.length - done
   const label = `Plan, ${done} of ${entries.length} done`
   return (
     <Popover>
@@ -111,11 +113,22 @@ export function AgentPlanControl({ entries, size = 'icon', className }: AgentPla
             size={size}
             aria-label={label}
             title={label}
-            className={className}
+            className={cn('relative', className)}
           />
         }
       >
         <ClipboardList />
+        {remaining > 0 ? (
+          // The work control's badge, overlaid on the corner so the button
+          // keeps its neighbours' footprint whatever the count. A finished
+          // plan shows none: a zero says nothing the plain icon does not.
+          <span
+            aria-hidden
+            className='absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground'
+          >
+            {remaining}
+          </span>
+        ) : null}
       </PopoverTrigger>
       <PopoverContent align='end' className='w-72 p-1'>
         <AgentPlanList entries={entries} />

@@ -16,7 +16,6 @@ import {
   listLocalExtensionsImpl,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
-import { COMPILE_OVERRIDE_PARAM } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import {
   claimExtensionLock,
   extensionLockRefusalMessage,
@@ -98,19 +97,8 @@ export const definitions = [
   {
     name: 'compile_extension',
     description:
-      'Manually trigger compilation (esbuild) of a local extension. Returns build result with errors and warnings. Useful after direct file edits (e.g. docker cp) that bypass the normal update flow. Compiling publishes the folder to THIS running instance as it stands, so it is declined when the checkout has uncommitted changes or sits on a branch other than its default — pass allowUnclean to do it anyway.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        ...LOCAL_FOLDER_PARAM,
-        [COMPILE_OVERRIDE_PARAM]: {
-          type: 'boolean',
-          description:
-            'Compile the folder in whatever state it is in, including uncommitted changes or a non-default branch. Use deliberately: whatever is on disk becomes what this instance runs.',
-        },
-      },
-      required: ['extensionFolder'],
-    },
+      'Manually trigger compilation (esbuild) of a local extension. Returns build result with errors and warnings. Useful after direct file edits (e.g. docker cp) that bypass the normal update flow. Compiling publishes the folder to THIS running instance as it stands, uncommitted changes included.',
+    inputSchema: { type: 'object' as const, properties: LOCAL_FOLDER_PARAM, required: ['extensionFolder'] },
   },
   {
     name: LOCK_TOOL_NAME,
@@ -376,12 +364,7 @@ export const handlers: Record<string, ToolHandler> = {
     // the shared thing even when no file changes.
     await claimFolderForWrite(folder, caller)
     try {
-      const result = await compileLocalExtensionImpl(folder, {
-        allowUnclean: args[COMPILE_OVERRIDE_PARAM] === true,
-      })
-      if (result.refusal) {
-        return textResult(result.refusal.message)
-      }
+      const result = await compileLocalExtensionImpl(folder)
       const parts: string[] = []
       parts.push(`Build ${result.success ? '✅ succeeded' : '❌ failed'}`)
       if (result.errors.length > 0) {

@@ -4,15 +4,13 @@ import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
 import { cn } from 'cn'
 import { Check, CheckCheck, X } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { Button } from 'ui/components/ui/button'
 import { Input } from 'ui/components/ui/input'
 import { Flex } from 'ui/components/ui/layout/flex'
 
 import { ChatNotice } from './components/chat-turn'
+import { Markdown } from './components/markdown'
 import { ThinkingBlock } from './components/thinking-block'
-import { markdownLinkComponents } from './markdown-link'
 import { ToolCallBlock } from './tool-block'
 import { lookupToolView, type ToolMessage, type ToolViewRegistry, toolViewProps } from './tool-views'
 
@@ -83,13 +81,9 @@ export function MessageView({
 } & MessageHandlers) {
   switch (message.kind) {
     case 'assistant':
-      return (
-        <div className='prose-chat'>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkComponents}>
-            {message.text}
-          </ReactMarkdown>
-        </div>
-      )
+      // The chat's one markdown renderer, so a reply reads here exactly as it
+      // does in the conversation's turns: links, code, tables and blocks alike.
+      return <Markdown text={message.text} />
 
     case 'thought':
       return <ThinkingBlock text={message.text} pending={pending} />

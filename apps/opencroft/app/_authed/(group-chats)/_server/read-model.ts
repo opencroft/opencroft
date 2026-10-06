@@ -16,6 +16,7 @@
 import { db, groupChatMember, groupChatThread, user } from '@opencroft/db'
 import { and, inArray, isNull } from 'drizzle-orm'
 
+import { type SnippetPart, searchTranscripts } from '@/app/_authed/(agent)/_server/transcript-search'
 import type { ContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type { GroupChatThreadSummary } from '@/app/_authed/(group-chats)/_server/model'
 import {
@@ -320,6 +321,55 @@ export async function findThreadViewBySlug(
     return null
   }
   return enrichThread(request, thread)
+}
+
+/** One message in a thread's transcript that a search matched. */
+export interface ThreadTranscriptHit {
+  threadId: string
+  /** Where the matching message starts in the recorded transcript: its identity in the thread. */
+  position: number
+  /** Whether the match is in the question or the agent's reply. */
+  role: 'user' | 'agent'
+  /** Where the message's turn starts: what the thread opens at. */
+  turn: number
+  snippet: SnippetPart[]
+  createdAt: Date
+}
+
+export interface ThreadTranscriptSearch {
+  hits: ThreadTranscriptHit[]
+  truncated: boolean
+}
+
+/** How many hits one search answers with, newest first. */
+const TRANSCRIPT_SEARCH_LIMIT = 50
+
+/**
+ * The messages in one group chat's threads that match `query`, newest first.
+ * Archived threads are searched only when asked for.
+ *
+ * The gate is `listThreadsInGroupChat`'s, per this module's header rule: the
+ * search runs over exactly the session keys of the threads it returns, so
+ * nothing outside the chat -- or outside the caller's membership -- can match.
+ */
+export async function searchThreadTranscriptsView(
+  request: Request,
+  groupChatId: string,
+  query: string,
+  includeArchived: boolean,
+): Promise<ThreadTranscriptSearch> {
+  const threads = (await listThreadsInGroupChat(request, groupChatId)).filter(
+    (t) => includeArchived || t.archivedAt === null,
+  )
+  const threadIdByKey = new Map(threads.map((t) => [t.sessionKey, t.id] as const))
+  const { hits, truncated } = await searchTranscripts([...threadIdByKey.keys()], query, TRANSCRIPT_SEARCH_LIMIT)
+  return {
+    hits: hits.flatMap(({ sessionKey, ...hit }) => {
+      const threadId = threadIdByKey.get(sessionKey)
+      return threadId ? [{ threadId, ...hit }] : []
+    }),
+    truncated,
+  }
 }
 
 /** The shared tail of the single-thread reads: resolve the agent and its

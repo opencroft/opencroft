@@ -77,6 +77,68 @@ export async function runGit(
   }
 }
 
+/** The host a remote URL points at, for a sentence about it. */
+function remoteHost(url: string): string {
+  try {
+    const { host } = new URL(url)
+    if (host) {
+      return host
+    }
+  } catch {
+    // An scp-style address (user@host:path) or a path: not a URL.
+  }
+  return url.match(/^[^@/]+@([^:/]+):/)?.[1] ?? 'the remote'
+}
+
+/** A read of a remote that failed: the sentence the page leads with, and what git said, for whoever fixes the cause. */
+export class GitRemoteError extends Error {
+  readonly detail: string
+
+  constructor(message: string, detail: string, cause: unknown) {
+    super(message, { cause })
+    this.name = 'GitRemoteError'
+    this.detail = detail
+  }
+}
+
+/**
+ * A git command against a remote that failed, said the way the page leads with
+ * it. The rejection itself is Node's "Command failed: <argv>" over git's
+ * stderr: the paths of this instance, and whatever a broken credential helper
+ * printed on the way. That text stays the error's `detail` — redacted, as every
+ * runGit failure is — and the message says which of the usual things went
+ * wrong, by git's own fatal lines (git 2.43):
+ * - sign-in: "could not read Username|Password … terminal prompts disabled",
+ *   "Authentication failed", "returned error: 401|403";
+ * - no such repository: "returned error: 404", "repository '…' not found",
+ *   "does not appear to be a git repository";
+ * - unreachable: "Could not resolve host", "Failed to connect", a timeout.
+ * Anything else is git's last fatal line, or the last thing it said.
+ */
+export function remoteFailure(err: unknown, url: string): GitRemoteError {
+  const e = err as GitExecError | undefined
+  const detail = err instanceof Error ? err.message.trim() : String(err)
+  const text = e?.stderr?.trim() || detail
+  const host = remoteHost(url)
+  console.warn(`[ext] git against ${host} failed:`, text)
+  let message: string
+  if (/could not read (Username|Password)|Authentication failed|returned error: 40[13]/.test(text)) {
+    message = `Could not sign in to ${host}: no credential is set up for this source, or the one it uses was refused.`
+  } else if (/returned error: 404|repository '[^']*' not found|does not appear to be a git repository/.test(text)) {
+    message = `There is no repository at this address on ${host}.`
+  } else if (/Could not resolve host|Failed to connect|Connection (refused|timed out)|Operation timed out/.test(text)) {
+    message = `Could not reach ${host}.`
+  } else {
+    const lines = text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('Command failed:'))
+    const fatal = lines.filter((line) => line.startsWith('fatal: ')).at(-1)
+    message = fatal?.slice('fatal: '.length) ?? lines.at(-1) ?? `git could not read ${host}.`
+  }
+  return new GitRemoteError(message, detail, err)
+}
+
 export interface GitCredentials {
   username: string
   token: string

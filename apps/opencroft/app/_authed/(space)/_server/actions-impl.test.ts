@@ -2,20 +2,18 @@
 // than a stand-in registry, so what the registry loads is what the database
 // holds.
 //
-// PGLITE_PATH and the migrations folder are set before importing anything that
-// touches the db package -- `@opencroft/db` opens the connection and migrates at
-// import time, so the environment has to be in place first. A datadir of its own
-// also gives the suite the state it is about: a workspace that starts empty,
-// which a datadir shared with every other suite never is.
+// The migrations folder is set before importing anything that touches the db
+// package -- `@opencroft/db` opens the connection and migrates at import time,
+// so the environment has to be in place first. The datadir test-env gives this
+// process is its own, which is the state the suite is about: a workspace that
+// starts empty, which a datadir shared with every other suite never is.
+
+import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test, { after } from 'node:test'
+import test from 'node:test'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-space-actions-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -32,10 +30,6 @@ delete process.env.DATABASE_URL
 
 const { createSpaceImpl, deleteSpaceImpl, registry, setSpaceIconImpl } = await import('./actions-impl')
 const { findSpaceIconPreset } = await import('ui/spaces/space-icon')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 test('a fresh workspace starts with no spaces', async () => {
   const r = await registry()

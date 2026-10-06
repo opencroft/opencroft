@@ -39,6 +39,29 @@ test("a window node's title counts as its name; an unnamed node leaves the name 
   assert.equal(refs[unnamed]?.name, '')
 })
 
+test('a terminal target is answered under itself, described by its owner', async () => {
+  const id = crypto.randomUUID()
+  const slug = await spaceWith([{ id, type: 'builtin.core.localhost', data: { name: 'laptop' } }])
+  const target = `${id}/terminal`
+  const refs = await describeGraphRefsImpl([target])
+  assert.deepEqual(refs, {
+    [target]: { id, kind: 'node', type: 'builtin.core.localhost', name: 'laptop', spaceSlug: slug },
+  })
+})
+
+test('a target on an App whose App names no handles carries no labels, and an unknown owner is null', async () => {
+  const slug = await spaceWith([])
+  // Every space has its graph App, addressed `<space>.default`; it declares no
+  // handleLabel hook.
+  const onApp = `${slug}.default/terminal`
+  const unknown = `${crypto.randomUUID()}/terminal`
+  const refs = await describeGraphRefsImpl([onApp, unknown])
+  assert.equal(refs[onApp]?.kind, 'app')
+  assert.equal(refs[onApp]?.spaceSlug, slug)
+  assert.equal(refs[onApp]?.handleLabels, undefined)
+  assert.equal(refs[unknown], null)
+})
+
 test('an id that names nothing is reported as null, and repeated ids are answered once', async () => {
   const id = crypto.randomUUID()
   const refs = await describeGraphRefsImpl([id, id])

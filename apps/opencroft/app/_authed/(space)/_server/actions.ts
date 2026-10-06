@@ -11,7 +11,6 @@ import {
   listSpacesImpl,
   loadSpaceGraphImpl,
   renameSpaceImpl,
-  saveSpaceGraphImpl,
   setSpaceIconImpl,
   setSpacePinnedImpl,
 } from '@/app/_authed/(space)/_server/actions-impl'
@@ -25,11 +24,10 @@ import type { GraphData, SpaceSummary } from '@/app/_authed/(space)/_server/type
 // createServerFn, which is an individually callable RPC endpoint reachable
 // without ever rendering the page that links to it. So the check has to exist
 // at this layer. But it must exist ONLY at this layer: (mcp)/_server/tools.ts
-// and graph-conflict-retry.ts call the implementations in-process to serve
-// MCP tool calls, and /mcp is a bearer-token surface carrying no session
-// cookie by design. Putting the check in the shared implementation instead
-// threw "Not signed in" for every agent tool — including, through
-// withGraphConflictRetry's default load/save, all seven graph-write tools.
+// calls the implementations in-process to serve MCP tool calls, and /mcp is a
+// bearer-token surface carrying no session cookie by design. Putting the
+// check in the shared implementation instead throws "Not signed in" for every
+// agent tool.
 //
 // Every export below is gated, not just the read paths: an unauthenticated
 // caller could not list spaces but could still delete one by slug, and slugs
@@ -65,13 +63,6 @@ export const findTakenGraphIds = createServerFn({ method: 'POST', strict: { outp
       ids: Array.isArray(data.ids) ? data.ids.map(String) : [],
       exceptAddress: data.exceptAddress,
     })
-  })
-
-export const saveSpaceGraph = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: { slug: string; graph: GraphData; expectedUpdatedAt?: string }) => data)
-  .handler(async ({ data }): Promise<{ updatedAt: string }> => {
-    await requireSession()
-    return saveSpaceGraphImpl(data)
   })
 
 export const createSpace = createServerFn({ method: 'POST', strict: { output: false } })

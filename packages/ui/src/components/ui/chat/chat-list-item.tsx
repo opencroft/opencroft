@@ -56,28 +56,10 @@ interface ChatListItemProps {
   onUnarchive?: (id: string) => void
   onDelete?: (id: string) => void
   actions?: ChatListItemAction[]
-  // Forwarded to the shared row shell, where it lands on the row element that
-  // the context-menu trigger also attaches to -- see ListRow for why that
-  // placement is what lets a host take the menu's timing over, and for the tap
-  // it owes the row in exchange.
+  // Forwarded to the shared row shell, where it lands on the row element
+  // itself -- the earliest point at which a host learns which input is driving
+  // the row. See ListRow.
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void
-  // Disables the context menu: it stops opening by itself on right-click or a
-  // touch long-press, and its trigger declines to arm that long-press on
-  // `touchstart`. It does not clear a long-press already armed, so it has to be
-  // true before the touch starts -- set it from `onPointerDown` above. A host
-  // running its own press uses that to take the menu's
-  // timing over: hold this true for the gesture, then release it at the moment
-  // the menu should appear and dispatch a `contextmenu` once the render has
-  // landed. Being a render rather than an event, it does not depend on which
-  // listener the browser reaches first.
-  menuDisabled?: boolean
-  // Reports the menu opening or closing. The context-menu primitive owns that
-  // state -- its root takes no controlled `open`, by design: it opens from a
-  // `contextmenu` event and nothing else. So this is a notification, not a
-  // handle. A host that needs the menu at a moment of its own choosing
-  // dispatches that event; the surrounding list also uses this to drop an
-  // in-flight touch press when a menu appears.
-  onMenuOpenChange?: (open: boolean) => void
 }
 
 // The description line carries the process state as text, and a status dot is
@@ -133,16 +115,14 @@ export const STATUS_DOT: Partial<Record<ChatStatus, StatusVariant>> = {
 // drags the whole row.
 //
 // The primitive anchors the menu to the point it captures while handling the
-// `contextmenu` event, so a menu that is disabled when that event arrives has
-// nothing to anchor to. Its built-in touch long-press rides along with that and
-// cannot be switched off separately -- a host that wants the menu on a schedule
-// of its own disables it (`menuDisabled`) from the row's `pointerdown`, before
-// the `touchstart` that would arm the long-press, and enables it again just
-// before dispatching its own `contextmenu`. That is what `chat-list` does.
+// `contextmenu` event, and its built-in touch long-press cannot be switched off
+// separately from that. A host that wants the menu on a schedule of its own
+// keeps the trigger's `touchstart` from reaching it and dispatches its own
+// `contextmenu` when the menu is due. That is what `chat-list` does.
 //
 // Title/description truncate; long content never grows the row. Self-contained,
 // works in any list.
-export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, context, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, actions, onPointerDown, menuDisabled = false, onMenuOpenChange }: ChatListItemProps) {
+export function ChatListItem({ id, title, description, avatarUrl, active = false, disabled = false, status, context, hasDraft = false, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, actions, onPointerDown }: ChatListItemProps) {
   // Derive the dot and the description's status word from the single `status`.
   const dot = status ? STATUS_DOT[status] : undefined
   const statusWord = status ? STATUS_WORD[status] : null
@@ -224,8 +204,6 @@ export function ChatListItem({ id, title, description, avatarUrl, active = false
     <RowContextMenu
       entries={entries}
       onDelete={onDelete ? () => onDelete(id) : undefined}
-      disabled={menuDisabled}
-      onOpenChange={onMenuOpenChange}
     >
       {row}
     </RowContextMenu>

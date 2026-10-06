@@ -1,6 +1,7 @@
-import { asc, eq, getTableColumns, getTableName, is } from 'drizzle-orm'
+import { getTableColumns, getTableName, is } from 'drizzle-orm'
 import { getTableConfig, type PgColumn, PgTable } from 'drizzle-orm/pg-core'
 
+import { boundedSelect, inBudget } from './bounded-select'
 import type { DB } from './connect'
 import * as schemaExports from './schema'
 
@@ -38,20 +39,6 @@ import * as schemaExports from './schema'
  */
 const EXCLUDED_FROM_BACKUP: ReadonlySet<string> = new Set(['session', 'verification'])
 
-/**
- * Tables whose rows are each up to several megabytes: read one row per query,
- * and inserted one row per statement.
- *
- * The embedded PGlite builds a whole result in its wasm memory. Measured
- * 01.10.2026: three ~4 MiB attachments in one SELECT came back, four ran it
- * out of memory ("memory access out of bounds"), and every query after that
- * failed until the process restarted. A backup reading the attachment table in
- * one SELECT, on the backup schedule, would do the same to a running instance.
- * Each table here needs a single-column primary key, which is what a row is
- * fetched by.
- */
-const ROW_AT_A_TIME: ReadonlySet<string> = new Set(['ChatAttachment'])
-
 /** Postgres refuses a statement carrying more than this many bind parameters. */
 const PG_MAX_BIND_PARAMS = 65_535
 
@@ -71,6 +58,24 @@ export interface Backup {
    * written when only four tables were covered, still load.
    */
   tables: Record<string, Record<string, unknown>[]>
+}
+
+/**
+ * What a restore reads its rows from, one table at a time.
+ *
+ * A source rather than a `Backup` so that no reader has to hold a whole backup
+ * at once: the object form is one value, and the file it comes from is one
+ * string, which V8 caps at about 512 MiB.
+ */
+export interface BackupSource {
+  /**
+   * The tables the backup covers. Naming one IS THE CLAIM that its contents
+   * are exactly the rows `rows` yields, and restore clears it first. A table
+   * not named is one the backup says nothing about, and restore leaves it be.
+   */
+  tables: readonly string[]
+  /** One covered table's rows. Asked for once per covered table, parents first. */
+  rows(table: string): AsyncIterable<Record<string, unknown>> | Iterable<Record<string, unknown>>
 }
 
 export interface RestoreSummary {
@@ -96,8 +101,8 @@ interface TableSpec {
   dateProps: string[]
   /** SQL names of the tables this one points at through a foreign key. */
   dependsOn: string[]
-  /** The single-column primary key of a table read one row at a time (ROW_AT_A_TIME). */
-  rowKey?: PgColumn
+  /** The primary key's columns, in key order: what a backup pages through the table by. */
+  key: PgColumn[]
 }
 
 function collectTables(): TableSpec[] {
@@ -110,7 +115,12 @@ function collectTables(): TableSpec[] {
     if (byName.has(name)) {
       continue
     }
-    const columns = getTableColumns(value) as Record<string, PgColumn>
+    // A generated column is the database's to compute: it is not carried in a
+    // backup, and an insert naming one is refused, so a restore leaves it out
+    // and Postgres fills it in from the columns it is generated from.
+    const columns = Object.fromEntries(
+      Object.entries(getTableColumns(value) as Record<string, PgColumn>).filter(([, column]) => !column.generated),
+    )
     const dateProps = Object.entries(columns)
       .filter(([, column]) => column.dataType === 'date')
       .map(([prop]) => prop)
@@ -123,25 +133,28 @@ function collectTables(): TableSpec[] {
           .filter((target) => target !== name),
       ),
     ]
-    const rowKey = ROW_AT_A_TIME.has(name) ? singleColumnKey(name, columns) : undefined
-    byName.set(name, { name, table: value, columns, dateProps, dependsOn, ...(rowKey ? { rowKey } : {}) })
-  }
-  // A listed name that matches no table would put that table back on the
-  // whole-table SELECT without a word, so a rename has to fail loudly here.
-  for (const name of ROW_AT_A_TIME) {
-    if (!byName.has(name)) {
-      throw new Error(`${name} is listed as read one row at a time, but the schema declares no such table`)
-    }
+    byName.set(name, { name, table: value, columns, dateProps, dependsOn, key: primaryKeyOf(name, value) })
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
-function singleColumnKey(name: string, columns: Record<string, PgColumn>): PgColumn {
-  const keys = Object.values(columns).filter((column) => column.primary)
-  if (keys.length !== 1) {
-    throw new Error(`${name} is read one row at a time, which needs a single-column primary key`)
+/**
+ * A table's primary key columns, declared on a column or as a composite key.
+ *
+ * Throws for a table with none: it could only be read in one SELECT, which is
+ * the read this module exists to avoid, so a keyless table fails at load
+ * rather than in the first backup that outgrows it.
+ */
+function primaryKeyOf(name: string, table: PgTable): PgColumn[] {
+  const composite = getTableConfig(table).primaryKeys[0]
+  if (composite) {
+    return composite.columns
   }
-  return keys[0]
+  const single = Object.values(getTableColumns(table) as Record<string, PgColumn>).filter((column) => column.primary)
+  if (single.length !== 1) {
+    throw new Error(`${name} has no primary key, which a backup pages through the table by`)
+  }
+  return single
 }
 
 /**
@@ -194,30 +207,25 @@ export function excludedTableNames(): string[] {
 }
 
 function insertChunkSize(spec: TableSpec): number {
-  if (spec.rowKey) {
-    return 1
-  }
   const columnCount = Object.keys(spec.columns).length
   return Math.max(1, Math.min(MAX_ROWS_PER_INSERT, Math.floor(PG_MAX_BIND_PARAMS / Math.max(1, columnCount))))
 }
 
-/** A table's rows, in one SELECT, or one per SELECT for a ROW_AT_A_TIME table. */
-async function readRows(db: DB, spec: TableSpec): Promise<Record<string, unknown>[]> {
-  const key = spec.rowKey
-  if (!key) {
-    return (await db.select().from(spec.table)) as Record<string, unknown>[]
+/**
+ * One covered table's rows, as a backup stores them, in primary-key order.
+ *
+ * Never in one SELECT, whatever the table: see `boundedSelect` for the limit
+ * a whole table outgrows. Yielded one at a time so a caller can write each
+ * away before the next batch is read, which keeps the backup's memory at one
+ * batch rather than the whole table. A row deleted while the table is being
+ * read is not in the backup, as it would not have been a moment later.
+ */
+export async function* backupRows(db: DB, table: string): AsyncGenerator<Record<string, unknown>> {
+  const spec = BACKED_UP_TABLES.find((candidate) => candidate.name === table)
+  if (!spec) {
+    throw new Error(`${table} is not a table a backup carries`)
   }
-  const keys = await db.select({ key }).from(spec.table).orderBy(asc(key))
-  const rows: Record<string, unknown>[] = []
-  for (const { key: value } of keys) {
-    const [row] = await db.select().from(spec.table).where(eq(key, value))
-    // A row deleted between the two reads is simply not in the backup, as it
-    // would not have been a moment later.
-    if (row) {
-      rows.push(row as Record<string, unknown>)
-    }
-  }
-  return rows
+  yield* boundedSelect(db, { from: spec.table, fields: spec.columns, key: spec.key })
 }
 
 /**
@@ -250,17 +258,59 @@ function reviveRow(row: Record<string, unknown>, spec: TableSpec): Record<string
   return out
 }
 
-/** Snapshot every covered table into a portable object (JSON.stringify-ready). */
+async function* revivedRows(
+  rows: AsyncIterable<Record<string, unknown>> | Iterable<Record<string, unknown>>,
+  spec: TableSpec,
+): AsyncGenerator<Record<string, unknown>> {
+  for await (const row of rows) {
+    if (row && typeof row === 'object') {
+      yield reviveRow(row, spec)
+    }
+  }
+}
+
+/** About how many bytes a row's values take as statement parameters. */
+function rowBytes(row: Record<string, unknown>): number {
+  let bytes = 0
+  for (const value of Object.values(row)) {
+    if (typeof value === 'string') {
+      bytes += Buffer.byteLength(value)
+    } else if (value != null) {
+      bytes += Buffer.byteLength(JSON.stringify(value) ?? '')
+    }
+  }
+  return bytes
+}
+
+/**
+ * Snapshot every covered table into one portable object (JSON.stringify-ready).
+ *
+ * The whole database in memory, and one string once serialised, so this is
+ * for small databases only. Anything that has to keep working as the data
+ * grows reads `backupRows` table by table instead.
+ */
 export async function createBackup(db: DB): Promise<Backup> {
   const tables: Record<string, Record<string, unknown>[]> = {}
-  for (const spec of BACKED_UP_TABLES) {
-    tables[spec.name] = await readRows(db, spec)
+  for (const name of backedUpTableNames()) {
+    const rows: Record<string, unknown>[] = []
+    for await (const row of backupRows(db, name)) {
+      rows.push(row)
+    }
+    tables[name] = rows
   }
   return { formatVersion: BACKUP_FORMAT_VERSION, createdAt: new Date().toISOString(), tables }
 }
 
+/** A `Backup` object as a restore source. Throws if `backup` is not shaped like one. */
+export function backupSource(backup: Backup): BackupSource {
+  if (!backup || typeof backup !== 'object' || !backup.tables || typeof backup.tables !== 'object') {
+    throw new Error('Invalid backup: missing tables')
+  }
+  return { tables: Object.keys(backup.tables), rows: (table) => backup.tables[table] ?? [] }
+}
+
 /**
- * Replace the covered tables' contents with the backup's, in one transaction.
+ * Replace the covered tables' contents with the source's, in one transaction.
  *
  * The caller is expected to have already migrated the database to the current
  * schema (openDb does this). Older backups therefore load into the current
@@ -273,30 +323,25 @@ export async function createBackup(db: DB): Promise<Backup> {
  * carries Space but not SpaceGraph, empties every graph that way. The returned
  * summary names the uncovered tables so a caller can say so before running.
  */
-export async function restoreBackup(db: DB, backup: Backup): Promise<RestoreSummary> {
-  if (!backup || typeof backup !== 'object' || !backup.tables || typeof backup.tables !== 'object') {
-    throw new Error('Invalid backup: missing tables')
-  }
-  const covered = BACKED_UP_TABLES.filter((spec) => Object.hasOwn(backup.tables, spec.name))
+export async function restoreBackup(db: DB, source: BackupSource): Promise<RestoreSummary> {
+  const named = new Set(source.tables)
+  const covered = BACKED_UP_TABLES.filter((spec) => named.has(spec.name))
   const summary: RestoreSummary = {
     restored: {},
     uncovered: ALL_TABLES.filter((spec) => !covered.includes(spec)).map((spec) => spec.name),
-    unknown: Object.keys(backup.tables).filter((name) => !ALL_TABLES.some((spec) => spec.name === name)),
+    unknown: [...named].filter((name) => !ALL_TABLES.some((spec) => spec.name === name)),
   }
   await db.transaction(async (tx) => {
     for (const spec of [...covered].reverse()) {
       await tx.delete(spec.table)
     }
     for (const spec of covered) {
-      const rows = backup.tables[spec.name] ?? []
-      const revived = rows
-        .filter((row): row is Record<string, unknown> => !!row && typeof row === 'object')
-        .map((row) => reviveRow(row, spec))
-      summary.restored[spec.name] = revived.length
-      const chunk = insertChunkSize(spec)
-      for (let i = 0; i < revived.length; i += chunk) {
-        await tx.insert(spec.table).values(revived.slice(i, i + chunk))
+      let restored = 0
+      for await (const batch of inBudget(revivedRows(source.rows(spec.name), spec), rowBytes, insertChunkSize(spec))) {
+        await tx.insert(spec.table).values(batch)
+        restored += batch.length
       }
+      summary.restored[spec.name] = restored
     }
   })
   return summary

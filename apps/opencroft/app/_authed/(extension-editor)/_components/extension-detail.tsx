@@ -33,6 +33,7 @@ import type {
   LocalExtensionRecord,
   LocalRemoteState,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
+import { shortCommit, updateTarget } from '@/app/_authed/(extension-editor)/_components/update-overview'
 import { isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
 import type {
   ExtensionHandle,
@@ -135,10 +136,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       {children}
     </section>
   )
-}
-
-function shortCommit(commit: string | null): string | null {
-  return commit ? commit.slice(0, 7) : null
 }
 
 /** One group of what something declares — an app's parameters, actions or
@@ -497,7 +494,7 @@ export function ExtensionDetail({
           {source ? (
             <Button size='sm' variant='outline' disabled={busy} onClick={onUpdate}>
               {hasUpdate ? <ArrowDownToLine className='size-3.5' /> : <RefreshCw className='size-3.5' />}
-              {hasUpdate ? `Update to ${updateCheck?.latest}` : 'Reinstall'}
+              {hasUpdate && updateCheck ? `Update to ${updateTarget(updateCheck)}` : 'Reinstall'}
             </Button>
           ) : null}
           {canPull ? (
@@ -595,170 +592,144 @@ export function ExtensionDetail({
           ) : null}
 
           {tab === 'version' ? (
-            <>
-              <div className='flex flex-col gap-1.5'>
-                <Field label='Version'>
-                  <Mono>{manifest.version}</Mono>
-                </Field>
-                {/* Named apart from the id under the title because the two differ
-                    for a local copy standing in for another extension: the id is
-                    what it runs as, the folder is where its files are. */}
-                <Field label='Folder'>
-                  <Mono>{record.folder}</Mono>
-                </Field>
-                {isInstalledRecord(record) ? (
-                  <>
-                    {source ? (
-                      <>
-                        <Field label='Repository'>
-                          <a
-                            href={source.url}
-                            target='_blank'
-                            rel='noreferrer'
-                            className='inline-flex items-center gap-1 font-mono text-xs underline underline-offset-2'
-                          >
-                            {source.url}
-                            <ExternalLink className='size-3' />
-                          </a>
-                        </Field>
-                        <Field label='Installed ref'>
-                          <Mono>{source.ref ?? 'unknown'}</Mono>
-                        </Field>
-                        {source.commit ? (
-                          <Field label='Commit'>
-                            <Mono>{shortCommit(source.commit)}</Mono>
-                          </Field>
-                        ) : null}
-                        <Field label='Installed'>{new Date(source.installedAt).toLocaleString()}</Field>
-                      </>
-                    ) : (
+            <div className='flex flex-col gap-1.5'>
+              <Field label='Version'>
+                <Mono>{manifest.version}</Mono>
+              </Field>
+              {/* Named apart from the id under the title because the two differ
+                  for a local copy standing in for another extension: the id is
+                  what it runs as, the folder is where its files are. */}
+              <Field label='Folder'>
+                <Mono>{record.folder}</Mono>
+              </Field>
+              {isInstalledRecord(record) ? (
+                <>
+                  {source ? (
+                    <>
                       <Field label='Repository'>
-                        <span className='text-muted-foreground'>Not recorded</span>
+                        <a
+                          href={source.url}
+                          target='_blank'
+                          rel='noreferrer'
+                          className='inline-flex items-center gap-1 font-mono text-xs underline underline-offset-2'
+                        >
+                          {source.url}
+                          <ExternalLink className='size-3' />
+                        </a>
                       </Field>
+                      <Field label='Installed ref'>
+                        <Mono>{source.ref ?? 'unknown'}</Mono>
+                      </Field>
+                      {source.commit ? (
+                        <Field label='Commit'>
+                          <Mono>{shortCommit(source.commit)}</Mono>
+                        </Field>
+                      ) : null}
+                      <Field label='Installed'>{new Date(source.installedAt).toLocaleString()}</Field>
+                    </>
+                  ) : (
+                    <Field label='Repository'>
+                      <span className='text-muted-foreground'>Not recorded</span>
+                    </Field>
+                  )}
+                  <Field label='Updates'>
+                    {hasUpdate && updateCheck ? (
+                      <span className='text-amber-600'>{updateTarget(updateCheck)} is available</span>
+                    ) : updateCheck ? (
+                      <span className='text-muted-foreground'>Up to date</span>
+                    ) : (
+                      <span className='text-muted-foreground'>Not checked</span>
                     )}
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label='Checkout'>
+                    {record.sourceCommit ? (
+                      <span className='flex flex-wrap items-baseline gap-2'>
+                        <Mono>
+                          {record.branch ?? 'detached'} · {shortCommit(record.sourceCommit)}
+                        </Mono>
+                        {/* When that commit was made — the honest version of
+                            the "Updated" this page used to print, which was
+                            the extension directory's mtime and moved for
+                            reasons that had nothing to do with the
+                            extension changing. */}
+                        {record.sourceCommitDate ? (
+                          <span className='text-xs text-muted-foreground'>
+                            committed {new Date(record.sourceCommitDate).toLocaleString()}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className='text-muted-foreground'>Not a git checkout</span>
+                    )}
+                  </Field>
+                  {record.sourceCommit ? (
+                    <Field label='Working tree'>
+                      {record.sourceDirty ? (
+                        <span className='flex flex-col gap-0.5'>
+                          <span className='text-amber-600'>
+                            {record.sourceDirtyPaths.length} uncommitted file
+                            {record.sourceDirtyPaths.length === 1 ? '' : 's'}
+                          </span>
+                          {/* The files themselves, under the count rather
+                              than inside a sentence: this is a list, and a
+                              list of paths in prose is unreadable at three
+                              and useless at ten. */}
+                          {record.sourceDirtyPaths.map((dirtyPath) => (
+                            <span key={dirtyPath} className='truncate font-mono text-xs text-muted-foreground'>
+                              {dirtyPath}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className='text-muted-foreground'>Clean</span>
+                      )}
+                    </Field>
+                  ) : null}
+                  {record.sourceCommit ? (
                     <Field label='Updates'>
-                      {hasUpdate ? (
-                        <span className='text-amber-600'>{updateCheck?.latest} is available</span>
-                      ) : updateCheck ? (
-                        <span className='text-muted-foreground'>Up to date</span>
+                      {remoteChecking ? (
+                        <span className='flex items-center gap-1.5 text-muted-foreground'>
+                          <Loader2 className='size-3 animate-spin' />
+                          Checking origin…
+                        </span>
+                      ) : remote?.error ? (
+                        <span className='text-muted-foreground'>{remote.error}</span>
+                      ) : remote?.behind ? (
+                        <span className='text-amber-600'>
+                          origin/{remote.branch} has newer commits ({shortCommit(remote.remoteCommit)})
+                        </span>
+                      ) : remote ? (
+                        <span className='text-muted-foreground'>Up to date with origin/{remote.branch}</span>
                       ) : (
                         <span className='text-muted-foreground'>Not checked</span>
                       )}
                     </Field>
-                  </>
-                ) : (
-                  <>
-                    <Field label='Checkout'>
-                      {record.sourceCommit ? (
-                        <span className='flex flex-wrap items-baseline gap-2'>
-                          <Mono>
-                            {record.branch ?? 'detached'} · {shortCommit(record.sourceCommit)}
-                          </Mono>
-                          {/* When that commit was made — the honest version of
-                              the "Updated" this page used to print, which was
-                              the extension directory's mtime and moved for
-                              reasons that had nothing to do with the
-                              extension changing. */}
-                          {record.sourceCommitDate ? (
-                            <span className='text-xs text-muted-foreground'>
-                              committed {new Date(record.sourceCommitDate).toLocaleString()}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <span className='text-muted-foreground'>Not a git checkout</span>
-                      )}
+                  ) : null}
+                  {/* Why the update is not on offer, when there is one to
+                      take. Said here as well as on the button, because the
+                      button is the thing somebody presses and this is the
+                      thing they read when it does not respond. */}
+                  {remote?.behind && remote.blocked ? (
+                    <Field label=''>
+                      <span className='text-xs text-muted-foreground'>{remote.blocked}</span>
                     </Field>
-                    {record.sourceCommit ? (
-                      <Field label='Working tree'>
-                        {record.sourceDirty ? (
-                          <span className='flex flex-col gap-0.5'>
-                            <span className='text-amber-600'>
-                              {record.sourceDirtyPaths.length} uncommitted file
-                              {record.sourceDirtyPaths.length === 1 ? '' : 's'}
-                            </span>
-                            {/* The files themselves, under the count rather
-                                than inside a sentence: this is a list, and a
-                                list of paths in prose is unreadable at three
-                                and useless at ten. */}
-                            {record.sourceDirtyPaths.map((dirtyPath) => (
-                              <span key={dirtyPath} className='truncate font-mono text-xs text-muted-foreground'>
-                                {dirtyPath}
-                              </span>
-                            ))}
-                          </span>
-                        ) : (
-                          <span className='text-muted-foreground'>Clean</span>
-                        )}
-                      </Field>
-                    ) : null}
-                    {record.sourceCommit ? (
-                      <Field label='Updates'>
-                        {remoteChecking ? (
-                          <span className='flex items-center gap-1.5 text-muted-foreground'>
-                            <Loader2 className='size-3 animate-spin' />
-                            Checking origin…
-                          </span>
-                        ) : remote?.error ? (
-                          <span className='text-muted-foreground'>{remote.error}</span>
-                        ) : remote?.behind ? (
-                          <span className='text-amber-600'>
-                            origin/{remote.branch} has newer commits ({shortCommit(remote.remoteCommit)})
-                          </span>
-                        ) : remote ? (
-                          <span className='text-muted-foreground'>Up to date with origin/{remote.branch}</span>
-                        ) : (
-                          <span className='text-muted-foreground'>Not checked</span>
-                        )}
-                      </Field>
-                    ) : null}
-                    {/* Why the update is not on offer, when there is one to
-                        take. Said here as well as on the button, because the
-                        button is the thing somebody presses and this is the
-                        thing they read when it does not respond. */}
-                    {remote?.behind && remote.blocked ? (
-                      <Field label=''>
-                        <span className='text-xs text-muted-foreground'>{remote.blocked}</span>
-                      </Field>
-                    ) : null}
-                    <Field label='Running build'>
-                      {record.builtCommit ? (
-                        <Mono>
-                          {shortCommit(record.builtCommit)}
-                          {record.builtDirty ? ' (built with uncommitted changes)' : ''}
-                        </Mono>
-                      ) : (
-                        <span className='text-muted-foreground'>Not built yet</span>
-                      )}
-                    </Field>
-                  </>
-                )}
-              </div>
-
-              {/* Why the running bundle is being held apart from the checkout.
-                  Composed from the refusal's own reasons rather than printed
-                  as its message: the message names the uncommitted files
-                  inline, and they are listed above under the tree they belong
-                  to. */}
-              {!isInstalledRecord(record) && record.refusal ? (
-                <div className='rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs'>
-                  <p className='font-medium'>The automatic rebuild is refusing this checkout.</p>
-                  <ul className='list-inside list-disc pt-0.5 text-muted-foreground'>
-                    {record.refusal.reasons.map((reason) => (
-                      <li key={reason}>
-                        {reason === 'unclean'
-                          ? 'It carries uncommitted changes.'
-                          : `It is on branch "${record.refusal?.branch}", not the default branch "${record.refusal?.defaultBranch}".`}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className='pt-1 text-muted-foreground'>
-                    Compiling publishes this directory to the running instance as it stands, so the instance goes on
-                    running the last build until the checkout is settled.
-                  </p>
-                </div>
-              ) : null}
-            </>
+                  ) : null}
+                  <Field label='Running build'>
+                    {record.builtCommit ? (
+                      <Mono>
+                        {shortCommit(record.builtCommit)}
+                        {record.builtDirty ? ' (built with uncommitted changes)' : ''}
+                      </Mono>
+                    ) : (
+                      <span className='text-muted-foreground'>Not built yet</span>
+                    )}
+                  </Field>
+                </>
+              )}
+            </div>
           ) : null}
         </div>
       </ScrollArea>

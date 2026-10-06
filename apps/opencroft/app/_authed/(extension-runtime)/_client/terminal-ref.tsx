@@ -16,7 +16,8 @@ export interface TerminalRefProps {
  */
 export function TerminalRef({ target, className }: TerminalRefProps) {
   const { nodeId, handleId } = splitTarget(target)
-  const ref = useGraphRef(nodeId)
+  // The whole target, so an App's answer carries its name for the handle.
+  const ref = useGraphRef(target)
   const display = refDisplay(ref, nodeId)
   const detail = ref.status === 'known' ? describeGraphRef(ref.info, handleId).detail : undefined
   return (

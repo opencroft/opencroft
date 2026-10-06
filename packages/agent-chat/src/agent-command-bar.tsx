@@ -1,8 +1,6 @@
 'use client'
 
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
-import { canonicalEffortId } from 'agent-client/session-effort'
-import { canonicalModeOf } from 'agent-client/session-modes'
 import {
   type ReactElement,
   type ReactNode,
@@ -17,17 +15,15 @@ import {
 } from 'react'
 
 import {
+  commandBarDials,
   EFFORT_CONFIG_ID,
   FAST_MODE_CONFIG_ID,
   FAST_MODE_OFF,
   FAST_MODE_ON,
-  flattenOptions,
   MODE_CONFIG_ID,
   MODEL_CONFIG_ID,
-  modeEntries,
   selectLeftoverBooleanOptions,
   selectLeftoverConfigs,
-  selectOwnButtonOptions,
 } from './agent-command-bar-configs'
 import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
 import { AttachButton } from './components/attach-button'
@@ -488,73 +484,7 @@ export function useAgentCommandBar({
       textarea.setSelectionRange(textarea.value.length, textarea.value.length)
     }
   }, [caretToEnd])
-  // Read through a structural type rather than narrowing the union: `find` does
-  // not narrow by its predicate, and flattenOptions already takes unknown and
-  // returns [] for anything that is not a value list.
-  // The kit selectors take our own values and nothing else, so wire ids are
-  // resolved here and mapped back on select. That keeps the synonym registry --
-  // which is logic, not presentation -- on this side of the boundary.
-  //
-  // Each control is found by the option's meaning, not by one agent's id for
-  // it (see selectOwnButtonOptions), so what is sent back is the id THIS
-  // agent used, and a host lock names the control by its conventional id.
-  const dial = useMemo(() => {
-    const own = selectOwnButtonOptions(configOptions)
-    const modeOption = own.mode as { id: string; currentValue?: unknown; options?: unknown } | undefined
-    const effortOption = own.effort as { id: string; currentValue?: unknown; options?: unknown } | undefined
-    const modelOption = own.model as { id: string; currentValue?: unknown; options?: unknown } | undefined
-    const fastOption = own.fast as
-      | { id: string; currentValue?: unknown; options?: unknown; type?: unknown; description?: unknown }
-      | undefined
-    const fastBoolean = fastOption?.type === 'boolean'
-    const modeWire = modeEntries(modeOption?.options)
-    const effortWire = flattenOptions(effortOption?.options)
-    // Read with each value's `_meta`, where an agent may state what the mode
-    // does -- see canonicalModeOf.
-    const modeMeta = new Map(modeWire.map((entry) => [entry.id, entry._meta]))
-    // A wire value nothing recognises passes through as itself: the kit renders
-    // it with its own label and no grade colour, which is the honest answer.
-    const modeOf = (value: string) =>
-      (adapterId ? canonicalModeOf(adapterId, { id: value, _meta: modeMeta.get(value) }) : undefined) ?? value
-    const effortOf = (value: string) => (adapterId ? canonicalEffortId(adapterId, value) : undefined) ?? value
-    const modeBack = new Map(modeWire.map((entry) => [modeOf(entry.id), entry.id]))
-    const effortBack = new Map(effortWire.map((entry) => [effortOf(entry.value), entry.value]))
-    const effortValues = effortWire.map((entry) => effortOf(entry.value))
-    // `default` is offered even by an agent that advertises no such value: it
-    // means "leave the baseline alone", and an agent without a name for that
-    // still has one. It sends the agent's own `high` -- the strongest value
-    // that is a grade rather than a limit -- so the choice reaches the wire as
-    // something the agent actually accepts.
-    if (effortValues.length > 0 && !effortValues.includes('default')) {
-      const baseline = effortBack.get('high')
-      if (baseline !== undefined) {
-        effortBack.set('default', baseline)
-        effortValues.push('default')
-      }
-    }
-    return {
-      modeId: modeOption?.id ?? MODE_CONFIG_ID,
-      effortId: effortOption?.id ?? EFFORT_CONFIG_ID,
-      modelId: modelOption?.id ?? MODEL_CONFIG_ID,
-      fastId: fastOption?.id ?? FAST_MODE_CONFIG_ID,
-      modeValues: modeWire.map((entry) => modeOf(entry.id)),
-      effortValues,
-      modeCurrent: modeOf(String(modeOption?.currentValue ?? '')),
-      effortCurrent: effortOf(String(effortOption?.currentValue ?? '')),
-      modeBack,
-      effortBack,
-      // No canonical id/label table for models -- the wire's own {value, label}
-      // pairs are shown as-is, unlike mode/effort's synonym-normalized values.
-      modelOptions: flattenOptions(modelOption?.options),
-      modelCurrent: String(modelOption?.currentValue ?? ''),
-      fastOffered: fastOption !== undefined,
-      fastBoolean,
-      fastEnabled: fastBoolean
-        ? Boolean(fastOption?.currentValue)
-        : String(fastOption?.currentValue ?? '') === FAST_MODE_ON,
-      fastDescription: typeof fastOption?.description === 'string' ? fastOption.description : undefined,
-    }
-  }, [configOptions, adapterId])
+  const dial = useMemo(() => commandBarDials(configOptions, adapterId), [configOptions, adapterId])
 
   const hostControls = useMemo(
     () => controls?.({ insertText, sendMessage, streaming: session.waiting }),

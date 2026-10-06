@@ -62,7 +62,12 @@ function GroupChatDetailPage() {
   const goToList = useCallback(() => navigate({ to: '/group-chats' }), [navigate])
   const onBack = useSafeBack(goToList)
   const goToThread = useCallback(
-    (threadId: string) => navigate({ to: '/group-chats/$groupChatId/$threadId', params: { groupChatId, threadId } }),
+    (threadId: string, at?: { position: number }) =>
+      navigate({
+        to: '/group-chats/$groupChatId/$threadId',
+        params: { groupChatId, threadId },
+        search: at ? { at: at.position } : {},
+      }),
     [navigate, groupChatId],
   )
 

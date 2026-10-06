@@ -15,11 +15,7 @@ import { CronExpressionParser } from 'cron-parser'
 
 import { EVENT_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import { dispatchExecutionContext } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
-import {
-  loadGraphPlain,
-  saveGraphPlain,
-  withGraphConflictRetry,
-} from '@/app/_authed/(space)/_server/graph-conflict-retry'
+import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 export type ScheduleMode = 'simple' | 'cron'
@@ -175,61 +171,44 @@ async function persistRunOutcome(
   // derived from firedAt: two genuinely separate fires can read an identical
   // Date.now() millisecond (queued timers fire back-to-back once the event
   // loop is free), and keying dedup off that value silently collapsed one of
-  // them into the other. fireId stays stable across
-  // withGraphConflictRetry's own retries of this SAME call — that's the case
-  // this dedup guards for real, belt-and-suspenders against
-  // a shared-object aliasing bug (fixed at its root
-  // in withGraphConflictRetry) — even if some other bug someday causes this
-  // same outcome to be applied twice, the dedup check below makes a second
-  // application a no-op instead of a second history entry.
+  // them into the other. If the same outcome is ever applied twice, the dedup
+  // check below makes the second application a no-op instead of a second
+  // history entry.
   const entryId = `run-${nodeId}-${fireId}`
   try {
-    await withGraphConflictRetry(
-      address,
-      (graph) => {
-        const node = (graph.nodes as unknown as GraphNode[]).find((n) => n.id === nodeId)
-        if (!node) {
-          // Deleted concurrently — nothing to persist. Reapply-not-recreate,
-          // same rule as the MCP tools' conflict retry.
-          //
-          // RESIDUAL, named rather than hidden: withGraphConflictRetry saves
-          // even when the mutator changes nothing, so this branch still writes
-          // the unchanged clone and broadcasts. That used to be the steady
-          // state — every fire on a non-default graph landed here — and with
-          // the address carried it shrinks to a rare, genuinely concurrent
-          // delete. Widening the shared helper with a skip-save path is not
-          // worth that residual: all seven MCP graph-write tools sit on it.
-          return
+    await mutateLiveGraph(address, { kind: 'system', name: 'scheduler' }, (graph) => {
+      const node = (graph.nodes as unknown as GraphNode[]).find((n) => n.id === nodeId)
+      if (!node) {
+        // Deleted concurrently — nothing to persist, and nothing is written.
+        return
+      }
+      const data = (node.data ??= {})
+      // Opportunistic refresh: since this node is being written anyway,
+      // recompute nextRunAt for every enabled rule too — not just the one(s)
+      // that fired. Piggybacks on this write rather than adding a new class
+      // of write; a rule that hasn't fired yet stays without a nextRunAt
+      // until this node's first fire, same as any other rule here.
+      const refreshedAt = Date.now()
+      for (const rule of data.schedules ?? []) {
+        if (rule.enabled) {
+          rule.nextRunAt = computeNextRunAt(rule.cron, refreshedAt)
         }
-        const data = (node.data ??= {})
-        // Opportunistic refresh: since this node is being written anyway,
-        // recompute nextRunAt for every enabled rule too — not just the one(s)
-        // that fired. Piggybacks on this write rather than adding a new class
-        // of write; a rule that hasn't fired yet stays without a nextRunAt
-        // until this node's first fire, same as any other rule here.
-        const refreshedAt = Date.now()
-        for (const rule of data.schedules ?? []) {
-          if (rule.enabled) {
-            rule.nextRunAt = computeNextRunAt(rule.cron, refreshedAt)
-          }
-        }
-        const history = (data.runHistory ??= [])
-        if (history.some((e) => e.id === entryId)) {
-          return
-        }
-        const entry: RunHistoryEntry = {
-          id: entryId,
-          at: firedAt,
-          status: outcome.status,
-          durationMs: outcome.durationMs,
-          error: outcome.error,
-          ruleId: dueRuleIds.length === 1 ? dueRuleIds[0] : undefined,
-        }
-        history.unshift(entry)
-        history.length = Math.min(history.length, MAX_HISTORY)
-      },
-      { load: loadGraphPlain, save: saveGraphPlain },
-    )
+      }
+      const history = (data.runHistory ??= [])
+      if (history.some((e) => e.id === entryId)) {
+        return
+      }
+      const entry: RunHistoryEntry = {
+        id: entryId,
+        at: firedAt,
+        status: outcome.status,
+        durationMs: outcome.durationMs,
+        error: outcome.error,
+        ruleId: dueRuleIds.length === 1 ? dueRuleIds[0] : undefined,
+      }
+      history.unshift(entry)
+      history.length = Math.min(history.length, MAX_HISTORY)
+    })
   } catch (err) {
     console.error(`[event-scheduler] failed to persist run outcome for ${nodeId}:`, err)
   }

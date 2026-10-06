@@ -151,6 +151,15 @@ function loadGrammar(instance: HighlighterCore, name: string): Promise<boolean> 
   return load
 }
 
+/**
+ * The classes that make a code block scroll sideways instead of wrapping, on
+ * the `pre` that `highlight` returns and on the plain one a caller renders
+ * before it. A wrapped line of code loses the indentation the reader is
+ * following. The classes travel with the markup, so a block scrolls wherever it
+ * is installed, whichever stylesheet the host has.
+ */
+export const CODE_SCROLL_CLASS = 'overflow-x-auto whitespace-pre'
+
 export interface HighlightOptions {
   /**
    * Leave out the mark that gives a block its box, for a caller that draws its
@@ -184,13 +193,11 @@ export async function highlight(
       lang: language,
       themes: { light: LIGHT_THEME, dark: DARK_THEME },
       defaultColor: false,
-      // Marks the element as a block that owns its own box. Chat prose wraps
-      // long lines in a `pre`, which is right for quoted output and wrong for
-      // code: a wrapped line breaks the indentation the reader is following.
-      // The mark is what the stylesheet hangs `white-space: pre`, horizontal
-      // scrolling and the border on. The colours do not hang on it -- they hang
-      // on shiki's own class -- so a caller that brings its own box still gets
-      // coloured text.
+      // Marks the element as a block that owns its own box: it scrolls sideways
+      // rather than wrapping, and the mark is what the stylesheet hangs the
+      // border on where no prose draws one. The colours do not hang on it --
+      // they hang on shiki's own class -- so a caller that brings its own box
+      // still gets coloured text.
       transformers: options?.plain
         ? [
             {
@@ -209,6 +216,7 @@ export async function highlight(
             {
               pre(node) {
                 node.properties['data-code-block'] = ''
+                this.addClassToHast(node, CODE_SCROLL_CLASS)
               },
             },
           ],

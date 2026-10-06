@@ -16,10 +16,11 @@
 // where a resurrected one costs them a stale conversation days later.
 
 import { agentQueueEntry, db } from '@opencroft/db'
+import { boundedSelect } from '@opencroft/db/bounded-select'
 import type { QueueStore } from 'agent-client/agent-client'
 import type { DeliveredAttachment } from 'agent-client/attachments'
 import type { QueuedPrompt } from 'agent-client/types'
-import { and, asc, eq, isNotNull, isNull, lt, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, isNotNull, isNull, lt, sql } from 'drizzle-orm'
 
 /**
  * How long a removed entry's marked row is kept before the sweep erases it.
@@ -82,6 +83,17 @@ function toEntry(row: typeof agentQueueEntry.$inferSelect): QueuedPrompt | null 
 }
 
 /**
+ * What marking an entry removed writes.
+ *
+ * The mark needs only the row's id, and nothing reads a marked row's content,
+ * so the content goes with it. Kept, it would sit in the table until the
+ * sweep, at whatever size it was sent.
+ */
+function forgotten(removedAt: Date) {
+  return { removedAt, text: '', attachments: null }
+}
+
+/**
  * Erase marked rows old enough that no late write could still name their id.
  *
  * Only rows with `removedAt` set are ever candidates — a waiting entry has
@@ -129,7 +141,7 @@ export async function moveQueueEntries(moves: readonly { from: string; to: strin
 export async function dropWaitingEntries(sessionKey: string): Promise<void> {
   await db
     .update(agentQueueEntry)
-    .set({ removedAt: new Date() })
+    .set(forgotten(new Date()))
     .where(and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)))
 }
 
@@ -180,7 +192,7 @@ export const queueStore: QueueStore = {
           removedAt,
         })),
       )
-      .onConflictDoUpdate({ target: agentQueueEntry.id, set: { removedAt } })
+      .onConflictDoUpdate({ target: agentQueueEntry.id, set: forgotten(removedAt) })
   },
 
   async clear(sessionKey) {
@@ -190,11 +202,18 @@ export const queueStore: QueueStore = {
   },
 
   async load(sessionKey) {
-    const rows = await db
-      .select()
-      .from(agentQueueEntry)
-      .where(and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)))
-      .orderBy(asc(agentQueueEntry.position))
+    // A queue holds as many waiting messages as were sent, more than one
+    // SELECT can return, so it is read in bounded batches.
+    const rows: (typeof agentQueueEntry.$inferSelect)[] = []
+    for await (const row of boundedSelect<typeof agentQueueEntry.$inferSelect>(db, {
+      from: agentQueueEntry,
+      fields: getTableColumns(agentQueueEntry),
+      // Positions are not declared unique, so the id breaks a tie.
+      key: [agentQueueEntry.position, agentQueueEntry.id],
+      where: and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)),
+    })) {
+      rows.push(row)
+    }
     // After the read rather than before it, so an open never waits on
     // housekeeping. Not awaited for the same reason; a failed sweep only
     // leaves marked rows for the next one.

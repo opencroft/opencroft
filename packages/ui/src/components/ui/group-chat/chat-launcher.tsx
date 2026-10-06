@@ -4,6 +4,7 @@ import { MessagesSquare } from 'lucide-react'
 import type * as React from 'react'
 
 import { Button } from 'ui/components/ui/button'
+import { CountBadge } from 'ui/components/ui/count-badge'
 import { cn } from 'cn'
 
 export interface ChatLauncherProps extends Omit<React.ComponentProps<'button'>, 'children'> {
@@ -35,14 +36,7 @@ export function ChatLauncher({ waitingCount = 0, className, ...props }: ChatLaun
       {...props}
     >
       <MessagesSquare className='size-6' />
-      {waitingCount > 0 ? (
-        <span
-          aria-hidden
-          className='absolute -top-0.5 -right-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-medium leading-none text-white ring-2 ring-background'
-        >
-          {waitingCount}
-        </span>
-      ) : null}
+      <CountBadge count={waitingCount} tone='destructive' size='default' />
     </Button>
   )
 }

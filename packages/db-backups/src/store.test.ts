@@ -7,7 +7,16 @@
 // `restoreBackupFile`, with both the database and the data directory changed
 // in between.
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after, before, beforeEach } from 'node:test'
@@ -161,6 +170,62 @@ test('a v1 .json backup still restores, and says what it does not carry', async 
   assert.ok(result.uncovered.includes('SpaceGraph'))
   // It carries no Space rows either, so nothing cascades and the graph stands.
   assert.equal((await db.select().from(spaceGraph)).length, 1)
+})
+
+test('a format 2 archive, with its rows in one database.json, still restores', async () => {
+  // Written by the format 2 writer itself, not rebuilt here, so this holds the
+  // reader to what such an archive actually contains.
+  copyFileSync(
+    new URL('./fixtures/backup-v2.zip', import.meta.url),
+    join(dataDirectory, 'backups', 'backup-format-2.zip'),
+  )
+
+  const contents = await store.describeBackupFile('backup-format-2.zip')
+  const result = await store.restoreBackupFile('backup-format-2.zip')
+
+  assert.equal(contents.formatVersion, 2)
+  assert.deepEqual(result.restored, { Space: 1, SpaceGraph: 1 })
+  const [graph] = await db.select().from(spaceGraph)
+  assert.equal(graph.data, '{"nodes":["v2"]}')
+  assert.equal(
+    readFileSync(join(dataDirectory, 'app-data', 'local', 'sample-app', 'inst-1', 'notes.txt'), 'utf8'),
+    'v2-content\n',
+  )
+  assert.ok(!existsSync(instanceDir), 'app storage was merged rather than replaced')
+})
+
+test('backups started together each restore to their own manifest', async () => {
+  // Both stage their rows under the same directory with the same file names,
+  // so without the queue one archive can carry the other's rows.
+  const first = store.createBackupFile()
+  await db.insert(setting).values([
+    { id: 'added-between-1', data: '"x"' },
+    { id: 'added-between-2', data: '"y"' },
+  ])
+  const second = store.createBackupFile()
+  const third = store.createBackupFile()
+
+  const infos = await Promise.all([first, second, third])
+
+  assert.equal(new Set(infos.map((info) => info.filename)).size, 3, 'one backup replaced another')
+  for (const info of infos) {
+    const contents = await store.describeBackupFile(info.filename)
+    const result = await store.restoreBackupFile(info.filename)
+    assert.deepEqual(result.restored, contents.tables, info.filename)
+  }
+})
+
+test('a restore leaves no staged rows behind', async () => {
+  const info = await store.createBackupFile()
+
+  await store.restoreBackupFile(info.filename)
+
+  const backupsDir = join(dataDirectory, 'backups')
+  assert.deepEqual(
+    readdirSync(backupsDir).filter((name) => name.startsWith('.')),
+    [],
+    'a staging directory outlived the restore',
+  )
 })
 
 test('an upload is filed by its bytes, not by the name the browser sent', async () => {

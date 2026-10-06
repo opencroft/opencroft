@@ -1,6 +1,6 @@
 import { cn } from 'cn'
 
-import { BRAND_ACCENT, Logo } from 'ui/components/ui/logo'
+import { BRAND_ACCENT, Logo } from './logo'
 
 // The OpenCroft lockup: the mark beside the name.
 //
@@ -8,10 +8,10 @@ import { BRAND_ACCENT, Logo } from 'ui/components/ui/logo'
 // accent from the same place, so the colour of the filled square and the colour
 // of the second half of the name cannot drift apart.
 //
-// NOTHING HERE NAMES A THEME COLOUR. The accent is fixed because it is part of
-// the mark; everything else inherits, so the outline and "Open" take whatever
-// text colour surrounds them and the lockup sits correctly on a light or a dark
-// surface. The line under the two larger sizes is dimmed with opacity rather
+// NOTHING HERE NAMES A THEME COLOUR. The accent is the mark's own and moves
+// only with it (see the sibling mark); everything else inherits, so the
+// outline and "Open" take whatever text colour surrounds them and the lockup
+// sits correctly on a light or a dark surface. The line under the two larger sizes is dimmed with opacity rather
 // than given a muted colour token -- a token would tie this to one product's
 // palette, which is the thing this project exists to avoid.
 

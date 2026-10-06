@@ -15,7 +15,10 @@ import {
 } from 'ui/alert-dialog'
 import { Button } from 'ui/button'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
+import { ExtensionUpdates } from 'ui/extensions/extension-updates'
 import { Flex } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/layout/scroll-area'
+import { TitleBarTitle, TitleBarToolbar } from 'ui/layouts/title-bar'
 import { Spinner } from 'ui/spinner'
 
 import {
@@ -23,25 +26,23 @@ import {
   listExtensionsIndex,
 } from '@/app/_authed/(extension-editor)/_actions/extensions-index'
 import {
-  checkInstalledForUpdates,
   getInstalledExtension,
-  type UpdateCheck,
   uninstallExtension,
-  updateInstalledExtension,
 } from '@/app/_authed/(extension-editor)/_actions/installed-extensions-actions'
 import {
-  checkLocalExtensionRemote,
   createLocalExtension,
   deleteLocalExtension,
   getLocalExtension,
   type LocalExtensionRecord,
-  type LocalRemoteState,
-  pullLocalExtension,
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions'
 import { ExtensionDetail, type ExtensionRecord } from '@/app/_authed/(extension-editor)/_components/extension-detail'
 import { ExtensionSourceEditor } from '@/app/_authed/(extension-editor)/_components/extension-source-editor'
 import { ExtensionsListPanel } from '@/app/_authed/(extension-editor)/_components/extensions-list-panel'
+import { ExtensionsToolbar } from '@/app/_authed/(extension-editor)/_components/extensions-toolbar'
 import { InstallExtensionDialog } from '@/app/_authed/(extension-editor)/_components/install-extension-dialog'
+import { RegistrySearchResults } from '@/app/_authed/(extension-editor)/_components/registry-search-results'
+import type { UpdateAllSummary } from '@/app/_authed/(extension-editor)/_components/update-run'
+import { useExtensionUpdates } from '@/app/_authed/(extension-editor)/_components/use-extension-updates'
 import { extensionTemplate } from '@/app/_authed/(extension-editor)/_templates/template'
 import { isLocalFolder, localFolderFor } from '@/app/_authed/(extension-runtime)/_extension-id'
 
@@ -54,9 +55,15 @@ function pickUntitledSlug(folders: string[]): string {
   return i === 1 ? 'untitled' : `untitled-${i}`
 }
 
-/** Whether there is a repository to ask about updates: the folder is there and its install recorded where it came from. */
-function hasUpdateSource(entry: ExtensionIndexEntry): boolean {
-  return !entry.missing && entry.sourceUrl !== undefined
+function updateAllOutcome({ updated, current, failed, skipped }: UpdateAllSummary): string {
+  return [
+    `Updated ${updated}`,
+    current > 0 ? `${current} already up to date` : null,
+    failed > 0 ? `${failed} failed` : null,
+    skipped > 0 ? `${skipped} skipped` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 // What taking an entry off the instance is called, and what it does. A recorded
@@ -97,15 +104,22 @@ interface ExtensionsPageProps {
 // The list is an INDEX — folders, names, versions — and it arrives with the
 // document, from the manifest cache the instance already keeps. Everything
 // heavier is read for the one extension somebody opens: its files, its
-// checkout, what it is running, where it stands against origin. Acts refresh
-// the index rather than re-reading the world.
+// checkout, what it is running. Where each extension stands against its source
+// is asked once the page is up, without holding the list back, and is what the
+// toolbar's updates button counts and opens. Acts refresh the index rather than
+// re-reading the world.
 //
-// The editor takes the whole surface when it opens, like the design kit's
-// does: three panes need the room, and the way back is the header's own.
+// The page's search and acts sit in the title bar's toolbar row. The search's
+// results take the right pane while it has a query, and the box is emptied
+// when the pane turns to something else, so it never stands over a pane that
+// is not its results. The editor
+// takes the whole surface when it opens, like the design kit's does: three
+// panes need the room, and the way back is the header's own.
 export default function ExtensionsPage({ index }: ExtensionsPageProps) {
   const router = useRouter()
   const [entries, setEntries] = useState<ExtensionIndexEntry[]>(index)
-  const [updateChecks, setUpdateChecks] = useState<Record<string, UpdateCheck>>({})
+  const [query, setQuery] = useState('')
+  const [showUpdates, setShowUpdates] = useState(false)
   const [installDialogOpen, setInstallDialogOpen] = useState(false)
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [selected, setSelected] = useState<ExtensionRecord | null>(null)
@@ -114,8 +128,6 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
   // entry that cannot be opened is never shown for the frame before its load starts.
   const [loadedFolder, setLoadedFolder] = useState<string | null>(null)
   const selectedLoading = selectedFolder !== null && loadedFolder !== selectedFolder
-  const [remote, setRemote] = useState<LocalRemoteState | null>(null)
-  const [remoteChecking, setRemoteChecking] = useState(false)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ExtensionIndexEntry | null>(null)
@@ -135,39 +147,12 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
     setEntries(next)
     // The loader's copy is now stale, and it is what a later navigation to this
     // route would draw. Not awaited: the list on screen is already current.
-    void router.invalidate()
+    // Only this route's loader. Re-running the layouts' too would refetch the
+    // whole chrome after every act, and any one of those requests failing
+    // replaces the page with the router's error screen.
+    void router.invalidate({ filter: (match) => match.routeId === '/_authed/(extension-editor)/extensions' })
     return next
   }, [router])
-
-  const checkAllUpdates = useCallback(async (list: ExtensionIndexEntry[]) => {
-    const results = await Promise.all(
-      list.filter(hasUpdateSource).map(async (entry) => {
-        try {
-          return [entry.folder, await checkInstalledForUpdates({ data: entry.folder })] as const
-        } catch {
-          return null
-        }
-      }),
-    )
-    const map: Record<string, UpdateCheck> = {}
-    for (const result of results) {
-      if (result) {
-        map[result[0]] = result[1]
-      }
-    }
-    setUpdateChecks(map)
-  }, [])
-
-  // Installed extensions are checked against their remote once the page is up.
-  // It is a network call per extension, so it never holds the list back — the
-  // version a row shows is what is installed, and the amber says a newer tag
-  // exists once the answer arrives.
-  useEffect(() => {
-    const installed = index.filter((entry) => entry.kind === 'installed')
-    if (installed.length > 0) {
-      void checkAllUpdates(installed)
-    }
-  }, [index, checkAllUpdates])
 
   // The open extension, with its files. Loaded per selection rather than with
   // the list, which is what keeps the list instant.
@@ -177,10 +162,25 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
       : await getInstalledExtension({ data: folder })
   }, [])
 
+  // An update rewrote a folder: the index row follows it, and so does the open
+  // page when it is that extension's.
+  const selectedFolderRef = useRef(selectedFolder)
+  selectedFolderRef.current = selectedFolder
+  const afterUpdate = useCallback(
+    async (folder: string) => {
+      await refresh()
+      if (selectedFolderRef.current === folder) {
+        setSelected(await loadSelected(folder))
+      }
+    },
+    [refresh, loadSelected],
+  )
+  const updates = useExtensionUpdates(entries, afterUpdate)
+  const { checkFolder, update, updateAll } = updates
+
   useEffect(() => {
     if (!selectedFolder) {
       setSelected(null)
-      setRemote(null)
       setLoadedFolder(null)
       return
     }
@@ -207,35 +207,13 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
     }
   }, [selectedFolder, loadSelected])
 
-  // Where the open checkout stands against origin. One round trip, for the one
-  // extension on screen — never for the list, which would make opening the
-  // page wait on the network once per extension.
-  const checkRemote = useCallback(async (folder: string) => {
-    setRemoteChecking(true)
-    try {
-      setRemote(await checkLocalExtensionRemote({ data: folder }))
-    } catch (err) {
-      setRemote({
-        branch: null,
-        localCommit: null,
-        remoteCommit: null,
-        behind: false,
-        blocked: null,
-        error: err instanceof Error ? err.message : String(err),
-      })
-    } finally {
-      setRemoteChecking(false)
-    }
-  }, [])
-
+  // An opened checkout is asked again: it is the one extension on screen, and
+  // its tree may have moved since the page's own check.
   useEffect(() => {
-    if (!selectedFolder || !isLocalFolder(selectedFolder)) {
-      setRemote(null)
-      return
+    if (selectedFolder && isLocalFolder(selectedFolder)) {
+      void checkFolder(selectedFolder)
     }
-    setRemote(null)
-    void checkRemote(selectedFolder)
-  }, [selectedFolder, checkRemote])
+  }, [selectedFolder, checkFolder])
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.folder === selectedFolder) ?? null,
@@ -245,6 +223,16 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
   const handleSelect = useCallback((folder: string) => {
     setSelectedFolder(folder)
     setEditing(false)
+    setShowUpdates(false)
+    setQuery('')
+  }, [])
+
+  const handleQueryChange = useCallback((next: string) => {
+    setQuery(next)
+    if (next.trim()) {
+      setSelectedFolder(null)
+      setShowUpdates(false)
+    }
   }, [])
 
   // A save in the editor can rename the extension or move its version, and the
@@ -262,7 +250,12 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
       setEntries((prev) =>
         prev.map((entry) =>
           entry.folder === saved.folder
-            ? { ...entry, name: saved.manifest.name || entry.folder, version: saved.manifest.version }
+            ? {
+                ...entry,
+                name: saved.manifest.name || entry.folder,
+                version: saved.manifest.version,
+                dirty: saved.sourceDirty === true ? true : undefined,
+              }
             : entry,
         ),
       )
@@ -281,7 +274,7 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
         data: { folder: localFolderFor(slug), files: extensionTemplate(slug) },
       })
       await refresh()
-      setSelectedFolder(record.folder)
+      handleSelect(record.folder)
       // Straight into the editor: a template has nothing to read about yet,
       // and writing it is the only reason it was created.
       setEditing(true)
@@ -291,61 +284,54 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
     } finally {
       setBusy(false)
     }
-  }, [localEntries, refresh])
+  }, [localEntries, refresh, handleSelect])
 
   // An install landed in `folder`: the list is re-read and the new extension
   // opened, whatever kind of folder it went into.
   const handleInstalled = useCallback(
     async (folder: string) => {
-      const next = await refresh()
-      setSelectedFolder(folder)
-      setEditing(false)
-      void checkAllUpdates(next.filter((entry) => entry.kind === 'installed'))
+      await refresh()
+      handleSelect(folder)
+      void checkFolder(folder)
     },
-    [refresh, checkAllUpdates],
+    [refresh, handleSelect, checkFolder],
   )
 
-  // Two different acts under one control, because they are the same intention:
-  // an installed extension is reinstalled at the newest tag, and a local
-  // checkout is fast-forwarded to its branch on origin and rebuilt.
   const handleUpdate = useCallback(async () => {
     if (!selectedFolder) {
       return
     }
     setBusy(true)
     try {
-      if (!isLocalFolder(selectedFolder)) {
-        const check = updateChecks[selectedFolder]
-        const record = await updateInstalledExtension({
-          data: { folder: selectedFolder, ref: check?.latest ?? undefined },
-        })
-        const next = await refresh()
-        void checkAllUpdates(next.filter((entry) => entry.kind === 'installed'))
-        setSelected(await loadSelected(selectedFolder))
-        toast.success(`Updated ${record.manifest.name ?? record.id} to ${record.source?.ref ?? 'its newest version'}`)
+      const result = await update(selectedFolder)
+      if (result.ok) {
+        toast.success(result.message)
       } else {
-        const result = await pullLocalExtension({ data: selectedFolder })
-        await refresh()
-        setSelected(result.record)
-        void checkRemote(selectedFolder)
-        if (!result.moved) {
-          toast.info('Already up to date.')
-        } else if (result.build.success) {
-          toast.success(`Updated to ${result.to?.slice(0, 7)} and rebuilt`)
-        } else {
-          // The files moved and the build did not: saying "update failed"
-          // would describe a checkout that did update.
-          toast.error(
-            `Updated to ${result.to?.slice(0, 7)}, but the rebuild failed: ${result.build.errors[0]?.message ?? 'see the editor'}`,
-          )
-        }
+        toast.error(result.message)
       }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
-  }, [selectedFolder, updateChecks, refresh, checkAllUpdates, loadSelected, checkRemote])
+  }, [selectedFolder, update])
+
+  const handleUpdateAll = useCallback(async () => {
+    const summary = await updateAll()
+    const outcome = updateAllOutcome(summary)
+    if (summary.failed > 0) {
+      toast.error(outcome)
+    } else {
+      toast.success(outcome)
+    }
+  }, [updateAll])
+
+  // The updates list takes the pane an extension's page would: opening it
+  // closes whatever extension was open.
+  const openUpdates = useCallback(() => {
+    setSelectedFolder(null)
+    setEditing(false)
+    setShowUpdates(true)
+    setQuery('')
+  }, [])
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) {
@@ -390,15 +376,24 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
 
   return (
     <Flex row expanded className='h-full min-h-0 w-full'>
+      <TitleBarTitle>Extensions</TitleBarTitle>
+      <TitleBarToolbar>
+        <ExtensionsToolbar
+          query={query}
+          onQueryChange={handleQueryChange}
+          updatesAvailable={updates.available}
+          onInstall={() => setInstallDialogOpen(true)}
+          onNew={() => void handleNew()}
+          onShowUpdates={openUpdates}
+        />
+      </TitleBarToolbar>
       <ExtensionsListPanel
         local={localEntries}
         installed={installedEntries}
-        updateChecks={updateChecks}
+        updateChecks={updates.installed}
+        localStates={updates.local}
         selectedFolder={selectedFolder}
         onSelect={handleSelect}
-        onNew={handleNew}
-        onInstall={() => setInstallDialogOpen(true)}
-        onInstalled={handleInstalled}
       />
       <InstallExtensionDialog
         open={installDialogOpen}
@@ -410,10 +405,10 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
         <ExtensionDetail
           key={selected.folder}
           record={selected}
-          updateCheck={updateChecks[selected.folder]}
-          remote={remote}
-          remoteChecking={remoteChecking}
-          busy={busy}
+          updateCheck={updates.installed[selected.folder]}
+          remote={updates.local[selected.folder] ?? null}
+          remoteChecking={updates.isChecking(selected.folder)}
+          busy={busy || updates.running}
           onEdit={() => setEditing(true)}
           onUpdate={() => void handleUpdate()}
           onDelete={() => setDeleteTarget(selectedEntry)}
@@ -439,6 +434,33 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
             </EmptyContent>
           </Empty>
         </Flex>
+      ) : query.trim() ? (
+        <ScrollArea className='min-w-0 flex-1'>
+          <RegistrySearchResults
+            className='mx-auto max-w-2xl px-6 py-6'
+            query={query}
+            installed={installedEntries}
+            onInstalled={(folder) => void handleInstalled(folder)}
+            onOpen={handleSelect}
+          />
+        </ScrollArea>
+      ) : showUpdates ? (
+        <ScrollArea className='min-w-0 flex-1'>
+          <ExtensionUpdates
+            className='mx-auto max-w-2xl px-6 py-6'
+            updates={updates.overview.updates}
+            blocked={updates.overview.blocked}
+            checking={updates.checking}
+            checkedLabel={
+              updates.checkedAt ? `Checked at ${new Date(updates.checkedAt).toLocaleTimeString()}` : undefined
+            }
+            progress={updates.progress}
+            onCheck={() => void updates.checkAll()}
+            onUpdate={(folder) => void update(folder)}
+            onUpdateAll={() => void handleUpdateAll()}
+            onOpen={handleSelect}
+          />
+        </ScrollArea>
       ) : (
         <Flex expanded align='center' justify='center' className='min-w-0'>
           <Empty>

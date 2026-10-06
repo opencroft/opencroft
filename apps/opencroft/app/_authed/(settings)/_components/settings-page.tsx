@@ -1,14 +1,14 @@
 'use client'
 
 import { useRouteContext } from '@tanstack/react-router'
-import { Archive, PackageSearch, ScrollText, User, Users } from 'lucide-react'
+import { Archive, Bot, PackageSearch, User, Users } from 'lucide-react'
 import type React from 'react'
 import { Suspense, useCallback } from 'react'
 import { ExtensionSettingsMenu } from 'ui/settings/extension-settings-menu'
 import { type SettingsSection, SettingsShell } from 'ui/settings/settings-shell'
 
 import AccountSettings from '@/app/_authed/(settings)/_components/account-settings'
-import AuditSettings from '@/app/_authed/(settings)/_components/audit-settings'
+import AgentsSettings from '@/app/_authed/(settings)/_components/agents-settings'
 import BackupSettings from '@/app/_authed/(settings)/_components/backup-settings'
 import {
   extensionMenuEntries,
@@ -30,7 +30,7 @@ interface BuiltinPage extends SettingsSection {
 
 const BUILTIN_PAGES: BuiltinPage[] = [
   { id: 'account', label: 'Account', icon: User, component: AccountSettings },
-  { id: 'audit', label: 'MCP Audit', icon: ScrollText, component: AuditSettings },
+  { id: 'agents', label: 'Agents', icon: Bot, component: AgentsSettings },
   { id: 'backup', label: 'Backup & Restore', icon: Archive, component: BackupSettings },
   { id: 'users', label: 'Users', icon: Users, component: UsersSettings, adminOnly: true },
   {

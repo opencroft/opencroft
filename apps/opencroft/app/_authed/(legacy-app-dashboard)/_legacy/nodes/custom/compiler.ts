@@ -1,13 +1,14 @@
 'use client'
 
 import { useReactFlow } from '@xyflow/react'
-import * as LucideIcons from 'lucide-react'
+import { Box } from 'lucide-react'
 import * as React from 'react'
 import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Textarea } from 'ui/textarea'
 
+import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
 import type { NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import type { CustomTemplate } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/custom/types'
@@ -33,7 +34,7 @@ const SCOPE = {
   useMemo: React.useMemo,
   useReactFlow,
   useSettingsDraft,
-  icons: LucideIcons,
+  icons: createSafeIcons(),
   PinnedNode,
   ButtonPin,
   HANDLE_EXECUTION,
@@ -54,7 +55,7 @@ export function compileTemplate(template: CustomTemplate): NodeTypeDefinition | 
     return {
       type: `custom-${template.id}`,
       label: result.label ?? template.name,
-      icon: result.icon ?? LucideIcons.Box,
+      icon: result.icon ?? Box,
       group: result.group ?? 'Custom',
       defaultData: result.defaultData ?? (() => ({})),
       component: result.component!,

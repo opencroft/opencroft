@@ -6,7 +6,7 @@ import { useMemo } from 'react'
 import { ApprovalDiff, ApprovalFields, FieldRow, Note, TargetRow } from './approval-fields'
 import { type DiffLine, lineDiff } from './diff-view'
 import { editSides, textEdit, useRemoteFile } from './edit-sides'
-import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpOutput, OpRow, OpText } from './op-block'
+import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpOutput, OpRow } from './op-block'
 
 // Views of calls that read and write files: the agent's own Write, Edit and
 // MultiEdit, and the product's remote_read, remote_write and remote_edit.
@@ -30,33 +30,26 @@ import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpOutput, OpRow
 const agentFilePath = (args: Record<string, unknown>) => args.file_path as string | undefined
 
 // What a call reported of its change, or null when it reported nothing: one
-// diff per region it named (a whole file, or one hunk of it) — or, when no
-// region came with its before side, the text written.
+// diff per region it named (a whole file, or one hunk of it).
 //
-// A region without a before side (`oldText` null) is not read as a created
-// file. claude-agent-acp 0.84.0 reports every Write that way, overwrites
-// included, because the call's input does not say whether the file existed;
-// the real diff follows only from its post-write hook, which a replayed
-// session does not run. A diff against nothing would claim every line new, so
-// that text is shown as written instead. Where some regions do have a before
-// side, those are the change.
-function reportedChange(diffs: ToolViewProps['diffs']): { diffs: DiffLine[][]; written: string | null } | null {
-  if (!diffs?.length) {
-    return null
-  }
-  const known = diffs.flatMap((diff) => (diff.oldText === null ? [] : [lineDiff(diff.oldText, diff.newText)]))
-  return known.length > 0 ? { diffs: known, written: null } : { diffs: [], written: diffs.map((diff) => diff.newText).join('\n') }
+// A region without a before side (`oldText` null) is diffed against nothing,
+// every line added, which is what ACP means by it: a created file. A harness
+// may send the same for an overwrite whose prior content it did not read —
+// claude-agent-acp 0.84.0 does for every Write until its post-write hook
+// reports the real diff, and a replayed session never runs that hook — and
+// such an overwrite then reads as a created file.
+function reportedChange(diffs: ToolViewProps['diffs']): DiffLine[][] | null {
+  return diffs?.length ? diffs.map((diff) => lineDiff(diff.oldText ?? '', diff.newText)) : null
 }
 
 // An agent edit's diffs: the reported ones, or the ones its arguments spell
-// out. `part` is what each one is, for the heading over several; `written` is
-// set instead when the report carried only written text.
+// out. `part` is what each one is, for the heading over several.
 function agentEditDiffs(
   reported: ToolViewProps['diffs'],
   fromArgs: () => DiffLine[][],
-): { diffs: DiffLine[][]; part: string; written: string | null } {
-  const change = reportedChange(reported)
-  return change ? { ...change, part: 'Change' } : { diffs: fromArgs(), part: 'Edit', written: null }
+): { diffs: DiffLine[][]; part: string } {
+  const diffs = reportedChange(reported)
+  return diffs ? { diffs, part: 'Change' } : { diffs: fromArgs(), part: 'Edit' }
 }
 
 // The approval form of the same: one diff under the file's path, several under
@@ -75,40 +68,7 @@ function ApprovalDiffs({ path, diffs, part }: { path?: string; diffs: DiffLine[]
   ))
 }
 
-// Text a call wrote where the prior contents are not known here, so there is
-// nothing to diff against: the resulting text is shown on its own.
-function WrittenFile({
-  verb = 'Write',
-  path,
-  content,
-  target,
-  result,
-}: {
-  verb?: string
-  path?: string
-  content: string
-  target?: string
-  result: ToolViewProps['result']
-}) {
-  return (
-    <OpBlock
-      verb={verb}
-      detail={path}
-      target={target}
-      meta={<OpMeta text={linesLabel(content)} />}
-      isError={result?.isError}
-      pending={!result}
-      overflowing={exceedsClamp(content)}
-    >
-      <OpRow label='content'>
-        <OpText text={content} />
-      </OpRow>
-    </OpBlock>
-  )
-}
-
-// An agent's edit-shaped call, drawn from `change`: the diffs, or the written
-// text when that is all that was reported.
+// An agent's edit-shaped call, drawn from the diffs of `change`.
 function AgentChange({
   verb,
   filePath,
@@ -118,7 +78,7 @@ function AgentChange({
 }: {
   verb: string
   filePath?: string
-  change: { diffs: DiffLine[][]; part: string; written: string | null }
+  change: { diffs: DiffLine[][]; part: string }
   mode: ToolViewProps['mode']
   result: ToolViewProps['result']
 }) {
@@ -126,29 +86,24 @@ function AgentChange({
     return (
       <ApprovalFields>
         {filePath && <FieldRow label='Path' value={filePath} />}
-        {change.written !== null ? (
-          <FieldRow label='Content' value={change.written} />
-        ) : (
-          <ApprovalDiffs path={filePath} diffs={change.diffs} part={change.part} />
-        )}
+        <ApprovalDiffs path={filePath} diffs={change.diffs} part={change.part} />
       </ApprovalFields>
     )
-  }
-  if (change.written !== null) {
-    return <WrittenFile verb={verb} path={filePath} content={change.written} result={result} />
   }
   return <DiffOpBlock verb={verb} detail={filePath} result={result} diffs={change.diffs} part={change.part} />
 }
 
-// A whole-file write. A reported diff with a before side shows what the file
-// held; otherwise the written file is shown on its own — from the report, or
-// from the arguments when nothing was reported.
+// A whole-file write, drawn as a diff like an edit: against what the file held
+// when the report carries it, otherwise against nothing, as a new file — and
+// from the written text in the arguments when nothing was reported.
 export function AgentWriteView({ args, diffs: reported, mode, result }: ToolViewProps) {
   const filePath = agentFilePath(args)
   const content = args.content as string | undefined
-  const reportedWrite = useMemo(() => reportedChange(reported), [reported])
-  const change = reportedWrite ?? { diffs: [], written: content ?? null }
-  return <AgentChange verb='Write' filePath={filePath} change={{ ...change, part: 'Change' }} mode={mode} result={result} />
+  const change = useMemo(
+    () => agentEditDiffs(reported, () => (content === undefined ? [] : [lineDiff('', content)])),
+    [reported, content],
+  )
+  return <AgentChange verb='Write' filePath={filePath} change={change} mode={mode} result={result} />
 }
 
 // A targeted replacement. Its diff is of the replaced text, or of the regions
@@ -227,8 +182,9 @@ export function RemoteWriteView({ args, requestId, mode, result }: ToolViewProps
     requestId,
   )
   // A file that cannot be read is diffed as absent, which is what a write to a
-  // new path is.
-  const current = live.text ?? (live.error !== null ? '' : null)
+  // new path is — and so is every write once it ran, as there is no before
+  // side left to read.
+  const current = mode === 'approval' ? (live.text ?? (live.error !== null ? '' : null)) : ''
   const diff = useMemo(() => (current === null ? null : lineDiff(current, newContent)), [current, newContent])
 
   if (mode === 'approval') {
@@ -241,7 +197,7 @@ export function RemoteWriteView({ args, requestId, mode, result }: ToolViewProps
       </ApprovalFields>
     )
   }
-  return <WrittenFile path={filePath} content={newContent} target={target} result={result} />
+  return <DiffOpBlock verb='Write' detail={filePath} target={target} result={result} diffs={diff ? [diff] : []} />
 }
 
 export function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {

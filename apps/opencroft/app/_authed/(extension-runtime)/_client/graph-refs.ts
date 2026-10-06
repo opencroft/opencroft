@@ -106,7 +106,8 @@ export function splitTarget(target: string): { nodeId: string; handleId: string 
 }
 
 // What tells this terminal apart from its node's other outputs: a dynamic
-// handle's expanded remainder (a container, a worktree). A node's one plain
+// handle's expanded remainder (a container), or what an App calls the handle
+// (a worktree's "repo · name") when it was asked as a target. A node's one plain
 // terminal output needs nothing -- its label would only repeat "Terminal" --
 // so a static label is shown only when the node has several to choose from.
 function handleDetail(info: GraphRefInfo, handleId: string): string {
@@ -114,7 +115,7 @@ function handleDetail(info: GraphRefInfo, handleId: string): string {
     return ''
   }
   if (info.kind !== 'node') {
-    return handleId === 'terminal' ? '' : handleId
+    return info.handleLabels?.[handleId] ?? (handleId === 'terminal' ? '' : handleId)
   }
   const handles = extensionRegistry.resolveNode(info.type)?.handles ?? []
   const handle = findExtensionHandle(handles, handleId, 'source')
@@ -158,9 +159,9 @@ export function describeGraphRef(info: GraphRefInfo, handleId = ''): GraphRefDes
 export async function describeGraphRefs(refs: string[]): Promise<Record<string, GraphRefDescription | null>> {
   const entries = await Promise.all(
     refs.map(async (ref) => {
-      const { nodeId, handleId } = splitTarget(ref)
-      const info = await describe(nodeId)
-      return [ref, info ? describeGraphRef(info, handleId) : null] as const
+      // Asked whole, so an App's answer can carry its name for the handle.
+      const info = await describe(ref)
+      return [ref, info ? describeGraphRef(info, splitTarget(ref).handleId) : null] as const
     }),
   )
   return Object.fromEntries(entries)
@@ -168,7 +169,11 @@ export async function describeGraphRefs(refs: string[]): Promise<Record<string, 
 
 export type GraphRefState = { status: 'loading' } | { status: 'known'; info: GraphRefInfo } | { status: 'unknown' }
 
-/** What a node / App instance id stands for, resolved across every space. */
+/**
+ * What a node / App instance id stands for, resolved across every space. A
+ * "node-id/handle-id" terminal target resolves to its owner, carrying an App's
+ * name for the handle.
+ */
 export function useGraphRef(id: string): GraphRefState {
   const [state, setState] = useState<GraphRefState>({ status: 'loading' })
   useEffect(() => {

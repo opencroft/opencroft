@@ -118,8 +118,11 @@ import { useLocalStorage } from '@/hooks/utils/use-local-storage'
  * group chat's own screen, where the threads are listed and started. Produced
  * by the surface itself (a row chosen on the home screen), by the host's Back
  * (home again) and by the ChatSelector, for hosts that still mount one.
+ *
+ * An existing thread may carry `at`, the position of the turn to open it at --
+ * what a message found by the home screen's search names.
  */
-export type EmbeddedChatSelection = { threadId: string } | { newId: string } | { home: true }
+export type EmbeddedChatSelection = { threadId: string; at?: number } | { newId: string } | { home: true }
 
 /**
  * What the open thread's header would say, for a host that draws that header
@@ -414,6 +417,7 @@ function EmbeddedThread({
   // An explicit thread is shown as-is, whatever agent it belongs to; a new id
   // replaces the default one on the ordinary find-or-start path.
   const explicitThreadId = selection && 'threadId' in selection ? selection.threadId : null
+  const revealPosition = selection && 'threadId' in selection ? selection.at : undefined
   const newId = selection && 'newId' in selection ? selection.newId : null
   const effectiveId = newId ?? id
   // MEMBER agents only: any other agent is refused by startThread, so
@@ -513,7 +517,10 @@ function EmbeddedThread({
   }, [chat.id, selectedAgent, effectiveId, explicitThreadId, home, threadTick, onChatLost])
 
   const reloadThread = useCallback(() => setThreadTick((tick) => tick + 1), [])
-  const openThread = useCallback((threadId: string) => choose({ threadId }), [choose])
+  const openThread = useCallback(
+    (threadId: string, at?: { position: number }) => choose(at ? { threadId, at: at.position } : { threadId }),
+    [choose],
+  )
 
   // The same shared session activity (and the same derivation) the
   // group-chat screens read — one status vocabulary, one source.
@@ -570,7 +577,12 @@ function EmbeddedThread({
             them from `onThreadContext` -- because a header inside a window
             that already has one read as two headers. The open note goes
             there too: it replaces or continues that header. */}
-        <GroupChatThreadChat thread={thread} onHeaderChange={setControls} onTurnSettled={refreshArtifacts} />
+        <GroupChatThreadChat
+          thread={thread}
+          revealPosition={revealPosition}
+          onHeaderChange={setControls}
+          onTurnSettled={refreshArtifacts}
+        />
       </div>
     )
   }
@@ -664,7 +676,7 @@ function EmbeddedChatHome({
   className,
 }: {
   chat: GroupChatDetailView
-  onOpenThread: (threadId: string) => void
+  onOpenThread: (threadId: string, at?: { position: number }) => void
   onHeader?: (header: GroupChatDetailHeader | null) => void
   /** The panel's own copy of the chat, which the composer's agent picker
    *  reads, is loaded separately from this screen's data; a write here has

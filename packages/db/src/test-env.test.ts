@@ -53,6 +53,7 @@ interface Ended {
   existedDuringRun: boolean
   code: number | null
   signal: NodeJS.Signals | null
+  output: string
 }
 
 /** Run a child to completion in its own TMPDIR, optionally signalling it once it is up. */
@@ -62,8 +63,10 @@ function run(
 ): Promise<Ended> {
   // Cleared rather than merely not set: an ambient PGLITE_PATH would send the child down the
   // caller-supplied branch, where it creates nothing — and every assertion about what it cleans up
-  // would then pass without the code under test ever having run.
-  const { PGLITE_PATH: _ambient, ...inherited } = process.env
+  // would then pass without the code under test ever having run. The run directory of the run this
+  // file is part of is cleared too: its sweep is already claimed, and a child inheriting it would
+  // never sweep.
+  const { PGLITE_PATH: _ambient, OPENCROFT_TEST_RUN_DIR: _outer, ...inherited } = process.env
   const child = spawn(process.execPath, ['--import', 'tsx', script], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...inherited, TMPDIR: opts.tmp, ...opts.env },
@@ -84,6 +87,7 @@ function run(
         existedDuringRun: out.includes('EXISTS_DURING_RUN=true'),
         code,
         signal,
+        output: out,
       })
     })
   })
@@ -200,6 +204,94 @@ test('the sweep collects directories and leaves a datadir lock alone', async () 
   assert.equal(ended.code, 0)
   assert.equal(existsSync(datadir), false, 'the directory is collected')
   assert.equal(existsSync(lock), true, 'and the lock beside it is not, however old it looks')
+})
+
+test('a datadir starts as a copy of the run’s template, and as an empty one without it', async () => {
+  // The template here is a marker file rather than a migrated database: what is under test is the
+  // copy, and a real datadir would only make the case slower without making it stricter.
+  const runDir = join(workdir, `run-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(join(runDir, 'pglite-template'), { recursive: true })
+  writeFileSync(join(runDir, 'pglite-template', 'marker'), 'from the template')
+  const script = childScript('seeded.mts', 'console.log("SEEDED=" + existsSync(dir + "/marker"))')
+  const seeded = async (env: Record<string, string>) =>
+    /SEEDED=(.*)/.exec((await run(script, { tmp: scratchTmp(), env })).output)?.[1] ?? 'no answer'
+
+  assert.equal(await seeded({ OPENCROFT_TEST_RUN_DIR: runDir }), 'true', 'inside a run with a template')
+  assert.equal(await seeded({}), 'false', 'and outside a run the datadir starts empty')
+  assert.equal(readdirSync(join(runDir, 'pglite-template')).join(), 'marker', 'the template itself is left as it was')
+})
+
+const index = join(import.meta.dirname, 'index.ts')
+
+test('a suite that leaves its database to this module gets one in memory, and nothing in its datadir', async () => {
+  // No run directory, so no template: the database is created and migrated in memory, which is
+  // slower than loading the dump but is the same mechanism.
+  const script = childScript(
+    'memory.mts',
+    [
+      `const { db, closeDb } = await import(${JSON.stringify(index)})`,
+      "await db.execute('create table probe (x int)')",
+      "await db.execute('insert into probe values (1)')",
+      "const counted = await db.execute('select count(*)::int as n from probe')",
+      'console.log("ROWS=" + counted.rows[0].n)',
+      'console.log("DATADIR_WRITTEN=" + existsSync(dir + "/PG_VERSION"))',
+      'await closeDb()',
+    ].join('\n'),
+  )
+
+  const ended = await run(script, { tmp: scratchTmp() })
+
+  assert.equal(ended.code, 0, ended.output)
+  assert.match(ended.output, /^ROWS=1$/m, 'the shared database works')
+  assert.match(ended.output, /^DATADIR_WRITTEN=false$/m, 'and is not the datadir')
+})
+
+test('a suite that sets its own PGLITE_PATH gets a real datadir there, as before', async () => {
+  // The way a suite that needs the datadir lock or crash recovery keeps them.
+  const script = childScript(
+    'own-datadir.mts',
+    [
+      'const own = dir + "-own"',
+      'process.env.PGLITE_PATH = own',
+      `const { db, closeDb } = await import(${JSON.stringify(index)})`,
+      "await db.execute('select 1')",
+      'console.log("OWN_WRITTEN=" + existsSync(own + "/PG_VERSION"))',
+      'await closeDb()',
+    ].join('\n'),
+  )
+
+  const ended = await run(script, { tmp: scratchTmp() })
+
+  assert.equal(ended.code, 0, ended.output)
+  assert.match(ended.output, /^OWN_WRITTEN=true$/m)
+})
+
+test('inside a run, the sweep is left to the one process that claimed it', async () => {
+  // The claim is the whole mechanism, so the control is a run whose claim is already taken: an
+  // abandoned datadir must survive that one and be collected by a run nobody has swept yet.
+  const old = new Date(Date.now() - 7 * 60 * 60 * 1000)
+  const abandonedIn = (tmp: string) => {
+    const dir = join(tmp, `${PREFIX}abandoned`)
+    mkdirSync(dir)
+    utimesSync(dir, old, old)
+    return dir
+  }
+  const script = childScript('claim.mts', '')
+
+  const claimedRun = join(workdir, `run-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(join(claimedRun, 'swept'), { recursive: true })
+  const tmpA = scratchTmp()
+  const keptA = abandonedIn(tmpA)
+  await run(script, { tmp: tmpA, env: { OPENCROFT_TEST_RUN_DIR: claimedRun } })
+  assert.equal(existsSync(keptA), true, 'a run whose sweep was claimed by another process does not sweep')
+
+  const freshRun = join(workdir, `run-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(freshRun)
+  const tmpB = scratchTmp()
+  const collectedB = abandonedIn(tmpB)
+  await run(script, { tmp: tmpB, env: { OPENCROFT_TEST_RUN_DIR: freshRun } })
+  assert.equal(existsSync(collectedB), false, 'the first process of a run sweeps')
+  assert.equal(existsSync(join(freshRun, 'swept')), true, 'and leaves its claim for the rest of the run')
 })
 
 test('one run will not spend itself clearing a backlog, and consecutive runs still clear it', async () => {

@@ -4,24 +4,18 @@
 // account cannot end up with two current handles. A mock would assume every
 // one of those rather than show it.
 
-import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test, { after, beforeEach } from 'node:test'
+import '@opencroft/db/test-env'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-usernames-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
+import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import test, { beforeEach } from 'node:test'
+
 process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'packages', 'db', 'migrations')
 delete process.env.DATABASE_URL
 process.env.NODE_ENV = 'development'
 
 const { db, user, username: usernames } = await import('@opencroft/db')
 const store = await import('./usernames')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 beforeEach(async () => {
   await db.delete(usernames)

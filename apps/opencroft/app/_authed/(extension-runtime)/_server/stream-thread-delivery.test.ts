@@ -5,15 +5,15 @@
 // with no row, and a payload that still names the removed direct-session
 // fields refused loudly rather than delivered nowhere.
 //
-// Same PGLITE_PATH-before-any-db-import discipline as model.test.ts: this
+// Same environment-before-any-db-import discipline as model.test.ts: this
 // exercises the real group-chats model behind the registered resolver, not a
 // stand-in for it.
 
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test, { after } from 'node:test'
+import test from 'node:test'
 
 import { connectionKey } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
@@ -21,8 +21,6 @@ import type { AgentSelection } from 'agent-client/types'
 
 import { slug } from '@/app/_authed/(server)/_server/types'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-thread-delivery-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -52,10 +50,6 @@ const model = await import('@/app/_authed/(group-chats)/_server/model')
 const stream = await import('./stream')
 
 stream.registerThreadDeliveryResolver(model.deliverThreadFromNode)
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 // A real space so requireAgentNode/listAgentNodesImpl resolve these names —
 // 'agent-session' carries a full provider/adapter/model triple so a real mock

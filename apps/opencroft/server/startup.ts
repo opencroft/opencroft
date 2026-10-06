@@ -13,12 +13,16 @@ import {
   groupChatStandingContext,
   groupChatWakeSession,
 } from '@/app/_authed/(group-chats)/_server/model'
+import { prepareLiveGraphs, registerGraphDocType } from '@/app/_authed/(space)/_server/graph-collab'
+import { warnOnUnknownBrandColor } from '@/app/_server/brand-color'
+import { storeAllCollabDocs } from '@/server/collab/collab-server'
+import { registerMarkdownDocType } from '@/server/collab/markdown-docs'
 import { startBackgroundTaskPoller } from '@/server/scheduler/background-task-poller'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
 import { startUsageRollupScheduler } from '@/server/scheduler/usage-rollup-scheduler'
-import { registerShutdownHandlers } from '@/server/shutdown'
+import { registerShutdownHandlers, registerShutdownStep } from '@/server/shutdown'
 import { maintainThreadKeys } from '@/server/thread-key-maintenance'
 
 const globalForStartup = globalThis as unknown as { __opencroftReady?: Promise<void> }
@@ -38,10 +42,19 @@ export function ensureServerStarted(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  warnOnUnknownBrandColor()
   // Before the schedulers, so nothing can start writing into a process that has
   // no way to release the database when it is asked to stop.
   registerShutdownHandlers()
   registerResolvers()
+  // Before the schedulers, which write graphs: a live graph is written through
+  // its document, and the collaboration server must know what a graph
+  // document is first. Open documents are stored before the database closes.
+  registerGraphDocType()
+  // Markdown documents too, before an extension registers where its own are
+  // stored.
+  registerMarkdownDocType()
+  registerShutdownStep(storeAllCollabDocs)
   // Before the schedulers too: a fired event can drive a send into a thread,
   // and the background-task poller and the idle reaper address sessions by key.
   await maintainThreadKeys()
@@ -98,6 +111,14 @@ async function preload(): Promise<void> {
   } catch (err) {
     console.error('[startup] spaces preload failed', err)
   }
+  // After the spaces preload: every graph's document is brought in step with
+  // its stored JSON, and the registry with any edits recorded in a document
+  // after its last snapshot.
+  try {
+    await prepareLiveGraphs()
+  } catch (err) {
+    console.error('[startup] graph documents could not be prepared', err)
+  }
   try {
     const { autoInstallExtensions } = await import('@/app/_authed/(extension-runtime)/_server/install')
     await autoInstallExtensions()
@@ -138,4 +159,21 @@ async function preload(): Promise<void> {
     // designed state, and the next boot tries again.
     console.error('[startup] username backfill failed', err)
   }
+  // Transcripts the search index has not caught up with: history recorded
+  // before it existed, and replies a stopped process left open. In the
+  // background, because on the first boot it reads every recorded transcript
+  // (kind and text only) and nothing about starting up waits on search.
+  void (async () => {
+    try {
+      const { catchUpTranscriptIndex } = await import('@/app/_authed/(agent)/_server/session-event-store')
+      const { sessions } = await catchUpTranscriptIndex()
+      if (sessions > 0) {
+        console.log(`[startup] indexed ${sessions} transcript(s) for search`)
+      }
+    } catch (err) {
+      // Not fatal: a transcript not caught up is missing from search results,
+      // and its next batch or the next boot catches it up.
+      console.error('[startup] transcript search backfill failed', err)
+    }
+  })()
 }

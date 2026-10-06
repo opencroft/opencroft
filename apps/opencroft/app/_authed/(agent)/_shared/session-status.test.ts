@@ -8,7 +8,7 @@ const KEY = new Set(['k'])
 
 /** No activity at all, overridden per test by the sets that hold the key. */
 function sets(held: Partial<SessionActivitySets>): SessionActivitySets {
-  return { pending: NONE, active: NONE, background: NONE, queued: NONE, alive: NONE, ...held }
+  return { pending: NONE, active: NONE, background: NONE, queued: NONE, compacting: NONE, alive: NONE, ...held }
 }
 
 test('offline when the key is in none of the sets', () => {

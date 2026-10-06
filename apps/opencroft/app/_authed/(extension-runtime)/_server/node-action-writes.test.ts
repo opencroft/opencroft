@@ -1,7 +1,8 @@
 // What a node action writes back to its node (its errors, its data patch)
-// reaches an open canvas the way every graph write does: as a `graph_updated`
-// for the space. A run that changes nothing writes nothing. End to end through
-// the loader, with a local extension written into a scratch data dir.
+// is announced the way every graph write is: a `graph_updated` for the space,
+// once per burst of writes. A run that changes nothing writes nothing. End to
+// end through the loader, with a local extension written into a scratch data
+// dir.
 import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
@@ -78,6 +79,16 @@ beforeEach(() => {
 })
 afterEach(() => unsubscribe())
 
+// A burst of writes is announced once, shortly after it: the events seen once
+// the first has arrived.
+async function announcements(): Promise<string[]> {
+  const deadline = Date.now() + 10_000
+  while (events.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return events
+}
+
 async function dispatchFailing(message: string): Promise<void> {
   await assert.rejects(dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'fail', params: { message } }), { message })
 }
@@ -87,38 +98,43 @@ test('a failing action stores its error and announces the graph change', async (
   events = []
   await dispatchFailing('lamp is broken')
   assert.deepEqual(storedData().__errors, ['lamp is broken'])
-  assert.deepEqual(events, ['graph_updated'])
+  assert.deepEqual(await announcements(), ['graph_updated'])
 })
 
 test('the next action that succeeds clears the error and announces it', async () => {
   await dispatchFailing('lamp is broken')
+  await announcements()
   events = []
   assert.equal(await dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'ok' }), 'ok')
   assert.equal('__errors' in storedData(), false)
-  assert.deepEqual(events, ['graph_updated'])
+  assert.deepEqual(await announcements(), ['graph_updated'])
 })
 
 test('an action that succeeds on a node with no error writes nothing', async () => {
   await dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'ok' })
   const version = storedVersion()
-  events = []
   await dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'ok' })
+  // Every change to the graph moves its version at once, so an unchanged
+  // version is the whole check that nothing was written.
   assert.equal(storedVersion(), version)
-  assert.deepEqual(events, [])
 })
 
-test('a retry clears the error while it runs and stores it again when it fails', async () => {
+test('a retry clears the error while it runs and stores it again when it fails, announced once', async () => {
   await dispatchFailing('lamp is broken')
+  await announcements()
   events = []
+  const version = storedVersion()
   await dispatchFailing('lamp is broken')
+  assert.notEqual(storedVersion(), version)
   assert.deepEqual(storedData().__errors, ['lamp is broken'])
-  assert.deepEqual(events, ['graph_updated', 'graph_updated'])
+  assert.deepEqual(await announcements(), ['graph_updated'])
 })
 
 test("an action's data patch is stored and announced", async () => {
   await dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'ok' })
+  await announcements()
   events = []
   await dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'paint', params: { colour: 'amber' } })
   assert.equal(storedData().colour, 'amber')
-  assert.deepEqual(events, ['graph_updated'])
+  assert.deepEqual(await announcements(), ['graph_updated'])
 })

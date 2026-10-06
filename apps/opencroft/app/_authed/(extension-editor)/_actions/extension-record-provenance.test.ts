@@ -1,8 +1,8 @@
-// Once the auto-rebuild refuses a dirty or off-branch checkout, the checkout's
-// HEAD stops being a fair proxy for what the instance runs. The record read by
-// `get_extension` therefore carries two extra facts: the commit the running
-// bundle was actually built from, and the refusal that is holding the two
-// apart. These assert that read against a real git checkout.
+// The checkout's HEAD is not a fair proxy for what the instance runs: the
+// bundle lags it until the next build, and a build of uncommitted work is not
+// a build of any commit. The record read by `get_extension` therefore carries
+// what the running bundle was actually built from. These assert that read
+// against a real git checkout.
 
 import '@opencroft/db/test-env'
 
@@ -74,9 +74,8 @@ async function builtFixture(
 test('the record reports the running bundle commit apart from the checkout, after a new commit', async () => {
   const { folder, dir, builtCommit } = await builtFixture()
 
-  // A commit lands after the build. The auto-rebuild would proceed (the tree is
-  // clean), but until it does, the bundle is still the one built at the first
-  // commit — which is what the record must say.
+  // A commit lands after the build. Until the next rebuild, the bundle is still
+  // the one built at the first commit — which is what the record must say.
   await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default { hello: "moon" }\n')
   await run('git', ['add', '-A'], { cwd: dir })
   await run('git', ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'second'], { cwd: dir, env: GIT_ENV })
@@ -88,12 +87,11 @@ test('the record reports the running bundle commit apart from the checkout, afte
   assert.equal(record.sourceCommit, headNow.trim(), 'sourceCommit is the checkout HEAD, which has moved on')
   assert.notEqual(record.builtCommit, record.sourceCommit, 'the two must be visibly different, not conflated')
   assert.equal(record.builtDirty, false, 'a bundle built from a clean tree reports so')
-  assert.equal(record.refusal, null, 'a clean checkout ahead of the bundle is not itself a refusal')
 })
 
 test('a bundle built from a dirty tree says so, so its commit is not read as an exact identity', async () => {
-  // The compile_extension(allowUnclean) case: builtCommit names a commit, but
-  // the tree had uncommitted work on top when the bundle was produced.
+  // builtCommit names a commit, but the tree had uncommitted work on top when
+  // the bundle was produced.
   const { folder, builtCommit } = await builtFixture({ dirty: true, dirtyPaths: ['src/client.tsx'] })
 
   const record = await getLocalExtensionImpl(folder)
@@ -103,16 +101,14 @@ test('a bundle built from a dirty tree says so, so its commit is not read as an 
   assert.deepEqual(record.builtDirtyPaths, ['src/client.tsx'], 'and it says which paths were uncommitted at build time')
 })
 
-test('the record carries the refusal that holds the bundle apart from a dirty checkout', async () => {
+test('an uncommitted edit after the build reads as a dirty checkout, the bundle still at its commit', async () => {
   const { folder, dir, builtCommit } = await builtFixture()
 
-  // An uncommitted edit: the auto-rebuild would refuse to publish it, so the
-  // record must both keep reporting the built commit and say why.
   await fs.appendFile(path.join(dir, 'src', 'client.tsx'), '// edit in progress\n')
 
   const record = await getLocalExtensionImpl(folder)
   assert.ok(record, 'the extension record must load')
   assert.equal(record.builtCommit, builtCommit, 'the running bundle is still the one built before the edit')
-  assert.ok(record.refusal, 'a dirty checkout must surface a refusal on the record')
-  assert.ok(record.refusal.reasons.includes('unclean'), 'and it names the uncommitted change as the reason')
+  assert.equal(record.sourceDirty, true)
+  assert.deepEqual(record.sourceDirtyPaths, ['src/client.tsx'])
 })

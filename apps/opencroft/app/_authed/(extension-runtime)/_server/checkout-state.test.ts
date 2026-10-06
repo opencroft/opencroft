@@ -1,10 +1,10 @@
 // What a shared extension folder currently is: which commit, whether anyone
 // has authored changes in it, and which branch it sits on.
 //
-// The parsing and the decision are exercised as pure functions, and the reading
-// against a real `git` checkout rather than a stub -- what it guards is that
-// rev-parse and status --porcelain agree with the tree on disk, which only
-// exists in the real interaction with git.
+// The parsing is exercised as a pure function, and the reading against a real
+// `git` checkout rather than a stub -- what it guards is that rev-parse and
+// status --porcelain agree with the tree on disk, which only exists in the real
+// interaction with git.
 
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -14,13 +14,7 @@ import path from 'node:path'
 import test, { after } from 'node:test'
 import { promisify } from 'node:util'
 
-import {
-  type CheckoutState,
-  COMPILE_OVERRIDE_PARAM,
-  parseStatusLines,
-  readCheckoutState,
-  refuseCompile,
-} from './checkout-state'
+import { parseStatusLines, readCheckoutState } from './checkout-state'
 
 const execFileAsync = promisify(execFile)
 
@@ -51,17 +45,6 @@ async function commitAll(dir: string, message: string): Promise<void> {
   await git(dir, ['commit', '--quiet', '-m', message])
 }
 
-function state(overrides: Partial<CheckoutState> = {}): CheckoutState {
-  return {
-    sourceCommit: 'abc1234',
-    sourceDirty: false,
-    sourceDirtyPaths: [],
-    branch: 'main',
-    defaultBranch: 'main',
-    ...overrides,
-  }
-}
-
 // ── parseStatusLines ──────────────────────────────────────────────────
 
 test('parseStatusLines reads the status code and the path separately', () => {
@@ -83,65 +66,52 @@ test('parseStatusLines ignores blank lines rather than emitting empty entries', 
   assert.deepEqual(parseStatusLines('\n\n'), [])
 })
 
-// ── refuseCompile ─────────────────────────────────────────────────────
-
-test('a clean checkout on its default branch compiles', () => {
-  assert.equal(refuseCompile(state(), false), null)
-})
-
-test('authored changes are refused, and the message names them', () => {
-  const refusal = refuseCompile(state({ sourceDirty: true, sourceDirtyPaths: ['server/index.ts'] }), false)
-  assert.deepEqual(refusal?.reasons, ['unclean'])
-  assert.match(refusal?.message ?? '', /server\/index\.ts/)
-})
-
-test('a non-default branch is refused, and the message names both branches', () => {
-  const refusal = refuseCompile(state({ branch: 'dev/some-work' }), false)
-  assert.deepEqual(refusal?.reasons, ['off-branch'])
-  assert.match(refusal?.message ?? '', /dev\/some-work/)
-  assert.match(refusal?.message ?? '', /main/)
-})
-
-test('both conditions are reported, not just the first one found', () => {
-  const refusal = refuseCompile(
-    state({ sourceDirty: true, sourceDirtyPaths: ['a.ts'], branch: 'dev/some-work' }),
-    false,
-  )
-  assert.deepEqual(refusal?.reasons, ['unclean', 'off-branch'])
-})
-
-test('every refusal says how to proceed anyway', () => {
-  const refusal = refuseCompile(state({ sourceDirty: true, sourceDirtyPaths: ['a.ts'] }), false)
-  assert.match(refusal?.message ?? '', new RegExp(COMPILE_OVERRIDE_PARAM))
-})
-
-test('the override compiles whatever state the folder is in', () => {
-  const worst = state({ sourceDirty: true, sourceDirtyPaths: ['a.ts'], branch: 'dev/some-work' })
-  assert.equal(refuseCompile(worst, true), null)
-})
-
-test('an unknown branch is not treated as the wrong branch', () => {
-  // A folder git can say nothing about built before this guard existed and has
-  // to keep building: refusing on absent information blocks work blindly.
-  assert.equal(refuseCompile(state({ branch: null, defaultBranch: null }), false), null)
-})
-
-test('an unknown default branch alone is not a mismatch', () => {
-  assert.equal(refuseCompile(state({ branch: 'dev/some-work', defaultBranch: null }), false), null)
-})
-
 // ── readCheckoutState, against real git ───────────────────────────────
+
+const UNKNOWN = {
+  sourceCommit: null,
+  sourceDirty: null,
+  sourceDirtyPaths: [],
+  branch: null,
+  defaultBranch: null,
+}
 
 test('a directory that is not a checkout reports unknown rather than raising', async () => {
   const dir = path.join(root, 'plain-dir')
   await fs.mkdir(dir, { recursive: true })
-  assert.deepEqual(await readCheckoutState(dir), {
-    sourceCommit: null,
-    sourceDirty: null,
-    sourceDirtyPaths: [],
-    branch: null,
-    defaultBranch: null,
-  })
+  assert.deepEqual(await readCheckoutState(dir), UNKNOWN)
+})
+
+test('a folder inside another repository, with none of its own, reports unknown', async () => {
+  // git run in such a folder answers for the enclosing repository, so without
+  // this the folder would report that repository's commit and its uncommitted
+  // files as its own.
+  const outer = await makeRepo('enclosing-repo')
+  await fs.writeFile(path.join(outer, 'package.json'), '{}')
+  await commitAll(outer, 'initial')
+  const dir = path.join(outer, 'data', 'extensions', 'local.nested')
+  await fs.mkdir(dir, { recursive: true })
+  await fs.writeFile(path.join(dir, 'extension.json'), '{}')
+  await fs.writeFile(path.join(outer, 'package.json'), '{"changed":true}')
+  await fs.writeFile(path.join(outer, 'untracked.ts'), '')
+
+  assert.deepEqual(await readCheckoutState(dir), UNKNOWN)
+  assert.equal((await readCheckoutState(outer)).sourceDirty, true, 'the enclosing repository itself is dirty')
+})
+
+test('a repository reached through a symlinked path is still its own checkout', async (t) => {
+  const dir = await makeRepo('symlink-target-repo')
+  await fs.writeFile(path.join(dir, 'extension.json'), '{}')
+  await commitAll(dir, 'initial')
+  const link = path.join(root, 'symlink-to-repo')
+  try {
+    await fs.symlink(dir, link, 'dir')
+  } catch {
+    t.skip('this filesystem cannot create a directory symlink')
+    return
+  }
+
+  assert.equal((await readCheckoutState(link)).sourceDirty, false)
 })
 
 test('a clean checkout reports its real commit, its branch, and no authored changes', async () => {
@@ -214,17 +184,4 @@ test('a clone knows its default branch; a repository with no remote does not', a
     null,
     'no remote means no opinion about a default branch -- unknown, not a mismatch',
   )
-})
-
-test('a clone parked on another branch is refused, end to end', async () => {
-  const origin = await makeRepo('origin-for-branch')
-  await fs.writeFile(path.join(origin, 'extension.json'), '{}')
-  await commitAll(origin, 'initial')
-
-  const clonePath = path.join(root, 'cloned-off-branch')
-  await execFileAsync('git', ['clone', '--quiet', origin, clonePath])
-  await git(clonePath, ['checkout', '--quiet', '-b', 'dev/some-work'])
-
-  const refusal = refuseCompile(await readCheckoutState(clonePath), false)
-  assert.deepEqual(refusal?.reasons, ['off-branch'])
 })

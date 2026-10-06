@@ -15,9 +15,9 @@ export const MAX_FAILURES = 10
 /**
  * How long to wait before the next attempt, after `failures` in a row.
  *
- * The first one is immediate: it answers a session that went away (an unload,
- * a restart), which is expected and is over as soon as the session is opened
- * again. Only a run of them backs off -- doubling from a second, capped at
+ * The first one is immediate: it answers a stream that ended (an unload, a
+ * restart), which is expected and is settled by one question to the server.
+ * Only a run of them backs off -- doubling from a second, capped at
  * thirty -- because a run means the server is down or refusing, and a tab that
  * asked again every moment would only add to that.
  *
@@ -55,12 +55,10 @@ export interface Reconnect {
  * starts the backoff over. A run that reaches MAX_FAILURES stops and says so in
  * `exhausted`; `retry` is the way out of that, and it is the reader's.
  *
- * A hidden tab does not reconnect until it is shown. A reconnect reopens the
- * session, which starts its agent's process if it was stopped, and a reader
- * with many tabs open would otherwise have every one of them bring its agent
- * back the moment the idle unload had put it away. Nothing is lost by waiting:
- * the open replays the session's history, so a tab shown later catches up on
- * everything it missed.
+ * A hidden tab does not reconnect until it is shown: a reader with many tabs
+ * open would otherwise send a request from every one of them at each restart.
+ * Nothing is lost by waiting: the stream replays the session's history, so a
+ * tab shown later catches up on everything it missed.
  */
 export function useReconnect(): Reconnect {
   const [attempt, setAttempt] = useState(0)

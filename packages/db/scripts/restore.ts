@@ -6,7 +6,7 @@
 
 import fs from 'node:fs'
 
-import { type Backup, restoreBackup } from '@opencroft/db/backup'
+import { type Backup, backupSource, restoreBackup } from '@opencroft/db/backup'
 import { openDb } from '@opencroft/db/connect'
 
 const file = process.argv[2]
@@ -17,7 +17,7 @@ if (!file) {
 
 const backup = JSON.parse(fs.readFileSync(file, 'utf8')) as Backup
 const { db, close } = await openDb()
-const summary = await restoreBackup(db, backup)
+const summary = await restoreBackup(db, backupSource(backup))
 await close()
 
 // From the restore itself, not from the file: rows the current schema cannot

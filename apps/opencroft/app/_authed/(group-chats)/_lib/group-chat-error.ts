@@ -15,6 +15,7 @@
 // model.ts instead would put the database and the ACP session machinery behind
 // a browser-reachable module.
 
+import { OVERSIZED_TEXT_REFUSAL } from '@/app/_authed/(agent)/_shared/message-size'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 
 export type { GroupChatAccessFailure }
@@ -29,6 +30,7 @@ const FAILURES = [
   'slug-unusable',
   'turn-not-found',
   'thread-archived',
+  'message-too-large',
 ] as const
 
 // Compile-time proof that the list above still matches the server's union. If
@@ -88,6 +90,7 @@ const MESSAGES: Record<GroupChatAccessFailure, string> = {
   // why it is not collapsed into "not available".
   'turn-not-found': 'That message is no longer where this page thinks it is — reload the chat and try again.',
   'thread-archived': 'This thread is archived; unarchive it to write.',
+  'message-too-large': OVERSIZED_TEXT_REFUSAL,
 }
 
 /**

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -14,6 +15,7 @@ import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/che
 import { EXTENSION_UTILITY_LAYER, hasVariant } from '@/app/_authed/(extension-runtime)/_server/css-cascade-layers'
 import {
   BUILD_PROVENANCE_FILE,
+  CLIENT_ICONS_FILE,
   extDir,
   extDistDir,
   isStagingName,
@@ -136,19 +138,33 @@ function clientStubPlugin(specifiers: string[], matched: Set<string>): esbuild.P
 // what this check exists to catch.
 const ICON_NAMES = new Set(Object.keys(lucideIcons))
 const ICON_NAMESPACE_TYPE_EXPORTS = new Set(['LucideIcon', 'LucideProps', 'IconNode'])
+// Named in the error for an unknown icon: a name that is real on lucide.dev but
+// newer than the host's copy reads exactly like a typo otherwise.
+const ICON_PACKAGE_VERSION: string = createRequire(import.meta.url)('lucide-react/package.json').version
 
 interface IconNameViolation {
   file: string
   name: string
 }
 
-// Flags `icons.<Name>` member access and names destructured out of `icons`
-// where <Name> isn't a real export of the bundled icon package -- an icon
-// name that only ever arrives as data, rather than being written into
-// source, can't be seen here (see safe-icons.ts on the app side for that
-// half). A regex scan over source text, not an AST walk: the same
-// mechanical, good-enough approach the workspace-dependency check already
-// uses elsewhere in this codebase, chosen for the same reason -- it is
+interface IconUsage {
+  /** Every real icon name the sources name, for the browser to preload. */
+  used: string[]
+  violations: IconNameViolation[]
+}
+
+// Reads the icon names an extension's client sources name: `icons.<Name>`
+// member access, names destructured out of `icons`, and names imported from
+// `lucide-react` (which the client build resolves to the host's icon set, so
+// esbuild cannot tell a misspelt one apart any more). A real name is recorded
+// for the browser to preload; one that isn't a real export of the icon
+// package is a violation -- an icon name that only ever arrives as data,
+// rather than being written into source, can't be seen here (see
+// safe-icons.ts on the app side for that half).
+//
+// A regex scan over source text, not an AST walk: the same mechanical,
+// good-enough approach the workspace-dependency check already uses elsewhere
+// in this codebase, chosen for the same reason -- it is
 // simple to read, simple to trust, and the failure mode of a false positive
 // (an unnecessary build error) is far cheaper than the crash this exists to
 // prevent, so a little imprecision is an acceptable trade.
@@ -162,10 +178,20 @@ interface IconNameViolation {
 // that test with and without this function wired in as a plugin. Reading
 // once, after the build has already settled on what it bundled, has no such
 // interaction with esbuild's own file access.
-async function findIconViolations(src: string, metafile: esbuild.Metafile): Promise<IconNameViolation[]> {
+async function scanIconUsage(src: string, metafile: esbuild.Metafile): Promise<IconUsage> {
   const MEMBER_RE = /\bicons\.([A-Za-z_$][\w$]*)/g
   const DESTRUCTURE_RE = /\{([^{}]*)\}\s*=\s*icons\b/g
+  // `import type { … }` is erased and binds nothing at runtime, so it is left out.
+  const IMPORT_RE = /\bimport\s*\{([^{}]*)\}\s*from\s*['"]lucide-react['"]/g
+  const used = new Set<string>()
   const violations: IconNameViolation[] = []
+  const record = (file: string, name: string) => {
+    if (ICON_NAMES.has(name)) {
+      used.add(name)
+    } else if (!ICON_NAMESPACE_TYPE_EXPORTS.has(name)) {
+      violations.push({ file, name })
+    }
+  }
   for (const relPath of Object.keys(metafile.inputs)) {
     if (!/\.[jt]sx?$/.test(relPath) || relPath.includes('node_modules')) {
       continue
@@ -175,24 +201,29 @@ async function findIconViolations(src: string, metafile: esbuild.Metafile): Prom
       continue
     }
     for (const match of source.matchAll(MEMBER_RE)) {
-      const name = match[1]
-      if (!ICON_NAMES.has(name) && !ICON_NAMESPACE_TYPE_EXPORTS.has(name)) {
-        violations.push({ file: relPath, name })
-      }
+      record(relPath, match[1])
     }
     for (const match of source.matchAll(DESTRUCTURE_RE)) {
       for (const raw of match[1].split(',')) {
         const name = raw.trim().split(':')[0].trim()
-        if (!name || name.startsWith('...')) {
-          continue
+        if (name && !name.startsWith('...')) {
+          record(relPath, name)
         }
-        if (!ICON_NAMES.has(name) && !ICON_NAMESPACE_TYPE_EXPORTS.has(name)) {
-          violations.push({ file: relPath, name })
+      }
+    }
+    for (const match of source.matchAll(IMPORT_RE)) {
+      for (const raw of match[1].split(',')) {
+        const name = raw
+          .trim()
+          .split(/\s+as\s+/)[0]
+          .trim()
+        if (name && !name.startsWith('type ')) {
+          record(relPath, name)
         }
       }
     }
   }
-  return violations
+  return { used: [...used].sort(), violations }
 }
 
 interface HostApiNames {
@@ -380,6 +411,14 @@ function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbu
           path: 'react-dom',
           namespace: 'ext-host',
         }))
+        build.onResolve({ filter: /^sonner$/ }, () => ({
+          path: 'sonner',
+          namespace: 'ext-host',
+        }))
+        build.onResolve({ filter: /^lucide-react$/ }, () => ({
+          path: 'lucide-react',
+          namespace: 'ext-host',
+        }))
       }
       build.onLoad({ filter: /.*/, namespace: 'ext-host' }, async (args) => {
         if (side === 'client') {
@@ -453,6 +492,32 @@ export const flushSync = (fn) => fn();
       loader: 'js',
     }
   }
+  if (specifier === 'sonner') {
+    // The host's own `toast`. A bundled copy of sonner keeps its toasts in a
+    // store of its own, which no Toaster on the page reads, so every toast a
+    // kit component raises would vanish without an error. Only `toast` is
+    // forwarded: the host mounts the one Toaster, and an extension importing
+    // another name fails its build rather than rendering a second one.
+    return {
+      contents: `
+const toast = globalThis.__extHost.host.toast;
+export { toast };
+export default toast;
+`,
+      loader: 'js',
+    }
+  }
+  if (specifier === 'lucide-react') {
+    // The host's icon set (see safe-icons.ts on the app side), so an extension
+    // carries no copy of its own and loads each icon the way the host does.
+    // CommonJS on purpose: esbuild reads a named import from a CommonJS module
+    // as a property access at runtime, so every icon is importable without
+    // this module listing the whole set by name.
+    return {
+      contents: 'module.exports = globalThis.__extHost.host.icons;\n',
+      loader: 'js',
+    }
+  }
   if (specifier === '@ext/ui') {
     const { ui: uiNames } = await loadHostApiNames()
     return {
@@ -490,6 +555,7 @@ export const SecretSelector = __ui.SecretSelector;
 export const TerminalSelector = __ui.TerminalSelector;
 export const NodeRef = __ui.NodeRef;
 export const TerminalRef = __ui.TerminalRef;
+export const TerminalList = __ui.TerminalList;
 export const describeGraphRefs = __host.describeGraphRefs;
 export const subscribeGraphRefs = __host.subscribeGraphRefs;
 export const CodeBlock = __ui.CodeBlock;
@@ -497,6 +563,7 @@ export const CodeBlockEditor = __ui.CodeBlockEditor;
 export const Markdown = __ui.Markdown;
 export const markdownDirectiveBlocks = __ui.markdownDirectiveBlocks;
 export const MarkdownEditor = __ui.MarkdownEditor;
+export const MarkdownDiffView = __ui.MarkdownDiffView;
 export const MermaidDiagram = __ui.MermaidDiagram;
 export const callAppAction = __host.callAppAction;
 export const AppLink = __ui.AppLink;
@@ -860,7 +927,7 @@ async function compileClientSide(
       minify: true,
       jsx: 'automatic',
       plugins: [hostVirtualPlugin('client', location.extensionId), clientStubPlugin(stubSpecifiers, matchedStubs)],
-      // Only for findIconViolations below, read after the build has settled
+      // Only for scanIconUsage below, read after the build has settled
       // — see its own comment for why that must not happen during the build.
       metafile: true,
       logLevel: 'silent',
@@ -877,7 +944,9 @@ async function compileClientSide(
     // than silently doing nothing, so the extension author finds out from
     // the build instead of from a bundle that quietly stayed large.
     const unmatchedStubs = stubSpecifiers.filter((specifier) => !matchedStubs.has(specifier))
-    const iconViolations = result.metafile ? await findIconViolations(src, result.metafile) : []
+    const icons = result.metafile ? await scanIconUsage(src, result.metafile) : { used: [], violations: [] }
+    await fs.writeFile(path.join(outDir, CLIENT_ICONS_FILE), JSON.stringify(icons.used))
+    const iconViolations = icons.violations
     return {
       errors: [
         ...toCompileErrors(result.errors),
@@ -887,7 +956,7 @@ async function compileClientSide(
         })),
         ...iconViolations.map((v) => ({
           file: v.file,
-          message: `icons.${v.name} is not an export of the bundled icon package — this renders as a blank element at runtime (React error #130), not a build failure the bundler can see on its own.`,
+          message: `${v.name} is not an icon in the host's lucide-react ${ICON_PACKAGE_VERSION} — check the spelling, or whether the icon was added to Lucide after that version. At runtime it would draw a placeholder instead.`,
         })),
       ],
       warnings: toCompileErrors(result.warnings),
@@ -1199,14 +1268,13 @@ async function buildExtensionNow(location: BuildLocation, manifest: ExtensionMan
   }
   if (errors.length === 0) {
     // Record what this bundle was built from, so a reader can tell what the
-    // instance is RUNNING apart from what the checkout is now on -- the two
-    // diverge once the auto-rebuild refuses a dirty or off-branch checkout. The
-    // commit alone is not enough: a manual `compile_extension(allowUnclean)`
-    // builds a tree with uncommitted work on top, so the commit names a tree
-    // that is NOT what was built. The dirty flag and paths are recorded beside
-    // it, or the bundle would claim to be exactly a commit it is not. Read
-    // straight from the checkout at build time; best-effort, and never a build
-    // failure, because a directory that is not a git checkout still builds.
+    // instance is RUNNING apart from what the checkout is now on. The commit
+    // alone is not enough: a checkout is built as it stands, so a tree with
+    // uncommitted work on top has a commit that is NOT what was built. The
+    // dirty flag and paths are recorded beside it, or the bundle would claim
+    // to be exactly a commit it is not. Read straight from the checkout at
+    // build time; best-effort, and never a build failure, because a directory
+    // that is not a git checkout still builds.
     const state = await readCheckoutState(location.sourceDir)
     await fs
       .writeFile(

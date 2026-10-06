@@ -5,9 +5,8 @@ import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
 
-import { GraphConflictError, getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from './store'
+import { getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from './store'
 
 async function freshSpace(slug: string) {
   const registry = getSpacesRegistry()
@@ -19,58 +18,6 @@ async function freshSpace(slug: string) {
 function defaultGraph(space: SpaceRuntime) {
   return space.graphs.get(space.defaultGraphSlug)!
 }
-
-// A timestamp that can never equal a row's real `updatedAt`, used to force the
-// conflict branch deterministically instead of racing the system clock.
-const NEVER_MATCHES = '2000-01-01T00:00:00.000Z'
-
-test('saveGraph without expectedUpdatedAt overwrites unconditionally (backward compatible)', async () => {
-  const registry = getSpacesRegistry()
-  const space = await freshSpace(`store-test-unconditional-${crypto.randomUUID()}`)
-  const graph = { nodes: [{ id: 'a', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  const result = await registry.saveGraph(space.slug, graph)
-  assert.ok(result)
-  assert.deepEqual(result.graph.graph.nodes, graph.nodes)
-})
-
-test('saveGraph with the current expectedUpdatedAt succeeds', async () => {
-  const registry = getSpacesRegistry()
-  const space = await freshSpace(`store-test-match-${crypto.randomUUID()}`)
-  const graph = { nodes: [{ id: 'a', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  const result = await registry.saveGraph(space.slug, graph, defaultGraph(space).updatedAt.toISOString())
-  assert.ok(result)
-  assert.deepEqual(result.graph.graph.nodes, graph.nodes)
-})
-
-test('saveGraph with a stale expectedUpdatedAt throws GraphConflictError and leaves the stored graph untouched', async () => {
-  const registry = getSpacesRegistry()
-  const space = await freshSpace(`store-test-stale-${crypto.randomUUID()}`)
-  const rejectedGraph = { nodes: [{ id: 'should-not-land', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  await assert.rejects(() => registry.saveGraph(space.slug, rejectedGraph, NEVER_MATCHES), GraphConflictError)
-  const current = registry.getBySlug(space.slug)
-  assert.deepEqual(current ? defaultGraph(current).graph.nodes : null, [])
-})
-
-test('saveGraph rejects a writer whose version predates a real concurrent write, without losing the winner', async () => {
-  const registry = getSpacesRegistry()
-  const space = await freshSpace(`store-test-race-${crypto.randomUUID()}`)
-  const staleVersion = defaultGraph(space).updatedAt.toISOString()
-  // Guarantee the winner's write lands in a later millisecond than staleVersion —
-  // updatedAt is millisecond-precision (see the trade-off comment in saveGraph),
-  // so without this the two writes could tie and this assertion would be flaky.
-  await delay(5)
-
-  // A concurrent writer (another tab / MCP call) saves first.
-  const winner = { nodes: [{ id: 'winner', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  await registry.saveGraph(space.slug, winner)
-
-  // Our save was built from the pre-race snapshot, so it must be rejected, not merged.
-  const loser = { nodes: [{ id: 'loser', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  await assert.rejects(() => registry.saveGraph(space.slug, loser, staleVersion), GraphConflictError)
-
-  const current = registry.getBySlug(space.slug)
-  assert.deepEqual(current ? defaultGraph(current).graph.nodes : null, winner.nodes)
-})
 
 // ---------------------------------------------------------------------------
 // RENAMING MOVES A SPACE'S ADDRESS. The slug is in canvas URLs, in agents'
@@ -185,13 +132,13 @@ test('every slug-addressed operation reaches a space through an address a rename
   assert.ok(renamed)
   assert.notEqual(renamed.slug, freed)
 
-  // The canvas autosave: addressed by whatever slug the open page was loaded
-  // with, so a rename in another tab used to make every later save a no-op.
-  const graph = { nodes: [{ id: 'saved', type: 'x', position: { x: 0, y: 0 }, data: {} }], edges: [] }
-  const saved = await registry.saveGraph(freed, graph)
-  assert.ok(saved, 'saveGraph must resolve a freed address')
-  const afterSave = registry.getBySlug(renamed.slug)
-  assert.deepEqual(afterSave ? defaultGraph(afterSave).graph.nodes : null, graph.nodes)
+  // Graph writes and reads: addressed by whatever slug the open page was
+  // loaded with, so a rename in another tab must not strand them.
+  assert.equal(
+    registry.resolveGraph(freed)?.graph,
+    defaultGraph(renamed),
+    'resolveGraph must resolve a freed address to the renamed space’s graph',
+  )
 
   const pinned = await registry.setPinned(freed, true)
   assert.equal(pinned?.pinned, true, 'setPinned must resolve a freed address')

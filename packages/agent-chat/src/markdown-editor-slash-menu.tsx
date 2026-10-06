@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom'
 
 import { MarkdownBlockMenu } from './components/markdown-block-menu'
 import { type BlockInsert, matchBlockInserts } from './markdown-editor-block-inserts'
+import { inTable } from './markdown-editor-table-markdown'
 
 /**
  * The `/` menu: typing `/` at the start of an empty line offers the blocks in
@@ -77,12 +78,15 @@ export const SlashMenu = Extension.create<{ store: SlashMenuStore | null }>({
         pluginKey: new PluginKey('markdownSlashMenu'),
         char: '/',
         startOfLine: true,
-        // The whole line is the `/` and what follows it, and nothing else.
+        // The whole line is the `/` and what follows it, and nothing else. Never
+        // in a table cell: a cell holds one line of text, so a block inserted
+        // there could only be folded back into text.
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
           return (
             $from.parent.type.name === 'paragraph' &&
-            $from.parent.textContent === state.doc.textBetween(range.from, range.to)
+            $from.parent.textContent === state.doc.textBetween(range.from, range.to) &&
+            !inTable($from)
           )
         },
         items: ({ query }) => matchBlockInserts(query),

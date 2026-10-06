@@ -6,6 +6,7 @@ import {
   listArtifactsAsAgent,
   writeArtifactAsAgent,
 } from '@/app/_authed/(group-chats)/_server/artifacts'
+import { COMPACT_WAIT_MS, waitForCompact } from '@/app/_authed/(group-chats)/_server/compact-wait'
 import {
   compactThreadAsAgent,
   deleteThreadAsAgent,
@@ -18,7 +19,7 @@ import {
   threadCompactStatusAsAgent,
   threadRefFromSessionKey,
 } from '@/app/_authed/(group-chats)/_server/model'
-import { COMPACT_WAIT_MS, compactOutcome, waitForCompact } from '@/app/_authed/(mcp)/_server/compact-outcome'
+import { compactOutcome } from '@/app/_authed/(mcp)/_server/compact-outcome'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, jsonResult, requireCallingAgent, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 

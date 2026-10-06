@@ -1,7 +1,6 @@
-import { legacy, TerminalRef, TerminalSelector } from '@opencroft/client'
+import { legacy, TerminalList, TerminalRef, TerminalSelector } from '@opencroft/client'
 
 const {
-  Badge,
   Button,
   Empty,
   EmptyDescription,
@@ -11,11 +10,6 @@ const {
   FieldLabel,
   Input,
   inspectorIntent,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemGroup,
-  ItemTitle,
   NodeFrame,
   OutputHandle,
   React,
@@ -133,8 +127,9 @@ export function TerminalRouterInspector({
     setAdding(false)
   }
 
-  const removeRoute = (id: string) => {
-    updateData({ routes: routes.filter((route) => route.id !== id) })
+  // By target: a router carries each target once (addRoute refuses a repeat).
+  const removeRoute = (target: string) => {
+    updateData({ routes: routes.filter((route) => route.target !== target) })
   }
 
   return (
@@ -151,23 +146,10 @@ export function TerminalRouterInspector({
       <Field>
         <FieldLabel>Terminals</FieldLabel>
         {routes.length > 0 ? (
-          <ItemGroup>
-            {routes.map((route) => (
-              <Item key={route.id} size='sm' className='px-0 py-1.5'>
-                <ItemContent className='min-w-0'>
-                  <ItemTitle className='w-full min-w-0'>
-                    <TerminalRef target={route.target} />
-                  </ItemTitle>
-                </ItemContent>
-                <ItemActions>
-                  {route.context ? null : <Badge variant='outline'>unavailable</Badge>}
-                  <Button variant='ghost' size='icon' onClick={() => removeRoute(route.id)} title='Remove'>
-                    <icons.Trash2 />
-                  </Button>
-                </ItemActions>
-              </Item>
-            ))}
-          </ItemGroup>
+          <TerminalList
+            targets={routes.map((route) => ({ target: route.target, unavailable: !route.context }))}
+            onRemove={removeRoute}
+          />
         ) : (
           <Empty className='p-2'>
             <EmptyHeader>

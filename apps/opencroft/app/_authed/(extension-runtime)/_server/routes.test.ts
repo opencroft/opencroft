@@ -12,6 +12,8 @@
 // Environment set up exactly as session-access.test.ts does it, and for the
 // same reason: `@opencroft/db` opens and migrates its connection at import time.
 
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -21,7 +23,6 @@ import test, { after } from 'node:test'
 import type { ExtensionRoute, ExtensionRouteContext } from '@opencroft/server'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-extension-routes-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,

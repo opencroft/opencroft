@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
@@ -86,6 +87,14 @@ export function GroupChatStartThreadComposer({
   const selectedAgent = selectedAgentNodeId !== undefined ? selectedAgentNodeId : derivedAgent
 
   const [value, setValue] = useState('')
+  // Bumped on every put-back, so the text lands even when `value` never moved:
+  // a refusal decided before any await restores in the same batch as the
+  // composer's clear-on-send, and the bar resyncs only on a change it can see.
+  const [valueRevision, setValueRevision] = useState(0)
+  const putBack = (text: string) => {
+    setValue(text)
+    setValueRevision((revision) => revision + 1)
+  }
   const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | undefined>(loadError)
@@ -101,7 +110,16 @@ export function GroupChatStartThreadComposer({
   // when the thread is being started without a message at all.
   const submit = async (text: string) => {
     if (!selectedAgent) {
+      putBack(text)
       setError('Choose an agent to start a thread with.')
+      return
+    }
+    // Checked here as the thread's own composer checks it, so the refusal
+    // names the size before anything goes to the server.
+    const oversized = oversizedTextNotice(text)
+    if (oversized) {
+      putBack(text)
+      setError(oversized)
       return
     }
     setError(undefined)
@@ -130,14 +148,14 @@ export function GroupChatStartThreadComposer({
         // explicitly — same as the thrown-failure path below. The title field
         // is untouched by clear-on-send, so it's already still there to
         // retitle; this just leaves it alone rather than clearing it.
-        setValue(text)
+        putBack(text)
         setError(groupChatAccessMessageForCode(result.code))
         return
       }
       setTitle('')
       onThreadStarted(result.started.thread.id)
     } catch (e) {
-      setValue(text)
+      putBack(text)
       setError(failureMessage(e, 'The thread could not be started.'))
     } finally {
       setSubmitting(false)
@@ -163,6 +181,7 @@ export function GroupChatStartThreadComposer({
         selectedAgentNodeId={selectedAgent}
         onSelectAgent={onSelectAgent ?? setRememberedAgent}
         value={value}
+        valueRevision={valueRevision}
         onValueChange={(next) => {
           setValue(next)
           if (error) {

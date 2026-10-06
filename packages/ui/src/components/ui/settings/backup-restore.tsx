@@ -313,7 +313,7 @@ export function BackupRestore({
 }: BackupRestoreProps) {
   return (
     <div className={cn('p-6 space-y-6', className)}>
-      <div className='flex items-center justify-between gap-4'>
+      <div className='flex flex-wrap items-center justify-between gap-4'>
         <div>
           <h1 className='text-2xl font-bold flex items-center gap-2'>
             Backup &amp; Restore
@@ -323,7 +323,7 @@ export function BackupRestore({
             Snapshots of settings, secrets, spaces, and the MCP audit log.
           </p>
         </div>
-        <div className='flex items-center gap-2'>
+        <div className='flex flex-wrap items-center gap-2'>
           <Button variant='outline' size='sm' onClick={onRefresh} disabled={pending}>
             <RefreshCw /> Refresh
           </Button>

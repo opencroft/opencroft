@@ -22,7 +22,7 @@ import {
   findExtensionHandle,
 } from '@/app/_authed/(extension-runtime)/_types'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
-import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
+import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import type { GraphRef } from '@/app/_authed/(space)/_server/store'
 
 export type TypeKind = 'node' | 'app' | 'handle'
@@ -342,7 +342,7 @@ export async function planTypeReplacement(request: ReplaceRequest): Promise<Repl
 
 /**
  * Rewrite every use of an unknown type to a known one. Each graph is one
- * save, so a graph is rewritten whole or not at all; a graph or instance that
+ * write, so a graph is rewritten whole or not at all; a graph or instance that
  * fails is reported and the rest go ahead. Edges are left as they are.
  */
 export async function replaceType(request: ReplaceRequest): Promise<ReplaceResult> {
@@ -359,16 +359,20 @@ async function replaceNodeType(from: string, to: string): Promise<ReplaceResult>
       continue
     }
     try {
-      result.replaced += await withGraphConflictRetry(spaces.addressOf(ref), (graph) => {
-        let replaced = 0
-        for (const node of graph.nodes) {
-          if (node.type === from) {
-            node.type = to
-            replaced += 1
+      result.replaced += await mutateLiveGraph(
+        spaces.addressOf(ref),
+        { kind: 'system', name: 'node type replacement' },
+        (graph) => {
+          let replaced = 0
+          for (const node of graph.nodes) {
+            if (node.type === from) {
+              node.type = to
+              replaced += 1
+            }
           }
-        }
-        return replaced
-      })
+          return replaced
+        },
+      )
     } catch (error) {
       result.failures.push({
         location: graphLocation(ref),

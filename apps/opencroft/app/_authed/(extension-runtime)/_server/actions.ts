@@ -6,16 +6,21 @@
 // in extension-action-impl.ts instead.
 import { createServerFn } from '@tanstack/react-start'
 
-import { TERMINAL_CONTEXT_HANDLE_TYPE, TERMINAL_ROUTER_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import {
   getActionAccess,
   invokeExtensionActionImpl,
+  listDeclaredIconNamesImpl,
   listExtensionManifestsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import { describeGraphRefsImpl, type GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
-import { listGraphHandles } from '@/app/_authed/(extension-runtime)/_server/host'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { findRegistryExtension } from '@/app/_authed/(extension-runtime)/_server/registry'
+import {
+  listTerminalSourcesImpl,
+  listTerminalSourceTargetsImpl,
+  type TerminalSourceInfo,
+  type TerminalSourceTarget,
+} from '@/app/_authed/(extension-runtime)/_server/terminal-sources'
 import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 
@@ -46,6 +51,11 @@ export const listExtensionManifests = createServerFn({ strict: { output: false }
   },
 )
 
+export const listDeclaredIconNames = createServerFn().handler(async (): Promise<string[]> => {
+  await requireSessionServerFn()
+  return listDeclaredIconNamesImpl()
+})
+
 export const rebuildExtension = createServerFn({ method: 'POST' })
   .inputValidator((extensionId: string) => extensionId)
   .handler(async ({ data: extensionId }): Promise<void> => {
@@ -53,38 +63,24 @@ export const rebuildExtension = createServerFn({ method: 'POST' })
     await ensureExtensionBuilt(extensionId)
   })
 
-/** One pickable terminal source, for the TerminalSelector. */
-export interface TerminalTargetOption {
-  /** "node-id/handle-id" — the form every terminal-taking action accepts. */
-  target: string
-  /** Display name: the node, qualified by what distinguishes this handle on it. */
-  title: string
-  spaceSlug: string
-}
-
-export const listTerminalTargets = createServerFn({ strict: { output: false } })
+/**
+ * The TerminalSelector's sources, at once: none of them is asked anything at
+ * runtime, so one unreachable host cannot hold the list. A source answering
+ * `targets: null` is expanded with `listTerminalSourceTargets`.
+ */
+export const listTerminalSources = createServerFn({ strict: { output: false } })
   .inputValidator((data: { spaceSlug?: string }) => data)
-  .handler(async ({ data }): Promise<TerminalTargetOption[]> => {
+  .handler(async ({ data }): Promise<TerminalSourceInfo[]> => {
     await requireSessionServerFn()
-    const handles = await listGraphHandles({ role: 'source', handleType: TERMINAL_CONTEXT_HANDLE_TYPE })
-    return (
-      handles
-        .filter((handle) => !data.spaceSlug || handle.spaceSlug === data.spaceSlug)
-        // A router's outputs are terminals already on this list under their own
-        // name; offering them again would list each routed terminal once per
-        // router that carries it.
-        .filter((handle) => handle.type !== TERMINAL_ROUTER_NODE_TYPE)
-        .map((handle) => {
-          // A dynamic handle's declared id is a prefix; the expanded remainder
-          // (a container name, a worktree) is what tells its siblings apart.
-          const detail = handle.dynamic ? handle.handleId.slice(handle.declaredId.length) : handle.label
-          return {
-            target: `${handle.nodeId}/${handle.handleId}`,
-            title: detail ? `${handle.nodeName} · ${detail}` : handle.nodeName,
-            spaceSlug: handle.spaceSlug,
-          }
-        })
-    )
+    return listTerminalSourcesImpl(data.spaceSlug)
+  })
+
+/** One source's terminals -- a docker host's containers, an App's worktrees. As slow as that source. */
+export const listTerminalSourceTargets = createServerFn({ strict: { output: false } })
+  .inputValidator((data: { id: string }) => data)
+  .handler(async ({ data }): Promise<TerminalSourceTarget[]> => {
+    await requireSessionServerFn()
+    return listTerminalSourceTargetsImpl(String(data.id))
   })
 
 /**

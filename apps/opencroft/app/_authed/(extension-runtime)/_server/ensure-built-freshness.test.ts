@@ -1,14 +1,13 @@
-// What `ensureBuilt` decides is FRESH, and what it serves when it declines to
-// rebuild. The staleness test may only require the bundles this extension can
+// What `ensureBuilt` decides is FRESH, and what it serves when a rebuild
+// fails. The staleness test may only require the bundles this extension can
 // produce: the compiler writes nothing for a side with no entry, so demanding
 // both bundles makes a one-sided extension permanently stale -- rebuilt on
-// every consultation, forever. The same
-// two-sided demand in the refusal fallback made "keep the existing bundle"
-// unreachable for a one-sided extension, turning a refusal that should serve
-// the previous bundle into a thrown "was not built".
+// every consultation, forever. The same two-sided demand in the fallback would
+// make "keep the existing bundle" unreachable for a one-sided extension,
+// turning a failed rebuild that should serve the previous bundle into a throw.
 //
 // Real git checkouts and real builds rather than mocks, for the same reason as
-// ensure-built-guard.test.ts: freshness is decided from what is actually on
+// ensure-built-rebuild.test.ts: freshness is decided from what is actually on
 // disk, so a fake would be testing the fake.
 
 import assert from 'node:assert/strict'
@@ -50,7 +49,7 @@ let seq = 0
 
 async function makeFixture(
   sides: { client?: boolean; server?: boolean },
-  opts: { dirty?: boolean } = {},
+  opts: { broken?: boolean } = {},
 ): Promise<{
   id: string
   dir: string
@@ -61,7 +60,9 @@ async function makeFixture(
   await fs.mkdir(dir, { recursive: true })
   if (sides.client) {
     await fs.mkdir(path.join(dir, 'src'), { recursive: true })
-    await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default { hello: "world" }\n')
+    // A broken source is a syntax error, so its build fails.
+    const source = opts.broken ? 'export default {\n' : 'export default { hello: "world" }\n'
+    await fs.writeFile(path.join(dir, 'src', 'client.tsx'), source)
   }
   if (sides.server) {
     await fs.mkdir(path.join(dir, 'server'), { recursive: true })
@@ -74,13 +75,16 @@ async function makeFixture(
   await run('git', ['add', '-A'], { cwd: dir })
   await run('git', ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init'], { cwd: dir, env: GIT_ENV })
 
-  if (opts.dirty) {
-    // An authored, uncommitted change in whichever side exists.
-    const file = sides.client ? path.join(dir, 'src', 'client.tsx') : path.join(dir, 'server', 'index.ts')
-    await fs.appendFile(file, '// edit in progress\n')
-  }
-
   return { id, dir }
+}
+
+// Dated an hour ahead rather than left at the moment of the write: the wall
+// clock can step back between writing the sources and writing this, and a file
+// written after them would then carry an earlier mtime and read as stale.
+async function writeNewerThanSources(file: string, contents: string): Promise<void> {
+  await fs.writeFile(file, contents)
+  const ahead = new Date(Date.now() + 60 * 60 * 1000)
+  await fs.utimes(file, ahead, ahead)
 }
 
 function captureToasts(): { events: string[]; stop: () => void } {
@@ -99,7 +103,7 @@ test('a client-only extension, once built, is fresh — it does not rebuild on e
   // any source, so a second ensure that still rebuilds can only be requiring
   // the server bundle that will never exist.
   const clientBundle = path.join(dir, 'dist', 'client.js')
-  await fs.writeFile(clientBundle, 'SENTINEL')
+  await writeNewerThanSources(clientBundle, 'SENTINEL')
   await ensureExtensionBuilt(id)
   assert.equal(
     await fs.readFile(clientBundle, 'utf-8'),
@@ -115,7 +119,7 @@ test('a server-only extension, once built, is fresh — same rule, other side', 
   await assert.rejects(fs.stat(path.join(dir, 'dist', 'client.js')), 'a server-only build produces no client bundle')
 
   const serverBundle = path.join(dir, 'dist', 'server.js')
-  await fs.writeFile(serverBundle, 'SENTINEL')
+  await writeNewerThanSources(serverBundle, 'SENTINEL')
   await ensureExtensionBuilt(id)
   assert.equal(
     await fs.readFile(serverBundle, 'utf-8'),
@@ -124,11 +128,10 @@ test('a server-only extension, once built, is fresh — same rule, other side', 
   )
 })
 
-test('a refused client-only rebuild keeps serving the existing client bundle instead of throwing', async () => {
-  const { id, dir } = await makeFixture({ client: true }, { dirty: true })
+test('a failed client-only rebuild keeps serving the existing client bundle instead of throwing', async () => {
+  const { id, dir } = await makeFixture({ client: true }, { broken: true })
 
-  // An existing bundle, older than the sources so the rebuild is due and the
-  // guard is actually reached.
+  // An existing bundle, older than the sources so the rebuild is due.
   const clientBundle = path.join(dir, 'dist', 'client.js')
   await fs.mkdir(path.join(dir, 'dist'), { recursive: true })
   await fs.writeFile(clientBundle, 'OLD-CLIENT')
@@ -145,12 +148,42 @@ test('a refused client-only rebuild keeps serving the existing client bundle ins
   assert.equal(
     await fs.readFile(clientBundle, 'utf-8'),
     'OLD-CLIENT',
-    'the previous bundle is what a refused rebuild serves — for a one-sided extension too',
+    'the previous bundle is what a failed rebuild serves — for a one-sided extension too',
   )
   assert.ok(
-    events.some((event) => event.includes('was not rebuilt') && event.includes(id)),
-    'the refusal is still announced',
+    events.some((event) => event.includes('build failed') && event.includes(id)),
+    'the failure is still announced',
   )
+})
+
+test('a client bundle with no icon record is rebuilt even though it is newer than its sources', async () => {
+  const { id, dir } = await makeFixture({ client: true })
+  await ensureExtensionBuilt(id)
+  const clientBundle = path.join(dir, 'dist', 'client.js')
+  const icons = path.join(dir, 'dist', 'icons.json')
+  assert.deepEqual(JSON.parse(await fs.readFile(icons, 'utf-8')), [], 'a build records its icons, none here')
+
+  // A bundle built before icons were recorded: current, but without the record.
+  await writeNewerThanSources(clientBundle, 'SENTINEL')
+  await fs.rm(icons)
+  await ensureExtensionBuilt(id)
+  assert.notEqual(await fs.readFile(clientBundle, 'utf-8'), 'SENTINEL', 'the bundle is rebuilt')
+  await fs.stat(icons)
+})
+
+test('a failed rebuild of a bundle with no icon record keeps serving that bundle', async () => {
+  const { id, dir } = await makeFixture({ client: true }, { broken: true })
+  const clientBundle = path.join(dir, 'dist', 'client.js')
+  await fs.mkdir(path.join(dir, 'dist'), { recursive: true })
+  await fs.writeFile(clientBundle, 'OLD-CLIENT')
+
+  const { stop } = captureToasts()
+  try {
+    await ensureExtensionBuilt(id)
+  } finally {
+    stop()
+  }
+  assert.equal(await fs.readFile(clientBundle, 'utf-8'), 'OLD-CLIENT')
 })
 
 test('an extension with no buildable entry on either side is left alone', async () => {

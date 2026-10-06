@@ -77,6 +77,24 @@ export interface TerminalRefProps {
 /** A terminal target shown as its node's name plus which of its terminals it is. */
 export declare const TerminalRef: FC<TerminalRefProps>
 
+export interface TerminalListProps {
+  /** "node-id/handle-id" targets, in the order to show them; `unavailable` for one that does not resolve now. */
+  targets: Array<{ target: string; unavailable?: boolean }>
+  /** The chosen target; its row carries the check. */
+  value?: string
+  onSelect?: (target: string) => void
+  /** When given, every row can be removed: an X on the row and Remove in its context menu. */
+  onRemove?: (target: string) => void
+  disabled?: boolean
+}
+
+/**
+ * Terminal targets you already hold, listed the way `TerminalSelector` lists
+ * its choices: grouped by the node or App they belong to, each named as that
+ * owner's terminal.
+ */
+export declare const TerminalList: FC<TerminalListProps>
+
 /** A graph reference as `NodeRef` / `TerminalRef` show it. */
 export interface GraphRefDescription {
   kind: 'node' | 'app'
@@ -317,11 +335,34 @@ export declare const MermaidDiagram: FC<MermaidDiagramProps>
  */
 export type MarkdownEditorToolbarGroup = 'history' | 'marks' | 'headings' | 'blocks' | 'links' | 'table' | 'blockMenu'
 
-export interface MarkdownEditorProps {
+/** A document the caller holds as markdown. */
+export interface MarkdownEditorOwnDocument {
   /** The markdown being edited. Controlled — the caller holds it. */
   value: string
   /** The markdown after an edit. Fires for edits, never for loading `value`. */
   onChange: (markdown: string) => void
+  collab?: never
+}
+
+/**
+ * A document several people edit at once, stored where the extension keeps it
+ * (see `collab.markdown` on the server host). Everyone with it open sees the
+ * others' carets and selections and who is there; a change an agent makes
+ * through the server host is played back as it lands; undo reverts only this
+ * person's own changes.
+ */
+export interface MarkdownEditorSharedDocument {
+  /** `document` is the name the server host's `collab.markdown.documentName` gave. */
+  collab: { document: string }
+  value?: never
+  onChange?: never
+}
+
+export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
+  (MarkdownEditorOwnDocument | MarkdownEditorSharedDocument)
+
+/** How the editor looks and behaves, whichever document it edits. */
+export interface MarkdownEditorSurfaceProps {
   /** Shown while the document is empty. Read once, when the editor is created. */
   placeholder?: string
   /** Editable by default; `false` shows the same prose read-only. */
@@ -356,9 +397,9 @@ export interface MarkdownEditorProps {
  * A markdown WYSIWYG: rich text to edit, markdown to store.
  *
  * Controlled on markdown in both directions, because markdown is what the
- * surfaces editing this way actually persist. Legacy HTML in a stored body is
- * read as the rich text it describes and written back as markdown on the next
- * save, so nothing has to be migrated ahead of the editor.
+ * surfaces editing this way actually persist -- or bound to a shared document
+ * through `collab`. HTML in a stored body other than `<br>` is shown as the
+ * characters it was written with, the same wherever the markdown is read.
  *
  * The host owns it for three reasons, in order of how much they cost to get
  * wrong. TipTap and ProseMirror are a large dependency, and an extension
@@ -369,6 +410,46 @@ export interface MarkdownEditorProps {
  * means one markdown dialect: what this writes is what `Markdown` renders.
  */
 export declare const MarkdownEditor: FC<MarkdownEditorProps>
+
+export interface MarkdownDiffViewProps {
+  /** The earlier version's markdown. Empty for a document that did not exist. */
+  before: string
+  /** The later version's markdown. */
+  after: string
+  /**
+   * Draws one block's markdown as your page draws markdown, WITHOUT a prose
+   * wrapper of its own: the blocks are set side by side in the view's prose,
+   * where their margins meet as they do on your page. It is also handed parts
+   * of a block -- a list's items, a paragraph's lines -- each as markdown that
+   * stands on its own.
+   */
+  renderBlock: (markdown: string) => ReactNode
+  /** Unchanged blocks kept around each change before a run folds. Defaults to 1. */
+  context?: number
+  /** The prose the blocks are set in, replacing the default `prose-chat`. */
+  proseClassName?: string
+}
+
+/**
+ * What changed between two versions of a markdown document, shown on the
+ * document as it renders rather than on its source: no `**` or `##` anywhere.
+ *
+ * Both versions are split into their top-level blocks -- a paragraph, a
+ * heading, a list, a table, a callout -- with the host's markdown dialect, and
+ * the blocks are compared by what they draw. An added block is framed green, a
+ * removed one red; a changed one is shown removed then added, with the words
+ * that differ marked in its rendered text. A changed tight list, or paragraph
+ * with line breaks, is narrowed to the items or lines that changed, and a code
+ * block whose code changed under the same fence line is a line diff of its
+ * code; a `mermaid` diagram stays its two pictures. Longer unchanged runs fold
+ * into a row that opens in place. Two equal versions show "No changes".
+ *
+ * Every block is drawn by `renderBlock`, so links, code and documentation
+ * blocks look exactly as on your page. The marks are painted over the drawn
+ * text and never change its DOM, so a renderer that fills in later -- a code
+ * block colouring itself -- is followed.
+ */
+export declare const MarkdownDiffView: FC<MarkdownDiffViewProps>
 
 /**
  * Run one of an App instance's actions from the App's own UI — the same

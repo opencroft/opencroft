@@ -129,13 +129,40 @@ export interface HostThreadUsageTurn {
   cost: { amount: number; currency: string } | null
 }
 
+/** How much context a thread's session holds. */
+export interface HostThreadContext {
+  usedTokens: number
+  /** The model's window; null when it cannot be named. */
+  contextLimit: number | null
+  /** When the reading was taken, ISO, for a session not loaded now; absent for a live reading. */
+  asOf?: string
+}
+
 /**
  * What a thread has spent: its recorded turns, oldest first, and whether a
- * turn is running now (its spend then arrives when that turn ends).
+ * turn is running now (its spend then arrives when that turn ends). `context`
+ * is what its session holds now, or last held; null when it never reported.
  */
 export interface HostThreadUsage {
   turns: HostThreadUsageTurn[]
   busy: boolean
+  context: HostThreadContext | null
+}
+
+/**
+ * How a compaction asked for with `groupChats.compact` ended.
+ * `compacted`: the session's context shrank. `not_compacted`: it did not (a
+ * harness without compaction answers it as a message). `unknown`: there was
+ * no reading to tell by. `failed`: the compaction errored. `timed_out`: it was
+ * still waiting or running when the wait ended; it carries on regardless.
+ */
+export interface HostCompactResult {
+  outcome: 'compacted' | 'not_compacted' | 'unknown' | 'failed' | 'timed_out'
+  /** Context tokens around the compaction alone; null when not read. */
+  contextBefore: number | null
+  contextAfter: number | null
+  /** Why it failed, for `failed`. */
+  error?: string
 }
 
 export interface HostThreadTurnsPage {
@@ -143,6 +170,41 @@ export interface HostThreadTurnsPage {
   hasMore: boolean
   nextBeforeIndex: number | null
   sessionStatus: string
+}
+
+/** How often a session's agent reads what is sent to it — the chat command bar's Presence control. */
+export type HostPresence =
+  | { kind: 'high-attention' }
+  | { kind: 'realtime' }
+  | { kind: 'online' }
+  | { kind: 'minutes' }
+  | { kind: 'hourly' }
+  | { kind: 'daily' }
+  | { kind: 'custom'; intervalMs: number }
+
+/**
+ * Settings for a thread's session, applied before the message they ride with
+ * is delivered — the chat command bar's Effort, Presence and Permission Mode
+ * controls, in the command bar's own vocabulary. Each is optional: one left
+ * out leaves the session's current setting as it is.
+ */
+export interface HostSessionOptions {
+  /** Reasoning effort: `max`, `extra`, `high`, `medium`, `low`, `default` or `off`. */
+  effort?: string
+  presence?: HostPresence
+  /** `auto`, `plan`, `manual-edits`, `accept-edits`, `reject-edits` or `bypass`. */
+  permissionMode?: string
+}
+
+/**
+ * What became of the session options a call carried. A value the session's
+ * agent does not offer (an effort level its model lacks, a permission mode its
+ * harness has no such thing as) is skipped with the reason, and the others
+ * still apply: an option never fails the call it rides with.
+ */
+export interface HostSessionOptionsResult {
+  applied: Array<keyof HostSessionOptions>
+  skipped: Array<{ option: keyof HostSessionOptions; reason: string }>
 }
 
 /**
@@ -164,16 +226,31 @@ export interface HostThreadTurnsPage {
 export interface HostGroupChatsApi {
   /** Chats the sender is a member of, with their agent members. */
   list(): Promise<HostGroupChat[]>
-  /** Open a thread addressed to an agent member of `chat` (id or slug), with `message` as its first message from the sender. */
+  /**
+   * Open a thread addressed to an agent member of `chat` (id or slug), with
+   * `message` as its first message from the sender. `sessionOptions` are
+   * applied to the thread's session before that message is delivered, and
+   * the result says what became of them (present only when they were given).
+   */
   startThread(input: {
     chat: string
     agentNodeId: string
     message: string
     title?: string
     folder?: string
-  }): Promise<{ thread: HostGroupChatThread; folder: string | null }>
-  /** Send into a thread; `queue` defaults to `wait` (after the running turn). */
-  send(input: { thread: string; message: string; queue?: 'wait' | 'push' }): Promise<{ status: 'queued' | 'delivered' }>
+    sessionOptions?: HostSessionOptions
+  }): Promise<{ thread: HostGroupChatThread; folder: string | null; sessionOptions?: HostSessionOptionsResult }>
+  /**
+   * Send into a thread; `queue` defaults to `wait` (after the running turn).
+   * `sessionOptions` are applied to the thread's session before the message
+   * is delivered or queued, as for `startThread`.
+   */
+  send(input: {
+    thread: string
+    message: string
+    queue?: 'wait' | 'push'
+    sessionOptions?: HostSessionOptions
+  }): Promise<{ status: 'queued' | 'delivered'; sessionOptions?: HostSessionOptionsResult }>
   thread(ref: string): Promise<HostGroupChatThread>
   /**
    * Archive a thread the sender owns — one it started, or for an agent sender
@@ -193,6 +270,16 @@ export interface HostGroupChatsApi {
    * of, refuses with "Not available", whoever the sender is.
    */
   usage(ref: string, options?: { since?: string }): Promise<HostThreadUsage>
+  /**
+   * Compact the session of a thread THIS extension opened, and resolve once
+   * the compaction has ended or the wait for it gave up. The compaction runs
+   * after any turn in progress, and on success the thread's standing context
+   * is re-delivered, as `group_chat_compact` does. Send the next message after
+   * this resolves: one sent before it can be read before the compaction.
+   * An archived thread, or one whose agent left the chat, is refused; any
+   * other thread refuses with "Not available", as for `usage`.
+   */
+  compact(ref: string): Promise<HostCompactResult>
 }
 
 /** `groupChats` acting as the agent that invoked an App action: the same calls, plus reading. */
@@ -381,6 +468,8 @@ export interface ExtensionServerHost {
    * client code via getStream(extensionId, 'events').
    */
   events: { broadcast: (name: string, payload?: Record<string, unknown>) => void }
+  /** Documents several people edit at once -- see HostCollabApi. */
+  collab: HostCollabApi
   openclaw: { call<T = unknown>(method: string, params?: object): Promise<T> }
   terminal: {
     exec(ctx: TerminalContext, command: string): Promise<string>
@@ -408,6 +497,17 @@ export interface ExtensionServerHost {
      * nothing for you to clean up.
      */
     startJob(ctx: TerminalContext, opts: JobSessionOptions): Promise<JobSession>
+    /**
+     * Stop a job you started with `stopWhenUnwatchedMs` (a job that exists only to be watched)
+     * now, rather than when that bound runs out. Call it when your client is done with the view:
+     * the tab showing it was closed, or it was replaced by another one. Until then every view holds
+     * one of the ten job slots, so a client that lets go of views without this can fill them.
+     *
+     * A view that has already ended or been reclaimed is not an error. Any other job is refused
+     * with a throw: a job started without the option, such as a deploy, is not stopped because a
+     * viewer left.
+     */
+    stopViewJob(sessionKey: string): void
   }
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>
@@ -430,6 +530,67 @@ export interface HostAppInstance {
   params: Record<string, string>
   /** Absolute path of the instance's private data directory. */
   dataDir: string
+}
+
+/** Where one kind of an extension's markdown documents is stored, keyed by whatever the extension keys them by. */
+export interface HostMarkdownDocStorage {
+  /** The document's markdown as stored; null when there is no such document. */
+  read(key: string): Promise<string | null>
+  /** Stores the document's markdown. */
+  write(key: string, markdown: string): Promise<void>
+  /** Whether a signed-in person may open the document; when absent, everyone signed in may. */
+  authorize?(key: string, user: { id: string; name: string }): Promise<boolean> | boolean
+}
+
+/** Who changed a markdown document from outside an editor, as the change is shown to the people editing it. */
+export interface HostMarkdownEditOrigin {
+  kind: 'agent' | 'user'
+  name: string
+}
+
+/**
+ * Documents several people edit at once, in the host's `MarkdownEditor`: a
+ * document's markdown stays where the extension keeps it, and while anyone
+ * has it open the host holds the shared copy, with everyone's carets, and
+ * writes the markdown back. A document nobody has changed is never rewritten
+ * for being opened.
+ */
+export interface HostCollabApi {
+  markdown: {
+    /** Serves the extension's documents of `kind` -- a name of its own, without a colon -- from `storage`. Call it from `load`. */
+    register(kind: string, storage: HostMarkdownDocStorage): void
+    /** What the extension's UI hands `MarkdownEditor` to open a document: `collab={{ document }}`. */
+    documentName(kind: string, key: string): string
+    /** A document's markdown as it stands: the open copy's when it is open, the stored markdown otherwise. */
+    read(kind: string, key: string): Promise<string | null>
+    /**
+     * Changes a document's markdown as `origin`: `change` is handed the
+     * markdown as it stands and returns what it should be. An open document is
+     * changed in place -- what people type meanwhile survives, and every editor
+     * shows the change being made -- and the change is stored before this
+     * returns. Returns the new markdown.
+     */
+    edit(
+      kind: string,
+      key: string,
+      origin: HostMarkdownEditOrigin,
+      change: (markdown: string) => string,
+    ): Promise<string>
+    /** Stores now what the open documents of `kind` hold -- or only `key`'s -- rather than shortly. */
+    flush(kind: string, key?: string): Promise<void>
+    /**
+     * Runs `change` -- a change to the storage of the documents of `kind`, or
+     * of the ones `keys` names -- while none of them is open. Each open one is
+     * stored first, unless `discard` drops what it holds; editors reconnect to
+     * the markdown as `change` left it.
+     */
+    whileClosed<T>(
+      kind: string,
+      keys: string[] | null,
+      change: () => Promise<T>,
+      options?: { discard?: boolean },
+    ): Promise<T>
+  }
 }
 
 export interface HostAppsApi {
@@ -458,6 +619,7 @@ export declare const groupChats: ExtensionServerHost['groupChats']
 export declare const users: ExtensionServerHost['users']
 export declare const execContext: ExtensionServerHost['execContext']
 export declare const events: ExtensionServerHost['events']
+export declare const collab: ExtensionServerHost['collab']
 export declare const openclaw: ExtensionServerHost['openclaw']
 export declare const terminal: ExtensionServerHost['terminal']
 export declare const ssh: ExtensionServerHost['ssh']

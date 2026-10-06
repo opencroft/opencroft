@@ -1,8 +1,8 @@
 'use client'
 
 import { type CSSProperties, Suspense, useEffect, useRef, useState } from 'react'
-import { TitlebarProvider } from 'ui/layout/titlebar'
 import { TitleBarProvider } from 'ui/layouts/title-bar'
+import { TitleDragStrip } from 'ui/layouts/title-drag-handle'
 import { Sidebar, SidebarContent, SidebarProvider } from 'ui/sidebar'
 
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
@@ -76,16 +76,19 @@ function Shell({ spaces, children }: Props) {
 
 export function AppShell({ spaces, children, chrome = true }: AppShellProps) {
   return (
-    <TitlebarProvider>
-      <TitleBarProvider>
-        <AppSidebarProvider>
-          {chrome ? (
-            <Shell spaces={spaces}>{children}</Shell>
-          ) : (
-            <main className='flex h-dvh w-full min-w-0 flex-col'>{children}</main>
-          )}
-        </AppSidebarProvider>
-      </TitleBarProvider>
-    </TitlebarProvider>
+    <TitleBarProvider>
+      <AppSidebarProvider>
+        {chrome ? (
+          <Shell spaces={spaces}>{children}</Shell>
+        ) : (
+          // A full-page route has no title bar, so the drag strip stands in for
+          // it in an installed app that draws into the window's title bar.
+          <div className='flex h-dvh w-full min-w-0 flex-col'>
+            <TitleDragStrip />
+            <main className='flex min-h-0 w-full min-w-0 flex-1 flex-col'>{children}</main>
+          </div>
+        )}
+      </AppSidebarProvider>
+    </TitleBarProvider>
   )
 }

@@ -9,7 +9,7 @@ import type { Edge, Node } from '@xyflow/react'
 import type { ExtensionDeclaration } from '@/app/_authed/(extension-runtime)/_client/host'
 import { loadedDeclaration } from '@/app/_authed/(extension-runtime)/_client/loaded-declaration'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { resolveInputContexts } from './context-resolver'
+import { resolveInputContexts, sameContext } from './context-resolver'
 
 const component = () => null
 
@@ -174,6 +174,24 @@ test('a wiring cycle ends the chain: a node met again upstream of itself contrib
   })
 
   assert.deepEqual(contexts, {})
+})
+
+test('contexts compare plain data by content and a live value by identity', () => {
+  const context = (value: unknown) => ({
+    sourceNodeId: 'engine-1',
+    sourceHandleId: 'engine-out',
+    type: 'engine',
+    value,
+  })
+  const live = new Blob(['a'])
+
+  assert.equal(sameContext(context({ hosts: ['a', { port: 1 }] }), context({ hosts: ['a', { port: 1 }] })), true)
+  assert.equal(sameContext(context({ hosts: ['a', { port: 1 }] }), context({ hosts: ['a', { port: 2 }] })), false)
+  assert.equal(sameContext(context({ host: 'a' }), context({ host: 'a', port: undefined })), false)
+  assert.equal(sameContext(context(live), context(live)), true)
+  assert.equal(sameContext(context(live), context(new Blob(['a']))), false)
+  assert.equal(sameContext(null, context({})), false)
+  assert.equal(sameContext(null, null), true)
 })
 
 test('a source node missing from the page contributes no input', () => {

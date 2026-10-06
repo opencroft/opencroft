@@ -111,3 +111,19 @@ export async function startJobSession(ctx: TerminalContext, opts: JobSessionOpti
 
   return { sessionKey, sessionId: session.id }
 }
+
+/**
+ * Stop a job started with `stopWhenUnwatchedMs` now, rather than when that bound runs out: its
+ * viewer is done with it. Call it when the view is replaced or its tab is closed. A view that is
+ * already gone is not an error.
+ *
+ * Throws for any other job. A job started without the option does work that matters whether or
+ * not anyone watches, such as a deploy, and is not stopped because a viewer left.
+ *
+ * Server code only, like `startJobSession`.
+ */
+export function stopViewJob(sessionKey: string): void {
+  if (sessionManager.stopViewJob(sessionKey) === 'refused') {
+    throw new Error('Not a view: only a job started with stopWhenUnwatchedMs can be stopped this way')
+  }
+}

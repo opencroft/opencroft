@@ -18,11 +18,13 @@ import type {
   ResolvedInput,
   Stream,
 } from '@/app/_authed/(extension-runtime)/_types'
+import type { GraphWriteOrigin } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
+import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
-import { toastStore } from '@/lib/toast-store'
 
 const ERRORS_KEY = '__errors'
+const NODE_ACTION_ORIGIN: GraphWriteOrigin = { kind: 'extension', name: 'node action' }
 
 export interface GraphNodeLike {
   id: string
@@ -262,11 +264,9 @@ export function buildCtx(
   }
 }
 
-// Rewrites the stored node's data and, when that changes it, saves the graph
-// and broadcasts `graph_updated` like every other graph write — an open canvas
-// then refetches at once, instead of showing the old data until something else
-// makes it refetch, and its next save does not collide with a version it never
-// saw. `next` returning the data it was given means nothing changed.
+// Rewrites the stored node's data through its graph's document, so an open
+// canvas shows the change as it lands. `next` returning the data it was given
+// means nothing changed, and nothing is written.
 async function writeNodeData(
   found: FoundNode,
   next: (data: Record<string, unknown>) => Record<string, unknown>,
@@ -279,20 +279,20 @@ async function writeNodeData(
   }
   // Whichever of the space's graphs actually stores the node.
   for (const graph of space.graphs.values()) {
-    const node = graph.graph.nodes.find((n) => (n as unknown as GraphNodeLike).id === found.node.id) as unknown as
-      | GraphNodeLike
-      | undefined
-    if (!node) {
+    if (!graph.graph.nodes.some((n) => (n as unknown as GraphNodeLike).id === found.node.id)) {
       continue
     }
-    const data = node.data ?? {}
-    const updated = next(data)
-    if (updated === data) {
-      return
-    }
-    node.data = updated
-    await r.saveGraph(`${space.slug}.${graph.slug}`, graph.graph)
-    toastStore.broadcast({ type: 'graph_updated', spaceId: space.slug })
+    await mutateLiveGraph(
+      `${space.slug}.${graph.slug}`,
+      NODE_ACTION_ORIGIN,
+      (current) => {
+        const target = (current.nodes as unknown as GraphNodeLike[]).find((n) => n.id === found.node.id)
+        if (target) {
+          target.data = next(target.data ?? {})
+        }
+      },
+      { resolveContexts: false },
+    )
     return
   }
 }

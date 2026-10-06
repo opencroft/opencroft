@@ -125,6 +125,13 @@ export interface AppServerHooks {
    */
   listHandles?: (ctx: AppInstanceContext) => string[] | Promise<string[]>
   /**
+   * What a person calls one of the App's live handle ids, for showing it in a
+   * picker instead of the id -- e.g. a worktree's repository and name. Pure
+   * and synchronous: it reads the id alone. Undefined leaves the id to the
+   * host's own fallback.
+   */
+  handleLabel?: (handleId: string) => string | undefined
+  /**
    * The context value behind one of the App's handles. The handle is
    * addressed as `<instanceId>/<handleId>` wherever node targets are
    * accepted. Return undefined for an id this App does not expose.

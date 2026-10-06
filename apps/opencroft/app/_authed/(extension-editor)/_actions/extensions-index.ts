@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 
+import { readDirtyLocalFolders } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { isBuiltinFolder, isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { scanExtensionFolders } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { ensureExtensionRows, listExtensionRows } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
@@ -9,10 +10,10 @@ import { requireSessionServerFn } from '@/app/_server/require-session'
 /**
  * One row of the extensions list: what this instance has, and what to call it.
  *
- * Everything else an extension can be asked about — its files, its checkout,
- * what it is running, whether origin has moved — is read when one extension is
- * opened. This is the index, and it is the only thing the page needs before it
- * can draw.
+ * Everything else an extension can be asked about — its files, the rest of its
+ * checkout, what it is running, whether origin has moved — is read when one
+ * extension is opened. This is the index, and it is the only thing the page
+ * needs before it can draw.
  */
 export interface ExtensionIndexEntry {
   /** The folder under `extensions/`: what is opened, edited and removed. */
@@ -29,6 +30,12 @@ export interface ExtensionIndexEntry {
   error?: string
   /** A recorded install whose folder is gone. It can be reinstalled or removed. */
   missing?: true
+  /**
+   * A local extension whose own git checkout carries uncommitted changes. Absent
+   * when the checkout is clean, and when the folder is not the root of its own
+   * checkout, since then nothing is known about it.
+   */
+  dirty?: true
   /** The ref it was installed at, for one installed from a repository. */
   ref?: string
   /** The repository it came from. Carried so a registry search can mark what this instance already holds. */
@@ -41,8 +48,11 @@ export interface ExtensionIndexEntry {
  *
  * `getManifest` reads the loader's manifest cache — re-read only when a
  * manifest's mtime moves — so this costs a directory listing, a stat per
- * extension and one table read, and no git at all. A folder with no row gets one
- * here, the first time it is listed (see ensureExtensionRows).
+ * extension, one table read, and a git status read per LOCAL extension only:
+ * a local extension is edited in place on this instance, so whether it carries
+ * uncommitted work is what the list has to show, while an installed one is a
+ * snapshot nobody edits. A folder with no row gets one here, the first time it
+ * is listed (see ensureExtensionRows).
  *
  * Called from the route's loader, so the list arrives with the document rather
  * than one round trip after the page has finished booting.
@@ -58,6 +68,7 @@ export const listExtensionsIndex = createServerFn({ strict: { output: false } })
     // edits or deletes — this page does not list them.
     const folders = (await scanExtensionFolders()).filter((entry) => !isBuiltinFolder(entry.folder))
     const rows = await ensureExtensionRows(folders.map((entry) => entry.folder))
+    const dirtyFolders = await readDirtyLocalFolders(folders.map((entry) => entry.folder))
     const entries: ExtensionIndexEntry[] = []
     for (const entry of folders) {
       let name = entry.folder
@@ -81,6 +92,7 @@ export const listExtensionsIndex = createServerFn({ strict: { output: false } })
         kind: isLocalFolder(entry.folder) ? 'local' : 'installed',
         active: entry.active,
         ...(entry.error ? { error: entry.error } : {}),
+        ...(dirtyFolders.has(entry.folder) ? { dirty: true as const } : {}),
         ...(row?.ref ? { ref: row.ref } : {}),
         ...(row?.sourceUrl ? { sourceUrl: row.sourceUrl } : {}),
         ...(row?.registryName ? { registryName: row.registryName } : {}),

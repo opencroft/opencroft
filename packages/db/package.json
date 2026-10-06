@@ -8,9 +8,11 @@
     "./schema": "./src/schema.ts",
     "./connect": "./src/connect.ts",
     "./backup": "./src/backup.ts",
+    "./bounded-select": "./src/bounded-select.ts",
     "./datadir-lock": "./src/datadir-lock.ts",
     "./space-icon-presets": "./src/space-icon-presets.ts",
-    "./test-env": "./src/test-env.ts"
+    "./test-env": "./src/test-env.ts",
+    "./test-template": "./src/test-template.ts"
   },
   "scripts": {
     "test": "node ../../scripts/run-tests.mjs",

@@ -95,7 +95,7 @@ function SpaceSettingsPage() {
             {section === 'general' ? (
               <SpaceGeneralSettings space={space} />
             ) : section === 'usage' ? (
-              <SpaceUsageSettings />
+              <SpaceUsageSettings spaceSlug={space.slug} />
             ) : (
               <SpaceApps
                 spaceSlug={space.slug}

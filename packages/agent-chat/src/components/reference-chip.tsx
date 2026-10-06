@@ -23,7 +23,8 @@ export interface ReferenceChipProps {
   label: string
   /**
    * Text after the label -- a task's summary -- in regular weight, so the
-   * label reads as the name. The first thing to truncate.
+   * label reads as the name. One line, never wider than about 28 characters,
+   * cut with an ellipsis; the first thing to give way on a narrow line.
    */
   detail?: string
   /**
@@ -100,8 +101,10 @@ const keepToChip = (event: SyntheticEvent) => event.stopPropagation()
 // with the thing's mark, its name and its state.
 //
 // INLINE, AT THE TEXT'S OWN SIZE. It sits inside a sentence, so it takes the
-// sentence's size and baseline rather than a control's, and a long name
-// truncates rather than widening the line -- or whatever holds the line.
+// sentence's size and baseline rather than a control's. It is one unbreakable
+// box in the text flow: where it does not fit in the rest of a line it moves
+// whole to the next one, and it is never wider than the line. Its detail is
+// capped, so a long summary does not make every chip a line of its own.
 //
 // ONE PRESS OPENS. A real link when there is somewhere to go, a button when
 // the host does something else; with neither it is only a label. Anything
@@ -147,11 +150,14 @@ export function ReferenceChip({
       ) : null}
       <span className='shrink-0 whitespace-nowrap'>{label}</span>
       {/* One line with an ellipsis, like `truncate`, but through a line clamp
-          over wrappable text: a container that sizes itself to the narrowest
-          its content allows (a transcript does) must be able to shrink the
-          chip, and nowrap text would make the whole detail unbreakable. */}
+          over text breakable anywhere: a container that sizes itself to the
+          narrowest its content allows (a transcript does) must be able to
+          shrink the chip, and nowrap text would make the whole detail
+          unbreakable. Breaking anywhere rather than between words fills the
+          one visible line to its end, so a capped detail has no gap before
+          the state. */}
       {detail ? (
-        <span className='min-w-0 shrink-[1000] line-clamp-1 font-normal [overflow-wrap:anywhere]'>{detail}</span>
+        <span className='min-w-0 max-w-[28ch] shrink-[1000] line-clamp-1 font-normal [word-break:break-all]'>{detail}</span>
       ) : null}
       {/* Never shrinks with the rest: a flex share, however small, clips a
           short status by a fraction of a pixel and it shows an ellipsis.

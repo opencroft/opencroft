@@ -3,6 +3,7 @@
 import { FileText } from 'lucide-react'
 import { Markdown } from 'agent-chat/components/markdown'
 import { Button } from 'ui/components/ui/button'
+import { CountBadge } from 'ui/components/ui/count-badge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,12 +72,7 @@ export function ArtifactMenu({ artifacts, openId, onOpen, size = 'icon', classNa
         }
       >
         <FileText />
-        <span
-          aria-hidden
-          className='absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1 text-[10px] font-medium leading-none text-muted-foreground ring-1 ring-border'
-        >
-          {artifacts.length}
-        </span>
+        <CountBadge count={artifacts.length} tone='muted' />
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-64'>
         {/* A radio group because exactly one note is open at a time, and the

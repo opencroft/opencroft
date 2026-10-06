@@ -32,8 +32,7 @@ async function spaceWithConnectionNode(name: string) {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const slug = `mcp-store-test-${crypto.randomUUID()}`
-  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
-  await registry.saveGraph(space.slug, {
+  return registry.create(slug, slug, {
     nodes: [
       {
         id: 'conn-1',
@@ -45,7 +44,6 @@ async function spaceWithConnectionNode(name: string) {
     ],
     edges: [],
   })
-  return space
 }
 
 test('readMcpServersForAgent returns only the global list when the selection carries no mcpIdentity', async () => {

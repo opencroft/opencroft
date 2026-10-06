@@ -105,6 +105,14 @@ export type GroupChatAccessFailure =
    * far, and they need to be told to unarchive it, not that it is missing.
    */
   | 'thread-archived'
+  /**
+   * The message's text is over the limit one message may carry (see
+   * `(agent)/_shared/message-size.ts`). Refused before the thread is created
+   * or the message queued, whoever sent it. Outside the collapse because only
+   * a caller who may write here gets this far, and they need to know the
+   * size is why nothing was sent.
+   */
+  | 'message-too-large'
 
 /**
  * PHASE 2 CONTRACT, verified against the actual wire format rather than

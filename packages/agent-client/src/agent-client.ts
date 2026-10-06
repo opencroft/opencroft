@@ -35,6 +35,7 @@ import {
 
 import { type AttachmentRef, type DeliveredAttachment, isImageMime, type PromptAttachment } from './attachments'
 import { type ChatMessageRecord, toChatMessages } from './chat-completion'
+import { type CompactionHold, endCompactionHold, nextCompactionHold } from './compaction-hold'
 import { findSelectOption, MODE_SELECTOR, MODEL_SELECTOR, THOUGHT_LEVEL_SELECTOR } from './config-selectors'
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
@@ -122,6 +123,12 @@ export interface SessionActivity {
   awaitingUser: boolean
   /** A subagent or background task still running with no turn needed. */
   backgroundWork: boolean
+  /**
+   * The harness reports a context compaction in progress — its own automatic
+   * one, a typed `/compact`, or one the host asked for. Mid-turn delivery is
+   * held while this is true.
+   */
+  compacting: boolean
 }
 
 export interface AgentClientOptions {
@@ -407,6 +414,20 @@ interface SessionState {
   // dev hot-reload may predate the field (backfilled at the use site, same as
   // `commands`).
   compactions?: Map<string, CompactionState>
+  /**
+   * Present while a compaction reported live is still in progress (see
+   * compaction-hold). Nothing is steered into the session meanwhile: realtime
+   * messages queue, a push waits instead of interrupting, notifications are
+   * held, and all of it goes when the hold ends.
+   */
+  compactionHold?: CompactionHold
+  /**
+   * Set when a message delivery that would have gone into the running turn —
+   * a push, or a steer — was held back by a compaction. Ending the hold then
+   * owes that delivery now, rather than at the turn's end; a message that was
+   * only ever waiting for the turn to end is not owed anything.
+   */
+  deliveryOwedAfterCompaction?: boolean
   // Subagents by subagentSessionId and background tasks by asyncTaskId,
   // merged from their upsert notifications. Optional for the same reason
   // `compactions` is: only reporting harnesses populate them, and hot-reload
@@ -871,7 +892,7 @@ const reportedActivity = new Map<string, string>()
 function readActivity(sessionId: string): SessionActivity {
   const session = store.sessions.get(sessionId)
   if (!session) {
-    return { sessionId, alive: false, activeTurns: 0, awaitingUser: false, backgroundWork: false }
+    return { sessionId, alive: false, activeTurns: 0, awaitingUser: false, backgroundWork: false, compacting: false }
   }
   const ownAsk = (pending: { sessionId: string }) => pending.sessionId === sessionId
   const sessionKey = session.selection.sessionKey
@@ -883,6 +904,7 @@ function readActivity(sessionId: string): SessionActivity {
     awaitingUser:
       [...store.pendingPermissions.values()].some(ownAsk) || [...store.pendingElicitations.values()].some(ownAsk),
     backgroundWork: hasLiveBackgroundWork(session),
+    compacting: isCompacting(session),
   }
 }
 
@@ -918,6 +940,39 @@ let onCompactionHook: ((sessionId: string, compaction: CompactionState) => void)
 // Where handleUpdate hands the harness's "I am idle" to the client that owns
 // the session's turn accounting (settleTurn lives in createAgentClient).
 let onHarnessTurnEndHook: ((sessionId: string, signal: HarnessTurnEnd) => void) | undefined
+
+// Where a compaction hold that ended mid-turn hands back to the client, which
+// owns the queue and the notifications it was holding (createAgentClient).
+let onCompactionHoldEndHook: ((sessionId: string) => void) | undefined
+
+function isCompacting(session: SessionState): boolean {
+  return session.compactionHold !== undefined
+}
+
+/**
+ * Apply one LIVE compaction signal to the session's hold: a status from
+ * `compaction_update`, or `undefined` for a summary chunk. A replay is history
+ * and never reaches here. When the last running compaction leaves
+ * `in_progress`, or the backstop runs out, what the hold kept back is handed
+ * over.
+ */
+function trackCompaction(sessionId: string, session: SessionState, compactionId: string, status?: string): void {
+  const held = isCompacting(session)
+  session.compactionHold = nextCompactionHold(session.compactionHold, compactionId, status, () => {
+    if (store.sessions.get(sessionId) === session && session.compactionHold) {
+      session.compactionHold = undefined
+      reportActivity(sessionId)
+      onCompactionHoldEndHook?.(sessionId)
+    }
+  })
+  if (held === isCompacting(session)) {
+    return
+  }
+  reportActivity(sessionId)
+  if (held) {
+    onCompactionHoldEndHook?.(sessionId)
+  }
+}
 
 // A record leaving the store ends every subscription on it.
 //
@@ -1788,6 +1843,9 @@ export function handleUpdate(notification: SessionNotification): void {
       applyCompactionMeta(record, update._meta)
       session.compactions.set(update.compactionId, record)
       emit(sessionId, { kind: 'compaction', compaction: { ...record } })
+      if (!session.replaying) {
+        trackCompaction(sessionId, session, update.compactionId, record.status)
+      }
       // Live status transitions only: the terminal update can arrive twice
       // (the bridge re-sends `completed` to enrich it with token counts once
       // the boundary reports them), and a session/load replay re-delivers the
@@ -1817,6 +1875,10 @@ export function handleUpdate(notification: SessionNotification): void {
       }
       record.summary = (record.summary ?? '') + textOf(update.content)
       session.compactions.set(update.compactionId, record)
+      if (!session.replaying) {
+        // Progress: the compaction is alive, so its backstop starts again.
+        trackCompaction(sessionId, session, update.compactionId)
+      }
       break
     }
     default:
@@ -2592,7 +2654,9 @@ function hasLiveBackgroundWork(session: SessionState): boolean {
  * waiting for its end.
  *
  * `realtime` is the cadence that asks for that, and a harness that advertised
- * the steering extension is one that can take it. Those two, and only those.
+ * the steering extension is one that can take it. Those two, and only those —
+ * except while the session is compacting: then the message waits like any
+ * other, and the end of the compaction delivers it (see compactionHold).
  *
  * DELIVERED EVEN MID-DELEGATION. Steering is an injection, never a cancel: the
  * bridge pushes the message onto the running turn's input and re-applies the
@@ -2606,7 +2670,7 @@ function hasLiveBackgroundWork(session: SessionState): boolean {
  * wherever the harness supports it.
  */
 function steersMidTurn(session: SessionState): boolean {
-  return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection)
+  return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection) && !isCompacting(session)
 }
 
 /** Whether an adapter's harness is verified to send ACP elicitations — see
@@ -2648,6 +2712,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   onActivityChangeHook = options.onActivityChange
   onCompactionHook = options.onCompaction
   onHarnessTurnEndHook = (sessionId, signal) => endHarnessTurns(sessionId, signal)
+  onCompactionHoldEndHook = (sessionId) => deliverAfterCompaction(sessionId)
   const mcpServerName = options.mcpServerName ?? 'local'
   const clientInfo = options.clientInfo ?? { name: 'agent-client', version: '0.1.0' }
   const mcp = createMcpServer({
@@ -3485,6 +3550,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    *    puts what it was delivering back where it came from FIRST, and only
    *    then lets go (releaseSteerHold) — letting go may hand over at once, and
    *    what it hands over first must be the thing that was declined.
+   *  - `held`: not asked, because the session is compacting — a steer would
+   *    pre-empt the generation writing the summary. Otherwise exactly
+   *    `declined`: the hold is kept for the caller to put things back and let
+   *    go. Told apart so the caller can owe the delivery to the compaction's
+   *    end rather than to the turn's.
    *  - `unavailable`: nothing was asked and nothing is held — this harness or
    *    connection has no steering channel.
    *  - `gone`: the session left while the harness was answering.
@@ -3512,7 +3582,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     prompt: ContentBlock[],
     attachments: DeliveredAttachment[],
     problems: string[],
-  ): Promise<'delivered' | 'declined' | 'unavailable' | 'gone'> {
+  ): Promise<'delivered' | 'declined' | 'held' | 'unavailable' | 'gone'> {
     if (!supportsMidTurnInput(session.selection)) {
       return 'unavailable'
     }
@@ -3531,6 +3601,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const first = prompt[0]
     if (first?.type === 'text' && first.text.trimStart().startsWith('/')) {
       return 'declined'
+    }
+    // Checked here, behind every caller's own gate, because this is the one
+    // place a steer is actually sent: a delivery decided before the
+    // compaction started still meets it.
+    if (isCompacting(session)) {
+      return 'held'
     }
     // Onto a copy: a declined steer is delivered later by a prompt built from
     // `prompt`, and that prompt aborts nothing, so it carries no note.
@@ -3795,7 +3871,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (steer === 'delivered' || steer === 'gone') {
         return
       }
-      if (steer === 'declined') {
+      if (steer === 'held') {
+        session.deliveryOwedAfterCompaction = true
+      }
+      if (steer === 'declined' || steer === 'held') {
         return 'requeue'
       }
     }
@@ -4382,6 +4461,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (runningTurns(session) > 0) {
       return
     }
+    // A compaction runs inside a turn, so the boundary ends whatever hold is
+    // left: one whose terminal update never arrived must not hold the next
+    // turn's deliveries. Nothing is owed any more either — the hand-over at
+    // the end of this function delivers what the hold kept back.
+    if (session.compactionHold) {
+      endCompactionHold(session.compactionHold)
+      session.compactionHold = undefined
+      reportActivity(sessionId)
+    }
+    session.deliveryOwedAfterCompaction = undefined
     // Before turn_end, so the transcript closes the turn's open questions
     // inside the turn that asked them.
     cancelTurnAsks(sessionId)
@@ -4514,6 +4603,48 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   /**
+   * A compaction ended while its turn is still running: hand that turn what
+   * the compaction kept from it. Notifications are offered as they always
+   * are. Messages go only when a delivery was owed (a push, or a steer the
+   * compaction turned away) or when the cadence steers anyway; a message
+   * that was waiting for the turn to end keeps waiting for it. On a harness
+   * that cannot steer, an owed push gets the interrupt it asked for.
+   */
+  function deliverAfterCompaction(sessionId: string): void {
+    const session = store.sessions.get(sessionId)
+    if (!session || session.activeTurns === 0) {
+      return
+    }
+    offerNotifications(sessionId)
+    const owed = session.deliveryOwedAfterCompaction === true
+    session.deliveryOwedAfterCompaction = undefined
+    if (supportsMidTurnInput(session.selection)) {
+      if (owed || steersMidTurn(session)) {
+        void drainQueue(sessionId)
+      }
+      return
+    }
+    if (owed && options.shouldHoldDelivery?.() !== true) {
+      void cancelSession(sessionId).catch((error: unknown) => reportAgentError(sessionId, 'session/cancel', error))
+    }
+  }
+
+  /**
+   * The interrupt a `push` buys on a harness that cannot steer, unless the
+   * session is compacting: a cancel then would cancel the compaction. The
+   * message is already queued and durable, so the push is owed to the
+   * compaction's end instead (deliverAfterCompaction).
+   */
+  async function interruptForPush(sessionId: string, session: SessionState): Promise<{ interrupted: boolean }> {
+    if (isCompacting(session)) {
+      session.deliveryOwedAfterCompaction = true
+      return { interrupted: false }
+    }
+    await cancelSession(sessionId)
+    return { interrupted: true }
+  }
+
+  /**
    * Deliver everything held for an IDLE session as one turn of its own. True
    * when a turn was started: the caller must then leave the queue alone,
    * because it drains when this turn settles.
@@ -4598,7 +4729,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Back in front BEFORE the hold goes: letting go of it may be what
       // hands over, and what it hands over first is this batch.
       session.notifications = [...batch, ...(session.notifications ?? [])]
-      if (steer === 'declined') {
+      if (steer === 'declined' || steer === 'held') {
         releaseSteerHold(sessionId, session)
       }
       return
@@ -4631,6 +4762,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (
       options.shouldHoldDelivery?.() === true ||
       session.notificationSteer ||
+      isCompacting(session) ||
       !supportsMidTurnInput(session.selection)
     ) {
       return
@@ -4828,6 +4960,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       for (const session of store.sessions.values()) {
         const key = session.selection.sessionKey
         if (session.activeTurns > 0 && key) {
+          keys.add(key)
+        }
+      }
+      return [...keys]
+    },
+
+    // Session keys of every session whose harness reports a context compaction
+    // in progress, whoever started it — what a host shows as "compacting"
+    // where it only knows of the compactions it asked for itself.
+    compactingSessionKeys(): string[] {
+      const keys = new Set<string>()
+      for (const session of store.sessions.values()) {
+        const key = session.selection.sessionKey
+        if (key && isCompacting(session)) {
           keys.add(key)
         }
       }
@@ -5529,6 +5675,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
     },
 
+    // Read side of setConfigOption: the options this session's agent advertises,
+    // with their current values. Null for an unknown session; an empty list for
+    // an agent that advertises none.
+    sessionConfigOptions(sessionId: string): SessionConfigOption[] | null {
+      return store.sessions.get(sessionId)?.configOptions ?? null
+    },
+
     async setMode(sessionId: string, modeId: string): Promise<void> {
       const connection = await connectionForSession(sessionId)
       await connection.setSessionMode({ sessionId, modeId })
@@ -5873,10 +6026,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       session.queue ??= []
       session.activeTurns ??= 0
 
-      // Under a realtime cadence a steering-capable agent never queues: the
-      // prompt goes straight through and the live turn picks it up as
-      // streaming input, so there is nothing to batch and nothing worth
-      // interrupting. Every other cadence holds even on such an agent — the
+      // Under a realtime cadence a steering-capable agent never queues outside
+      // a compaction: the prompt goes straight through and the live turn picks
+      // it up as streaming input, so there is nothing to batch and nothing
+      // worth interrupting. Every other cadence holds even on such an agent — the
       // reader chose a boundary, and capability is not consent.
       const holding = session.activeTurns > 0 && !steersMidTurn(session)
       // Read once per call, next to the turn guard it modifies: while the host
@@ -5936,8 +6089,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           await drainQueue(sessionId)
           return { interrupted: false }
         }
-        await cancelSession(sessionId)
-        return { interrupted: true }
+        return interruptForPush(sessionId, session)
       }
 
       // `front` puts a message ahead of what is already held — corrective
@@ -6021,8 +6173,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         await drainQueue(sessionId)
         return { interrupted: false }
       }
-      await cancelSession(sessionId)
-      return { interrupted: true }
+      return interruptForPush(sessionId, session)
     },
 
     /**

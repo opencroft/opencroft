@@ -1,7 +1,7 @@
 // Retiring session state that no group-chat thread owns.
 //
 // Every key-addressed store -- the three settings rows, the durable queue, the
-// transcript and the attachments -- files a thread's state under its session
+// transcript, its search index and the attachments -- files a thread's state under its session
 // key, and deleting a thread retires that key everywhere. A key can still
 // outlive its thread: a delivery that resolved the row just before a delete
 // re-creates the session just after it, and a database edited outside the app
@@ -28,6 +28,7 @@ import {
   db,
   groupChatThread,
   groupChatThreadAlias,
+  transcriptMessageCursor,
 } from '@opencroft/db'
 import { like } from 'drizzle-orm'
 
@@ -52,7 +53,9 @@ export interface SessionKeyOwners {
 
 export type OrphanSweepReport = { refused: string } | { forgotten: StoredKey[]; aliasHeld: StoredKey[]; stored: number }
 
-async function distinctKeys(table: typeof agentQueueEntry | typeof agentSessionEvent | typeof chatAttachment) {
+async function distinctKeys(
+  table: typeof agentQueueEntry | typeof agentSessionEvent | typeof chatAttachment | typeof transcriptMessageCursor,
+) {
   const rows = await db
     .selectDistinct({ key: table.sessionKey })
     .from(table)
@@ -75,6 +78,8 @@ export async function storedGroupChatKeys(): Promise<Map<string, string[]>> {
   }
   add('queue', await distinctKeys(agentQueueEntry))
   add('transcript', await distinctKeys(agentSessionEvent))
+  // Every indexed session has a cursor, written with its message rows.
+  add('search index', await distinctKeys(transcriptMessageCursor))
   add('attachments', await distinctKeys(chatAttachment))
   return stored
 }

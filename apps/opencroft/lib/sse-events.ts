@@ -40,7 +40,8 @@ export interface DockerContainerSnapshot {
 
 // The session keys of the receiving person's own chat threads, by activity:
 // waiting on someone (pending), a turn running (active), background work
-// running (background), messages held for a later turn (queued), a live agent
+// running (background), messages held for a later turn (queued), a context
+// compaction in progress whoever started it (compacting), a live agent
 // process at all (alive — a superset of the others). Beside them, the context
 // each live session last reported, by key; a key with no entry has reported
 // none since it loaded. Always the whole picture, never a delta, so a missed
@@ -50,6 +51,7 @@ export interface SessionActivitySnapshot {
   active: string[]
   background: string[]
   queued: string[]
+  compacting: string[]
   alive: string[]
   usage: Record<string, LiveContextUsage>
 }

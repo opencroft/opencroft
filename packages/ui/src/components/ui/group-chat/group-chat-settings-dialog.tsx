@@ -39,9 +39,9 @@ export interface GroupChatSettingsDialogProps {
 //
 // Below the md breakpoint the shell's own narrow form applies: the section
 // list takes the whole width, choosing a section opens it, and Back returns to
-// the list. That Back lives in this dialog's header. The shell's own Back is
-// published to the page's title bar, which sits behind a dialog, so this
-// passes it no onClosed and draws its own.
+// the list. That Back lives in this dialog's header, beside the section's
+// name. The shell draws a Back of its own only when given onClosed, so this
+// passes none.
 export function GroupChatSettingsDialog({
   open,
   onOpenChange,

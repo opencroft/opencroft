@@ -96,7 +96,7 @@ interface AgentCommandBarHostProps {
 // concept, autoApprove/autoApproveLocked, not opencroft vocabulary). Module-
 // level so the reference is stable — it feeds the memoized bar.
 const APPROVAL_TITLES = {
-  yolo: 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=audit)',
+  yolo: 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=agents)',
   on: 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)',
   off: 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)',
 }

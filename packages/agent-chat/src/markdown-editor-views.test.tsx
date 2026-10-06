@@ -58,6 +58,359 @@ async function typeInto(input: HTMLInputElement, value: string) {
   })
 }
 
+/** The mounted editor, which TipTap hangs on its own element. */
+function mountedEditor(): import('@tiptap/core').Editor {
+  const element = container.querySelector('.ProseMirror') as
+    | (HTMLElement & { editor?: import('@tiptap/core').Editor })
+    | null
+  assert.ok(element?.editor, 'the editor is mounted')
+  return element.editor
+}
+
+function iconPosition(editor: import('@tiptap/core').Editor): number {
+  let found = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'markdownIcon') {
+      found = pos
+    }
+  })
+  assert.ok(found >= 0, 'the document holds an icon')
+  return found
+}
+
+function pickerSearch(): HTMLInputElement | null {
+  return document.querySelector<HTMLInputElement>('input[aria-label="Search icons"]')
+}
+
+async function press(target: Element, key: string) {
+  await act(async () => {
+    target.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }))
+  })
+}
+
+/** Click or tap the icon itself, the one way its picker opens on an icon already there. */
+async function openPicker(): Promise<HTMLInputElement> {
+  const icon = document.querySelector('[aria-label^="Icon: "]')
+  assert.ok(icon, 'the icon is drawn')
+  await pressOn(icon)
+  await nextFrame()
+  const search = pickerSearch()
+  assert.ok(search, 'a click on the icon opens its picker')
+  return search
+}
+
+test('the caret steps over an icon in one move, like a character, and never opens its picker', async () => {
+  await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  const pos = iconPosition(editor)
+  await act(async () => {
+    editor.chain().focus().setTextSelection(pos).run()
+  })
+  await nextFrame()
+  await press(editor.view.dom, 'ArrowRight')
+  assert.deepEqual([editor.state.selection.from, editor.state.selection.to], [pos + 1, pos + 1], 'past it')
+  assert.equal(pickerSearch(), null, 'no picker')
+  await press(editor.view.dom, 'ArrowLeft')
+  assert.deepEqual([editor.state.selection.from, editor.state.selection.to], [pos, pos], 'back before it')
+  assert.equal(pickerSearch(), null, 'still no picker')
+})
+
+// The browser moves by word and paints a selection by the text it finds; the
+// icon's drawing is neither, so the icon carries text of its own for both.
+test('an icon carries text for the browser: an emoji, where moving by word stops, then a blank for a selection to paint', async () => {
+  await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  const icon = editor.view.nodeDOM(iconPosition(editor)) as HTMLElement
+  assert.match(icon.textContent ?? '', /^\p{Extended_Pictographic}\s$/u)
+})
+
+test('a caret the browser leaves inside an icon reads as before it at the icon’s start, and after it anywhere else', async () => {
+  await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  const pos = iconPosition(editor)
+  await act(async () => {
+    editor.commands.focus()
+  })
+  await nextFrame()
+  const icon = editor.view.nodeDOM(pos) as HTMLElement
+  const walker = document.createTreeWalker(icon, window.NodeFilter.SHOW_TEXT)
+  walker.nextNode()
+  const emoji = walker.currentNode as Text
+  walker.nextNode()
+  const blank = walker.currentNode as Text
+  // Where Ctrl+arrow leaves the browser's caret: the edges of the icon's emoji.
+  const read = async (node: Text, offset: number) => {
+    await act(async () => {
+      window.getSelection()?.collapse(node, offset)
+      document.dispatchEvent(new window.Event('selectionchange'))
+    })
+    return editor.state.selection.head
+  }
+  assert.equal(await read(emoji, 0), pos, 'its start is before the icon')
+  assert.equal(await read(emoji, emoji.length), pos + 1, 'past the emoji is after it')
+  assert.equal(await read(blank, 1), pos + 1, 'its end is after it')
+  assert.equal(await read(emoji, 0), pos, 'and back before it')
+})
+
+test('Backspace just after an icon, or Delete just before it, removes the whole icon in one press', async () => {
+  const changes = await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  const pos = iconPosition(editor)
+  await act(async () => {
+    editor
+      .chain()
+      .focus()
+      .setTextSelection(pos + 1)
+      .run()
+  })
+  await press(editor.view.dom, 'Backspace')
+  assert.equal(changes.at(-1), 'Before  after')
+  assert.deepEqual([editor.state.selection.from, editor.state.selection.to], [pos, pos])
+
+  const changesAgain = await mount('Before :icon[smile] after')
+  const again = mountedEditor()
+  await act(async () => {
+    again.chain().focus().setTextSelection(iconPosition(again)).run()
+  })
+  await press(again.view.dom, 'Delete')
+  assert.equal(changesAgain.at(-1), 'Before  after')
+})
+
+test('a click on an icon opens its picker; a choice in it keeps it open; Escape returns typing to just after it', async () => {
+  const changes = await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  const pos = iconPosition(editor)
+  const search = await openPicker()
+  assert.equal(document.activeElement, search, 'typing goes into the search')
+
+  await typeInto(search, 'rocket')
+  await press(search, 'Enter')
+  assert.equal(changes.at(-1), 'Before :icon[rocket] after')
+  assert.ok(pickerSearch(), 'the picker is still open for a colour')
+
+  await press(pickerSearch() as HTMLInputElement, 'Escape')
+  await nextFrame()
+  assert.equal(pickerSearch(), null, 'Escape closes the picker')
+  assert.deepEqual(
+    [editor.state.selection.from, editor.state.selection.to],
+    [pos + 1, pos + 1],
+    'the caret is just after the icon',
+  )
+  assert.ok(
+    editor.view.dom.contains(document.activeElement),
+    'keyboard focus is back in the text, so typing lands there',
+  )
+})
+
+test('an icon inserted from the toolbar has its search focused once the toolbar has let go', async () => {
+  const changes = await mount('A sentence with ')
+  const editor = mountedEditor()
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+  })
+  const blocks = container.querySelector<HTMLButtonElement>('button[title="Insert a block"]')
+  assert.ok(blocks, 'the toolbar has its Blocks menu')
+  await act(async () => {
+    blocks.focus()
+  })
+  await pressOn(blocks, FULL_CLICK)
+  await nextFrame()
+  const icon = [...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent === 'Icon')
+  assert.ok(icon, 'the Blocks menu offers Icon')
+  await pressOn(icon, FULL_CLICK)
+  // TipTap focuses an unfocused editor a frame later; the picker has to still
+  // hold focus after that.
+  await nextFrame()
+  await nextFrame()
+  const search = pickerSearch()
+  assert.ok(search, 'the inserted icon has its picker open')
+  assert.equal(document.activeElement, search, 'typing goes into the search')
+  assert.match(changes.at(-1) ?? '', /:icon\[smile\]/)
+})
+
+test('an icon inserted where the editor already has focus, as the / menu does, opens with its search focused', async () => {
+  const changes = await mount('A sentence with ')
+  const editor = mountedEditor()
+  await act(async () => {
+    editor
+      .chain()
+      .focus()
+      .setTextSelection(editor.state.doc.content.size - 1)
+      .run()
+  })
+  await nextFrame()
+  const { insertIcon } = await import('./markdown-editor-icon')
+  await act(async () => {
+    insertIcon(editor.chain().focus()).run()
+  })
+  await nextFrame()
+  const search = pickerSearch()
+  assert.ok(search, 'the inserted icon has its picker open')
+  assert.equal(document.activeElement, search)
+  assert.match(changes.at(-1) ?? '', /:icon\[smile\]/)
+})
+
+test('an open picker leaves the icon unselected, so text typed beside it never replaces it', async () => {
+  const changes = await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  const pos = iconPosition(editor)
+  await openPicker()
+  assert.equal(editor.state.selection.to - editor.state.selection.from, 0, 'a caret, not the icon selected')
+  await act(async () => {
+    editor
+      .chain()
+      .focus()
+      .setTextSelection(pos + 1)
+      .insertContent('x')
+      .run()
+  })
+  assert.equal(changes.at(-1), 'Before :icon[smile]x after')
+})
+
+test('the palette offers every hue, and every shade of the hue in hand, writing the hue and shade back', async () => {
+  const changes = await mount('Before :icon[smile] after')
+  await openPicker()
+  const hues = [...document.querySelectorAll('[role="group"][aria-label="Palette"] button')]
+  assert.equal(hues.length, 22, 'every hue of the palette')
+  const sky = hues.find((hue) => hue.getAttribute('aria-label') === 'Sky')
+  assert.ok(sky)
+  await act(async () => {
+    ;(sky as HTMLButtonElement).click()
+  })
+  assert.equal(changes.at(-1), 'Before :icon[smile]{color=sky-500} after', 'a hue starts at its 500')
+  const shades = [...document.querySelectorAll('[role="radiogroup"][aria-label="Sky shade"] [role="radio"]')]
+  assert.deepEqual(
+    shades.map((shade) => shade.getAttribute('aria-label')),
+    ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950'].map((shade) => `Sky ${shade}`),
+  )
+  await act(async () => {
+    ;(shades[3] as HTMLButtonElement).click()
+  })
+  assert.equal(changes.at(-1), 'Before :icon[smile]{color=sky-300} after')
+  assert.match(
+    document.querySelector('[aria-label^="Icon: "] svg')?.getAttribute('class') ?? '',
+    /text-sky-300/,
+    'the icon in the text takes the shade',
+  )
+})
+
+/** The icons on the picker's grid, in order, with the one marked chosen. */
+function pickerGrid(): { names: string[]; chosen: string[] } {
+  const radios = [...document.querySelectorAll('[role="radiogroup"][aria-label="Icon"] [role="radio"]')]
+  return {
+    names: radios.map((radio) => radio.getAttribute('aria-label') ?? ''),
+    chosen: radios
+      .filter((radio) => radio.getAttribute('aria-checked') === 'true')
+      .map((radio) => radio.getAttribute('aria-label') ?? ''),
+  }
+}
+
+test('reopening an icon shows it first on the grid, marked chosen, and a new choice stays where it was clicked', async () => {
+  const changes = await mount('Before :icon[smile] after')
+  await openPicker()
+  const opened = pickerGrid()
+  assert.equal(opened.names[0], 'smile', 'the current icon leads the grid')
+  assert.deepEqual(opened.chosen, ['smile'])
+  assert.equal(opened.names.filter((name) => name === 'smile').length, 1, 'and is not on it twice')
+
+  const other = document.querySelector<HTMLButtonElement>(`[role="radio"][aria-label="${opened.names[1]}"]`)
+  assert.ok(other)
+  await act(async () => {
+    other.click()
+  })
+  assert.equal(changes.at(-1), `Before :icon[${opened.names[1]}] after`)
+  const after = pickerGrid()
+  assert.deepEqual(after.names, opened.names, 'the grid does not reorder under the pointer')
+  assert.deepEqual(after.chosen, [opened.names[1]])
+})
+
+/**
+ * A mouse press on `target`, as the popover hears it: it closes on the click
+ * of a press that also started outside it. No `mousedown` by default:
+ * ProseMirror would place the caret from it, which needs a layout jsdom does
+ * not have.
+ */
+const POINTER_PRESS = ['pointerdown', 'pointerup', 'click']
+
+/** Every event of a click, which the toolbar's menu opens and acts on; for controls outside the text. */
+const FULL_CLICK = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']
+
+async function pressOn(target: Element, events = POINTER_PRESS) {
+  await act(async () => {
+    for (const type of events) {
+      const init = { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }
+      target.dispatchEvent(
+        type.startsWith('pointer') && window.PointerEvent
+          ? new window.PointerEvent(type, init)
+          : new window.MouseEvent(type, init),
+      )
+    }
+  })
+}
+
+/** Let a focus TipTap defers to the next frame happen, if one was asked for. */
+async function nextFrame() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  })
+}
+
+test('a press in the text closes the picker and leaves the caret to ProseMirror, where the press put it', async () => {
+  await mount('Some text\n\n:icon[smile]')
+  const editor = mountedEditor()
+  await openPicker()
+  const paragraph = editor.view.dom.querySelector('p')
+  assert.ok(paragraph, 'the text line above the icon')
+  // In a browser ProseMirror places the caret from the press itself, and the
+  // popover closes on the click after it. jsdom has no layout to place a
+  // caret from, so the caret is put where the press would have, and what is
+  // left to see is that closing the picker does not move it.
+  const clicked = 3
+  await act(async () => {
+    editor.commands.setTextSelection(clicked)
+  })
+  await pressOn(paragraph)
+  await nextFrame()
+  assert.equal(pickerSearch(), null, 'the picker is closed')
+  assert.deepEqual([editor.state.selection.from, editor.state.selection.to], [clicked, clicked])
+})
+
+test('a press outside the editor closes the picker without taking focus back into the text', async () => {
+  await mount('Some text\n\n:icon[smile]')
+  const editor = mountedEditor()
+  const outside = document.createElement('button')
+  document.body.append(outside)
+  try {
+    await openPicker()
+    const before = [editor.state.selection.from, editor.state.selection.to]
+    await act(async () => {
+      outside.focus()
+    })
+    await pressOn(outside)
+    await nextFrame()
+    assert.equal(pickerSearch(), null, 'the picker is closed')
+    assert.deepEqual([editor.state.selection.from, editor.state.selection.to], before, 'the caret is not moved')
+    assert.equal(document.activeElement, outside, 'focus stays where the press took it')
+  } finally {
+    outside.remove()
+  }
+})
+
+test('Remove in the picker deletes the icon and leaves keyboard focus in the text', async () => {
+  const changes = await mount('Before :icon[smile] after')
+  const editor = mountedEditor()
+  await openPicker()
+  const remove = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Remove icon')
+  assert.ok(remove, 'the open picker offers Remove')
+  await act(async () => {
+    remove.click()
+  })
+  await nextFrame()
+  assert.equal(changes.at(-1), 'Before  after')
+  assert.equal(pickerSearch(), null, 'the picker is gone with its icon')
+  assert.ok(editor.view.dom.contains(document.activeElement), 'keyboard focus is in the text')
+})
+
 test('the toolbar ends with the Blocks menu, after the buttons it already had', async () => {
   await mount('text')
   const buttons = [...container.querySelectorAll('button')]

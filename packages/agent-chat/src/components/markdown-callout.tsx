@@ -12,7 +12,9 @@ import { Button } from 'ui/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/components/ui/dropdown-menu'
 import { cn } from 'cn'
 
-export type MarkdownCalloutKind = 'note' | 'tip' | 'important' | 'warning' | 'caution'
+import { MARKDOWN_CALLOUT_KINDS, type MarkdownCalloutKind } from './markdown-callout-kinds'
+
+export { MARKDOWN_CALLOUT_KINDS, type MarkdownCalloutKind }
 
 interface Tone {
   icon: LucideIcon
@@ -55,9 +57,6 @@ const TONES: Record<MarkdownCalloutKind, Tone> = {
     accent: 'text-destructive',
   },
 }
-
-/** Every kind, in the order a picker offers them. */
-export const MARKDOWN_CALLOUT_KINDS = Object.keys(TONES) as MarkdownCalloutKind[]
 
 /** A kind's own name and icon, for anything that offers the kinds as a choice. */
 export function markdownCalloutKind(kind: MarkdownCalloutKind): { title: string; icon: LucideIcon } {

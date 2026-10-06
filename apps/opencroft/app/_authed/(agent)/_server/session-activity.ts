@@ -28,6 +28,7 @@ export function sessionActivitySets(): SessionActivitySets {
         .listSessions()
         .flatMap((meta) => (meta.sessionKey && (meta.queuedMessages ?? 0) > 0 ? [meta.sessionKey] : [])),
     ),
+    compacting: new Set(agentClient.compactingSessionKeys()),
     alive: new Set(agentClient.aliveSessionKeys()),
   }
 }
@@ -61,6 +62,7 @@ function activityPicture(includes: (sessionKey: string) => boolean): SessionActi
     active: within(sets.active),
     background: within(sets.background),
     queued: within(sets.queued),
+    compacting: within(sets.compacting),
     alive: within(sets.alive),
     usage: Object.fromEntries(usage),
   }

@@ -4,8 +4,6 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import {
-  Extension,
-  Node,
   NodeViewContent,
   type NodeViewProps,
   NodeViewWrapper,
@@ -14,63 +12,22 @@ import {
 } from '@tiptap/react'
 
 import { MarkdownCallout, type MarkdownCalloutKind } from './components/markdown-callout'
-import { isCalloutKind, SPOILER_DIRECTIVE, TAB_DIRECTIVE, TABS_DIRECTIVE } from './components/markdown-directives'
 import { MarkdownSpoiler } from './components/markdown-spoiler'
 import { MarkdownTabs } from './components/markdown-tabs'
 import {
-  DIRECTIVE_DOM,
+  CalloutNode as CalloutSchemaNode,
   DIRECTIVE_NODES,
-  type DirectiveSerializerState,
-  formatDirectiveInfo,
-  installDirectiveSyntax,
-  writeDirective,
+  SpoilerNode as SpoilerSchemaNode,
+  TabsNode as TabsSchemaNode,
 } from './markdown-editor-directives'
 
 /*
- * The documentation blocks as editor content: a callout, a spoiler, tabs of
- * tabs, and a node for any directive the editor does not know, which keeps it
- * exactly as it was read so that opening and saving a page never rewrites or
- * loses a block added after this editor was written.
- *
- * Each node draws itself through the same component `Markdown` renders the
- * block with, in that component's editable form, so a block looks the same
- * being written as being read.
+ * The documentation blocks as the editor draws them. Their schema and markdown
+ * are `./markdown-editor-directives`; each node here adds the view that draws
+ * it through the same component `Markdown` renders the block with, in that
+ * component's editable form, so a block looks the same being written as being
+ * read. A tab and an unknown directive draw as their plain HTML.
  */
-
-function directiveName(element: HTMLElement): string {
-  return element.getAttribute(DIRECTIVE_DOM.name) ?? ''
-}
-
-function isTabsElement(element: Element | null): boolean {
-  if (!(element instanceof HTMLElement) || directiveName(element) !== TABS_DIRECTIVE) {
-    return false
-  }
-  const children = [...element.children]
-  return (
-    children.length > 0 &&
-    children.every((child) => child instanceof HTMLElement && directiveName(child) === TAB_DIRECTIVE)
-  )
-}
-
-/** The heading attribute every known block keeps, read from and written to the parsed fence. */
-function headingAttribute() {
-  return {
-    default: '',
-    parseHTML: (element: HTMLElement) => element.getAttribute(DIRECTIVE_DOM.heading) ?? '',
-    renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.heading]: attributes.heading }),
-  }
-}
-
-function markdownStorage(info: (node: ProseMirrorNode) => string) {
-  return {
-    markdown: {
-      serialize(state: DirectiveSerializerState, node: ProseMirrorNode) {
-        writeDirective(state, node, info(node))
-      },
-      parse: {},
-    },
-  }
-}
 
 /* ─── Callout ─────────────────────────────────────────────────────────── */
 
@@ -89,37 +46,9 @@ function CalloutView({ node, updateAttributes }: NodeViewProps) {
   )
 }
 
-const CalloutNode = Node.create({
-  name: DIRECTIVE_NODES.callout,
-  group: 'block',
-  content: 'block+',
-  defining: true,
-  addAttributes() {
-    return {
-      kind: {
-        default: 'note',
-        parseHTML: (element: HTMLElement) => directiveName(element),
-        renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.name]: attributes.kind }),
-      },
-      heading: headingAttribute(),
-    }
-  },
-  parseHTML() {
-    return [
-      {
-        tag: `div[${DIRECTIVE_DOM.name}]`,
-        getAttrs: (element) => (isCalloutKind(directiveName(element)) ? null : false),
-      },
-    ]
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ['div', HTMLAttributes, 0]
-  },
+const CalloutNode = CalloutSchemaNode.extend({
   addNodeView() {
     return ReactNodeViewRenderer(CalloutView)
-  },
-  addStorage() {
-    return markdownStorage((node) => formatDirectiveInfo(node.attrs.kind, node.attrs.heading))
   },
 })
 
@@ -138,30 +67,9 @@ function SpoilerView({ node, updateAttributes }: NodeViewProps) {
   )
 }
 
-const SpoilerNode = Node.create({
-  name: DIRECTIVE_NODES.spoiler,
-  group: 'block',
-  content: 'block+',
-  defining: true,
-  addAttributes() {
-    return { heading: headingAttribute() }
-  },
-  parseHTML() {
-    return [
-      {
-        tag: `div[${DIRECTIVE_DOM.name}]`,
-        getAttrs: (element) => (directiveName(element) === SPOILER_DIRECTIVE ? null : false),
-      },
-    ]
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ['div', { ...HTMLAttributes, [DIRECTIVE_DOM.name]: SPOILER_DIRECTIVE }, 0]
-  },
+const SpoilerNode = SpoilerSchemaNode.extend({
   addNodeView() {
     return ReactNodeViewRenderer(SpoilerView)
-  },
-  addStorage() {
-    return markdownStorage((node) => formatDirectiveInfo(SPOILER_DIRECTIVE, node.attrs.heading))
   },
 })
 
@@ -370,110 +278,14 @@ function TabsView({ node, editor, getPos }: NodeViewProps) {
   )
 }
 
-const TabsNode = Node.create({
-  name: DIRECTIVE_NODES.tabs,
-  group: 'block',
-  content: `${DIRECTIVE_NODES.tab}+`,
-  defining: true,
-  parseHTML() {
-    return [{ tag: `div[${DIRECTIVE_DOM.name}]`, getAttrs: (element) => (isTabsElement(element) ? null : false) }]
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ['div', { ...HTMLAttributes, [DIRECTIVE_DOM.name]: TABS_DIRECTIVE }, 0]
-  },
+const TabsNode = TabsSchemaNode.extend({
   addNodeView() {
     return ReactNodeViewRenderer(TabsView)
   },
   addProseMirrorPlugins() {
     return [activeTabsPlugin]
   },
-  addStorage() {
-    return markdownStorage(() => TABS_DIRECTIVE)
-  },
 })
 
-const TabNode = Node.create({
-  name: DIRECTIVE_NODES.tab,
-  content: 'block+',
-  defining: true,
-  addAttributes() {
-    return { heading: headingAttribute() }
-  },
-  parseHTML() {
-    return [
-      {
-        tag: `div[${DIRECTIVE_DOM.name}]`,
-        getAttrs: (element) =>
-          directiveName(element) === TAB_DIRECTIVE && isTabsElement(element.parentElement) ? null : false,
-      },
-    ]
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ['div', { ...HTMLAttributes, [DIRECTIVE_DOM.name]: TAB_DIRECTIVE }, 0]
-  },
-  addStorage() {
-    return markdownStorage((node) => formatDirectiveInfo(TAB_DIRECTIVE, node.attrs.heading))
-  },
-})
-
-/* ─── Any other directive ─────────────────────────────────────────────── */
-
-const UnknownDirectiveNode = Node.create({
-  name: DIRECTIVE_NODES.unknown,
-  group: 'block',
-  content: 'block+',
-  defining: true,
-  addAttributes() {
-    return {
-      name: {
-        default: '',
-        parseHTML: (element: HTMLElement) => directiveName(element),
-        renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.name]: attributes.name }),
-      },
-      info: {
-        default: '',
-        parseHTML: (element: HTMLElement) => element.getAttribute(DIRECTIVE_DOM.info) ?? '',
-        renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.info]: attributes.info }),
-      },
-    }
-  },
-  parseHTML() {
-    // Below every known block's rule, so it only takes what none of them claimed.
-    return [{ tag: `div[${DIRECTIVE_DOM.name}]`, priority: 40 }]
-  },
-  renderHTML({ HTMLAttributes }) {
-    // Its content is shown as plain content, in a dashed box headed by the
-    // directive's name, so the author can see the block is there and which
-    // one it is without the editor pretending to know what it means.
-    return [
-      'div',
-      {
-        ...HTMLAttributes,
-        class:
-          'my-2 rounded-md border border-dashed px-3 py-2 before:mb-1 before:block before:font-mono before:text-xs before:text-muted-foreground before:content-[attr(data-md-directive)]',
-      },
-      0,
-    ]
-  },
-  addStorage() {
-    return markdownStorage((node) => `${node.attrs.name}${node.attrs.info}`)
-  },
-})
-
-/** Registers the directive syntax with the editor's markdown parser. */
-const DirectiveSyntax = Extension.create({
-  name: 'markdownDirectiveSyntax',
-  addStorage() {
-    return { markdown: { parse: { setup: installDirectiveSyntax } } }
-  },
-})
-
-/** Everything the editor needs to read, show, edit and write the documentation blocks. */
-export const directiveBlockExtensions = [
-  DirectiveSyntax,
-  CalloutNode,
-  SpoilerNode,
-  TabsNode,
-  TabNode,
-  UnknownDirectiveNode,
-]
+/** The documentation blocks the editor draws with views of their own. */
+export const directiveBlockViews = [CalloutNode, SpoilerNode, TabsNode]

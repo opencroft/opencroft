@@ -1,6 +1,6 @@
 'use client'
 
-import { AgentChat } from 'agent-chat/agent-chat'
+import { AgentChat, type AgentChatReveal } from 'agent-chat/agent-chat'
 import type { AgentComposerHandle } from 'agent-chat/agent-command-bar'
 import { Approvals } from 'agent-chat/approvals'
 import type { PlanEntry } from 'agent-chat/components/agent-plan-control'
@@ -15,8 +15,8 @@ import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
 import { ArchivedThreadNotice } from 'ui/group-chat/archived-thread-notice'
 import type { ThreadWork, ThreadWorkItem } from 'ui/group-chat/thread-work-control'
 import { Flex } from 'ui/layout/flex'
+import { ScrollArea } from 'ui/layout/scroll-area'
 import { StickySection } from 'ui/layouts/sticky-section'
-import { ScrollArea } from 'ui/scroll-area'
 
 import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
@@ -29,6 +29,8 @@ import type {
 } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
+import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { locateRecordedTurnLocal } from '@/app/_authed/(agent)/_server/acp'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { openedOrThrow } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
@@ -39,6 +41,7 @@ import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
+  attachGroupChatThreadSession,
   clearGroupChatThread,
   compactGroupChatThread,
   forkGroupChatThreadAt,
@@ -102,7 +105,16 @@ interface GroupChatThreadChatProps {
    *  arrangement, and a second one inside the surface read as two. Read
    *  through a ref, so an inline callback never re-arms the effect. */
   onHeaderChange?: (controls: ThreadHeaderControls) => void
+  /** Open the conversation at the turn in this position (what a message
+   *  search hit names) instead of at its end. Once per thread and position:
+   *  the same value arriving again does not scroll the reader back. */
+  revealPosition?: number
 }
+
+const TURN_GONE_MESSAGE = 'That message is no longer in this conversation.'
+// Search keeps a thread's whole history; the conversation keeps a bounded
+// tail of it, so a hit can name a message the thread can no longer show.
+const TURN_OLDER_MESSAGE = 'That message is older than the history kept for this conversation.'
 
 // The two halves of the selection in the composer: the quotation that rides in
 // the attachments row above the input, and the toggle that stands beside the
@@ -134,6 +146,7 @@ export function GroupChatThreadChat({
   onThreadForked,
   renderFrame,
   onHeaderChange,
+  revealPosition,
 }: GroupChatThreadChatProps) {
   // Memoised on the two values that identify the session, not rebuilt each
   // render: `useAcpSession` keys its effects on this object, so a fresh
@@ -242,10 +255,75 @@ export function GroupChatThreadChat({
   // fail: it creates a fresh, empty session under an address nothing else
   // resolves, and the reader sees an empty chat where their conversation was.
   // A thread's id never moves, so the server reads whatever key it has now.
+  //
+  // The session id it answers with is kept for the reveal below: the hook does
+  // not hand its id out, and locating a turn is addressed by session id. Tagged
+  // with the thread so an id from the thread just left is never used.
+  const [openedSession, setOpenedSession] = useState<{ threadId: string; sessionId: string } | null>(null)
   const openTransport = useCallback<OpenTransport>(
-    async () => openedOrThrow(await openGroupChatThreadSession({ data: thread.id })),
+    async (_source, { wake }) => {
+      const opened = wake
+        ? openedOrThrow(await openGroupChatThreadSession({ data: thread.id }))
+        : await attachGroupChatThreadSession({ data: thread.id })
+      if (opened) {
+        setOpenedSession({ threadId: thread.id, sessionId: opened.sessionId })
+      }
+      return opened
+    },
     [thread.id],
   )
+
+  // Opening at a turn: asked once the session is open, because the turn is
+  // looked up in the session's recorded log. The answer is a log index, which
+  // is what the blocks' ids are made of (see build-blocks), so it becomes the
+  // two ids that turn can render as. `reveal` is state so AgentChat sees one
+  // request object, not a new one per render. A turn the log no longer holds
+  // -- the thread was cleared or rewritten since the search -- is told to the
+  // reader rather than left as a thread that silently opened at the end.
+  const [reveal, setReveal] = useState<AgentChatReveal | null>(null)
+  const revealAskedRef = useRef<string | null>(null)
+  const openedSessionId = openedSession?.threadId === thread.id ? openedSession.sessionId : null
+  useEffect(() => {
+    if (revealPosition === undefined) {
+      revealAskedRef.current = null
+      setReveal(null)
+      return
+    }
+    if (!openedSessionId) {
+      return
+    }
+    const asked = `${thread.id}\n${revealPosition}`
+    if (revealAskedRef.current === asked) {
+      return
+    }
+    revealAskedRef.current = asked
+    setReveal(null)
+    locateRecordedTurnLocal({ data: { sessionId: openedSessionId, position: revealPosition } })
+      .then((location) => {
+        if (revealAskedRef.current !== asked) {
+          return
+        }
+        if (location.kind !== 'found') {
+          toast(location.kind === 'older' ? TURN_OLDER_MESSAGE : TURN_GONE_MESSAGE)
+          return
+        }
+        const { index } = location
+        setReveal({
+          blockIds: [`u:${index}`, `t:${index}`],
+          onSettled: (found) => {
+            if (!found) {
+              toast(TURN_GONE_MESSAGE)
+            }
+          },
+        })
+      })
+      .catch((err) => {
+        console.error('Failed to locate the message in the thread', thread.id, err)
+        if (revealAskedRef.current === asked) {
+          toast('That message could not be located.')
+        }
+      })
+  }, [thread.id, revealPosition, openedSessionId])
 
   // Fork into a NEW thread: the server branches this thread's session before
   // the chosen turn, creates the destination thread and stages the forked
@@ -418,7 +496,15 @@ export function GroupChatThreadChat({
     },
     [],
   )
-  const compact = useCompactControl(thread.id, fetchCompactStatus, requestCompact)
+  const compactJob = useCompactControl(thread.id, fetchCompactStatus, requestCompact)
+  // The job knows only the compactions this surface asked for. The engine
+  // reports every one in progress, the harness's automatic ones and a typed
+  // `/compact` included, and the ring shows those as compacting too.
+  const harnessCompacting = useSessionActivity().compacting.has(thread.sessionKey)
+  const compact = useMemo(
+    () => (harnessCompacting && !compactJob.compacting ? { ...compactJob, compacting: true } : compactJob),
+    [compactJob, harnessCompacting],
+  )
   // The membership-checked server call above tears the session down, but
   // useAcpSession -- still holding the old sessionId, EventSource and
   // rendered messages -- is never told: without the second step below, the
@@ -534,6 +620,7 @@ export function GroupChatThreadChat({
         onRemoveUnread={acp.removeQueued}
         onDeliverUnread={acp.deliverQueue}
         composerRef={composerRef}
+        reveal={reveal}
         footerExtra={
           <>
             {/* In the footer so it stands under an empty chat and under a
@@ -557,22 +644,19 @@ export function GroupChatThreadChat({
     return <>{renderFrame({ conversation, composer, ...headerControls })}</>
   }
   // The default (embedded) frame: the same scroll-and-pin arrangement the
-  // kit's thread framing keeps, minus its chrome. The scroll area's viewport
-  // renders its children directly, so the wrapper inside it is the filling
-  // flex column — without it a short conversation top-anchors and the sticky
-  // composer has nothing to pin against; see the kit framing's own note on
-  // this arrangement.
+  // kit's thread framing keeps, minus its chrome. `min-h-full` makes the scroll
+  // area's content column fill the viewport — without it a short conversation
+  // top-anchors and the sticky composer has nothing to pin against; see the kit
+  // framing's own note on this arrangement.
   return (
     <div className='flex h-full min-h-0 flex-col'>
-      <ScrollArea className='min-h-0 flex-1'>
-        <div className='flex min-h-full flex-col'>
-          <Flex expanded justify='end'>
-            {conversation}
-          </Flex>
-          <StickySection side='bottom' fade>
-            <CommandBarFrame>{composer}</CommandBarFrame>
-          </StickySection>
-        </div>
+      <ScrollArea className='min-h-0 flex-1' innerClassName='min-h-full'>
+        <Flex expanded justify='end'>
+          {conversation}
+        </Flex>
+        <StickySection side='bottom' fade>
+          <CommandBarFrame>{composer}</CommandBarFrame>
+        </StickySection>
       </ScrollArea>
     </div>
   )

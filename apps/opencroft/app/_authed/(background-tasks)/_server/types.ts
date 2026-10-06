@@ -148,7 +148,14 @@ export interface BackgroundTaskService {
   listForOwner(owner: BackgroundTaskOwner): Promise<BackgroundTaskRecord[]>
   /** Every task still running, across the instance. */
   listRunning(): Promise<BackgroundTaskRecord[]>
-  cancel(taskId: string): Promise<CancelOutcome>
+  /**
+   * Stop a task. `by` is who asked. When it is the session the task would
+   * tell, the ending this cancel records counts as told: the caller reads it
+   * in its own reply, and no notification follows. Anyone else — another
+   * session, the chat's stop, a caller without a session — leaves the owner
+   * to be told as for any other ending.
+   */
+  cancel(taskId: string, by?: BackgroundTaskOwner): Promise<CancelOutcome>
   /**
    * Keys of sessions with a task still running. Synchronous because it is
    * read on hot paths — the session status every chat list derives, and the

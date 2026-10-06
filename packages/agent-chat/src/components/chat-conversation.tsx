@@ -636,16 +636,25 @@ function useConversationScroll(sessionKey: string, blocks: readonly Block[]) {
     return () => observer.disconnect()
   }, [applyDecision, armQuiescence])
 
+  // The session changing is a cause, recorded here and acted on by the effect
+  // below, which is declared after it so both run on the same commit in that
+  // order. Recorded against the key last seen, not on every run: React may
+  // run an effect again with nothing changed (StrictMode does, on every
+  // mount), and a second "session changed" would land at the end again --
+  // over a turn a reveal had just brought into view in the same commit.
+  const seenSessionKeyRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (seenSessionKeyRef.current !== sessionKey) {
+      seenSessionKeyRef.current = sessionKey
+      causeRef.current = 'session-changed'
+    }
+  }, [sessionKey])
+
   // A suppression has to be the LAST comment line before the effect it covers.
   // Sitting inside the body -- above the dependency line rather than above the
   // hook call -- detaches it from the node, and it stops applying without
-  // saying so. Both suppressions in this file were written that way and were
-  // inert from the day they were added.
-  // biome-ignore lint/correctness/useExhaustiveDependencies(sessionKey): the session changing IS the cause being recorded, and it must be declared before the effect below that acts on causes runs on this same commit
-  useLayoutEffect(() => {
-    causeRef.current = 'session-changed'
-  }, [sessionKey])
-
+  // saying so.
+  //
   // Every commit that changed the content -- keyed on the blocks ARRAY, not on
   // a count of it. A page landing mid-turn merges into an existing block and
   // adds neither a block nor a message, so a count would skip the very commit
@@ -655,8 +664,42 @@ function useConversationScroll(sessionKey: string, blocks: readonly Block[]) {
     applyDecision()
   }, [blocks, applyDecision])
 
-  return { rootRef, holdAcrossLoadOlder }
+  // Bring a block's turn to the top of the viewport. Measured from the turn's
+  // SECTION, never from the block: a user message is sticky, so its box is
+  // wherever it is currently pinned, not where its turn begins.
+  const revealBlock = useCallback(
+    (id: string) => {
+      const root = viewport()
+      const block = root?.querySelector(`[${BLOCK_ID_ATTR}="${id}"]`)
+      if (!root || !block) {
+        return false
+      }
+      const section = block.closest(`[${TURN_SECTION_ATTR}]`) ?? block
+      // Whatever was in progress is superseded: a held prepend position and a
+      // landing at the end both belong to where the reader was before.
+      endHold()
+      causeRef.current = 'none'
+      const top = contentTop(section.getBoundingClientRect().top, root.getBoundingClientRect().top, root.scrollTop)
+      runProgrammatic(() => {
+        root.scrollBy(0, top - root.scrollTop)
+      })
+      // Read back rather than assumed: a turn near the end cannot reach the
+      // top, and a reader left at the end should go on following it.
+      atBottomRef.current = isAtBottom({
+        scrollTop: root.scrollTop,
+        clientHeight: root.clientHeight,
+        scrollHeight: root.scrollHeight,
+      })
+      return true
+    },
+    [viewport, endHold, runProgrammatic],
+  )
+
+  return { rootRef, holdAcrossLoadOlder, revealBlock }
 }
+
+// Marks a turn's section, the box `revealBlock` measures.
+const TURN_SECTION_ATTR = 'data-turn-section'
 
 export interface ChatConversationHandle {
   // Hold the reader's position, run the given operation, and settle the hold
@@ -666,6 +709,10 @@ export interface ChatConversationHandle {
   // is the host's decision, but once it decides to, this is what keeps the
   // reader's position steady while it does.
   holdAcrossLoadOlder(operation: () => Promise<void> | undefined): void
+  // Scroll the turn holding the block with this id to the top of the view.
+  // False when no such block is rendered -- loading the history that holds it
+  // is the host's business, as it is for "load older".
+  revealBlock(id: string): boolean
 }
 
 export interface ChatConversationProps {
@@ -770,8 +817,8 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
   },
   ref,
 ) {
-  const { rootRef, holdAcrossLoadOlder } = useConversationScroll(sessionKey, blocks)
-  useImperativeHandle(ref, () => ({ holdAcrossLoadOlder }), [holdAcrossLoadOlder])
+  const { rootRef, holdAcrossLoadOlder, revealBlock } = useConversationScroll(sessionKey, blocks)
+  useImperativeHandle(ref, () => ({ holdAcrossLoadOlder, revealBlock }), [holdAcrossLoadOlder, revealBlock])
 
   const sections = useMemo(() => groupIntoTurnSections(blocks), [blocks])
   const detailsCollapsedRef = useRef(!defaultExpanded)
@@ -824,7 +871,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
             // non-null to say what this local already knows.
             const user = section.user
             return (
-            <Flex key={section.id} className='w-full min-w-0 gap-3'>
+            <Flex key={section.id} className='w-full min-w-0 gap-3' {...{ [TURN_SECTION_ATTR]: '' }}>
               {user ? (
                 <ChatUserMessage
                   sticky

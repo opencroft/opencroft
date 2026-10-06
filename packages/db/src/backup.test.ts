@@ -12,13 +12,14 @@ import './test-env'
 import assert from 'node:assert/strict'
 import test, { after, before, beforeEach } from 'node:test'
 
-import { getTableName, is } from 'drizzle-orm'
+import { getTableName, is, sql } from 'drizzle-orm'
 import { PgTable } from 'drizzle-orm/pg-core'
 
 import {
   allTableNames,
   type Backup,
   backedUpTableNames,
+  backupSource,
   createBackup,
   excludedTableNames,
   resetDatabase,
@@ -166,7 +167,7 @@ test('a backup round-trips the tables the old list never carried', async () => {
   await resetDatabase(db)
   assert.equal((await db.select().from(schema.spaceGraph)).length, 0)
 
-  const summary = await restoreBackup(db, onDisk)
+  const summary = await restoreBackup(db, backupSource(onDisk))
 
   const graphs = await db.select().from(schema.spaceGraph)
   assert.equal(graphs.length, 1)
@@ -186,7 +187,7 @@ test('column types survive the JSON crossing', async () => {
   await seed()
   const onDisk = JSON.parse(JSON.stringify(await createBackup(db))) as Backup
   await resetDatabase(db)
-  await restoreBackup(db, onDisk)
+  await restoreBackup(db, backupSource(onDisk))
 
   const [setting] = await db.select().from(schema.setting)
   assert.ok(setting.createdAt instanceof Date, 'timestamp came back as a string')
@@ -199,6 +200,34 @@ test('column types survive the JSON crossing', async () => {
   // Past 2^32, so a bigint that had been narrowed to int would not come back.
   assert.equal(turn.inputTokens, 9_007_199_254)
   assert.equal(turn.costAmount, 1.25)
+})
+
+test('a generated column is left out of a backup and computed again on restore', async () => {
+  await db.insert(schema.transcriptMessage).values({
+    sessionKey: 'k1',
+    position: 0,
+    segment: 0,
+    role: 'user',
+    turn: 0,
+    text: 'restored words',
+    createdAt: new Date(),
+  })
+  const onDisk = JSON.parse(JSON.stringify(await createBackup(db))) as Backup
+  assert.deepEqual(Object.keys(onDisk.tables.TranscriptMessage?.[0] ?? {}).sort(), [
+    'createdAt',
+    'position',
+    'role',
+    'segment',
+    'sessionKey',
+    'text',
+    'turn',
+  ])
+  await resetDatabase(db)
+
+  await restoreBackup(db, backupSource(onDisk))
+
+  const [entry] = await db.select().from(schema.transcriptMessage)
+  assert.equal(entry?.document, "'restored':1 'words':2")
 })
 
 // The extension folders in a backup are snapshots or checkouts without their
@@ -224,7 +253,7 @@ test('an extension row keeps its source and the time it first appeared through a
   await resetDatabase(db)
   assert.deepEqual(await db.select().from(schema.extension), [])
 
-  await restoreBackup(db, onDisk)
+  await restoreBackup(db, backupSource(onDisk))
 
   assert.deepEqual(await db.select().from(schema.extension), [row])
 })
@@ -240,7 +269,7 @@ test('a backup that covers only some tables leaves the rest alone', async () => 
     tables: { Setting: [{ id: 'active-space-slug', data: '"default"' }] },
   }
 
-  const summary = await restoreBackup(db, v1)
+  const summary = await restoreBackup(db, backupSource(v1))
 
   const settings = await db.select().from(schema.setting)
   assert.deepEqual(
@@ -263,7 +292,7 @@ test('a stored row carrying a column the schema has since dropped still loads', 
     tables: { Space: [{ id: 's9', slug: 'old', name: 'Old', retiredColumn: 'gone' }] },
   }
 
-  await restoreBackup(db, backup)
+  await restoreBackup(db, backupSource(backup))
 
   const spaces = await db.select().from(schema.space)
   assert.equal(spaces.length, 1)
@@ -284,7 +313,7 @@ test('a stored space without an icon takes a random preset', async () => {
     },
   }
 
-  await restoreBackup(db, backup)
+  await restoreBackup(db, backupSource(backup))
 
   const spaces = await db.select().from(schema.space)
   assert.equal(spaces.length, 2)
@@ -294,17 +323,39 @@ test('a stored space without an icon takes a random preset', async () => {
 })
 
 test('a key naming no table is reported rather than restored', async () => {
-  const summary = await restoreBackup(db, {
-    formatVersion: 1,
-    createdAt: new Date().toISOString(),
-    tables: { NoSuchTable: [{ id: 'x' }] },
-  })
+  const summary = await restoreBackup(
+    db,
+    backupSource({
+      formatVersion: 1,
+      createdAt: new Date().toISOString(),
+      tables: { NoSuchTable: [{ id: 'x' }] },
+    }),
+  )
   assert.deepEqual(summary.unknown, ['NoSuchTable'])
   assert.deepEqual(summary.restored, {})
 })
 
-test('restoring rejects a file that is not a backup', async () => {
-  await assert.rejects(() => restoreBackup(db, { formatVersion: 1 } as unknown as Backup), /missing tables/)
+test('a file that is not a backup is refused before a restore can start', () => {
+  assert.throws(() => backupSource({ formatVersion: 1 } as unknown as Backup), /missing tables/)
+})
+
+test('a restore asks the source once per covered table and inserts every row across insert batches', async () => {
+  // More rows than one insert statement carries, so the batch boundary and the
+  // remainder after it are both crossed.
+  const settings = Array.from({ length: 2_345 }, (_, i) => ({ id: `setting-${i}`, data: `"${i}"` }))
+  let asked: string[] = []
+
+  const summary = await restoreBackup(db, {
+    tables: ['Setting'],
+    async *rows(table) {
+      asked = [...asked, table]
+      yield* settings
+    },
+  })
+
+  assert.deepEqual(asked, ['Setting'])
+  assert.equal(summary.restored.Setting, settings.length)
+  assert.equal((await db.select().from(schema.setting)).length, settings.length)
 })
 
 // The embedded PGlite builds a whole result in its wasm memory: four rows this
@@ -331,10 +382,52 @@ test('six attachments at the size ceiling back up and restore, and the database 
     ids.map((id) => [id, data.length]),
   )
   await resetDatabase(db)
-  const summary = await restoreBackup(db, JSON.parse(JSON.stringify(backup)) as Backup)
+  const summary = await restoreBackup(db, backupSource(JSON.parse(JSON.stringify(backup)) as Backup))
   assert.equal(summary.restored.ChatAttachment, 6)
   const restored = await db
     .select({ id: schema.chatAttachment.id, byteSize: schema.chatAttachment.byteSize })
     .from(schema.chatAttachment)
   assert.deepEqual(restored.map((row) => row.id).sort(), ids, 'a query after the round trip still runs')
+})
+
+test('tables whose rows add up past one SELECT back up and restore, whatever their key', async () => {
+  // Two 10 MB messages in the queue (a single-column key) and about 23 MiB of
+  // session events (a composite key). Either table in one SELECT would run
+  // the embedded database out of memory, and the restore's inserts are held
+  // to the same budget.
+  const message = 'm'.repeat(10 * 1024 * 1024)
+  for (const id of ['entry-a', 'entry-b']) {
+    await db
+      .insert(schema.agentQueueEntry)
+      .values({ id, sessionKey: 'agent:test:big', kind: 'message', text: message, position: 0 })
+  }
+  const filler = 'e'.repeat(20 * 1024)
+  for (let start = 0; start < 1_200; start += 100) {
+    await db.insert(schema.agentSessionEvent).values(
+      Array.from({ length: 100 }, (_, i) => ({
+        sessionKey: 'agent:test:big',
+        position: start + i,
+        event: { kind: 'agent_message', text: filler },
+      })),
+    )
+  }
+
+  const backup = await createBackup(db)
+  assert.deepEqual(
+    backup.tables.AgentQueueEntry.map((row) => [row.id, (row.text as string).length]),
+    [
+      ['entry-a', message.length],
+      ['entry-b', message.length],
+    ],
+  )
+  assert.equal(backup.tables.AgentSessionEvent.length, 1_200)
+
+  await resetDatabase(db)
+  const summary = await restoreBackup(db, backupSource(backup))
+  assert.deepEqual([summary.restored.AgentQueueEntry, summary.restored.AgentSessionEvent], [2, 1_200])
+  const { rows } = await db.execute(sql`
+    select
+      (select count(*)::int from "AgentQueueEntry" where length(text) = ${message.length}) as entries,
+      (select count(*)::int from "AgentSessionEvent") as events`)
+  assert.deepEqual(rows, [{ entries: 2, events: 1_200 }], 'a query after the round trip still runs')
 })

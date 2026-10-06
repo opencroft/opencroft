@@ -9,13 +9,16 @@ export type SessionStatus = 'offline' | 'idle' | 'queued' | 'working' | 'waiting
  * The session keys in each activity, as the server reads them and as it pushes
  * them to a page: blocked on someone (pending), a turn running (active),
  * background work running (background), messages held for a later turn
- * (queued), and a live agent process at all (alive — a superset of the others).
+ * (queued), a context compaction in progress (compacting — not a status of its
+ * own, it always runs inside a turn), and a live agent process at all (alive —
+ * a superset of the others).
  */
 export interface SessionActivitySets {
   pending: ReadonlySet<string>
   active: ReadonlySet<string>
   background: ReadonlySet<string>
   queued: ReadonlySet<string>
+  compacting: ReadonlySet<string>
   alive: ReadonlySet<string>
 }
 

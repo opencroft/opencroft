@@ -1,8 +1,6 @@
-import type { CompileRefusal, CompileRefusalReason } from '../_types'
-import { runGit } from './git-exec'
+import { promises as fs } from 'node:fs'
 
-/** The name of the parameter a caller passes to compile a checkout anyway. */
-export const COMPILE_OVERRIDE_PARAM = 'allowUnclean'
+import { runGit } from './git-exec'
 
 /** One entry of `git status --porcelain` output. */
 export interface StatusEntry {
@@ -72,8 +70,7 @@ const UNKNOWN_CHECKOUT: CheckoutState = {
  * clone.
  *
  * Null means UNKNOWN, and every caller has to read it as "no opinion" rather
- * than as a mismatch — refusing to build a directory git can say nothing about
- * would break the plain case of an extension folder that was never a checkout.
+ * than as a mismatch.
  */
 async function readDefaultBranch(dir: string): Promise<string | null> {
   try {
@@ -89,17 +86,35 @@ async function readDefaultBranch(dir: string): Promise<string | null> {
 }
 
 /**
+ * Whether `dir` is the root of its own repository.
+ *
+ * git run inside a folder that has no repository of its own walks up to the
+ * nearest enclosing one and answers for THAT: an extension folder created
+ * inside the application's checkout would report the application's commit,
+ * branch and uncommitted files as its own.
+ */
+async function isOwnRepositoryRoot(dir: string): Promise<boolean> {
+  const { stdout } = await runGit(['-C', dir, 'rev-parse', '--show-toplevel'])
+  // git prints the top level with symlinks resolved, so the folder is resolved
+  // the same way before the two are compared.
+  return stdout.trim() === (await fs.realpath(dir))
+}
+
+/**
  * Read what a checkout is: its commit, whether anyone has authored changes in
  * it, and which branch it is on.
  *
  * Read straight from the directory rather than tracked by this application,
  * so it stays true through anything that changes the tree — a plain checkout or
- * pull, not only this application's own actions. A directory that is not a git
- * checkout degrades to "unknown" rather than raising: being one has never been
- * a requirement.
+ * pull, not only this application's own actions. A directory that is not the
+ * root of its own git checkout degrades to "unknown" rather than raising: being
+ * one has never been a requirement.
  */
 export async function readCheckoutState(dir: string): Promise<CheckoutState> {
   try {
+    if (!(await isOwnRepositoryRoot(dir))) {
+      return { ...UNKNOWN_CHECKOUT }
+    }
     const { stdout: head } = await runGit(['-C', dir, 'rev-parse', 'HEAD'])
     const { stdout: status } = await runGit(['-C', dir, 'status', '--porcelain'])
     const { stdout: branch } = await runGit(['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])
@@ -113,61 +128,5 @@ export async function readCheckoutState(dir: string): Promise<CheckoutState> {
     }
   } catch {
     return { ...UNKNOWN_CHECKOUT }
-  }
-}
-
-const MAX_LISTED_PATHS = 5
-
-function listPaths(paths: string[]): string {
-  const shown = paths.slice(0, MAX_LISTED_PATHS).join(', ')
-  const rest = paths.length - MAX_LISTED_PATHS
-  return rest > 0 ? `${shown} and ${rest} more` : shown
-}
-
-/**
- * Whether a checkout in this state may be published to the running instance,
- * and if not, why.
- *
- * Compiling replaces what the instance is running, so it publishes whatever the
- * directory happens to hold at that moment. Two states are refused because both
- * publish something nobody asked for: a tree carrying changes someone has not
- * committed, and a tree parked on a branch other than the default one.
- *
- * Anything unknown is never a refusal. A directory git cannot describe, or a
- * remote with no recorded default branch, keeps building exactly as before —
- * a guard that fires on the absence of information would block work it knows
- * nothing about.
- *
- * The result is ADVISORY in the same sense as everything else guarding these
- * directories: `override` always gets through, because a deliberate build of a
- * branch on a throwaway instance is legitimate and must not need a workaround.
- */
-export function refuseCompile(state: CheckoutState, override: boolean): CompileRefusal | null {
-  if (override) {
-    return null
-  }
-  const reasons: CompileRefusalReason[] = []
-  const clauses: string[] = []
-
-  if (state.sourceDirty === true) {
-    reasons.push('unclean')
-    clauses.push(`it carries uncommitted changes (${listPaths(state.sourceDirtyPaths)})`)
-  }
-  if (state.branch && state.defaultBranch && state.branch !== state.defaultBranch) {
-    reasons.push('off-branch')
-    clauses.push(`it is on branch "${state.branch}", not the default branch "${state.defaultBranch}"`)
-  }
-  if (reasons.length === 0) {
-    return null
-  }
-  return {
-    reasons,
-    branch: state.branch,
-    defaultBranch: state.defaultBranch,
-    dirtyPaths: state.sourceDirtyPaths,
-    message:
-      `Refusing to compile: ${clauses.join(', and ')}. ` +
-      `Compiling publishes this directory to the running instance as it stands. ` +
-      `Pass ${COMPILE_OVERRIDE_PARAM}: true to compile it anyway.`,
   }
 }

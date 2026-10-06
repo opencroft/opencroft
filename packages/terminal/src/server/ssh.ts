@@ -340,6 +340,13 @@ export async function sshExecResult(
  * with every other channel on the pooled connection, and a failing channel emits both `'error'` and
  * `'close'`. Releasing twice would hand the connection back to the idle timer while another session
  * is still using it.
+ *
+ * **Stopping it signals the remote command; closing the channel alone does not stop it.** A
+ * non-pty session's command keeps running after its channel closes. An ssh `signal` request is
+ * the one way to reach it: OpenSSH (7.9 and later) delivers it to the session's whole process
+ * group. A server that does not support the request ignores it, and the command there runs on.
+ * The library sends that request only while the channel is still writable, so the channel is never
+ * ended from this side: the command's input is delivered by count instead (`withCountedStdin`).
  */
 export async function sshStreamHandle(
   creds: SshCredentials,
@@ -348,9 +355,10 @@ export async function sshStreamHandle(
   filter?: OutputFilter,
 ): Promise<StreamHandle> {
   const client = await acquire(creds)
+  const input = Buffer.from(stdin ?? '')
 
   return new Promise<StreamHandle>((resolve, reject) => {
-    client.exec(command, (err, stream) => {
+    client.exec(withCountedStdin(command, input.length), (err, stream) => {
       if (err) {
         release(creds)
         reject(err)
@@ -367,7 +375,10 @@ export async function sshStreamHandle(
         release(creds)
       }
 
-      const handle = makeStreamHandle(() => stream.close(), filter)
+      const handle = makeStreamHandle(() => {
+        stream.signal('TERM')
+        stream.close()
+      }, filter)
       stream.setEncoding('utf8')
       stream.stderr.setEncoding('utf8')
       stream.on('data', (chunk: string) => handle.emit(chunk))
@@ -391,13 +402,26 @@ export async function sshStreamHandle(
         releaseOnce()
         handle.finish()
       })
-      // The command takes its input once. Ending the writable side is what makes a reader on the
-      // far end see EOF rather than waiting for input that is never coming.
-      stream.end(stdin ?? '')
+      // The command takes its input once. Its end of input comes from the count, not from ending
+      // the channel — see `withCountedStdin`.
+      if (input.length > 0) {
+        stream.write(input)
+      }
 
       resolve(handle)
     })
   })
+}
+
+/**
+ * `command` reading exactly `bytes` bytes of the channel's input, then end-of-file.
+ *
+ * End-of-file would otherwise have to come from ending the channel, and an ended channel can no
+ * longer carry the signal that stops the command. `head` stops after the count, so a reader in
+ * the command sees EOF there while the channel stays open.
+ */
+function withCountedStdin(command: string, bytes: number): string {
+  return `head -c ${bytes} | {\n${command}\n}`
 }
 
 /** One-shot exec against a `ServerConfig`. Throws (with exit code + stderr) on non-zero exit. */

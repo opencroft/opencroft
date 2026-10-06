@@ -334,7 +334,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   // ── stopping ─────────────────────────────────────────────────────────
 
-  async cancel(taskId: string): Promise<CancelOutcome> {
+  async cancel(taskId: string, by?: BackgroundTaskOwner): Promise<CancelOutcome> {
     const row = await getTask(this.deps.instanceId(), taskId)
     if (!row) {
       return 'unknown-task'
@@ -342,16 +342,22 @@ export class BackgroundTasks implements BackgroundTaskService {
     if (row.state !== 'running') {
       return 'not-running'
     }
+    // A notification to the session that is asking would arrive while its own
+    // call is still out, and a harness that takes mid-turn input aborts that
+    // call to deliver it.
+    const toldInReply = await this.isOwnSession(row, by)
     if (onRunner(row)) {
-      return this.stopOnNode(row, 'cancelled')
+      return this.stopOnNode(row, 'cancelled', toldInReply)
     }
     if (!this.inProcess.abort(taskId, 'cancelled')) {
       // Running by its row, but not in this process: a previous process's
       // handler, gone with it.
-      await this.end(taskId, { state: 'failed', reason: SERVER_RESTARTED })
+      await this.end(taskId, { state: 'failed', reason: SERVER_RESTARTED }, toldInReply)
       return 'not-running'
     }
-    return (await this.end(taskId, { state: 'stopped', reason: 'cancelled' })) ? 'requested' : 'not-running'
+    return (await this.end(taskId, { state: 'stopped', reason: 'cancelled' }, toldInReply))
+      ? 'requested'
+      : 'not-running'
   }
 
   /** A stop pressed in the chat, answered the way the chat asks: was it taken. */
@@ -360,12 +366,12 @@ export class BackgroundTasks implements BackgroundTaskService {
     return outcome === 'stopped' || outcome === 'requested'
   }
 
-  /** Stop a runner task's process group on its node. */
-  private async stopOnNode(row: TaskRow, reason: string): Promise<CancelOutcome> {
+  /** Stop a runner task's process group on its node. `toldInReply`: see `end`. */
+  private async stopOnNode(row: TaskRow, reason: string, toldInReply = false): Promise<CancelOutcome> {
     const dir = row.nodeDir
     if (!dir) {
       // Stopped before its launch recorded a directory: nothing on the node to signal.
-      return (await this.end(row.taskId, { state: 'stopped', reason })) ? 'stopped' : 'not-running'
+      return (await this.end(row.taskId, { state: 'stopped', reason }, toldInReply)) ? 'stopped' : 'not-running'
     }
     // Held for the probe, which would otherwise read the process this stop has
     // just killed as one that vanished on its own.
@@ -378,36 +384,56 @@ export class BackgroundTasks implements BackgroundTaskService {
         // task for its session, or an unreachable node would keep that session
         // working for as long as the node stays away.
         const unreached = `${reason}; the node could not be reached to stop the process (${messageOf(error)})`
-        return (await this.end(row.taskId, { state: 'stopped', reason: unreached })) ? 'requested' : 'not-running'
+        const ending: Ending = { state: 'stopped', reason: unreached }
+        return (await this.end(row.taskId, ending, toldInReply)) ? 'requested' : 'not-running'
       }
       if (report?.status === 'exited') {
         // It ended on its own just before the stop reached it.
-        await this.end(row.taskId, endingOf(report))
+        await this.end(row.taskId, endingOf(report), toldInReply)
         return 'not-running'
       }
       if (report?.status === 'running') {
         const survived = `${reason}; the process was still running after SIGKILL`
-        return (await this.end(row.taskId, { state: 'stopped', reason: survived })) ? 'requested' : 'not-running'
+        const ending: Ending = { state: 'stopped', reason: survived }
+        return (await this.end(row.taskId, ending, toldInReply)) ? 'requested' : 'not-running'
       }
       const outputTail = report?.status === 'vanished' ? report.tail || undefined : undefined
-      return (await this.end(row.taskId, { state: 'stopped', reason, outputTail })) ? 'stopped' : 'not-running'
+      const ending: Ending = { state: 'stopped', reason, outputTail }
+      return (await this.end(row.taskId, ending, toldInReply)) ? 'stopped' : 'not-running'
     })
   }
 
   // ── ending ───────────────────────────────────────────────────────────
 
-  /** Record the ending, if nothing beat this to it, and tell the session. */
-  private async end(taskId: string, ending: Ending): Promise<BackgroundTaskRecord | null> {
-    const row = await finishTask(taskId, ending, this.now())
+  /**
+   * Record the ending, if nothing beat this to it, and tell the session.
+   * `toldInReply`: the session asked for this ending and reads it in its own
+   * reply, so the ending is recorded as told and only the session's record of
+   * the task is brought up to date. An ending something else beat this to is
+   * told as usual.
+   */
+  private async end(taskId: string, ending: Ending, toldInReply = false): Promise<BackgroundTaskRecord | null> {
+    const now = this.now()
+    const row = await finishTask(taskId, toldInReply ? { ...ending, deliveredAt: now } : ending, now)
     this.keys.untrack(taskId)
     if (!row) {
       return null
     }
     const record = toRecord(row)
-    if (!record.deliveredAt) {
+    if (toldInReply) {
+      void this.delivery.show(record)
+    } else if (!record.deliveredAt) {
       void this.delivery.deliver(record)
     }
     return record
+  }
+
+  /** Whether `by` is the session a task tells: the one that started it, by id or by the key it outlives restarts under. */
+  private async isOwnSession(row: TaskRow, by: BackgroundTaskOwner | undefined): Promise<boolean> {
+    if (!by?.sessionId || !row.sessionKey) {
+      return false
+    }
+    return row.sessionId === by.sessionId || row.sessionKey === (await this.sessionKeyOf(by))
   }
 
   /** See Delivery.sync: called whenever the host opens a session behind a key. */

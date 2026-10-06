@@ -2,19 +2,30 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { type Backup, excludedTableNames } from '@opencroft/db/backup'
+import { type Backup, type BackupSource, backupSource, excludedTableNames } from '@opencroft/db/backup'
 
+import {
+  type DumpMember,
+  databaseMemberTable,
+  type StagedDump,
+  stageDumpMember,
+  stagedDumpSource,
+} from './database-dump'
 import { BACKUP_FILE_ROOTS, type FileRoot, type SkippedEntry, walkRoot } from './file-tree'
 import { readZip, readZipMember, writeZip, type ZipEntryInput, type ZipMember } from './zip'
 
 // The backup archive: one ZIP holding the logical database dump and the parts
 // of the data directory nothing else holds a copy of.
 //
-//   manifest.json     what is inside, written FIRST so a listing or an upload
-//                     check reads one member instead of the whole archive
-//   database.json     the `Backup` object, the same shape a v1 .json file was
-//   files/<root>/...  the data directory, one subtree per root
-//   checksums.json    written LAST, because it covers everything before it
+//   manifest.json       what is inside, written FIRST so a listing or an upload
+//                       check reads one member instead of the whole archive
+//   database/<table>/   the rows, as bounded JSON Lines members (database-dump.ts)
+//   files/<root>/...    the data directory, one subtree per root
+//   checksums.json      written LAST, because it covers everything before it
+//
+// Format 2 carried the rows as one `database.json`, the `Backup` object a v1
+// .json file was. Such an archive still restores; none is written, because one
+// serialised dump is one string, and V8 caps a string at about 512 MiB.
 //
 // A RESTORE VERIFIES BEFORE IT APPLIES. `checksums.json` carries one SHA-256
 // over every preceding member — path, length and bytes, in order — so a
@@ -24,9 +35,10 @@ import { readZip, readZipMember, writeZip, type ZipEntryInput, type ZipMember } 
 // in the format survives an archive being unpacked and rezipped by something
 // else, which a CRC in the container does not.
 
-export const ARCHIVE_FORMAT_VERSION = 2
+export const ARCHIVE_FORMAT_VERSION = 3
 
 export const MANIFEST_MEMBER = 'manifest.json'
+/** Format 2's whole-dump member. Read, never written. */
 export const DATABASE_MEMBER = 'database.json'
 export const TRAILER_MEMBER = 'checksums.json'
 export const FILES_PREFIX = 'files/'
@@ -74,7 +86,7 @@ export interface ArchiveTrailer {
 export interface BackupArchive {
   manifest: ArchiveManifest
   trailer: ArchiveTrailer
-  backup: Backup
+  database: BackupSource
 }
 
 /**
@@ -111,7 +123,10 @@ export function summariseTables(backup: Backup): { tables: Record<string, number
 }
 
 export interface WriteArchiveOptions {
-  backup: Backup
+  /** ISO time the backup was taken. */
+  createdAt: string
+  /** The rows, already staged by `stageDatabaseDump`. */
+  database: StagedDump
   /** Absolute path of the data directory the file roots live under. */
   dataDirectory: string
   roots?: readonly FileRoot[]
@@ -120,12 +135,16 @@ export interface WriteArchiveOptions {
 /** Write a backup archive to `destPath`. Returns what its manifest and trailer ended up saying. */
 export async function writeBackupArchive(
   destPath: string,
-  { backup, dataDirectory, roots = BACKUP_FILE_ROOTS }: WriteArchiveOptions,
+  { createdAt, database, dataDirectory, roots = BACKUP_FILE_ROOTS }: WriteArchiveOptions,
 ): Promise<{ manifest: ArchiveManifest; trailer: ArchiveTrailer }> {
   const manifest: ArchiveManifest = {
     formatVersion: ARCHIVE_FORMAT_VERSION,
-    createdAt: backup.createdAt,
-    database: { ...summariseTables(backup), excludedTables: excludedTableNames() },
+    createdAt,
+    database: {
+      tables: database.tables,
+      totalRows: Object.values(database.tables).reduce((sum, rows) => sum + rows, 0),
+      excludedTables: excludedTableNames(),
+    },
     fileRoots: roots.map((root) => root.name),
   }
 
@@ -140,17 +159,14 @@ export async function writeBackupArchive(
     const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf8')
     foldMember(hash, MANIFEST_MEMBER, manifestData)
     members++
-    yield { path: MANIFEST_MEMBER, data: manifestData, mtime: new Date(backup.createdAt) }
+    yield { path: MANIFEST_MEMBER, data: manifestData, mtime: new Date(createdAt) }
 
-    // Cleared after the yield rather than left to scope: a suspended async
-    // generator keeps its whole frame alive, so without this the serialised
-    // dump — the largest member by far on a busy installation — stays
-    // resident for the entire file walk that follows.
-    let databaseData: Buffer | undefined = Buffer.from(JSON.stringify(backup), 'utf8')
-    foldMember(hash, DATABASE_MEMBER, databaseData)
-    members++
-    yield { path: DATABASE_MEMBER, data: databaseData, mtime: new Date(backup.createdAt) }
-    databaseData = undefined
+    for (const member of database.members) {
+      const data = await fs.readFile(member.file)
+      foldMember(hash, member.path, data)
+      members++
+      yield { path: member.path, data, mtime: new Date(createdAt) }
+    }
 
     for (const root of roots) {
       const rootStats: ArchiveFileStats = { files: 0, directories: 0, bytes: 0 }
@@ -232,36 +248,43 @@ export async function readArchiveManifest(srcPath: string): Promise<ArchiveManif
 }
 
 /**
- * Read an archive and verify it end to end. Touches nothing on disk.
+ * Read an archive and verify it end to end, staging its rows in
+ * `stagingDirectory`. Touches nothing else on disk.
  *
  * The first half of a restore: if this returns, the archive is intact and the
- * caller can apply it. If it throws, nothing has been changed.
+ * caller can apply it. If it throws, nothing has been changed. The returned
+ * `database` reads from `stagingDirectory`, so that must outlive its use.
  */
-export async function readBackupArchive(srcPath: string): Promise<BackupArchive> {
+export async function readBackupArchive(srcPath: string, stagingDirectory: string): Promise<BackupArchive> {
   const hash = createHash('sha256')
   let manifest: ArchiveManifest | undefined
-  let backup: Backup | undefined
+  let legacyDump: Backup | undefined
   let trailer: ArchiveTrailer | undefined
+  const dumpMembers: DumpMember[] = []
   let members = 0
 
-  await readZip(srcPath, (member: ZipMember) => {
+  await fs.mkdir(stagingDirectory, { recursive: true })
+  await readZip(srcPath, async (member: ZipMember) => {
     if (member.path === TRAILER_MEMBER) {
       trailer = parseJson<ArchiveTrailer>(member.data, TRAILER_MEMBER)
       return
     }
     foldMember(hash, member.path, member.data)
     members++
+    const table = databaseMemberTable(member.path)
     if (member.path === MANIFEST_MEMBER) {
       manifest = parseJson<ArchiveManifest>(member.data, MANIFEST_MEMBER)
     } else if (member.path === DATABASE_MEMBER) {
-      backup = parseJson<Backup>(member.data, DATABASE_MEMBER)
+      legacyDump = parseJson<Backup>(member.data, DATABASE_MEMBER)
+    } else if (table) {
+      await stageDumpMember(stagingDirectory, dumpMembers, { table, path: member.path, data: member.data })
     }
   })
 
   if (!manifest) {
     throw new Error('Not a backup archive: no manifest.json')
   }
-  if (!backup) {
+  if (!legacyDump && manifest.formatVersion < 3) {
     throw new Error('Backup archive has no database.json')
   }
   if (!trailer) {
@@ -274,7 +297,10 @@ export async function readBackupArchive(srcPath: string): Promise<BackupArchive>
   if (digest !== trailer.digest) {
     throw new Error('Backup archive fails its checksum: its contents are not what it was written with')
   }
-  return { manifest, trailer, backup }
+  const database = legacyDump
+    ? backupSource(legacyDump)
+    : stagedDumpSource({ tables: manifest.database.tables, members: dumpMembers })
+  return { manifest, trailer, database }
 }
 
 /**

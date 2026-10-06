@@ -290,3 +290,107 @@ test('without the option an unwatched job runs on', async () => {
     h.manager.dispose()
   }
 })
+
+// ── a view its owner lets go of ──
+
+/** Open a view the way a tab does: the server starts it, the tab's terminal attaches to it. */
+function openView(h: ReturnType<typeof harness>, key: string): { handle: StreamHandle; watcher: SocketPeer } {
+  const slot = h.manager.prepareJob()
+  assert.equal(slot.ok, true, slot.ok ? '' : slot.message)
+  const handle = jobHandle()
+  h.manager.create(null, handle, { sessionKey: key, kind: 'job', stopWhenUnwatchedMs: 60_000 })
+  const watcher = peer()
+  h.manager.attach(watcher, { sessionKey: key, cols: 80, rows: 24 })
+  return { handle, watcher }
+}
+
+test('stopping a view ends its command at once and frees its slot', () => {
+  const h = harness({ maxJobSessions: 1 })
+  try {
+    const { handle, watcher } = openView(h, 'job:view')
+    h.manager.handleSocketClose(watcher)
+
+    assert.equal(h.manager.stopViewJob('job:view'), 'stopped')
+
+    assert.equal(handle.isAlive(), false)
+    assert.equal(h.manager.size(), 0, 'nothing is kept: nobody is left to read it')
+    assert.equal(h.manager.prepareJob().ok, true, 'the slot is free without waiting for the bound')
+  } finally {
+    h.manager.dispose()
+  }
+})
+
+test('a tab switched away and back more than ten times never reaches the job cap', () => {
+  const h = harness()
+  try {
+    for (let visit = 0; visit < 25; visit++) {
+      const { watcher } = openView(h, `job:visit-${visit}`)
+      // Leaving the tab: its terminal unmounts, then the tab lets go of its view.
+      h.manager.handleSocketClose(watcher)
+      h.manager.stopViewJob(`job:visit-${visit}`)
+    }
+    assert.equal(h.manager.size(), 0)
+  } finally {
+    h.manager.dispose()
+  }
+})
+
+test('without letting go, the same switching fills the cap: the failure the test above guards', () => {
+  const h = harness()
+  try {
+    for (let visit = 0; visit < 10; visit++) {
+      const { watcher } = openView(h, `job:visit-${visit}`)
+      h.manager.handleSocketClose(watcher)
+    }
+    const refused = h.manager.prepareJob()
+    assert.equal(refused.ok, false)
+    assert.match(refused.ok ? '' : refused.message, /Session limit reached \(10 active\)/)
+  } finally {
+    h.manager.dispose()
+  }
+})
+
+test('a view that already ended or was reclaimed is gone, not an error', () => {
+  const h = harness()
+  try {
+    const { handle } = openView(h, 'job:ended')
+    handle.finish()
+
+    assert.equal(h.manager.stopViewJob('job:ended'), 'stopped', 'the ended record is dropped too')
+    assert.equal(h.manager.stopViewJob('job:ended'), 'gone')
+    assert.equal(h.manager.stopViewJob('job:never'), 'gone')
+  } finally {
+    h.manager.dispose()
+  }
+})
+
+test('a job started without the option is refused and runs on', () => {
+  // A deploy: a viewer leaving is not a decision about it.
+  const h = harness()
+  try {
+    const handle = jobHandle()
+    const job = h.manager.create(null, handle, { sessionKey: 'job:deploy', kind: 'job' })
+
+    assert.equal(h.manager.stopViewJob('job:deploy'), 'refused')
+
+    assert.equal(handle.isAlive(), true)
+    assert.equal(h.manager.get(job.id), job)
+  } finally {
+    h.manager.dispose()
+  }
+})
+
+test('an interactive session is refused', () => {
+  const h = harness()
+  try {
+    const handle = jobHandle()
+    const shell = h.manager.create(peer(), handle, { sessionKey: 'terminal' })
+
+    assert.equal(h.manager.stopViewJob('terminal'), 'refused')
+
+    assert.equal(handle.isAlive(), true)
+    assert.equal(h.manager.get(shell.id), shell)
+  } finally {
+    h.manager.dispose()
+  }
+})

@@ -1,9 +1,9 @@
 'use client'
 
 import { useEdges, useNodes } from '@xyflow/react'
-import { useMemo } from 'react'
+import { useRef } from 'react'
 
-import { resolveSourceContext } from '@/app/_authed/(dashboard)/_extension-system/context-resolver'
+import { resolveSourceContext, sameContext } from '@/app/_authed/(dashboard)/_extension-system/context-resolver'
 import { feedingEdges } from '@/app/_authed/(extension-runtime)/_input-edges'
 import type { ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 
@@ -17,8 +17,12 @@ export function useNodeContext<V = unknown>(nodeId: string, targetHandleId: stri
     sourceNode && edge?.sourceHandle ? resolveSourceContext(sourceNode, edge.sourceHandle, { nodes, edges }) : null
 
   // The context can be built from anywhere upstream of the source, so it is
-  // resolved against the whole graph on every change. Keyed on its content,
-  // so moving an unrelated node does not hand consumers a new context object.
-  const key = ctx ? JSON.stringify(ctx) : ''
-  return useMemo(() => (key ? (JSON.parse(key) as ResolvedContext<V>) : null), [key])
+  // resolved against the whole graph on every change. The previous context is
+  // kept while the new one has the same content, so moving an unrelated node
+  // does not hand consumers a new context object.
+  const stable = useRef(ctx)
+  if (!sameContext(stable.current, ctx)) {
+    stable.current = ctx
+  }
+  return stable.current as ResolvedContext<V> | null
 }

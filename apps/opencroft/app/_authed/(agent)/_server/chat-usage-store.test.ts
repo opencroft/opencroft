@@ -12,7 +12,15 @@ import '@opencroft/db/test-env'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
+import {
+  chatUsageTurn,
+  chatUsageTurnModel,
+  db,
+  groupChat,
+  groupChatSlugAlias,
+  groupChatThread,
+  space,
+} from '@opencroft/db'
 import { eq } from 'drizzle-orm'
 
 import {
@@ -29,6 +37,26 @@ async function modelRowsOf(sessionId: string) {
   const [turn] = await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, sessionId))
   assert.ok(turn, `no turn row recorded for ${sessionId}`)
   return db.select().from(chatUsageTurnModel).where(eq(chatUsageTurnModel.turnId, turn.id))
+}
+
+/**
+ * A space with its own chat (at the space's slug, where a space's chat lives)
+ * and one thread in it. Returns the space's id and the thread's session key —
+ * the key a recorded turn is attributed to the space through.
+ */
+async function seedSpaceThread(slug: string): Promise<{ spaceId: string; sessionKey: string }> {
+  const [row] = await db.insert(space).values({ slug, name: slug }).returning({ id: space.id })
+  const [chat] = await db.insert(groupChat).values({ slug, name: slug, topic: slug }).returning({ id: groupChat.id })
+  const sessionKey = `group-chat.${slug}.agent-a.thread-1`
+  await db.insert(groupChatThread).values({ groupChatId: chat.id, agentNodeId: 'agent-a', sessionKey })
+  return { spaceId: row.id, sessionKey }
+}
+
+/** The `spaceId` a session's one recorded turn was written with. */
+async function spaceIdOfTurn(sessionId: string): Promise<string | null> {
+  const [turn] = await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, sessionId))
+  assert.ok(turn, `no turn row recorded for ${sessionId}`)
+  return turn.spaceId
 }
 
 test('usageDay buckets by UTC calendar date', () => {
@@ -169,8 +197,10 @@ test("a harness's per-model breakdown becomes one ChatUsageTurnModel row per mod
 })
 
 test('model grouping sums the breakdown, so a subagent model the turn row never named still shows up', async () => {
+  const { spaceId, sessionKey } = await seedSpaceThread('space-model-grouping')
   await recordChatUsageTurn({
     sessionId: 'sess-usage-5',
+    sessionKey,
     adapterId: 'claude-subscription',
     model: 'claude-sonnet-5',
     usage: { totalTokens: 100 },
@@ -183,7 +213,7 @@ test('model grouping sums the breakdown, so a subagent model the turn row never 
       ],
     },
   })
-  const series = await queryChatUsage('model', { kind: 'custom', from: '2026-09-18', to: '2026-09-18' })
+  const series = await queryChatUsage(spaceId, 'model', { kind: 'custom', from: '2026-09-18', to: '2026-09-18' })
   const haiku = series.find((s) => s.key === 'claude-haiku-5')
   assert.ok(haiku, 'the subagent-only model gets its own series, even though no turn ever resolved to it')
   // A one-day window reads by the hour, so the turn sits in its 10:00 bucket.
@@ -192,18 +222,21 @@ test('model grouping sums the breakdown, so a subagent model the turn row never 
 
 test('a short window is bucketed by the hour, a long one by the day', async () => {
   // Two turns on one day no other test records on, hours apart.
+  const { spaceId, sessionKey } = await seedSpaceThread('space-resolution')
   await recordChatUsageTurn({
     sessionId: 'sess-usage-7-early',
+    sessionKey,
     usage: { totalTokens: 30 },
     at: new Date('2026-08-10T03:30:00.000Z'),
   })
   await recordChatUsageTurn({
     sessionId: 'sess-usage-7-late',
+    sessionKey,
     usage: { totalTokens: 50 },
     at: new Date('2026-08-10T21:05:00.000Z'),
   })
 
-  const [hourly] = await queryChatUsage('all', { kind: 'custom', from: '2026-08-10', to: '2026-08-10' })
+  const [hourly] = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-08-10', to: '2026-08-10' })
   assert.deepEqual(
     hourly.points.map((p) => p.date),
     Array.from({ length: 24 }, (_, h) => `2026-08-10T${String(h).padStart(2, '0')}`),
@@ -218,7 +251,7 @@ test('a short window is bucketed by the hour, a long one by the day', async () =
     'each turn lands in the hour it ended, cut from its own timestamp',
   )
 
-  const [daily] = await queryChatUsage('all', { kind: 'custom', from: '2026-08-08', to: '2026-08-14' })
+  const [daily] = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-08-08', to: '2026-08-14' })
   assert.deepEqual(
     daily.points.map((p) => p.date),
     ['2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'],
@@ -227,25 +260,43 @@ test('a short window is bucketed by the hour, a long one by the day', async () =
   assert.equal(daily.points[2].totalTokens, 80, 'and both turns fold into their day')
 })
 
-test('a reset removes the turns inside its period, their model rows with them, and nothing outside it', async () => {
-  // Two turns either side of the window's edge, on days no other test here
-  // records on, so the population this proves over is exactly these two.
+test("a reset removes the space's turns inside its period, their model rows with them, and nothing else", async () => {
+  // Turns on days no other test here records on, so the population this
+  // proves over is exactly these four: the space's own either side of the
+  // window's edge, and inside the window another space's and an unattributed one.
+  const { spaceId, sessionKey } = await seedSpaceThread('space-reset')
+  const other = await seedSpaceThread('space-reset-other')
   await recordChatUsageTurn({
     sessionId: 'sess-usage-6-inside',
+    sessionKey,
     usage: { totalTokens: 10 },
     at: new Date('2026-08-02T10:00:00.000Z'),
   })
   await recordChatUsageTurn({
     sessionId: 'sess-usage-6-outside',
+    sessionKey,
     usage: { totalTokens: 20 },
     at: new Date('2026-08-05T10:00:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-6-other-space',
+    sessionKey: other.sessionKey,
+    usage: { totalTokens: 30 },
+    at: new Date('2026-08-02T11:00:00.000Z'),
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-usage-6-no-space',
+    usage: { totalTokens: 40 },
+    at: new Date('2026-08-02T12:00:00.000Z'),
   })
   const [inside] = await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, 'sess-usage-6-inside'))
   assert.ok(inside)
 
-  const removed = await deleteChatUsage({ kind: 'custom', from: '2026-08-01', to: '2026-08-03' })
+  const removed = await deleteChatUsage(spaceId, { kind: 'custom', from: '2026-08-01', to: '2026-08-03' })
 
-  assert.equal(removed, 1, 'exactly the turn inside the window is counted')
+  assert.equal(removed, 1, "exactly the space's turn inside the window is counted")
+  assert.equal((await modelRowsOf('sess-usage-6-other-space')).length, 1, "another space's turn stays")
+  assert.equal((await modelRowsOf('sess-usage-6-no-space')).length, 1, 'an unattributed turn stays')
   assert.equal(
     (await db.select().from(chatUsageTurn).where(eq(chatUsageTurn.sessionId, 'sess-usage-6-inside'))).length,
     0,
@@ -260,8 +311,99 @@ test('a reset removes the turns inside its period, their model rows with them, a
 })
 
 test('a reset refuses a half-picked custom period rather than deleting to the edge of time', async () => {
-  await assert.rejects(deleteChatUsage({ kind: 'custom', from: '2026-08-01' }))
-  await assert.rejects(deleteChatUsage({ kind: 'custom' }))
+  const { spaceId } = await seedSpaceThread('space-reset-half-picked')
+  await assert.rejects(deleteChatUsage(spaceId, { kind: 'custom', from: '2026-08-01' }))
+  await assert.rejects(deleteChatUsage(spaceId, { kind: 'custom' }))
+})
+
+test('a turn is recorded in the space its thread belongs to, and a session with no thread in none', async () => {
+  const { spaceId, sessionKey } = await seedSpaceThread('space-attribution')
+  await recordChatUsageTurn({ sessionId: 'sess-space-thread', sessionKey, usage: { totalTokens: 1 } })
+  await recordChatUsageTurn({
+    sessionId: 'sess-space-unknown-key',
+    sessionKey: 'group-chat.no-such-chat.agent-a.thread-1',
+    usage: { totalTokens: 1 },
+  })
+  await recordChatUsageTurn({ sessionId: 'sess-space-no-key', usage: { totalTokens: 1 } })
+
+  assert.equal(await spaceIdOfTurn('sess-space-thread'), spaceId)
+  assert.equal(await spaceIdOfTurn('sess-space-unknown-key'), null)
+  assert.equal(await spaceIdOfTurn('sess-space-no-key'), null)
+})
+
+test("a turn recorded after the space's chat was renamed away from the space's slug still lands in the space", async () => {
+  const { spaceId, sessionKey } = await seedSpaceThread('space-chat-rename')
+  // What a chat rename leaves behind: the chat at its new slug, the old slug as
+  // the chat's alias, and the thread's key moved onto the new slug.
+  const [thread] = await db.select().from(groupChatThread).where(eq(groupChatThread.sessionKey, sessionKey))
+  const renamedKey = 'group-chat.space-chat-rename-team.agent-a.thread-1'
+  await db.update(groupChat).set({ slug: 'space-chat-rename-team' }).where(eq(groupChat.id, thread.groupChatId))
+  await db.insert(groupChatSlugAlias).values({ slug: 'space-chat-rename', groupChatId: thread.groupChatId })
+  await db.update(groupChatThread).set({ sessionKey: renamedKey }).where(eq(groupChatThread.id, thread.id))
+
+  await recordChatUsageTurn({ sessionId: 'sess-space-chat-rename', sessionKey: renamedKey, usage: { totalTokens: 1 } })
+
+  assert.equal(await spaceIdOfTurn('sess-space-chat-rename'), spaceId)
+})
+
+test('the space is fixed when the turn is recorded: deleting its thread later leaves it in place', async () => {
+  const { spaceId, sessionKey } = await seedSpaceThread('space-fixed')
+  await recordChatUsageTurn({
+    sessionId: 'sess-space-fixed',
+    sessionKey,
+    usage: { totalTokens: 70 },
+    at: new Date('2026-07-20T10:00:00.000Z'),
+  })
+  await db.delete(groupChatThread).where(eq(groupChatThread.sessionKey, sessionKey))
+
+  assert.equal(await spaceIdOfTurn('sess-space-fixed'), spaceId)
+  const [all] = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-07-20', to: '2026-07-20' })
+  assert.equal(all.points.find((p) => p.date === '2026-07-20T10')?.totalTokens, 70)
+})
+
+test("a space's usage reads only its own turns, whatever the grouping", async () => {
+  // One day no other test records on: a turn in each of two spaces and one
+  // in none, so each space's total is exactly its own turn.
+  const first = await seedSpaceThread('space-read-first')
+  const second = await seedSpaceThread('space-read-second')
+  const at = new Date('2026-07-10T10:00:00.000Z')
+  await recordChatUsageTurn({
+    sessionId: 'sess-read-first',
+    sessionKey: first.sessionKey,
+    usage: { totalTokens: 100 },
+    at,
+  })
+  await recordChatUsageTurn({
+    sessionId: 'sess-read-second',
+    sessionKey: second.sessionKey,
+    model: 'model-b',
+    usage: { totalTokens: 7 },
+    cost: { amount: 0.5, currency: 'USD' },
+    at,
+  })
+  await recordChatUsageTurn({ sessionId: 'sess-read-none', usage: { totalTokens: 1_000 }, at })
+
+  const period = { kind: 'custom', from: '2026-07-10', to: '2026-07-10' } as const
+  const totalOf = (series: { points: { totalTokens: number }[] }[]) =>
+    series.flatMap((s) => s.points).reduce((sum, p) => sum + p.totalTokens, 0)
+
+  assert.equal(totalOf(await queryChatUsage(first.spaceId, 'all', period)), 100)
+  assert.equal(totalOf(await queryChatUsage(second.spaceId, 'all', period)), 7)
+  const byAgent = await queryChatUsage(second.spaceId, 'agent', period)
+  assert.deepEqual(
+    byAgent.map((s) => s.key),
+    ['agent-a'],
+  )
+  const byModel = await queryChatUsage(second.spaceId, 'model', period)
+  assert.deepEqual(
+    byModel.map((s) => [s.key, totalOf([s]), s.points.find((p) => p.cost !== undefined)?.cost]),
+    [['model-b', 7, 0.5]],
+  )
+  assert.equal(
+    (await queryChatUsage(first.spaceId, 'model', period)).flatMap((s) => s.points).some((p) => p.cost !== undefined),
+    false,
+    "the other space's cost is not in this one",
+  )
 })
 
 test("a turn's tokens and a session's account include what its subagents spent", async () => {

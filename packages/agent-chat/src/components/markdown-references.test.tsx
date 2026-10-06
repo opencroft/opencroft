@@ -90,7 +90,17 @@ test('identifiers in prose, lists, emphasis and tables become references', () =>
     rendered.map((reference) => reference.id),
     ['ABC-1', 'XY-22', 'ABC-3', 'XY-4'],
   )
-  assert.match(html, /See <b data-ref="ticket">ABC-1<\/b> and <em><b data-ref="ticket">XY-22<\/b><\/em>\./)
+  assert.match(
+    html,
+    /See <span data-selection-text="ABC-1"><b data-ref="ticket">ABC-1<\/b><\/span> and <em><span data-selection-text="XY-22"><b data-ref="ticket">XY-22<\/b><\/span><\/em>\./,
+  )
+})
+
+test('a reference is selected as the text it was written as', () => {
+  install()
+  const html = render('Open https://app.example.com/tasks/1 for ABC-7.')
+  assert.match(html, /<span data-selection-text="https:\/\/app\.example\.com\/tasks\/1"><b data-ref="page">/)
+  assert.match(html, /<span data-selection-text="ABC-7"><b data-ref="ticket">ABC-7<\/b><\/span>/)
 })
 
 test('code, inline code and labelled links are never claimed', () => {
@@ -129,7 +139,10 @@ test('only a match that ends the text is trailing', () => {
 
 test('inline rendering keeps references', () => {
   install()
-  assert.equal(render('Fix ABC-9', true), '<span class="prose-chat">Fix <b data-ref="ticket">ABC-9</b></span>')
+  assert.equal(
+    render('Fix ABC-9', true),
+    '<span class="prose-chat">Fix <span data-selection-text="ABC-9"><b data-ref="ticket">ABC-9</b></span></span>',
+  )
 })
 
 test('findReferences folds every text recogniser into one scan, in order', () => {

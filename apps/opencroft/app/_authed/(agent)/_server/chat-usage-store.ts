@@ -5,6 +5,7 @@ import { and, eq, gte, lte, sql, sum } from 'drizzle-orm'
 import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
 
 import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
+import { spaceIdForSessionKey } from '@/app/_authed/(group-chats)/_server/thread-space'
 import { partsOfSessionKey } from '@/app/_authed/(group-chats)/_shared/session-key'
 
 // Per-turn usage accounting for agent-chat sessions, read off the turn_end
@@ -45,8 +46,9 @@ export async function recordChatUsageTurn(input: {
   sessionId: string
   /**
    * The session's key, when it has one. Only a group-chat thread's key names an
-   * agent, so this is what the `agent` column is derived from — decoded here,
-   * with the rest of the row's defaulting, rather than by each caller.
+   * agent and leads to a space, so this is what the `agent` and `spaceId`
+   * columns are derived from — here, with the rest of the row's defaulting,
+   * rather than by each caller.
    */
   sessionKey?: string
   adapterId?: string
@@ -66,6 +68,9 @@ export async function recordChatUsageTurn(input: {
   // timestamp an hourly read cuts from must never disagree about which
   // bucket a turn is in, so neither is left to a column default.
   const at = input.at ?? new Date()
+  // Resolved now and stored, never re-derived at read time: the spend stays in
+  // the space it was made in, whatever later happens to the thread or its chat.
+  const spaceId = input.sessionKey ? await spaceIdForSessionKey(input.sessionKey) : null
   const [turn] = await db
     .insert(chatUsageTurn)
     .values({
@@ -76,6 +81,7 @@ export async function recordChatUsageTurn(input: {
       adapterId: input.adapterId ?? 'unknown',
       model: input.model ?? null,
       agent: input.sessionKey ? (partsOfSessionKey(input.sessionKey)?.agentSlug ?? null) : null,
+      spaceId,
       ...tokenColumns(input.usage),
       costAmount: input.cost?.amount ?? null,
       costCurrency: input.cost?.currency ?? null,
@@ -225,12 +231,9 @@ export async function moveChatUsageTurns(moves: readonly { from: string; to: str
 
 // ── Read side: SpaceUsage series ────────────────────────────────────────────
 //
-// v1 aggregates INSTANCE-WIDE — every recorded turn, not scoped to a space. A
-// session key names a group-chat agent but not a space; deriving one needs a
-// chat→space resolution that is its own design step, left for a separate
-// design decision (this still lands on the space settings
-// page per the product ask — the instance-wide scope is the provisional
-// part, not the placement).
+// Scoped to ONE space: the turns whose `spaceId` was recorded as it (see
+// recordChatUsageTurn). A turn no space's chat held is in no space's read, and
+// no space's reset removes it.
 
 const ALL_SERIES_KEY = 'all'
 const UNKNOWN_GROUP_KEY = '__unknown__'
@@ -263,9 +266,10 @@ function dayRangeOf(period: UsagePeriod): { from?: string; to?: string } {
   }
 }
 
-/** The bounds as one turn-table predicate — the read and the reset select the same rows by construction. */
-function dayWhereOf(range: { from?: string; to?: string }) {
+/** The space and bounds as one turn-table predicate — the read and the reset select the same rows by construction. */
+function turnWhereOf(spaceId: string, range: { from?: string; to?: string }) {
   return and(
+    eq(chatUsageTurn.spaceId, spaceId),
     range.from ? gte(chatUsageTurn.day, range.from) : undefined,
     range.to ? lte(chatUsageTurn.day, range.to) : undefined,
   )
@@ -410,9 +414,13 @@ function labelOf(grouping: UsageGrouping, key: string): string {
  * building the date axis and padding cells — unchanged, just fed rows that
  * are already summed instead of raw ones.
  */
-export async function queryChatUsage(grouping: UsageGrouping, period: UsagePeriod): Promise<SpaceUsageSeries[]> {
+export async function queryChatUsage(
+  spaceId: string,
+  grouping: UsageGrouping,
+  period: UsagePeriod,
+): Promise<SpaceUsageSeries[]> {
   const range = dayRangeOf(period)
-  const where = dayWhereOf(range)
+  const where = turnWhereOf(spaceId, range)
   const resolution = resolutionOf(range)
   const bucket = bucketOf(resolution)
 
@@ -512,21 +520,22 @@ export async function queryChatUsage(grouping: UsageGrouping, period: UsagePerio
 // ── Reset ───────────────────────────────────────────────────────────────────
 
 /**
- * Deletes every turn recorded in the period — the Usage page's reset, and the
- * one write this module makes that is not a recording. Same v1 scope as the
- * read: instance-wide. The turn's model rows go with it (the foreign key
- * cascades), so a model-grouped read afterwards has nothing orphaned to sum.
+ * Deletes every turn the space recorded in the period — the Usage page's
+ * reset, and the one write this module makes that is not a recording. Same
+ * scope as the read, so another space's turns and unattributed ones stay. The
+ * turn's model rows go with it (the foreign key cascades), so a model-grouped
+ * read afterwards has nothing orphaned to sum.
  *
  * Only a BOUNDED period is accepted. The read tolerates a half-picked custom
  * range by leaving that end open; a delete that did the same would wipe to
  * the start (or end) of time on a choice the reader had not finished making.
  * Returns how many turns went.
  */
-export async function deleteChatUsage(period: UsagePeriod): Promise<number> {
+export async function deleteChatUsage(spaceId: string, period: UsagePeriod): Promise<number> {
   const range = dayRangeOf(period)
   if (!range.from || !range.to) {
     throw new Error('A usage reset needs both ends of its period')
   }
-  const removed = await db.delete(chatUsageTurn).where(dayWhereOf(range)).returning({ id: chatUsageTurn.id })
+  const removed = await db.delete(chatUsageTurn).where(turnWhereOf(spaceId, range)).returning({ id: chatUsageTurn.id })
   return removed.length
 }

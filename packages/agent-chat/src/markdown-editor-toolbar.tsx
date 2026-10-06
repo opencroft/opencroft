@@ -42,8 +42,8 @@ import { BLOCK_INSERTS } from './markdown-editor-block-inserts'
  * Which toolbar controls to offer. The chat composer wants fewer of these than
  * a documentation page does, and a surface that wants none passes `false`.
  *
- * `blockMenu` is the Blocks menu: callouts, spoiler, tabs, table and divider,
- * the same list the `/` menu offers.
+ * `blockMenu` is the Blocks menu: callouts, spoiler, tabs, table, divider and
+ * icon, the same list the `/` menu offers.
  */
 export type MarkdownEditorToolbarGroup = 'history' | 'marks' | 'headings' | 'blocks' | 'links' | 'table' | 'blockMenu'
 
@@ -269,7 +269,7 @@ export function Toolbar({
   )
 }
 
-/** The Blocks menu: every entry of `BLOCK_INSERTS`, callouts first, then the rest. */
+/** The Blocks menu: every entry of `BLOCK_INSERTS` in its order, a separator between groups. */
 function BlockMenu({ editor }: { editor: Editor }) {
   return (
     <DropdownMenu>

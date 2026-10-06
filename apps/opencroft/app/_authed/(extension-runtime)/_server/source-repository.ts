@@ -1,11 +1,11 @@
 // Reading an extension's source repository: the credential an install points
-// at, the version tags it offers, and one commit of it fetched into a folder.
+// at, the tags and branches it offers, and one commit of it fetched into a folder.
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 import type { InstallAuth } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
-import { runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
+import { remoteFailure, runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 
 const GIT_BUFFER = 64 * 1024 * 1024
@@ -49,25 +49,51 @@ export function semverCmp(a: string, b: string): number {
   return 0
 }
 
-/** A repository's tags, oldest version first. */
-export async function listRemoteTags(url: string, creds: ResolvedAuth | null): Promise<string[]> {
+/** What a repository offers: its tags, oldest version first, and its branches with the commit each is at. */
+export interface RemoteRefs {
+  tags: string[]
+  branches: Map<string, string>
+}
+
+export async function listRemoteRefs(url: string, creds: ResolvedAuth | null): Promise<RemoteRefs> {
   const { url: authedUrl, env, cleanup } = await withGitAuth(url, creds)
   let stdout: string
   try {
-    ;({ stdout } = await runGit(['ls-remote', '--tags', '--refs', authedUrl], { maxBuffer: 4 * 1024 * 1024, env }))
+    ;({ stdout } = await runGit(['ls-remote', '--tags', '--heads', '--refs', authedUrl], {
+      maxBuffer: 4 * 1024 * 1024,
+      env,
+    }))
+  } catch (err) {
+    throw remoteFailure(err, url)
   } finally {
     await cleanup()
   }
-  const tags = stdout
-    .split('\n')
-    .map((line) =>
-      line
-        .trim()
-        .split('\t')[1]
-        ?.replace(/^refs\/tags\//, ''),
-    )
-    .filter((tag): tag is string => Boolean(tag))
-  return tags.sort(semverCmp)
+  const tags: string[] = []
+  const branches = new Map<string, string>()
+  for (const line of stdout.split('\n')) {
+    const [commit, ref] = line.trim().split('\t')
+    if (!commit || !ref) {
+      continue
+    }
+    if (ref.startsWith('refs/tags/')) {
+      tags.push(ref.slice('refs/tags/'.length))
+    } else if (ref.startsWith('refs/heads/')) {
+      branches.set(ref.slice('refs/heads/'.length), commit)
+    }
+  }
+  return { tags: tags.sort(semverCmp), branches }
+}
+
+/**
+ * The commit an install at `ref` moves to when it follows a branch, or null
+ * when it does not: `ref` names a tag, or nothing the repository has. A name
+ * that is both a tag and a branch is read as the tag.
+ */
+export function followedBranchTip(ref: string | null, refs: RemoteRefs): string | null {
+  if (!ref || refs.tags.includes(ref)) {
+    return null
+  }
+  return refs.branches.get(ref) ?? null
 }
 
 /** A repository URL or `owner/repo` shorthand, normalized, with its path segments. */
@@ -106,7 +132,7 @@ async function defaultRef(url: string, creds: ResolvedAuth | null, asLocal: bool
   if (asLocal) {
     return undefined
   }
-  const tags = await listRemoteTags(url, creds)
+  const { tags } = await listRemoteRefs(url, creds)
   return tags.at(-1)
 }
 
@@ -122,6 +148,8 @@ export async function fetchSource(
   const branch = ref ? ['--branch', ref, '--single-branch'] : []
   try {
     await runGit(['clone', ...shape, ...branch, authedUrl, dest], { maxBuffer: GIT_BUFFER, env })
+  } catch (err) {
+    throw remoteFailure(err, request.url)
   } finally {
     await cleanup()
   }

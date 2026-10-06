@@ -1,7 +1,6 @@
 'use client'
 
 import type { Node } from '@xyflow/react'
-import * as lucideIcons from 'lucide-react'
 import { Box, GripVertical, List, Maximize2, MessageCircleQuestion, Minimize2, Pencil, X } from 'lucide-react'
 import { type DragEvent, type ReactNode, useCallback } from 'react'
 import { toast } from 'sonner'
@@ -19,18 +18,12 @@ import {
   editableFolderOf,
   extensionRegistry,
   type ResolvedNode,
+  resolveIcon,
 } from '@/app/_authed/(extension-runtime)/_client/registry'
 import type { NodeData } from '@/app/_authed/(extension-runtime)/_types'
 import { useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
 
 export type BrowserTab = 'outline' | 'palette' | 'mcp'
-
-function resolveIcon(name?: string): lucideIcons.LucideIcon {
-  if (!name) {
-    return lucideIcons.Box
-  }
-  return (lucideIcons as unknown as Record<string, lucideIcons.LucideIcon>)[name] ?? lucideIcons.Box
-}
 
 function groupByCategory(nodes: ResolvedNode[]): Map<string, ResolvedNode[]> {
   const map = new Map<string, ResolvedNode[]>()

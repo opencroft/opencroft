@@ -7,14 +7,12 @@
 // the terms the exposure was agreed on, so the shape is pinned by checking
 // what must NOT be there.
 
-import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test, { after } from 'node:test'
+import '@opencroft/db/test-env'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-directory-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
+import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import test from 'node:test'
+
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -33,10 +31,6 @@ process.env.NODE_ENV = 'development'
 const directory = await import('./user-directory')
 const { GroupChatAccessError } = await import('@/app/_authed/(group-chats)/_shared/access-error')
 const { ensureAuth } = await import('@opencroft/auth/server')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 async function makeUser(email: string, name: string): Promise<{ id: string; cookie: string }> {
   const result = await ensureAuth().api.signUpEmail({

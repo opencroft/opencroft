@@ -15,6 +15,12 @@ const additionalAllowedHosts = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOST
   .map((host) => host.trim())
   .filter(Boolean)
 
+// The `dev` script starts Vite with RAYON_NUM_THREADS capped. Rolldown,
+// lightningcss and the Tailwind scanner each keep a native thread pool sized to
+// the CPU count by default, and on a many-core host those pools hold hundreds
+// of MB of the dev server's memory. Setting it from this file instead does not
+// lower the startup peak, so it has to be in the environment Vite starts with.
+
 export default defineConfig(async ({ mode }) => {
   // Devtools are a development-only concern, and a release install carries no
   // devDependencies. Importing the plugin at module scope would make the package
@@ -57,11 +63,32 @@ export default defineConfig(async ({ mode }) => {
     resolve: {
       tsconfigPaths: true,
     },
-    // Native / server-only modules must never be pulled into client dep optimization
-    // or bundled for SSR — they are resolved from node_modules at runtime.
-    // @tailwindcss/node + oxide + lightningcss back the runtime extension CSS
-    // compiler and ship native binaries that break the bundler.
     optimizeDeps: {
+      // Every client dependency has to be found by the startup scan. One found
+      // later, when a page first imports it, makes Vite re-bundle all
+      // dependencies and full-reload every open page while the old module graph
+      // is still in memory, which can take the dev server past its memory limit.
+      // TanStack Start excludes from optimization every package that peer-depends
+      // on it, agent-chat included, and the scan does not descend into excluded
+      // packages, so agent-chat's client sources are scanned as entries of their own.
+      entries: [
+        '../../packages/agent-chat/src/**/*.{ts,tsx}',
+        '!../../packages/agent-chat/src/server/**',
+        '!../../packages/agent-chat/src/**/*test*',
+      ],
+      // Imported only from TanStack's own excluded client packages, so the scan
+      // cannot see them either. A dependency missing here shows up in the dev
+      // log as "new dependencies optimized" after the first page load.
+      include: [
+        '@tanstack/router-core',
+        '@tanstack/router-core/isServer',
+        '@tanstack/router-core/ssr/client',
+        'seroval',
+      ],
+      // Native / server-only modules must never be pulled into client dep optimization
+      // or bundled for SSR — they are resolved from node_modules at runtime.
+      // @tailwindcss/node + oxide + lightningcss back the runtime extension CSS
+      // compiler and ship native binaries that break the bundler.
       exclude: [
         'ssh2',
         'cpu-features',
@@ -73,6 +100,22 @@ export default defineConfig(async ({ mode }) => {
         '@tailwindcss/node',
         '@tailwindcss/oxide',
         'lightningcss',
+        // Server-only packages imported by server functions inside route files.
+        // The scan reads route sources before TanStack Start strips the server
+        // code from the client build, so it would prebundle these for the
+        // browser too, which costs startup memory and serves nothing.
+        '@agentclientprotocol/sdk',
+        '@ai-sdk/openai-compatible',
+        '@aws-sdk/client-s3',
+        '@aws-sdk/lib-storage',
+        '@hocuspocus/server',
+        '@modelcontextprotocol/sdk',
+        'ai',
+        'better-auth/adapters/drizzle',
+        'better-auth/plugins',
+        'better-auth/tanstack-start',
+        'drizzle-orm',
+        'sharp',
       ],
     },
     ssr: {
@@ -154,6 +197,14 @@ export default defineConfig(async ({ mode }) => {
       tailwindcss(),
       tanstackStart({
         srcDirectory: 'app',
+        // Off: the dev server's SSR stylesheet is collected by walking each route's
+        // server module graph and looking up every bare import it finds in the
+        // client environment. Each lookup that is not already a client dependency
+        // registers one, so the first page whose server code reaches a server-only
+        // package makes Vite re-bundle all dependencies and reload every open page.
+        // App styles reach the page through globals.css's link in __root.tsx;
+        // stylesheets imported by components still load with the component's module.
+        dev: { ssrStyles: { enabled: false } },
         router: {
           routesDirectory: '.',
           // The base pattern excludes every `_`-prefixed name (that is how

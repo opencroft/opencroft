@@ -2,8 +2,8 @@
 // their versions. Those versions go into immutably cached URLs, so a source
 // edit has to change the version the browser is handed, or a browser that
 // cached the old bundle never asks again. Real git checkouts and real builds,
-// as in ensure-built-freshness.test.ts: the auto-rebuild reads the checkout's
-// git state, and freshness is decided from what is on disk.
+// as in ensure-built-freshness.test.ts: freshness is decided from what is on
+// disk.
 
 import assert from 'node:assert/strict'
 import { execFile, execFileSync } from 'node:child_process'
@@ -27,7 +27,7 @@ const hasGit = (() => {
     return false
   }
 })()
-const needsGit = { skip: hasGit ? false : 'git is missing; the auto-rebuild reads the checkout with it' }
+const needsGit = { skip: hasGit ? false : 'git is missing; the fixtures are git checkouts' }
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'client-bundles-built-'))
 const savedDataDir = process.env.OPENCROFT_DATA_DIR
@@ -113,8 +113,14 @@ test('a client bundle whose sources changed is rebuilt and listed at its new ver
 test('an unchanged client bundle is left as built, so its listed version holds', needsGit, async () => {
   const { id, dir } = await makeClientExtension('unchanged', 'export default {}\n')
   await listedVersion(id, true)
-  // Newer than every source, so only a rebuild that should not happen replaces it.
-  await fs.writeFile(path.join(dir, 'dist', 'client.js'), 'SENTINEL')
+  // Newer than every source, so only a rebuild that should not happen replaces
+  // it. Dated an hour ahead rather than left at the moment of the write: the
+  // wall clock can step back after the sources are written, and the sentinel
+  // would then carry an earlier mtime than they do.
+  const sentinel = path.join(dir, 'dist', 'client.js')
+  await fs.writeFile(sentinel, 'SENTINEL')
+  const ahead = new Date(Date.now() + 60 * 60 * 1000)
+  await fs.utimes(sentinel, ahead, ahead)
   const before = await clientBundleVersion(id)
 
   assert.equal(await listedVersion(id, true), before)
@@ -133,11 +139,13 @@ test('a listing not asked to rebuild hands out the version as it is', needsGit, 
   assert.match(await fs.readFile(path.join(dir, 'dist', 'client.js'), 'utf-8'), /before/)
 })
 
-test('a refused extension listed on every page load is announced once', needsGit, async () => {
-  const { id, dir } = await makeClientExtension('refused', 'export default {}\n')
+test('a failing extension listed on every page load is announced once', needsGit, async () => {
+  const { id, dir } = await makeClientExtension('failing', 'export default {}\n')
   await listedVersion(id, true)
   await ageBundle(dir)
-  await fs.appendFile(path.join(dir, 'src', 'client.tsx'), '// edit in progress\n')
+  // A syntax error, so every rebuild of this source fails the same way.
+  await fs.writeFile(path.join(dir, 'src', 'client.tsx'), 'export default {\n')
+  await commitAll(dir, 'break')
 
   const events: string[] = []
   const stop = toastStore.subscribe((data) => events.push(data))
@@ -148,7 +156,7 @@ test('a refused extension listed on every page load is announced once', needsGit
     stop()
   }
 
-  assert.equal(events.filter((event) => event.includes('was not rebuilt') && event.includes(id)).length, 1)
+  assert.equal(events.filter((event) => event.includes('build failed') && event.includes(id)).length, 1)
 })
 
 test('an extension that fails to build does not stop the others', needsGit, async () => {

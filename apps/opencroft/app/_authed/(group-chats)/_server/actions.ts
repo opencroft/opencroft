@@ -22,6 +22,7 @@ import type {
 import {
   addMember,
   addPin,
+  attachThreadSession,
   clearThread,
   compactThread,
   createGroupChat,
@@ -57,6 +58,7 @@ import type {
   GroupChatThreadEntry,
   GroupChatThreadListEntry,
   MemberRef,
+  ThreadTranscriptSearch,
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import {
   findThreadViewBySlug,
@@ -64,6 +66,7 @@ import {
   getGroupChatDetailView,
   listGroupChatsForUserView,
   listThreadsInGroupChatView,
+  searchThreadTranscriptsView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import { getThreadLayout, putThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-access'
 import type {
@@ -334,6 +337,11 @@ export const openGroupChatThreadSession = createServerFn({ method: 'POST', stric
   .inputValidator((threadId: string) => threadId)
   .handler(async ({ data: threadId }) => refusalAsData(() => openThreadSession(getRequest(), threadId)))
 
+/** This thread's session if the engine holds it, null if not -- never starting it. See `attachThreadSession`. */
+export const attachGroupChatThreadSession = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }) => attachThreadSession(getRequest(), threadId))
+
 export const sendGroupChatThreadMessage = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator(
     (data: { threadId: string; text: string; front?: boolean; queue: QueueMode; attachments?: string[] }) => data,
@@ -427,6 +435,13 @@ export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: 
   .handler(
     async ({ data: groupChatId }): Promise<GroupChatThreadListEntry[]> =>
       listThreadsInGroupChatView(getRequest(), groupChatId),
+  )
+
+export const searchGroupChatTranscripts = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { groupChatId: string; query: string; includeArchived: boolean }) => data)
+  .handler(
+    async ({ data }): Promise<ThreadTranscriptSearch> =>
+      searchThreadTranscriptsView(getRequest(), data.groupChatId, data.query, data.includeArchived),
   )
 
 // ── Thread folders ───────────────────────────────────────────────────────

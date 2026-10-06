@@ -26,6 +26,9 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-node: var(--node);
+  --color-node-selected: var(--node-selected);
+  --color-node-shadow: var(--node-shadow);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);

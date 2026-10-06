@@ -250,6 +250,12 @@ export function askAnswers(text: string | undefined, questions: readonly string[
 // answer the agent got back for it.
 export function AskUserQuestionView({ args, result }: ToolViewProps) {
   const questions = Array.isArray(args.questions) ? (args.questions as AskedQuestion[]) : []
+  // While the agent is still writing the call, its arguments carry no
+  // questions yet: there is nothing to count and nothing to show under the
+  // header.
+  if (questions.length === 0 && !result) {
+    return <OpBlock verb='Preparing' detail='question' pending />
+  }
   const asked = questions.map((entry) => entry.question ?? entry.header ?? '').filter(Boolean)
   const detail = questions.length === 1 ? (questions[0].header ?? questions[0].question) : `${questions.length} questions`
   // Only questions that have their own text can be found in the reply; a

@@ -1,6 +1,8 @@
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+
+import { templateDatadir, templateDump } from './test-template'
 
 const PREFIX = 'opencroft-test-pglite-'
 
@@ -39,11 +41,11 @@ const STALE_MS = 6 * 60 * 60 * 1000
  * 2026-09-08 — where one unlucky test process would otherwise spend minutes deleting other
  * people's leftovers and look, from outside, exactly like a hung suite.
  *
- * **The bound spreads that work, it does not remove it.** A run puts every test FILE in its own
- * process, so a backlog is paid for across all of them rather than by one — which is still a slower
- * run, and still the symptom this number exists to avoid. A backlog of that size was therefore
- * cleared out of band rather than left to drain through test runs, which is what makes this a
- * safety margin rather than a mechanism anything relies on.
+ * **The bound spreads that work, it does not remove it.** Inside a run of run-tests.mjs one process
+ * per run sweeps (see `claimsTheSweep`), so a backlog drains by this much per run — still a slower
+ * run while it lasts, and still the symptom this number exists to avoid. A backlog of that size was
+ * therefore cleared out of band rather than left to drain through test runs, which is what makes
+ * this a safety margin rather than a mechanism anything relies on.
  */
 const MAX_SWEEP = 200
 
@@ -90,7 +92,8 @@ function removeWhenThisProcessEnds(dir: string): void {
  *
  * Everything above is best-effort by construction, so this is what makes the bound real rather
  * than hoped for: whatever escapes, the next run collects. It reads one directory and stats the
- * entries matching the prefix, which is free once the backlog it was written for has drained.
+ * entries matching the prefix. The read costs as much as that directory holds, which is whatever
+ * everything else on the host leaves in it, so inside a run only one process pays it.
  *
  * Two narrowings guard it — the path in use, and directories only — and they interact. The whole
  * enumeration, so the next reader does not re-derive three safe cases to find the fourth:
@@ -155,6 +158,80 @@ function sweepStaleDatadirs(): void {
   }
 }
 
+/**
+ * Whether this process sweeps. Outside a run of run-tests.mjs, always. Inside one, exactly one of
+ * its processes does: the first to create the claim in the run's directory, which only one can.
+ * Every file sweeping would read the same directory once per file and collect nothing the first
+ * sweep did not.
+ */
+function claimsTheSweep(): boolean {
+  const runDir = process.env.OPENCROFT_TEST_RUN_DIR
+  if (!runDir) {
+    return true
+  }
+  try {
+    mkdirSync(join(runDir, 'swept'))
+    return true
+  } catch (error) {
+    // Only "already claimed" passes the sweep on. A run directory that cannot be written to says
+    // nothing about whether anyone swept, so this process does.
+    return (error as NodeJS.ErrnoException).code !== 'EEXIST'
+  }
+}
+
+/**
+ * Start `dir` as a copy of the run's migrated template, when the run built one.
+ *
+ * Without a template the datadir stays empty and the first open initialises and migrates it, which
+ * is the same database reached the slow way -- so a missing template, or one that cannot be copied,
+ * costs time and nothing else. The copy goes into the directory already made above rather than
+ * replacing it, so it is still this process's own and still removed when the process ends.
+ */
+function seedFromTemplate(dir: string): void {
+  const template = templateDatadir()
+  if (!template || !existsSync(template)) {
+    return
+  }
+  try {
+    cpSync(template, dir, { recursive: true })
+  } catch {
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir)
+  }
+}
+
+/**
+ * Make `@opencroft/db`'s shared `db` an in-memory database (test-memory-db.ts) for a suite that
+ * left its database to this file -- that is, one whose PGLITE_PATH is still `defaultDir` when it
+ * first imports the package.
+ *
+ * The package keeps its handle on `globalThis.__opencroftDb` and opens one only when nothing is
+ * there (see index.ts), so the in-memory one is supplied there and the app's own open path is not
+ * touched. It is decided at that first import, not here: a suite imports this file first and
+ * may set PGLITE_PATH afterwards, and a suite that does wants a real datadir -- the lock and crash
+ * recovery exist only there -- so it gets one, opened by openDb as before. So does any suite
+ * that calls openDb itself. Imported lazily for the same reason: connect.ts reads
+ * DB_MIGRATIONS_DIR when it loads, and suites set that after importing this file.
+ *
+ * The datadir made above is kept, seeded and set as PGLITE_PATH all the same, so nothing that
+ * reads PGLITE_PATH or calls openDb sees a difference.
+ */
+function openSharedDatabaseInMemory(defaultDir: string): void {
+  let handle: Promise<unknown> | undefined
+  Object.defineProperty(globalThis, '__opencroftDb', {
+    configurable: true,
+    get() {
+      if (handle === undefined && process.env.PGLITE_PATH === defaultDir && !process.env.DATABASE_URL) {
+        handle = import('./test-memory-db').then(({ openMemoryDb }) => openMemoryDb(templateDump()))
+      }
+      return handle
+    },
+    set(value: Promise<unknown>) {
+      handle = value
+    },
+  })
+}
+
 // Importing this file IS the guard, and it must be a test file's first
 // import: openDb() picks node-postgres over PGlite purely on whether
 // DATABASE_URL is set, with no way to tell "the real app started" from "a
@@ -174,6 +251,10 @@ if (!process.env.PGLITE_PATH) {
   const dir = mkdtempSync(join(tmpdir(), PREFIX))
   process.env.PGLITE_PATH = dir
   removeWhenThisProcessEnds(dir)
+  seedFromTemplate(dir)
+  openSharedDatabaseInMemory(dir)
 }
 
-sweepStaleDatadirs()
+if (claimsTheSweep()) {
+  sweepStaleDatadirs()
+}

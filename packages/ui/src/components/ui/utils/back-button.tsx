@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react'
 import { ChevronLeft } from 'lucide-react'
 
-import { Button } from 'ui/components/ui/button'
+import { Button } from '../button'
 import { cn } from 'cn'
 
 export interface BackButtonProps extends Omit<ComponentProps<typeof Button>, 'children' | 'size' | 'variant'> {

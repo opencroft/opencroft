@@ -18,7 +18,7 @@ import { installDomEnvironment } from '@/test-support/dom-environment'
 
 const dom = await installDomEnvironment()
 
-const { act, createElement, useRef, useState } = await import('react')
+const { act, createElement, Fragment, useRef, useState } = await import('react')
 const { createRoot } = await import('react-dom/client')
 const { useClipboard } = await import('./use-clipboard')
 
@@ -93,10 +93,32 @@ async function mountHarness(
       nodes: () => nodesRef.current,
     }
 
-    return null
+    // The canvas the shortcuts are bound to, with the kinds of thing that can
+    // hold focus inside it, and beside it an inspector whose code editor is a
+    // plain focusable div -- what Monaco's EditContext input is on the page.
+    return createElement(
+      Fragment,
+      null,
+      createElement(
+        'div',
+        { 'data-testid': 'canvas', tabIndex: -1, onKeyDown: controls.onKeyDown },
+        createElement('div', { 'data-testid': 'node', tabIndex: 0 }, 'node text'),
+        createElement('input', { 'data-testid': 'node-input' }),
+        createElement('div', {
+          'data-testid': 'node-editable',
+          contentEditable: true,
+          suppressContentEditableWarning: true,
+        }),
+        createElement('div', { className: 'nokey' }, createElement('div', { 'data-testid': 'node-code', tabIndex: 0 })),
+      ),
+      createElement('div', { 'data-testid': 'inspector-code', tabIndex: 0 }),
+    )
   }
 
-  const root = createRoot(dom.container)
+  // A host of its own per mount, so one test's elements are never found by the next.
+  const host = document.createElement('div')
+  dom.container.append(host)
+  const root = createRoot(host)
   after(() => act(() => root.unmount()))
   await act(async () => {
     root.render(createElement(Harness, null))
@@ -116,7 +138,28 @@ async function mountHarness(
     paste: (target?: { x: number; y: number }) => current().paste(target),
     hasCopiedNodes: () => current().hasCopiedNodes(),
     nodes: () => current().nodes(),
+    element: (testId: string): HTMLElement => {
+      const el = host.querySelector<HTMLElement>(`[data-testid="${testId}"]`)
+      assert.ok(el, `expected the harness to render ${testId}`)
+      return el
+    },
   }
+}
+
+/** Presses a Ctrl shortcut on `target`; true when something took it from the browser. */
+async function pressOn(target: HTMLElement, code: string, key: string, init: KeyboardEventInit = {}): Promise<boolean> {
+  const event = new globalThis.window.KeyboardEvent('keydown', {
+    code,
+    key,
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  })
+  await act(async () => {
+    target.dispatchEvent(event)
+  })
+  return event.defaultPrevented
 }
 
 test('copy with no selection does not mark the clipboard as holding anything', async () => {
@@ -190,10 +233,9 @@ test('a clipboard read rejection on paste does not throw and pastes nothing', as
   assert.equal(h.nodes().length, before, 'a failed read must not add any node')
 })
 
-// THE REGRESSION THESE TWO PIN (non-English keyboard layouts): the Ctrl+X /
-// Ctrl+V hotkeys are matched on `event.code` (the physical key), not
-// `event.key` (the character it produces) -- so a layout switch, which
-// changes `key` but never `code`, must not turn them off.
+// The shortcuts are matched on `event.code` (the physical key), not
+// `event.key` (the character it produces), so a layout switch, which changes
+// `key` but never `code`, must not turn them off.
 test('Ctrl+V pastes on the physical V key even when the layout types a different character', async () => {
   installFakeClipboard()
   const h = await mountHarness([makeNode('a', 10, 10, true)])
@@ -201,12 +243,8 @@ test('Ctrl+V pastes on the physical V key even when the layout types a different
     await h.copy()
   })
   const before = h.nodes().length
-  await act(async () => {
-    // A Cyrillic layout's physical V key: `code` is still "KeyV", `key` is
-    // "м" -- the exact shape a real non-English keypress has.
-    const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
-    dispatchEvent.call(globalThis.window, new Ctor('keydown', { code: 'KeyV', key: 'м', ctrlKey: true }))
-  })
+  // A Cyrillic layout's physical V key: `code` is still "KeyV", `key` is "м".
+  assert.equal(await pressOn(h.element('canvas'), 'KeyV', 'м'), true)
   assert.equal(h.nodes().length, before + 1, 'the physical key still pastes, regardless of what it types')
 })
 
@@ -217,28 +255,87 @@ test('a different physical key does not paste just because it happens to type "v
     await h.copy()
   })
   const before = h.nodes().length
-  await act(async () => {
-    // `key: 'v'` but a different physical key -- proves the match is on
-    // `code`, not merely on `key` still happening to pass alongside it.
-    const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
-    dispatchEvent.call(globalThis.window, new Ctor('keydown', { code: 'KeyN', key: 'v', ctrlKey: true }))
-  })
+  assert.equal(await pressOn(h.element('canvas'), 'KeyN', 'v'), false)
   assert.equal(h.nodes().length, before, 'the wrong physical key must not paste')
 })
 
-function pressCtrl(code: string, key: string) {
-  const { KeyboardEvent: Ctor, dispatchEvent } = globalThis.window
-  dispatchEvent.call(globalThis.window, new Ctor('keydown', { code, key, ctrlKey: true }))
-}
+test('Ctrl+C on a node copies the selected nodes', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  assert.equal(await pressOn(h.element('node'), 'KeyC', 'c'), true)
+  assert.equal(h.hasCopiedNodes(), true)
+})
+
+test('Cmd+C copies on a Mac the same as Ctrl+C', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  assert.equal(await pressOn(h.element('canvas'), 'KeyC', 'c', { ctrlKey: false, metaKey: true }), true)
+  assert.equal(h.hasCopiedNodes(), true)
+})
+
+// A code editor that takes input through EditContext is a plain div, not a
+// form field. Outside the canvas it must keep its own paste even so.
+test('Ctrl+V in an editor outside the canvas is left to the browser', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  await act(async () => {
+    await h.copy()
+  })
+  const before = h.nodes().length
+  assert.equal(await pressOn(h.element('inspector-code'), 'KeyV', 'v'), false)
+  assert.equal(h.nodes().length, before)
+})
+
+test('Ctrl+C, X and V in a text field, contenteditable or .nokey editor inside the canvas are left to the browser', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  for (const testId of ['node-input', 'node-editable', 'node-code']) {
+    for (const [code, key] of [
+      ['KeyC', 'c'],
+      ['KeyX', 'x'],
+      ['KeyV', 'v'],
+    ]) {
+      assert.equal(await pressOn(h.element(testId), code, key), false, `${code} in ${testId}`)
+    }
+  }
+  assert.equal(h.hasCopiedNodes(), false, 'nothing was copied')
+  assert.deepEqual(
+    h.nodes().map((n) => n.id),
+    ['a'],
+    'nothing was cut or pasted',
+  )
+})
+
+test('Ctrl+C with text selected inside the canvas copies the text, not the nodes', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  const selection = document.getSelection()
+  assert.ok(selection)
+  selection.selectAllChildren(h.element('node'))
+  try {
+    assert.equal(await pressOn(h.element('node'), 'KeyC', 'c'), false)
+    assert.equal(h.hasCopiedNodes(), false)
+  } finally {
+    selection.removeAllRanges()
+  }
+})
+
+test('Ctrl+Shift+V is left to the browser', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  await act(async () => {
+    await h.copy()
+  })
+  assert.equal(await pressOn(h.element('canvas'), 'KeyV', 'V', { shiftKey: true }), false)
+  assert.equal(h.nodes().length, 1)
+})
 
 // Ids survive a move: whatever refers to a cut node (a router route, an edge
 // from elsewhere) must still find it once it is pasted back.
 test("cut then paste keeps the nodes' ids", async () => {
   installFakeClipboard()
   const h = await mountHarness([makeNode('a', 0, 0, true), makeNode('keep', 50, 50, false)])
-  await act(async () => {
-    pressCtrl('KeyX', 'x')
-  })
+  await pressOn(h.element('canvas'), 'KeyX', 'x')
   assert.deepEqual(
     h.nodes().map((n) => n.id),
     ['keep'],
@@ -274,9 +371,7 @@ test('an id another graph already holds is replaced on paste', async () => {
     asked.push(ids)
     return ['a']
   })
-  await act(async () => {
-    pressCtrl('KeyX', 'x')
-  })
+  await pressOn(h.element('canvas'), 'KeyX', 'x')
   await act(async () => {
     await h.paste()
   })
@@ -291,9 +386,7 @@ test('when the id check fails the paste still happens, with fresh ids', async ()
   const h = await mountHarness([makeNode('a', 0, 0, true)], async () => {
     throw new Error('offline')
   })
-  await act(async () => {
-    pressCtrl('KeyX', 'x')
-  })
+  await pressOn(h.element('canvas'), 'KeyX', 'x')
   await act(async () => {
     await h.paste()
   })

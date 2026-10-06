@@ -63,11 +63,15 @@ const FIXED: { kind: FixedPresenceKind; label: string; hint: string }[] = [
   { kind: 'daily', label: 'Daily', hint: 'once a day' },
 ]
 
+// Nothing chosen: the glyph is drawn muted rather than coloured by a cadence,
+// since no cadence is in force to read the colour of.
+const NOT_SET_COLOUR = 'text-muted-foreground stroke-muted-foreground'
+
 // A custom interval is stored in milliseconds and read in minutes, and it is
 // never shown as less than one: a sub-minute interval is realtime by another
 // name, and rounding it to "0 minutes" would describe a cadence nobody can set.
-function customMinutes(presence: PresenceValue): number {
-  return presence.kind === 'custom' ? Math.max(1, Math.round(presence.intervalMs / MINUTE_MS)) : 0
+function customMinutes(presence: PresenceValue | null): number {
+  return presence?.kind === 'custom' ? Math.max(1, Math.round(presence.intervalMs / MINUTE_MS)) : 0
 }
 
 // What the cadence is called, wherever it has to be said in words -- the
@@ -82,8 +86,11 @@ export function presenceLabel(presence: PresenceValue): string {
 }
 
 export interface PresenceSelectorProps {
-  presence: PresenceValue
+  /** `null` means no cadence has been chosen. */
+  presence: PresenceValue | null
   onSelect: (presence: PresenceValue) => void
+  // When given, the popover ends with a "Not set" row that calls this.
+  onUnset?: () => void
   // Whether this session's agent takes mid-turn input. Realtime is the one
   // cadence that only exists as a steering behaviour (streaming into the live
   // turn), so without steering it is not offered — on such an agent it would
@@ -106,7 +113,7 @@ export interface PresenceSelectorProps {
  * no hover-revealed control and nothing to drag, so the whole of it works on a
  * touch screen without a second route having to exist.
  */
-export function PresenceSelector({ presence, onSelect, steering = true, className }: PresenceSelectorProps) {
+export function PresenceSelector({ presence, onSelect, onUnset, steering = true, className }: PresenceSelectorProps) {
   const current = customMinutes(presence)
   const [open, setOpen] = useState(false)
   const [minutes, setMinutes] = useState(current ? String(current) : '')
@@ -133,7 +140,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
     setOpen(false)
   }
 
-  const title = `Reads messages: ${presenceLabel(presence)}`
+  const title = `Reads messages: ${presence === null ? 'Not set' : presenceLabel(presence)}`
 
   return (
     <Popover open={open} onOpenChange={openChange}>
@@ -151,7 +158,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
           />
         }
       >
-        <Activity className={`size-4 ${PRESENCE_COLOR[presence.kind]}`} />
+        <Activity className={`size-4 ${presence === null ? NOT_SET_COLOUR : PRESENCE_COLOR[presence.kind]}`} />
       </PopoverTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its overlays
           open upward from the start edge. Dressed as the kit's menus are:
@@ -168,7 +175,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
               }}
               className={cn(
                 'flex w-full items-baseline justify-between gap-3 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
-                presence.kind === entry.kind && 'bg-accent font-medium',
+                presence?.kind === entry.kind && 'bg-accent font-medium',
               )}
             >
               <span className='flex items-center gap-2'>
@@ -180,7 +187,7 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
           ))}
         </div>
         <div className='-mx-1 my-1 h-px bg-border' />
-        <div className={cn('flex items-center gap-2 px-2 py-1', presence.kind === 'custom' && 'font-medium')}>
+        <div className={cn('flex items-center gap-2 px-2 py-1', presence?.kind === 'custom' && 'font-medium')}>
           <Activity className={`size-4 shrink-0 ${PRESENCE_COLOR.custom}`} />
           <span className='text-sm'>Every</span>
           <Input
@@ -210,6 +217,28 @@ export function PresenceSelector({ presence, onSelect, steering = true, classNam
             Set
           </Button>
         </div>
+        {/* Offered only where "no choice" is a real state of the value, such as a
+            form field that may stay empty. A composer always has a cadence in
+            force, so it does not pass this. */}
+        {onUnset && (
+          <>
+            <div className='-mx-1 my-1 h-px bg-border' />
+            <button
+              type='button'
+              onClick={() => {
+                onUnset()
+                setOpen(false)
+              }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent',
+                presence === null && 'bg-accent font-medium',
+              )}
+            >
+              <Activity className={`size-4 shrink-0 ${NOT_SET_COLOUR}`} />
+              Not set
+            </button>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   )

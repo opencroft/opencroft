@@ -27,8 +27,7 @@ async function spaceWithAgents(names: string[]): Promise<void> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const slug = `tools-bridge-test-${crypto.randomUUID()}`
-  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
-  await registry.saveGraph(space.slug, {
+  await registry.create(slug, slug, {
     nodes: names.map((name, i) => ({
       id: `bridge-agent-${i}-${crypto.randomUUID()}`,
       type: 'builtin.core.agent',

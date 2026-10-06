@@ -1,9 +1,10 @@
 'use client'
 
 import type { Edge, Node } from '@xyflow/react'
-import { useCallback, useEffect, useState } from 'react'
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useState } from 'react'
 import { toast } from 'sonner'
 
+import { hasTextSelectionIn, isCanvasKeyPress } from '@/app/_authed/(dashboard)/_canvas/canvas-key-scope'
 import { assignPasteIds } from '@/app/_authed/(dashboard)/_canvas/paste-ids'
 import { newGraphId } from '@/lib/graph-id'
 
@@ -27,18 +28,6 @@ interface Options {
   setNodes: (updater: (nodes: Node[]) => Node[]) => void
   setEdges: (updater: (edges: Edge[]) => Edge[]) => void
   onChange: (nodes: Node[], edges: Edge[]) => void
-}
-
-function isEditing(): boolean {
-  const el = document.activeElement as HTMLElement | null
-  if (!el) {
-    return false
-  }
-  const tag = el.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-    return true
-  }
-  return el.isContentEditable
 }
 
 function selectedSet(nodes: Node[]): Node[] {
@@ -139,6 +128,35 @@ export interface ClipboardControls {
   paste: (target?: { x: number; y: number }) => Promise<void>
   /** True once a copy/cut has written something pasteable in this session. */
   hasCopiedNodes: boolean
+  /**
+   * Ctrl/Cmd+C, X and V for the canvas element's `onKeyDown`. Acts only on
+   * presses `isCanvasKeyPress` gives the canvas; every other press keeps the
+   * browser's own copy, cut and paste.
+   */
+  onKeyDown: (event: ReactKeyboardEvent<Element>) => void
+}
+
+type ClipboardAction = 'copy' | 'cut' | 'paste'
+
+// Matched on `event.code` (the physical key), not `event.key` (the character
+// it produces): on a non-QWERTY layout the keys are in the same place but type
+// a different character, so a `key`-based match would never fire there.
+const SHORTCUTS: Readonly<Record<string, ClipboardAction>> = { KeyC: 'copy', KeyX: 'cut', KeyV: 'paste' }
+
+function shortcutAction(event: KeyboardEvent, canvas: Element): ClipboardAction | null {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) {
+    return null
+  }
+  const action = Object.hasOwn(SHORTCUTS, event.code) ? SHORTCUTS[event.code] : undefined
+  if (!action || !isCanvasKeyPress(event, canvas)) {
+    return null
+  }
+  // Text selected inside a node (an error message, an output) is copied as
+  // text, the way it would be anywhere else on the page.
+  if (action !== 'paste' && hasTextSelectionIn(canvas)) {
+    return null
+  }
+  return action
 }
 
 export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, onChange }: Options): ClipboardControls {
@@ -205,38 +223,23 @@ export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, o
     [findTakenIds, nodes, edges, setNodes, setEdges, onChange],
   )
 
-  // Copy has no hotkey — it hijacked every Ctrl+C on the page (the isEditing()
-  // guard below only recognizes focus on an input/textarea/select/contentEditable,
-  // so copying selected text anywhere else, e.g. a log viewer, still got
-  // overwritten with node JSON). Copy is now only reachable from the node
-  // context menu. Cut/paste keep their hotkeys — not implicated in that bug.
-  //
-  // Matched on `event.code` (the physical key), not `event.key` (the
-  // character it produces): on a non-QWERTY layout the X/V keys are in the
-  // same place but produce a different character, so a `key`-based match
-  // silently never fires. `code` is layout-independent by construction —
-  // `KeyX` is `KeyX` everywhere.
-  useEffect(() => {
-    function handler(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey)) {
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent<Element>) => {
+      const action = shortcutAction(event.nativeEvent, event.currentTarget)
+      if (!action) {
         return
       }
-      if (isEditing()) {
-        return
-      }
-      if (e.code === 'KeyX') {
-        e.preventDefault()
+      event.preventDefault()
+      if (action === 'copy') {
+        copy()
+      } else if (action === 'cut') {
         cut()
-        return
-      }
-      if (e.code === 'KeyV') {
-        e.preventDefault()
+      } else {
         paste()
       }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [cut, paste])
+    },
+    [copy, cut, paste],
+  )
 
-  return { copy, paste, hasCopiedNodes }
+  return { copy, paste, hasCopiedNodes, onKeyDown }
 }

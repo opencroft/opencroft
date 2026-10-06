@@ -19,6 +19,8 @@ import { Calendar } from 'ui/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { cn } from 'cn'
 
+import { formatCompactNumber } from '../utils/compact-number'
+
 export type UsageGrouping = 'all' | 'agent' | 'model'
 
 export type UsagePeriod =
@@ -102,20 +104,6 @@ function seriesColor(index: number): string {
   return SERIES_COLORS[Math.min(index, SERIES_COLORS.length - 1)]
 }
 
-// Compact token counts — 18k, 680k, 1M, 2B — k / M / B / T covers any total a
-// day of cache reads can reach. One decimal while the figure is small in its
-// unit, dropped once it is noise. Same ladder and the same lower-case `k` the
-// chat's own token readouts use (usage-cost, context-ring), so one quantity
-// never renders two ways across the app.
-function formatTokens(n: number): string {
-  const value = Math.max(0, n)
-  if (value >= 1e12) return `${trimTrailingZero((value / 1e12).toFixed(value >= 1e13 ? 0 : 1))}T`
-  if (value >= 1e9) return `${trimTrailingZero((value / 1e9).toFixed(value >= 1e10 ? 0 : 1))}B`
-  if (value >= 1e6) return `${trimTrailingZero((value / 1e6).toFixed(value >= 1e7 ? 0 : 1))}M`
-  if (value >= 1e3) return `${trimTrailingZero((value / 1e3).toFixed(value >= 1e5 ? 0 : 1))}k`
-  return String(Math.round(value))
-}
-
 // The smallest "nice" step — 1, 2 or 5 times a power of ten — whose fifth
 // multiple reaches the maximum. Five levels at that step are the chart's
 // horizontal scale: every level reads as a round figure (2M 4M 6M 8M 10M,
@@ -129,10 +117,6 @@ function niceStep(max: number): number {
     }
   }
   return 10 * magnitude
-}
-
-function trimTrailingZero(text: string): string {
-  return text.endsWith('.0') ? text.slice(0, -2) : text
 }
 
 function formatCost(amount: number, currency: string): string {
@@ -590,38 +574,38 @@ export function SpaceUsage({
           />
           <ChartCard
             title='Total tokens'
-            total={formatTokens(totalOf((p) => p.totalTokens))}
+            total={formatCompactNumber(totalOf((p) => p.totalTokens))}
             dates={dates}
             series={chartSeries((p) => p.totalTokens)}
-            format={formatTokens}
+            format={formatCompactNumber}
           />
           <ChartCard
             title='Input tokens'
-            total={formatTokens(totalOf((p) => p.inputTokens))}
+            total={formatCompactNumber(totalOf((p) => p.inputTokens))}
             dates={dates}
             series={chartSeries((p) => p.inputTokens)}
-            format={formatTokens}
+            format={formatCompactNumber}
           />
           <ChartCard
             title='Output tokens'
-            total={formatTokens(totalOf((p) => p.outputTokens))}
+            total={formatCompactNumber(totalOf((p) => p.outputTokens))}
             dates={dates}
             series={chartSeries((p) => p.outputTokens)}
-            format={formatTokens}
+            format={formatCompactNumber}
           />
           <ChartCard
             title='Cache reads'
-            total={formatTokens(totalOf((p) => p.cacheReadTokens))}
+            total={formatCompactNumber(totalOf((p) => p.cacheReadTokens))}
             dates={dates}
             series={chartSeries((p) => p.cacheReadTokens)}
-            format={formatTokens}
+            format={formatCompactNumber}
           />
           <ChartCard
             title='Cache writes'
-            total={formatTokens(totalOf((p) => p.cacheWriteTokens))}
+            total={formatCompactNumber(totalOf((p) => p.cacheWriteTokens))}
             dates={dates}
             series={chartSeries((p) => p.cacheWriteTokens)}
-            format={formatTokens}
+            format={formatCompactNumber}
           />
         </div>
       )}

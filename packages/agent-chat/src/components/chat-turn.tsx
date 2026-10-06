@@ -358,7 +358,7 @@ export interface ChatUserMessageProps {
   //
   // The turn is then rendered twice by `CollapsingStickyHeader`: in full, and
   // as the short strip it collapses to. That component owns the sticky
-  // geometry, the stacking order and the cross-fade between the two forms;
+  // geometry, the stacking order and the swap between the two forms;
   // what each form looks like stays here.
   sticky?: boolean
   renderers: ChatTurnRenderers
@@ -466,7 +466,7 @@ export function ChatUserMessage({
             key={run.parts[0].id ?? runIndex}
             // Pinned rather than duplicated: the face holds the container's top
             // edge while its own run scrolls under it, so it is rendered once
-            // and never fades. Placed in the cross-fade instead it would appear
+            // and never takes part in the swap. Placed in it instead it would appear
             // out of nothing exactly as the message left, which is the kind of
             // thing a reader sees even when they could not say what happened.
             //
@@ -515,8 +515,8 @@ export function ChatUserMessage({
                     {handsOver && sticky ? (
                       // The last message is the one that hands over: its full
                       // form scrolls away like ordinary content, its opening
-                      // three lines stay behind, and the two cross only in the
-                      // final stretch. That wait is the point -- a message
+                      // three lines stay behind, and the two swap only once the
+                      // slide has finished. That wait is the point -- a message
                       // taller than the screen is read rather than shrunk out
                       // from under the reader.
                       <CollapsingStickyHeaderContent preview={<UserMessageBubble part={part} preview />}>
@@ -707,7 +707,7 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
         // sits behind the bubble's background -- which hides nothing, since an
         // outer shadow is drawn outside the border box. It needs no transition
         // and no query: this form only exists as the thing left behind, and the
-        // header cross-fades the whole of it in.
+        // header swaps the whole of it in.
         <div aria-hidden className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50' />
       )}
       {(part.author || part.authorAccount || part.sentAt || menu) && (

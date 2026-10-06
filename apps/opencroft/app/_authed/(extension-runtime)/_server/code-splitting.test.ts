@@ -137,9 +137,13 @@ test('a rebuild that changes only the dynamically-imported module still changes 
   assert.ok(first.success, JSON.stringify(first.errors))
   const dist = distDir(dir)
   const firstEntry = await fs.readFile(path.join(dist, 'client.js'), 'utf-8')
+  // Dated back rather than waited past: the wall clock can step back between
+  // the two builds, and the rewritten entry would then carry an earlier mtime
+  // than the first one did.
+  const old = new Date('2020-01-01T00:00:00Z')
+  await fs.utimes(path.join(dist, 'client.js'), old, old)
   const firstStat = await fs.stat(path.join(dist, 'client.js'))
 
-  await new Promise((resolve) => setTimeout(resolve, 10))
   await fs.writeFile(path.join(dir, 'src', 'big-module.ts'), bigModuleSource('after-'))
   const second = await buildExtension(id, manifest)
   assert.ok(second.success, JSON.stringify(second.errors))

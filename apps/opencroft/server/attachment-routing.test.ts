@@ -22,13 +22,23 @@ import type { ProbeRequest, ProbeResult } from './attachment-routing.probe'
 // for as an image, must still get the HTML 404. If it did not, the header would
 // no longer be doing anything here and the first assertion would prove nothing.
 
+// The app's icons and its manifest ride on the same rule: a browser asks for an
+// icon as an image and for the manifest as a `manifest`, so they are Nitro
+// routes too, and are probed here the way a browser asks for them.
+
 const PICTURE = '/api/acp/attachments/att-1?key=space.agent.thread'
 const NOT_A_ROUTE = '/api/acp/not-a-route/att-1'
+const TAB_ICON = '/favicon.svg?color=green'
+const APP_ICON = '/icons/icon-192.png?color=green'
+const MANIFEST = '/manifest.webmanifest?color=green'
 
 const REQUESTS: ProbeRequest[] = [
   { path: PICTURE, dest: 'image' },
   { path: PICTURE, dest: 'empty' },
   { path: NOT_A_ROUTE, dest: 'image' },
+  { path: TAB_ICON, dest: 'image' },
+  { path: APP_ICON, dest: 'image' },
+  { path: MANIFEST, dest: 'manifest' },
 ]
 
 let results: ProbeResult[]
@@ -57,6 +67,18 @@ test('control: a path Nitro does not route, asked for as an image, is still dive
   const result = resultFor(NOT_A_ROUTE, 'image')
   assert.equal(result.status, 404)
   assert.match(result.contentType, /html/)
+})
+
+test('the tab icon, an app icon and the manifest reach their routes when a browser asks for them', () => {
+  for (const [path, dest, type] of [
+    [TAB_ICON, 'image', /^image\/svg\+xml/],
+    [APP_ICON, 'image', /^image\/png/],
+    [MANIFEST, 'manifest', /^application\/manifest\+json/],
+  ] as const) {
+    const result = resultFor(path, dest)
+    assert.equal(result.status, 200, `${dest} ${path}`)
+    assert.match(result.contentType, type, `${dest} ${path}`)
+  }
 })
 
 // Its own process GROUP, killed whole at the end: Nitro's dev worker is a

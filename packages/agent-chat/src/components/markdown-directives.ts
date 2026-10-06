@@ -1,7 +1,7 @@
 import type { Parent, Root, RootContent } from 'mdast'
-import type { ContainerDirective } from 'mdast-util-directive'
+import type { ContainerDirective, TextDirective } from 'mdast-util-directive'
 
-import { MARKDOWN_CALLOUT_KINDS, type MarkdownCalloutKind } from './markdown-callout'
+import { MARKDOWN_CALLOUT_KINDS, type MarkdownCalloutKind } from './markdown-callout-kinds'
 
 /**
  * The documentation blocks markdown can carry, written as generic directives
@@ -24,14 +24,22 @@ import { MARKDOWN_CALLOUT_KINDS, type MarkdownCalloutKind } from './markdown-cal
  *     :::
  *     ::::
  *
+ * and one inline element, an icon in the text, named by its label and
+ * coloured by a theme token:
+ *
+ *     Ship it :icon[rocket]{color=primary} today.
+ *
  * This is the one place that says which directive names mean something and
- * which attribute each one reads (the callout kinds themselves are the callout
- * component's), so anything else that reads or writes these blocks takes the
- * names from here rather than restating them.
+ * which attribute each one reads (the callout kinds and the icon colours
+ * themselves are their components'), so anything else that reads or writes
+ * these takes the names from here rather than restating them.
  */
 export const SPOILER_DIRECTIVE = 'details'
 export const TABS_DIRECTIVE = 'tabs'
 export const TAB_DIRECTIVE = 'tab'
+export const ICON_DIRECTIVE = 'icon'
+/** The one attribute an icon reads. */
+export const ICON_COLOR_ATTRIBUTE = 'color'
 
 /**
  * The element names the blocks are handed to the renderer under. Custom names
@@ -43,6 +51,7 @@ export const DIRECTIVE_ELEMENTS = {
   spoiler: 'markdown-spoiler',
   tabs: 'markdown-tabs',
   tab: 'markdown-tab',
+  icon: 'markdown-icon',
 } as const
 
 export function isCalloutKind(name: string): name is MarkdownCalloutKind {
@@ -146,6 +155,29 @@ function sourceOf(node: RootContent, source: string): string | undefined {
   return start === undefined || end === undefined ? undefined : source.slice(start, end)
 }
 
+/**
+ * An icon: the text form named `icon` with a non-empty label, which is the
+ * icon's name. Its label is the name and not text to show, so it leaves the
+ * tree; the colour is carried as written, and the renderer decides whether it
+ * is one it draws.
+ */
+function iconOf(node: RootContent): TextDirective | undefined {
+  if (node.type !== 'textDirective' || node.name !== ICON_DIRECTIVE) {
+    return undefined
+  }
+  return textOf(node).trim() === '' ? undefined : node
+}
+
+function claimIcon(node: TextDirective) {
+  const color = node.attributes?.[ICON_COLOR_ATTRIBUTE]
+  node.data = {
+    ...node.data,
+    hName: DIRECTIVE_ELEMENTS.icon,
+    hProperties: { name: textOf(node).trim(), color: color ?? undefined },
+  }
+  node.children = []
+}
+
 function walk(parent: Parent, source: string) {
   parent.children = parent.children.map((child) => {
     if (child.type === 'containerDirective') {
@@ -153,11 +185,17 @@ function walk(parent: Parent, source: string) {
       walk(child, source)
       return child
     }
-    // Only containers are blocks. The text form (`:name`) turns up in ordinary
-    // prose -- `see file:README`, `key:value` -- so it goes back to the text it
-    // was parsed from rather than swallowing what the author typed. No block
-    // uses the leaf form (`::name` alone on a line) either, and it gets the
-    // same treatment.
+    const icon = iconOf(child)
+    if (icon) {
+      claimIcon(icon)
+      return icon
+    }
+    // Containers are blocks, and the icon is the one text form that means
+    // something. Any other text form (`:name`) turns up in ordinary prose --
+    // `see file:README`, `key:value` -- so it goes back to the text it was
+    // parsed from rather than swallowing what the author typed. No block uses
+    // the leaf form (`::name` alone on a line) either, and it gets the same
+    // treatment.
     if (child.type === 'textDirective' || child.type === 'leafDirective') {
       const text = sourceOf(child, source)
       if (text === undefined) {

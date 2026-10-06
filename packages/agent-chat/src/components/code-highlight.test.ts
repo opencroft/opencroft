@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { highlight, resolveLanguage } from './code-highlight'
+import { CODE_SCROLL_CLASS, highlight, resolveLanguage } from './code-highlight'
 
 // What a fence resolves to decides whether a block is coloured at all, and the
 // inputs are whatever an agent happened to type above the code. These are the
@@ -78,8 +78,8 @@ test('an alias never resolves to a grammar that is not loadable', () => {
   }
 })
 
-// The two shapes of output. `code-block` relies on the mark for its box and its
-// wrapping; `code-block-editor` relies on there being NO mark, because it draws
+// The two shapes of output. `code-block` relies on the mark for its box and on
+// its own classes for scrolling instead of wrapping; `code-block-editor` relies on there being NO mark, because it draws
 // its own box and has to own the padding for the caret to land correctly. Both
 // rely on the colours, which is why the colours hang on shiki's own class and
 // not on the mark.
@@ -91,6 +91,18 @@ test('a highlighted block marks itself as owning its box', async () => {
   assert.match(html, /class="shiki/)
   assert.match(html, /--shiki-light:/)
   assert.match(html, /--shiki-dark:/)
+})
+
+test('a highlighted block scrolls sideways on its own classes', async () => {
+  const html = await highlight('const answer = 42\n', 'typescript')
+  assert.ok(html, 'typescript should highlight')
+  const pre = html.match(/<pre [^>]*class="([^"]*)"/)
+  assert.ok(pre, 'the block should be a classed pre')
+  assert.deepEqual(
+    CODE_SCROLL_CLASS.split(' ').filter((name) => !pre[1].split(' ').includes(name)),
+    [],
+    'every scroll class should be on the pre',
+  )
 })
 
 test('a plain highlight keeps the colours and drops the box', async () => {

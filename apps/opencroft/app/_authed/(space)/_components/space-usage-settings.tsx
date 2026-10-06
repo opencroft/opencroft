@@ -9,12 +9,10 @@ import { getSpaceUsage, resetSpaceUsage } from '@/app/_authed/(space)/_server/us
  * The Usage section of a space's settings: token and cost trends over the
  * period and grouping the reader picks. Grouping/period live as local state
  * rather than the URL (same choice audit-settings.tsx made for its own
- * filters) — refetching on change, same as that page.
- *
- * INSTANCE-WIDE for v1, not scoped to this space: see the comment on
- * queryChatUsage in chat-usage-store.ts for why.
+ * filters) — refetching on change, same as that page. Both the read and the
+ * reset cover this space's spend only.
  */
-export function SpaceUsageSettings() {
+export function SpaceUsageSettings({ spaceSlug }: { spaceSlug: string }) {
   const [grouping, setGrouping] = useState<UsageGrouping>('all')
   const [period, setPeriod] = useState<UsagePeriod>({ kind: '7d' })
   const [series, setSeries] = useState<SpaceUsageSeries[]>([])
@@ -26,11 +24,11 @@ export function SpaceUsageSettings() {
   const latestRequest = useRef(0)
   const load = useCallback(async () => {
     const request = ++latestRequest.current
-    const next = await getSpaceUsage({ data: { grouping, period } })
+    const next = await getSpaceUsage({ data: { slug: spaceSlug, grouping, period } })
     if (request === latestRequest.current) {
       setSeries(next)
     }
-  }, [grouping, period])
+  }, [spaceSlug, grouping, period])
 
   useEffect(() => {
     void load()
@@ -46,7 +44,7 @@ export function SpaceUsageSettings() {
       // Re-queried rather than edited in place, so what the page shows after
       // the write is what the store holds — the same way it is after a switch.
       onReset={async (target) => {
-        await resetSpaceUsage({ data: { period: target } })
+        await resetSpaceUsage({ data: { slug: spaceSlug, period: target } })
         await load()
       }}
     />

@@ -40,6 +40,12 @@ export interface StartThreadComposerProps {
   // one that puts the text back. See agent-command-bar for why that trade is
   // made that way round.
   value: string
+  // Passed straight to the command bar: bump it whenever the host puts text
+  // back. A host that restores in the same tick as the clear (a refusal it
+  // decides before any await) leaves `value` at the text it already held, so
+  // without a revision the bar sees no change and stays empty. See the bar's
+  // `shouldResyncBuffer`.
+  valueRevision?: number
   onValueChange: (value: string) => void
   // An optional NAME for the thread, which the server slugifies into the
   // readable part of the session key ("Code review" -> code-review). An empty
@@ -141,6 +147,7 @@ export function StartThreadComposer({
   selectedAgentNodeId,
   onSelectAgent,
   value,
+  valueRevision,
   onValueChange,
   title,
   onTitleChange,
@@ -206,6 +213,7 @@ export function StartThreadComposer({
 
       <AgentCommandBar
         value={value}
+        valueRevision={valueRevision}
         onValueChange={onValueChange}
         // The command bar hands over the trimmed text and this passes it
         // straight on -- see `onSubmit` for why it is not left to the host to

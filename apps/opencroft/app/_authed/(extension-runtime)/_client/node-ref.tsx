@@ -3,7 +3,12 @@
 import { cn } from 'cn'
 import { AppWindow, Box, type LucideIcon } from 'lucide-react'
 
-import { describeGraphRef, type GraphRefState, useGraphRef } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
+import {
+  describeGraphRef,
+  type GraphRefDescription,
+  type GraphRefState,
+  useGraphRef,
+} from '@/app/_authed/(extension-runtime)/_client/graph-refs'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 export interface NodeRefProps {
@@ -23,6 +28,11 @@ interface RefDisplay {
   known: boolean
 }
 
+/** The icon a described node or App instance is drawn with. */
+export function refIcon(described: GraphRefDescription): LucideIcon {
+  return described.kind === 'app' ? AppWindow : resolveIcon(described.icon)
+}
+
 export function refDisplay(ref: GraphRefState, id: string): RefDisplay {
   if (ref.status !== 'known') {
     return {
@@ -34,7 +44,7 @@ export function refDisplay(ref: GraphRefState, id: string): RefDisplay {
   }
   const described = describeGraphRef(ref.info)
   return {
-    icon: described.kind === 'app' ? AppWindow : resolveIcon(described.icon),
+    icon: refIcon(described),
     accent: described.accent,
     name: described.name,
     hint: `${described.typeName} · ${described.spaceSlug} · ${id}`,

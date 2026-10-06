@@ -3,11 +3,7 @@ import path from 'node:path'
 
 import { dirMtime, listSourceFiles } from '@/app/_authed/(extension-editor)/_actions/extension-files'
 import { isLocalFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
-import {
-  type CheckoutState,
-  readCheckoutState,
-  refuseCompile,
-} from '@/app/_authed/(extension-runtime)/_server/checkout-state'
+import { type CheckoutState, readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { buildExtensionAt } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import {
   extensionIdOf,
@@ -20,7 +16,7 @@ import { uninstallExtension } from '@/app/_authed/(extension-runtime)/_server/in
 import { flushCache } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { manifestForDisplay } from '@/app/_authed/(extension-runtime)/_server/manifest'
 import { BUILD_PROVENANCE_FILE, folderDir, folderDistDir } from '@/app/_authed/(extension-runtime)/_server/paths'
-import type { BuildResult, CompileRefusal, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
+import type { BuildResult, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 // The checkout state is spread in rather than restated: the durable half of
 // "is this instance running that change?" is what the directory itself says,
@@ -41,28 +37,21 @@ export interface LocalExtensionRecord extends CheckoutState {
   updatedAt: number
   /**
    * The commit the CURRENTLY BUILT bundle was produced from — what the instance
-   * is actually running. It can lag `sourceCommit` (the checkout's own HEAD)
-   * now that the auto-rebuild refuses a dirty or off-branch checkout instead of
-   * republishing it. Null when nothing has been built yet, or the build predates
-   * this being recorded.
+   * is actually running. It lags `sourceCommit` (the checkout's own HEAD) until
+   * the next build, and a build that failed keeps the previous bundle running.
+   * Null when nothing has been built yet, or the build predates this being
+   * recorded.
    */
   builtCommit: string | null
   /**
-   * Whether the bundle was built from a tree carrying uncommitted work — true
-   * for a `compile_extension(allowUnclean)`, where `builtCommit` names a commit
-   * whose tree is NOT what was built. Without this, that commit reads as an
-   * exact identity it does not have. Null when no build has recorded provenance.
+   * Whether the bundle was built from a tree carrying uncommitted work, where
+   * `builtCommit` names a commit whose tree is NOT what was built. Without
+   * this, that commit reads as an exact identity it does not have. Null when no
+   * build has recorded provenance.
    */
   builtDirty: boolean | null
   /** The uncommitted paths that were on top of `builtCommit` at build time. */
   builtDirtyPaths: string[]
-  /**
-   * Why the running bundle may lag the checkout: the refusal the automatic
-   * rebuild would raise for the checkout as it stands (dirty, or off its default
-   * branch), or null when a rebuild would proceed. Reading `builtCommit` against
-   * `sourceCommit` says the two differ; this says why they are being kept apart.
-   */
-  refusal: CompileRefusal | null
   /**
    * When `sourceCommit` was committed, ISO 8601, or null when there is no
    * checkout to ask.
@@ -157,11 +146,6 @@ async function loadExtension(folder: string): Promise<LocalExtensionRecord | nul
     builtCommit: built.commit,
     builtDirty: built.dirty,
     builtDirtyPaths: built.dirtyPaths,
-    // The refusal the automatic rebuild would raise for this checkout as it
-    // stands — the reason the running bundle is held apart from the checkout.
-    // No override here: the record reports what the automatic path would do, and
-    // that path has no override.
-    refusal: refuseCompile(checkout, false),
     sourceCommitDate: commitDate,
   }
 }
@@ -189,6 +173,17 @@ export async function listLocalExtensionsImpl(): Promise<LocalExtensionRecord[]>
 
 export async function getLocalExtensionImpl(folder: string): Promise<LocalExtensionRecord | null> {
   return loadExtension(folder)
+}
+
+/**
+ * Which of `folders` are local extensions whose own checkout carries
+ * uncommitted changes. Other folders are skipped unread, and a folder git can
+ * say nothing about is not dirty.
+ */
+export async function readDirtyLocalFolders(folders: string[]): Promise<Set<string>> {
+  const local = folders.filter(isLocalFolder)
+  const states = await Promise.all(local.map((folder) => readCheckoutState(localFolderDir(folder))))
+  return new Set(local.filter((_, index) => states[index].sourceDirty === true))
 }
 
 async function writeFiles(dir: string, files: Record<string, string>): Promise<void> {
@@ -288,35 +283,17 @@ export async function deleteLocalExtensionImpl(folder: string): Promise<void> {
   await uninstallExtension(folder)
 }
 
-export interface CompileOptions {
-  /**
-   * Build the checkout as it stands, whatever state it is in. Deliberately
-   * available with no conditions: building a branch on a throwaway instance is
-   * legitimate, and a guard nobody can get past is a guard people route around.
-   */
-  allowUnclean?: boolean
-}
-
-export async function compileLocalExtensionImpl(folder: string, options: CompileOptions = {}): Promise<BuildResult> {
+/**
+ * Build a local extension's folder as it stands, uncommitted changes and
+ * branch included: a local extension is edited in place on this instance, so
+ * its working tree IS the version meant to run. What was built is recorded
+ * beside the bundle (see buildExtensionAt), which is how a reader tells a
+ * build of uncommitted work from a build of a commit.
+ */
+export async function compileLocalExtensionImpl(folder: string): Promise<BuildResult> {
   const record = await loadExtension(folder)
   if (!record) {
     throw new Error(`Extension ${folder} does not exist`)
-  }
-  // Checked before anything is flushed or built: a compile replaces what this
-  // instance is running, so the state of the directory has to be acceptable
-  // BEFORE the running bundle is disturbed, not after the build reports on it.
-  const refusal = refuseCompile(record, options.allowUnclean === true)
-  if (refusal) {
-    return {
-      success: false,
-      // Repeated as an error so a caller that only renders errors still shows
-      // the reason, instead of an empty failure it cannot explain.
-      errors: [{ file: folder, message: refusal.message }],
-      warnings: [],
-      clientHash: '',
-      serverHash: '',
-      refusal,
-    }
   }
   flushCache(record.id)
   // Built for the id the folder runs under, into its own dist — also when

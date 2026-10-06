@@ -2,9 +2,11 @@
 // that the table definitions, the migration and the membership queries
 // actually agree, the same reason token-actions.test.ts is set up this way.
 //
-// PGLITE_PATH and the migrations folder are set before importing anything
+// The data dir and the migrations folder are set before importing anything
 // that touches the db package — `@opencroft/db` opens the connection and
 // migrates at import time, so the environment has to be in place first.
+
+import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -15,7 +17,7 @@ import test, { after } from 'node:test'
 // Safe to import statically, above the env setup below: none of these opens a
 // database connection (agent-client is host-agnostic, `slug` is dependency-free
 // and drizzle-orm's `eq` is a pure query builder), so hoisting them cannot make
-// `@opencroft/db` connect before PGLITE_PATH is in place.
+// `@opencroft/db` connect before the environment is in place.
 import { connectionKey, handleUpdate } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
 // The parser half of the delivery format, used below to read a delivered turn
@@ -25,11 +27,11 @@ import { decodeBatch } from 'agent-client/queue-tags'
 import type { AgentSelection } from 'agent-client/types'
 import { and, eq, inArray, isNull, like } from 'drizzle-orm'
 
+import { MAX_MESSAGE_TEXT_BYTES } from '@/app/_authed/(agent)/_shared/message-size'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { slug } from '@/app/_authed/(server)/_server/types'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-group-chats-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 // The sleep-mode module resolves its marker directory once, when it loads, so
 // this has to be in place before anything imports it — agent-client-instance
 // does, below. Set it afterwards and the marker lands in a directory nothing
@@ -66,17 +68,19 @@ const {
   groupChatThread,
   groupChatThreadAlias,
   groupChatThreadArtifact,
+  transcriptMessage,
+  transcriptMessageCursor,
 } = await import('@opencroft/db')
 const model = await import('./model')
 // Dynamic like the rest: it reads and writes the settings table, so importing
-// it statically would touch the database before PGLITE_PATH is set above.
+// it statically would touch the database before the environment is set above.
 const sessionStore = await import('@/app/_authed/(agent)/_server/acp-session-store')
 // The live session registry a rename has to carry the session across -- same
 // singleton the app uses, imported dynamically for the same reason as above.
 const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
 // The handles messages are stamped with. Dynamic for the same reason as the
 // rest: resolving one reads (and may claim) a row, so importing it statically
-// would touch the database before PGLITE_PATH is set above.
+// would touch the database before the environment is set above.
 const { authorForAgentNode, authorForPerson } = await import('@/app/_server/message-author')
 const { ensureAuth } = await import('@opencroft/auth/server')
 // The production wiring this test process never runs (it imports model.ts
@@ -665,6 +669,42 @@ test('deleteThread tears the session down before dropping the row it is reachabl
   )
   const remaining = await db.select().from(groupChatThread).where(eq(groupChatThread.id, threadId))
   assert.equal(remaining.length, 0, 'and the row is gone once the delete completes')
+})
+
+test('deleting a thread deletes its search index; archiving one keeps it, for the Archived switch', async () => {
+  const owner = await makeUser('delete-index-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'delete index')
+  const indexedThread = async (key: string) => {
+    const [row] = await db
+      .insert(groupChatThread)
+      .values({ groupChatId: chat.id, agentNodeId: 'agent-a', sessionKey: key, createdByUserId: owner.id })
+      .returning()
+    assert.ok(row)
+    await db.insert(transcriptMessage).values({
+      sessionKey: key,
+      position: 0,
+      segment: 0,
+      role: 'user',
+      turn: 0,
+      text: 'remember this',
+      createdAt: new Date(),
+    })
+    await db.insert(transcriptMessageCursor).values({ sessionKey: key, resumeFrom: 1, turn: 0, openSegment: 0 })
+    return row.id
+  }
+  const indexed = async (key: string) =>
+    (await db.select().from(transcriptMessage).where(eq(transcriptMessage.sessionKey, key))).length +
+    (await db.select().from(transcriptMessageCursor).where(eq(transcriptMessageCursor.sessionKey, key))).length
+  const deletedKey = `group-chat:${chat.id}:agent-a:index-deleted`
+  const archivedKey = `group-chat:${chat.id}:agent-a:index-archived`
+  const deleted = await indexedThread(deletedKey)
+  const archived = await indexedThread(archivedKey)
+
+  await model.deleteThread(reqAs(owner), deleted)
+  await model.setThreadArchived(reqAs(owner), archived, true)
+
+  assert.equal(await indexed(deletedKey), 0)
+  assert.equal(await indexed(archivedKey), 2)
 })
 
 // ---------------------------------------------------------------------------
@@ -5187,6 +5227,179 @@ test('a granted extension lists the chat, opens a thread for an agent member, se
   assert.equal('turns' in api, false, 'a system grant opens threads and posts; it never reads transcripts')
 })
 
+// SESSION OPTIONS. The command bar's Effort, Permission Mode and Presence,
+// carried on a start or a send and applied to the thread's session before the
+// message is prompted. `log` records, in order, every config change the agent
+// was asked for and every prompt it received.
+function seedConfigurableConnection(log: string[]): void {
+  let options = [
+    {
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      type: 'select',
+      currentValue: 'medium',
+      options: [
+        { value: 'low', name: 'Low' },
+        { value: 'medium', name: 'Medium' },
+        { value: 'high', name: 'High' },
+      ],
+    },
+    {
+      id: 'mode',
+      name: 'Mode',
+      category: 'mode',
+      type: 'select',
+      currentValue: 'default',
+      options: [
+        { value: 'default', name: 'Default' },
+        { value: 'plan', name: 'Plan' },
+      ],
+    },
+  ]
+  const connection = {
+    newSession: async () => ({ sessionId: `configurable-${crypto.randomUUID()}`, configOptions: options }),
+    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+      log.push(`prompt:${params.prompt.map((b) => b.text ?? '').join('')}`)
+      return { stopReason: 'end_turn' }
+    },
+    setSessionConfigOption: async (params: { configId: string; value: string }) => {
+      log.push(`set:${params.configId}=${params.value}`)
+      options = options.map((o) => (o.id === params.configId ? { ...o, currentValue: params.value } : o))
+      return { configOptions: options }
+    },
+    resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
+    cancel: async () => {},
+    closeSession: async () => ({}),
+  } as unknown as AgentConnection
+  const selection: AgentSelection = {
+    providerId: 'test-provider',
+    adapterId: 'openclaw',
+    model: 'test-model',
+    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session Two')),
+    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  }
+  const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
+  assert.ok(store)
+  store.connections.set(connectionKey(selection), {
+    connection,
+    lastSessionId: null,
+    loadSession: false,
+    initialized: Promise.resolve(),
+  })
+}
+
+async function waitForLog(log: string[], entry: RegExp): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (log.some((line) => entry.test(line))) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`expected ${entry} in ${JSON.stringify(log)}`)
+}
+
+async function grantedExtensionChat(email: string) {
+  const owner = await makeUser(email)
+  const chat = await model.createGroupChat(reqAs(owner), email)
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session-2' })
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  return { chat, api: groupChatsForCaller(TEST_EXTENSION, undefined).api }
+}
+
+async function presenceOfThread(threadId: string) {
+  const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, threadId))
+  return agentClient.listSessions().find((s) => s.sessionKey === row?.sessionKey)?.presence
+}
+
+test('session options are applied before the opening message, and again before a later one', async () => {
+  const log: string[] = []
+  seedConfigurableConnection(log)
+  const { chat, api } = await grantedExtensionChat('session-options-apply@example.test')
+
+  const started = await api.startThread({
+    chat: chat.slug,
+    agentNodeId: 'agent-session-2',
+    message: 'opening instructions',
+    sessionOptions: { effort: 'high', permissionMode: 'plan', presence: { kind: 'online' } },
+  })
+  await waitForLog(log, /^prompt:[\s\S]*opening instructions/)
+  assert.deepEqual(started.sessionOptions, { applied: ['effort', 'permissionMode', 'presence'], skipped: [] })
+  assert.deepEqual(
+    log.map((line) => (line.startsWith('prompt:') ? 'prompt' : line)),
+    ['set:effort=high', 'set:mode=plan', 'prompt'],
+    'both settings reached the agent before the message did',
+  )
+  assert.deepEqual(await presenceOfThread(started.thread.threadId), { kind: 'online' })
+
+  const sent = await api.send({ thread: started.thread.ref, message: 'rework', sessionOptions: { effort: 'low' } })
+  await waitForLog(log, /^prompt:[\s\S]*rework/)
+  assert.deepEqual(sent.sessionOptions, { applied: ['effort'], skipped: [] })
+  assert.deepEqual(
+    log.slice(3).map((line) => (line.startsWith('prompt:') ? 'prompt' : line)),
+    ['set:effort=low', 'prompt'],
+  )
+})
+
+test('a session option the agent does not offer is skipped with its reason, and the others still apply', async () => {
+  const log: string[] = []
+  seedConfigurableConnection(log)
+  const { chat, api } = await grantedExtensionChat('session-options-skip@example.test')
+
+  const started = await api.startThread({
+    chat: chat.slug,
+    agentNodeId: 'agent-session-2',
+    message: 'opening instructions',
+    sessionOptions: {
+      effort: 'max',
+      permissionMode: 'plan',
+      presence: { kind: 'weekly' } as unknown as { kind: 'daily' },
+    },
+  })
+  await waitForLog(log, /^prompt:[\s\S]*opening instructions/)
+  assert.deepEqual(started.sessionOptions?.applied, ['permissionMode'])
+  assert.deepEqual(
+    started.sessionOptions?.skipped.map((s) => s.option),
+    ['effort', 'presence'],
+  )
+  assert.match(
+    started.sessionOptions?.skipped[0]?.reason ?? '',
+    /no effort "max" \(it offers low, medium, high, default\)/,
+  )
+  assert.match(started.sessionOptions?.skipped[1]?.reason ?? '', /"weekly" is not a presence/)
+  assert.deepEqual(
+    log.filter((line) => line.startsWith('set:')),
+    ['set:mode=plan'],
+    'nothing was sent for the skipped effort',
+  )
+})
+
+test('a send without session options leaves every setting as the session has it', async () => {
+  const log: string[] = []
+  seedConfigurableConnection(log)
+  const { chat, api } = await grantedExtensionChat('session-options-unset@example.test')
+
+  const started = await api.startThread({
+    chat: chat.slug,
+    agentNodeId: 'agent-session-2',
+    message: 'opening instructions',
+    sessionOptions: { effort: 'high', presence: { kind: 'online' } },
+  })
+  await waitForLog(log, /^prompt:[\s\S]*opening instructions/)
+
+  const sent = await api.send({ thread: started.thread.ref, message: 'plain follow-up' })
+  await waitForLog(log, /^prompt:[\s\S]*plain follow-up/)
+  assert.equal('sessionOptions' in sent, false, 'no options, no result for them')
+  assert.deepEqual(
+    log.filter((line) => line.startsWith('set:')),
+    ['set:effort=high'],
+    'the follow-up changed no setting',
+  )
+  assert.deepEqual(await presenceOfThread(started.thread.threadId), { kind: 'online' })
+})
+
 test('an extension reads the usage of the threads it opened, and of no other thread', async () => {
   const { recordChatUsageTurn } = await import('@/app/_authed/(agent)/_server/chat-usage-store')
   const owner = await makeUser('ext-sender-usage@example.test')
@@ -5619,6 +5832,68 @@ test('an extension archives and unarchives the threads it opened, and no other',
   assert.equal(await archivedAtOf(byPerson.thread.id), null)
 })
 
+// COMPACTING. An extension compacts the threads it opened through the same
+// job group_chat_compact runs, and reads how much context a thread holds.
+
+async function extensionCompactChat(email: string) {
+  const owner = await makeUser(email)
+  const chat = await model.createGroupChat(reqAs(owner), email, 'the standing topic')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), chat.id, EXTENSION_PRINCIPAL)
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+  const { thread } = await api.startThread({ chat: chat.slug, agentNodeId: 'agent-session', message: 'TASK-4: go' })
+  await waitForPrompts(prompts, 1)
+  return { owner, chat, api, thread, prompts }
+}
+
+test('an extension compacts a thread it opened: /compact reaches the session, and the call waits for the job', async () => {
+  const { api, thread, prompts } = await extensionCompactChat('compact-ext-own@example.test')
+
+  const result = await api.compact(thread.ref)
+  assert.equal(prompts[1], '/compact')
+  assert.match(prompts[2] ?? '', /the standing topic/, 'the standing context is re-delivered')
+  // The mock session reports no context usage, so whether it shrank cannot be told.
+  assert.deepEqual(result, { outcome: 'unknown', contextBefore: null, contextAfter: null })
+  assert.equal((await api.usage(thread.ref)).context, null, 'a session that never reported its context')
+})
+
+test('an extension compacts no thread it did not open, refused as a missing one, and reads no usage of it either', async () => {
+  const { owner, chat, api } = await extensionCompactChat('compact-ext-foreign@example.test')
+  const byPerson = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'mine')
+  const other = 'acme.compact-other-test'
+  groupChatsForCaller(other, undefined).api
+  await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.ext.acme.compact-other-test' })
+  const otherApi = groupChatsForCaller(other, undefined).api
+  const { thread: othersThread } = await otherApi.startThread({
+    chat: chat.slug,
+    agentNodeId: 'agent-session',
+    message: 'theirs',
+  })
+
+  const missing = await captureRefusal(() => api.compact('no-such-thread'))
+  assert.equal(missing.code, 'not-found')
+  assert.deepEqual(await captureRefusal(() => api.compact(byPerson.thread.id)), missing, "a person's thread")
+  assert.deepEqual(await captureRefusal(() => api.compact(othersThread.ref)), missing, "another extension's thread")
+  assert.deepEqual(
+    await captureRefusal(() => api.usage(othersThread.ref)),
+    await captureRefusal(() => api.usage('no-such-thread')),
+  )
+})
+
+test('an extension cannot compact its archived thread, or one whose agent left the chat', async () => {
+  const { owner, chat, api, thread } = await extensionCompactChat('compact-ext-refused@example.test')
+
+  await api.archive(thread.ref)
+  assert.equal((await captureRefusal(() => api.compact(thread.ref))).code, 'thread-archived')
+  await api.unarchive(thread.ref)
+
+  await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  assert.equal((await captureRefusal(() => api.compact(thread.ref))).code, 'agent-not-a-member')
+})
+
 test('a message waiting behind a running turn is dropped when the thread is archived, not delivered after', async () => {
   const { owner, chatId } = await chatWithBothAgents('archive-queue@example.test', 'archive drops the queue')
   const prompts: string[] = []
@@ -5681,4 +5956,38 @@ test('a message waiting behind a running turn is dropped when the thread is arch
   await new Promise((resolve) => setTimeout(resolve, 200))
   assert.equal(prompts.length, 1, 'the waiting message never reached the agent')
   assert.equal((await waiting()).length, 0, 'and nothing durable is left to bring it back on a later load')
+})
+
+test('message text over the limit is refused by name on every send surface, and starts no thread', async () => {
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('oversized-text@example.test', 'oversized text')
+  groupChatsForCaller(TEST_EXTENSION, undefined).api
+  await model.addMember(reqAs(owner), chatId, EXTENSION_PRINCIPAL)
+  const api = groupChatsForCaller(TEST_EXTENSION, undefined).api
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'first')
+  await waitForPrompts(inbox, 1)
+  const ref = model.threadRefFromSessionKey(thread.sessionKey)
+  const over = 'x'.repeat(MAX_MESSAGE_TEXT_BYTES + 1)
+
+  const refusals = [
+    await captureRefusal(() => model.sendMessageInThread(reqAs(owner), thread.id, over, { queue: 'wait' })),
+    await captureRefusal(() => model.sendMessageInThreadAsAgent('Agent Session Two', ref, over, 'wait')),
+    await captureRefusal(() => api.send({ thread: ref, message: over })),
+    await captureRefusal(() => model.startThread(reqAs(owner), chatId, 'agent-session-2', over)),
+    await captureRefusal(() => model.startThreadAsAgent('Agent Session', chatId, 'Agent Session Two', over)),
+    await captureRefusal(() => api.startThread({ chat: chatId, agentNodeId: 'agent-session-2', message: over })),
+  ]
+
+  assert.deepEqual(
+    refusals.map((refusal) => refusal.code),
+    Array(6).fill('message-too-large'),
+  )
+  assert.match(refusals[0]?.message ?? '', /over the 1\.0 MiB a message can carry/)
+  assert.deepEqual(await threadRowsFor(chatId), [thread.id], 'no refused start left a thread behind')
+  assert.equal(inbox.length, 1, 'nothing refused reached the agent')
+
+  // Exactly at the limit is a message like any other.
+  await model.sendMessageInThread(reqAs(owner), thread.id, 'y'.repeat(MAX_MESSAGE_TEXT_BYTES), { queue: 'wait' })
+  await waitForPrompts(inbox, 2)
 })

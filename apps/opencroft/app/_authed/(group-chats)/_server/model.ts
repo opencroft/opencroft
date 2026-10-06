@@ -20,10 +20,9 @@ import {
   groupChatSlugAlias,
   groupChatThread,
   groupChatThreadAlias,
-  space,
-  spaceSlugAlias,
   user,
 } from '@opencroft/db'
+import type { HostSessionOptions, HostSessionOptionsResult } from '@opencroft/server'
 import type { QueueMode } from 'agent-client/types'
 import { and, asc, eq, inArray, like, sql } from 'drizzle-orm'
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core'
@@ -31,6 +30,7 @@ import type { PgUpdateSetSource } from 'drizzle-orm/pg-core'
 import type { OpenedSession } from '@/app/_authed/(agent)/_server/acp-impl'
 import {
   agentConfiguredWindowByNodeId,
+  attachLocalSessionImpl,
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
   forkTurnLocalImpl,
@@ -46,7 +46,9 @@ import {
   stageSessionKeyMoves,
   type TabKeyMove,
 } from '@/app/_authed/(agent)/_server/session-key-move'
+import { applySessionOptions } from '@/app/_authed/(agent)/_server/session-options'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
+import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
 import { type TurnsPage, turnsPageForSessionKey } from '@/app/_authed/(extension-runtime)/_server/host'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type {
@@ -70,6 +72,7 @@ import {
   updateThreadLayout,
   withThreadInFolder,
 } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
+import { spaceIdBySlug, threadIdForSessionKey } from '@/app/_authed/(group-chats)/_server/thread-space'
 import { GroupChatAccessError, type GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import {
   isGroupChatSessionKey,
@@ -400,10 +403,10 @@ async function chatRowBySlug(chatSlug: string): Promise<GroupChatSummary | null>
 }
 
 /**
- * Whether a slug addresses a SPACE — live slug first, then one a rename freed,
- * the same ordering and for the same reason as `chatRowBySlug` above. Asked of
- * the tables rather than through the spaces registry, which would put the graph
- * runtime behind every membership question this file answers.
+ * Whether a slug addresses a SPACE — live slug first, then one a rename freed
+ * (see `spaceIdBySlug`). Asked of the tables rather than through the spaces
+ * registry, which would put the graph runtime behind every membership question
+ * this file answers.
  *
  * A chat at a space's own address IS that space's chat by construction: the
  * embed looks its chat up by the space's slug, and the create flow mints one
@@ -415,16 +418,7 @@ async function chatRowBySlug(chatSlug: string): Promise<GroupChatSummary | null>
  * nothing else here has to move.
  */
 async function slugAddressesASpace(spaceSlug: string): Promise<boolean> {
-  const [live] = await db.select({ id: space.id }).from(space).where(eq(space.slug, spaceSlug)).limit(1)
-  if (live) {
-    return true
-  }
-  const [aliased] = await db
-    .select({ spaceId: spaceSlugAlias.spaceId })
-    .from(spaceSlugAlias)
-    .where(eq(spaceSlugAlias.slug, spaceSlug))
-    .limit(1)
-  return !!aliased
+  return (await spaceIdBySlug(spaceSlug)) !== null
 }
 
 /**
@@ -1648,39 +1642,6 @@ async function standingContextForThread(groupChatId: string, agentNodeId: string
  *
  * This is the shape the session layer asks for by session key.
  */
-/**
- * THE ONE PLACE a session key is turned into a thread. Live first, then an
- * address a rename freed -- the rule every lookup here obeys, written once so a
- * caller cannot accidentally get the live half of it and not the other.
- *
- * Every site that resolves a key needs the alias half, not just the ones a
- * person reaches. A key can be captured in a closure and resolved a whole turn
- * later (see `requestCompact`), by which time a rename may have retired
- * it; a lookup without the fallback finds nothing and its caller carries on
- * with whatever "not a group-chat thread" means to it -- which, for the
- * compaction path, is dropping the history and then not restoring the topic,
- * pins and instructions that were the point of compacting.
- *
- * The alias row carries `threadId` directly, so this is one indexed read per
- * half and no join.
- */
-async function threadIdForSessionKey(sessionKey: string): Promise<string | null> {
-  const [live] = await db
-    .select({ id: groupChatThread.id })
-    .from(groupChatThread)
-    .where(eq(groupChatThread.sessionKey, sessionKey))
-    .limit(1)
-  if (live) {
-    return live.id
-  }
-  const [aliased] = await db
-    .select({ threadId: groupChatThreadAlias.threadId })
-    .from(groupChatThreadAlias)
-    .where(eq(groupChatThreadAlias.sessionKey, sessionKey))
-    .limit(1)
-  return aliased?.threadId ?? null
-}
-
 export async function groupChatStandingContext(sessionKey: string): Promise<StandingContext | null> {
   const threadId = await threadIdForSessionKey(sessionKey)
   if (!threadId) {
@@ -1852,6 +1813,8 @@ async function requireSessionKeysFree(keys: string[], exceptThreadIds: string[])
 export interface StartThreadResult {
   thread: GroupChatThreadSummary
   sessionId: string
+  /** What became of the session options the opening message carried; absent when it carried none. */
+  sessionOptions?: HostSessionOptionsResult
 }
 
 /**
@@ -1992,6 +1955,7 @@ async function createThread(
     // threads it opened (see the column's note in schema.ts).
     createdBySystemId?: string | null
     sender: string
+    sessionOptions?: HostSessionOptions
   },
 ): Promise<StartThreadResult> {
   // A GATE, not the copy that gets delivered. This refuses a thread for a chat
@@ -2002,6 +1966,9 @@ async function createThread(
   if (!standing) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
+  // Delivery refuses it too; checked here as well so an oversized opening
+  // message does not leave an empty thread behind.
+  refuseOversizedText(firstMessage)
 
   const title = opts.title?.trim() || undefined
   const { threadSlug, sessionKey } = await mintThreadAddress(groupChatId, agentNodeId, title)
@@ -2094,7 +2061,7 @@ async function createThread(
   // was inserted with a NULL signature and the once-on-change rule therefore
   // reads it as undelivered, and the signature is still recorded only once the
   // prompt has been accepted.
-  const { sessionId } = await deliverIntoThread(
+  const { sessionId, sessionOptions } = await deliverIntoThread(
     {
       id: thread.id,
       groupChatId,
@@ -2109,10 +2076,10 @@ async function createThread(
       archivedAt: null,
     },
     firstMessage,
-    { queue: 'wait', sender: opts.sender },
+    { queue: 'wait', sender: opts.sender, sessionOptions: opts.sessionOptions },
   )
 
-  return { thread, sessionId }
+  return { thread, sessionId, ...(sessionOptions ? { sessionOptions } : {}) }
 }
 
 /**
@@ -2224,6 +2191,22 @@ export async function forkThreadAt(
  * conversation, not reading a row.
  */
 export async function openThreadSession(request: Request, threadId: string): Promise<OpenedSession> {
+  return ensureLocalSessionImpl(await threadSessionSource(request, threadId))
+}
+
+/**
+ * The thread's session if the engine holds it, null if not -- never starting
+ * it. Addressed and gated exactly like `openThreadSession`; see
+ * `attachLocalSessionImpl` for who needs it.
+ */
+export async function attachThreadSession(request: Request, threadId: string): Promise<OpenedSession | null> {
+  return attachLocalSessionImpl(await threadSessionSource(request, threadId))
+}
+
+async function threadSessionSource(
+  request: Request,
+  threadId: string,
+): Promise<{ agentNodeId: string; tabKey: string }> {
   const sessionUser = await requireSignedInUser(request)
   const [row] = await db
     .select({
@@ -2240,7 +2223,7 @@ export async function openThreadSession(request: Request, threadId: string): Pro
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  return ensureLocalSessionImpl({ agentNodeId: row.agentNodeId, tabKey: row.sessionKey })
+  return { agentNodeId: row.agentNodeId, tabKey: row.sessionKey }
 }
 
 /**
@@ -2308,6 +2291,14 @@ function refuseIfArchived(thread: { archivedAt: Date | null }): void {
   }
 }
 
+/** Refuses message text over the limit one message may carry, from any sender. */
+function refuseOversizedText(text: string): void {
+  const notice = oversizedTextNotice(text)
+  if (notice) {
+    throw new GroupChatAccessError('message-too-large', notice)
+  }
+}
+
 /**
  * THE ONE DELIVERY PATH INTO A THREAD. Every caller — a person in the browser,
  * an agent through the tool surface, a send-message node's graph-driven send
@@ -2344,9 +2335,18 @@ function refuseIfArchived(thread: { archivedAt: Date | null }): void {
 async function deliverIntoThread(
   row: ThreadDeliveryTarget,
   text: string,
-  opts: { front?: boolean; queue: QueueMode; sender: string; attachments?: readonly string[] },
-): Promise<{ queued: boolean; sessionId: string }> {
+  opts: {
+    front?: boolean
+    queue: QueueMode
+    sender: string
+    attachments?: readonly string[]
+    sessionOptions?: HostSessionOptions
+  },
+): Promise<{ queued: boolean; sessionId: string; sessionOptions?: HostSessionOptionsResult }> {
   refuseIfArchived(row)
+  // The text as sent, not the payload with standing context framed around it:
+  // the limit is on what the sender wrote.
+  refuseOversizedText(text)
   // The agent has to still be a member, whoever is sending. Without this,
   // removing an agent is decoration: its threads survive by design, they carry
   // the sessionKey, and every send through them would keep reaching it. This
@@ -2378,6 +2378,12 @@ async function deliverIntoThread(
   // not announce. So this reports what it would report with delivery flowing:
   // whether a turn was already running when the message arrived.
   const queued = hasActiveTurnImpl(opened.sessionId)
+  // Before the prompt, in this same call: the message must reach an agent
+  // already on the settings it was sent with, whether it is delivered now or
+  // waits behind a running turn.
+  const sessionOptions = opts.sessionOptions
+    ? await applySessionOptions(opened.sessionId, opts.sessionOptions)
+    : undefined
 
   // ONCE ON CHANGE. If the chat's standing context has moved on since this
   // thread was last told about it, this message carries the new one; otherwise
@@ -2425,7 +2431,7 @@ async function deliverIntoThread(
       .set({ deliveredContextSignature: standing.signature })
       .where(eq(groupChatThread.id, row.id))
   }
-  return { queued, sessionId: opened.sessionId }
+  return { queued, sessionId: opened.sessionId, ...(sessionOptions ? { sessionOptions } : {}) }
 }
 
 /**
@@ -2656,7 +2662,7 @@ export async function setThreadArchivedAsAgent(
 /**
  * Archive or unarchive a thread as a host-bound sender -- an extension's own
  * system identity, or the agent that invoked its action. A thread the sender
- * does not own is refused as UNAVAILABLE, the way `usageSessionKeyForSystem`
+ * does not own is refused as UNAVAILABLE, the way `threadOpenedBySystem`
  * refuses one: an extension manages what it started and nothing else.
  */
 export async function setThreadArchivedForSender(
@@ -3690,8 +3696,8 @@ export async function startThreadForSender(
   chatRef: string,
   agentNodeId: string,
   firstMessage: string,
-  opts?: { title?: string; folder?: string },
-): Promise<{ thread: SenderThread; folder: string | null }> {
+  opts?: { title?: string; folder?: string; sessionOptions?: HostSessionOptions },
+): Promise<{ thread: SenderThread; folder: string | null; sessionOptions?: HostSessionOptionsResult }> {
   const chat = await chatForSender(sender, chatRef)
   const trimmed = firstMessage.trim()
   if (!trimmed) {
@@ -3711,11 +3717,16 @@ export async function startThreadForSender(
     createdByAgentNodeId: sender.principal.kind === 'agent' ? sender.principal.agentNodeId : null,
     createdBySystemId: sender.principal.kind === 'system' ? sender.principal.systemId : null,
     sender: sender.author,
+    sessionOptions: opts?.sessionOptions,
   })
   if (folder) {
     await placeThreadInFolder({ id: started.thread.id, groupChatId: chat.id, archivedAt: null }, folder)
   }
-  return { thread: await senderThreadFor(started.thread.id), folder: folder ?? null }
+  return {
+    thread: await senderThreadFor(started.thread.id),
+    folder: folder ?? null,
+    ...(started.sessionOptions ? { sessionOptions: started.sessionOptions } : {}),
+  }
 }
 
 /** Send into a thread of a chat the sender is a member of — `deliverIntoThread`, as every other send. */
@@ -3724,14 +3735,18 @@ export async function sendInThreadForSender(
   threadRef: string,
   text: string,
   queue: QueueMode,
-): Promise<{ status: 'queued' | 'delivered' }> {
+  sessionOptions?: HostSessionOptions,
+): Promise<{ status: 'queued' | 'delivered'; sessionOptions?: HostSessionOptionsResult }> {
   const trimmed = text.trim()
   if (!trimmed) {
     throw new Error('A message needs some text')
   }
   const row = await resolveThreadForPrincipal(sender.principal, threadRef)
-  const { queued } = await deliverIntoThread(row, trimmed, { queue, sender: sender.author })
-  return { status: queued ? 'queued' : 'delivered' }
+  const delivered = await deliverIntoThread(row, trimmed, { queue, sender: sender.author, sessionOptions })
+  return {
+    status: delivered.queued ? 'queued' : 'delivered',
+    ...(delivered.sessionOptions ? { sessionOptions: delivered.sessionOptions } : {}),
+  }
 }
 
 /** A thread of a chat the sender is a member of. */
@@ -3756,14 +3771,13 @@ export async function threadTurnsForSender(
 }
 
 /**
- * The session key of a thread that the system sender `systemId` itself
- * opened, for reading that thread's usage — its turns' tokens and cost, never
- * its transcript. Refused like any unreachable thread ("Not available") when
- * the system sender is no longer a member of the chat, or when someone else
- * opened the thread: an extension reads the usage of what it started, and of
- * nothing else in a chat it was granted into.
+ * A thread that the system sender `systemId` itself opened. Refused like any
+ * unreachable thread ("Not available") when the system sender is no longer a
+ * member of the chat, or when someone else opened the thread: an extension
+ * reads and compacts what it started, and nothing else in a chat it was
+ * granted into.
  */
-export async function usageSessionKeyForSystem(systemId: string, threadRef: string): Promise<string> {
+async function threadOpenedBySystem(systemId: string, threadRef: string): Promise<ThreadDeliveryTarget> {
   const row = await resolveThreadForPrincipal({ kind: 'system', systemId }, threadRef)
   const [opened] = await db
     .select({ createdBySystemId: groupChatThread.createdBySystemId })
@@ -3773,7 +3787,43 @@ export async function usageSessionKeyForSystem(systemId: string, threadRef: stri
   if (opened?.createdBySystemId !== systemId) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  return row.sessionKey
+  return row
+}
+
+/**
+ * What a thread that `systemId` opened holds, for reading its usage: the
+ * session key its turns' tokens and cost are recorded under (never its
+ * transcript), and the context its session holds — live, or what it last
+ * persisted while it is not loaded or has not reported since it was.
+ */
+export async function usageSourceForSystem(
+  systemId: string,
+  threadRef: string,
+): Promise<{ sessionKey: string; context: ContextUsage | null }> {
+  const row = await threadOpenedBySystem(systemId, threadRef)
+  const live = agentClient.listSessions().find((meta) => meta.sessionKey === row.sessionKey)
+  const context =
+    (live ? toContextUsage(live.usage) : null) ?? (await lastKnownContextUsage([row])).get(row.sessionKey) ?? null
+  return { sessionKey: row.sessionKey, context }
+}
+
+/**
+ * Compact a thread `systemId` opened — `compactThreadAsAgent` for an
+ * extension's own identity: the same job and the same refusals (an archived
+ * thread, an agent no longer in the chat), gated on having opened the thread.
+ */
+export async function compactThreadForSystem(systemId: string, threadRef: string): Promise<ThreadCompactWatch> {
+  const row = await threadOpenedBySystem(systemId, threadRef)
+  refuseIfArchived(row)
+  if (!(await isAgentMember(row.groupChatId, row.agentNodeId))) {
+    throw new GroupChatAccessError('agent-not-a-member', 'That agent is no longer a member of this group chat')
+  }
+  const watch = await watchCompact(row.sessionKey)
+  return {
+    ack: toThreadCompactAck(watch.ack),
+    status: () => toThreadCompactStatus(watch.status()),
+    settled: watch.settled.then(toThreadCompactStatus),
+  }
 }
 
 // Ungated: every caller above has already resolved the thread through the sender's membership.

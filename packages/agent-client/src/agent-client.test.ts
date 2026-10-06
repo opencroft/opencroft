@@ -5728,6 +5728,167 @@ test('a replayed compaction emits its event but never fires the live hook', asyn
   await h.client.deleteSession(h.sessionId)
 })
 
+// ── the compaction hold: nothing goes into a turn while it compacts ─────────
+
+const steersOf = (h: { extMethodCalls: Array<{ method: string; params: Record<string, unknown> }> }) =>
+  h.extMethodCalls
+    .filter((call) => call.method === '_session/steering')
+    .map((call) => (call.params.prompt as Array<{ text: string }>)[0].text)
+
+test('a realtime message sent while the turn compacts waits as queued, then steers in once it completes', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-1', status: 'in_progress' })
+
+  await h.client.prompt(h.sessionId, 'during', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.deepEqual(steersOf(h), [], 'nothing was steered into the compacting turn')
+  assert.equal(h.promptCalls.length, 1, 'and no prompt went over it either')
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['during'], 'shown as waiting')
+
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-1', status: 'completed' })
+  await settle()
+  const steers = steersOf(h)
+  assert.equal(steers.length, 1, 'delivered once the compaction ended, while the turn still runs')
+  assert.match(steers[0], /during/)
+  assert.equal(h.promptCalls.length, 1)
+  assert.deepEqual(queueSnapshots(h.events).at(-1), [])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a push sent while the turn compacts is neither steered nor interrupting, and steers in once it ends', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  // A windowed cadence: a plain message would wait for the turn's end, so only
+  // the push is owed to the compaction's.
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: 60_000 })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'push', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-2', status: 'in_progress' })
+
+  const pushed = await h.client.prompt(h.sessionId, 'urgent', {
+    queue: 'push',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await settle()
+  assert.deepEqual(pushed, { interrupted: false })
+  assert.deepEqual(steersOf(h), [])
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['urgent'])
+
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-2', status: 'failed', error: 'no' })
+  await settle()
+  const steers = steersOf(h)
+  assert.equal(steers.length, 1, 'a failed compaction ends the hold the same way')
+  assert.match(steers[0], /urgent/)
+  assert.equal(h.promptCalls.length, 1)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a message waiting for the turn end on a windowed cadence is not steered when a compaction ends', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: 60_000 })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'push', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-3', status: 'in_progress' })
+  await h.client.prompt(h.sessionId, 'later', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-3', status: 'completed' })
+  await settle()
+  assert.deepEqual(steersOf(h), [], 'the compaction owed it nothing')
+  assert.deepEqual(queueSnapshots(h.events).at(-1), ['later'])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a push on a harness that cannot steer does not cancel a compacting turn, and interrupts once it ends', async () => {
+  const h = await setup('openclaw', { cancelEndsTurn: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-4', status: 'in_progress' })
+
+  const pushed = await h.client.prompt(h.sessionId, 'urgent', {
+    queue: 'push',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await settle()
+  assert.deepEqual(pushed, { interrupted: false }, 'the compacting turn was not cancelled')
+  assert.deepEqual(deliveries(h), [['first']])
+
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-4', status: 'completed' })
+  await settle()
+  // The cancel ends the turn, and its settlement delivers the push.
+  assert.deepEqual(deliveries(h), [['first'], ['urgent']])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a notification raised while the turn compacts is held, then steered in once it ends', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-5', status: 'in_progress' })
+
+  const delivered = h.client.notify(h.sessionId, 'build finished')
+  await settle()
+  assert.deepEqual(steersOf(h), [])
+
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-5', status: 'cancelled' })
+  assert.equal(await delivered, true)
+  assert.deepEqual(steersOf(h), ['build finished'])
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a compaction whose end never arrives is released by the turn end, and the next turn steers again', async () => {
+  const h = await setup('openclaw', { steeringSupported: true, sessionKey: 'agent:lost-end' })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-6', status: 'in_progress' })
+  await h.client.prompt(h.sessionId, 'during', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.ok(h.client.compactingSessionKeys().includes('agent:lost-end'))
+
+  h.endTurn()
+  await settle()
+  assert.deepEqual(deliveries(h), [['first'], ['during']], 'the turn end delivered what was held')
+  assert.equal(h.client.compactingSessionKeys().includes('agent:lost-end'), false)
+
+  await h.client.prompt(h.sessionId, 'next', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(steersOf(h).length, 1, 'no hold outlived its turn')
+  assert.match(steersOf(h)[0], /next/)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a replayed in-progress compaction holds nothing', async () => {
+  const h = await setup('openclaw', { steeringSupported: true })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  const session = acpStore().sessions.get(h.sessionId) as { replaying?: boolean }
+  session.replaying = true
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-7', status: 'in_progress' })
+  session.replaying = false
+  await h.client.prompt(h.sessionId, 'steer me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await settle()
+  assert.equal(steersOf(h).length, 1)
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('onActivityChange reports a compaction starting and ending', async () => {
+  const reports: SessionActivity[] = []
+  const h = await setup('openclaw', { sessionKey: 'agent:compacting', onActivityChange: (a) => reports.push(a) })
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-8', status: 'in_progress' })
+  sendSummaryChunk(h.sessionId, 'hold-8', 'progress')
+  sendCompactionUpdate(h.sessionId, { compactionId: 'hold-8', status: 'completed' })
+  const own = reports.filter((a) => a.sessionId === h.sessionId).map((a) => a.compacting)
+  assert.deepEqual(own.slice(own.indexOf(true) - 1), [false, true, false], 'one report per change, none per chunk')
+  h.endTurn()
+  await h.client.deleteSession(h.sessionId)
+})
+
 // ── steering (mid-turn input via the harness's _session/steering extension) ─
 
 test('a harness that advertised steering injects a mid-turn message instead of queuing it', async () => {
@@ -6509,6 +6670,7 @@ test('onActivityChange reports every activity transition of a session once, and 
     activeTurns: 0,
     awaitingUser: false,
     backgroundWork: false,
+    compacting: false,
     ...activity,
   })
 
@@ -6542,7 +6704,14 @@ test('onActivityChange reports every activity transition of a session once, and 
     state({ backgroundWork: true }),
     state({}),
     state({ sessionKey: 'agent:activity-moved' }),
-    { sessionId: h.sessionId, alive: false, activeTurns: 0, awaitingUser: false, backgroundWork: false },
+    {
+      sessionId: h.sessionId,
+      alive: false,
+      activeTurns: 0,
+      awaitingUser: false,
+      backgroundWork: false,
+      compacting: false,
+    },
   ])
 })
 

@@ -1,73 +1,17 @@
 /**
- * How group_chat_compact waits for the compaction it asked for, and what it
- * says about how that ended.
+ * What group_chat_compact says about how the compaction it waited for ended
+ * (the wait itself is ../../(group-chats)/_server/compact-wait.ts).
  *
  * The tool is declared `async`, so it runs as a background task and the text
  * built here is that task's result — the notification the caller reads instead
  * of polling group_chat_compact_status. Its own module, with no server imports,
- * so the bounds and the wording are tested on a fake job.
- *
- * THE COMPACTION IS NEVER STOPPED FROM HERE. The timeout and the task's signal
- * end the WAIT; the job carries on under its own lifecycle in stream.ts, and
- * every answer that gives up says so, with the last state it saw.
+ * so the wording is tested on a fake job. Every answer that gives up says the
+ * compaction itself carries on, with the last state it saw.
  */
 
 import type { ContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
+import type { CompactWait } from '@/app/_authed/(group-chats)/_server/compact-wait'
 import type { ThreadCompactAck, ThreadCompactStatus } from '@/app/_authed/(group-chats)/_server/model'
-
-/**
- * How long the tool waits for the job to end. Observed compactions take 2–8
- * minutes, and a job can also sit `pending` behind a long turn in the thread,
- * so this leaves a margin. It stays below the background task's own limit
- * (DEFAULT_TIMEOUT_MINUTES), so the wait always ends with this module's answer
- * rather than a bare expiry that says nothing about the compaction.
- */
-export const COMPACT_WAIT_MS = 15 * 60_000
-
-/** What the tool waits on — `ThreadCompactWatch`, narrowed to what the wait reads. */
-export interface CompactWaitable {
-  status: () => ThreadCompactStatus
-  settled: Promise<ThreadCompactStatus>
-}
-
-/** How the wait ended, and the job's status at that moment. */
-export interface CompactWait {
-  ended: 'settled' | 'timeout' | 'aborted'
-  status: ThreadCompactStatus
-}
-
-/**
- * Wait for the job to reach `done` or `error`, for at most `timeoutMs`, and no
- * longer than `signal` stays unaborted. Never rejects: a job's failure is its
- * status, not an exception.
- */
-export async function waitForCompact(
-  watch: CompactWaitable,
-  opts: { timeoutMs: number; signal?: AbortSignal },
-): Promise<CompactWait> {
-  const { timeoutMs, signal } = opts
-  if (signal?.aborted) {
-    return { ended: 'aborted', status: watch.status() }
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let onAbort: (() => void) | undefined
-  const givenUp = new Promise<'timeout' | 'aborted'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), timeoutMs)
-    onAbort = () => resolve('aborted')
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
-  try {
-    return await Promise.race([
-      watch.settled.then((status): CompactWait => ({ ended: 'settled', status })),
-      givenUp.then((ended): CompactWait => ({ ended, status: watch.status() })),
-    ])
-  } finally {
-    clearTimeout(timer)
-    if (onAbort) {
-      signal?.removeEventListener('abort', onAbort)
-    }
-  }
-}
 
 /** The task's result text, and whether the task should read as failed. */
 export interface CompactOutcome {

@@ -351,6 +351,48 @@
       "when": 1790822380326,
       "tag": "0049_chat_attachment_dimensions",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790851234662,
+      "tag": "0050_transcript_search_entry",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1790853395830,
+      "tag": "0051_transcript_message",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1790877106373,
+      "tag": "0052_collab_doc",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790974507289,
+      "tag": "0053_drop_brand_setting",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1791055582361,
+      "tag": "0054_chat_usage_turn_space",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1791062451512,
+      "tag": "0055_drop_graph_sync_setting",
+      "breakpoints": true
     }
   ]
 }

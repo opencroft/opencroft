@@ -8,7 +8,7 @@ import {
   MARK_CELLS,
   MARK_STROKE_WIDTH,
   MARK_VIEWBOX,
-} from 'ui/components/ui/logo'
+} from './logo'
 
 // The loading indicator. It IS the mark, animated -- not a spinner set beside a
 // logo.
@@ -250,7 +250,8 @@ export function LogoLoader({ size = 24, className, ...props }: LogoLoaderProps) 
           width={MARK_CELL_SIZE}
           height={MARK_CELL_SIZE}
           rx={MARK_CELL_RADIUS}
-          fill={cell.accent ? BRAND_ACCENT : 'none'}
+          fill={cell.accent ? undefined : 'none'}
+          style={cell.accent ? { fill: BRAND_ACCENT } : undefined}
           stroke={cell.accent ? undefined : 'currentColor'}
           strokeWidth={cell.accent ? undefined : MARK_STROKE_WIDTH}
         />

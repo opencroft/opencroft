@@ -4,28 +4,33 @@
 // not mocks — the point is that the table definition, the migration and the
 // query actually agree.
 //
-// PGLITE_PATH and the migrations folder are set before importing anything
-// that touches the db package — `@opencroft/db` opens the connection and
-// migrates at import time, so the environment has to be in place first.
+// The migrations folder is set before importing anything that touches the db
+// package — `@opencroft/db` opens the connection and migrates at import time,
+// so the environment has to be in place first.
+
+import '@opencroft/db/test-env'
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test, { after } from 'node:test'
+import test from 'node:test'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-token-actions-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'packages', 'db', 'migrations')
+process.env.DB_MIGRATIONS_DIR = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'packages',
+  'db',
+  'migrations',
+)
 delete process.env.DATABASE_URL
 
 const { apiToken, db, user } = await import('@opencroft/db')
 const { createTokenForUser, listTokensForUser, revokeTokenForUser } = await import('./token-actions-impl')
 const { resolveCaller } = await import('@/app/_authed/(mcp)/_server/caller')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 async function makeUser(email: string): Promise<string> {
   const id = crypto.randomUUID()

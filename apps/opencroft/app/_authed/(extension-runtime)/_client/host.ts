@@ -19,6 +19,7 @@ import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
+import { MarkdownDiffView } from 'ui/components/ui/editing/markdown-diff-view'
 import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import * as uiKit from 'ui/ext'
 import { useIsMobile } from 'ui/hooks/use-mobile'
@@ -39,7 +40,7 @@ import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashbo
 import { NodeFrame, useNodeAccent } from '@/app/_authed/(dashboard)/_canvas/node-frame'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
-import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
+import { ChatDock, useChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { GraphCanvasLoading } from '@/app/_authed/(extension-runtime)/_client/graph-canvas-loading'
@@ -55,6 +56,7 @@ import {
   subscribe,
   type TextChunk,
 } from '@/app/_authed/(extension-runtime)/_client/stream'
+import { TerminalList } from '@/app/_authed/(extension-runtime)/_client/terminal-list'
 import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-ref'
 import { TerminalSelector } from '@/app/_authed/(extension-runtime)/_client/terminal-selector'
 import { resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
@@ -166,8 +168,10 @@ export interface NodeDefinition<D = Record<string, unknown>> {
    * inputs as the open canvas has them (`contexts`, keyed by target handle id,
    * as in `NodeContextMenuContext`). An output built from an input reads it
    * there, not from `data.__resolvedContexts`, which lags wiring done in the
-   * open page. The value must be JSON-serialisable: consumers on the canvas
-   * are handed a structural copy of it.
+   * open page. Consumers on the canvas get the value as returned, so it may be
+   * live, such as a `Stream` from `getStream`. They get a new context only when
+   * the value changes: plain objects and arrays by content, anything else by
+   * identity, so an unchanged live value must be the same instance each call.
    */
   exposeOutput?: (
     handleId: string,
@@ -495,6 +499,10 @@ export const extensionUiApi = {
   // object is built wherever the host surface is asked for, and most of those
   // places never edit anything.
   MarkdownEditor,
+  // What changed between two versions of a markdown document, on the
+  // document as it renders, each block drawn by the caller's own renderer.
+  // Shared so a document's changes look the same wherever they are shown.
+  MarkdownDiffView,
   // What `Markdown` already renders a `mermaid` fence with, exposed on its own
   // for a surface holding diagram source that never was markdown. Shared
   // because mermaid is a megabyte-class dependency fetched on first use, and
@@ -505,6 +513,7 @@ export const extensionUiApi = {
   NodeRef,
   SecretSelector,
   Terminal,
+  TerminalList,
   TerminalRef,
   TerminalSelector,
   // Pre-@opencroft/terminal name for already-compiled extensions.
@@ -588,6 +597,9 @@ export const extensionHostApi = {
   // behaviour — one component shared with the space canvas, so an extension
   // mounts this instead of arranging the pieces itself. See chat-dock.tsx.
   ChatDock,
+  // The dock around the calling surface (null outside one): which chat it
+  // shows, and opening one of that chat's threads in it.
+  useChatDock,
   // The full canvas surface behind a Graph App instance (prop: `instanceId`)
   // — the builtin extension's Graph App component renders this and nothing
   // else. See graph-canvas.tsx.

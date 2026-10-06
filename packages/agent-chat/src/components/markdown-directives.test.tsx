@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { PALETTE_HUES, PALETTE_SHADES } from 'ui/components/ui/input/color-palette'
+import { preloadIcons } from 'ui/components/ui/media/named-icon'
 
 import { Markdown } from './markdown'
 import { MARKDOWN_CALLOUT_KINDS } from './markdown-callout'
+import { MARKDOWN_ICON_COLOR_CHOICES } from './markdown-icon'
 
 function render(text: string, inline = false): string {
   return renderToStaticMarkup(<Markdown text={text} inline={inline} />)
@@ -117,6 +120,68 @@ test('blocks nest: a callout inside a tab inside tabs', () => {
   assert.match(html, /role="tab"[^>]*>Linux</)
   assert.match(html, /role="note"/)
   assert.match(visibleText(html), /TipUse the package manager\./)
+})
+
+test('an icon renders in the line as that Lucide icon, in its theme colour', async () => {
+  await preloadIcons(['rocket'])
+  const html = render('Ship :icon[rocket]{color=primary} today.')
+  assert.match(html, /^<div class="prose-chat"><p>Ship <svg [^>]*class="lucide lucide-rocket [^"]*text-primary"/)
+  assert.match(html, /<\/svg> today\.<\/p><\/div>$/)
+  assert.doesNotMatch(html, /:icon|rocket\]/)
+})
+
+test('every colour the picker offers draws with its own class', async () => {
+  await preloadIcons(['star'])
+  for (const { id, className } of MARKDOWN_ICON_COLOR_CHOICES) {
+    assert.match(render(`:icon[star]{color=${id}}`), new RegExp(`class="lucide lucide-star [^"]*${className}"`), id)
+  }
+})
+
+test('every hue of the palette at every shade draws with its own class', async () => {
+  await preloadIcons(['star'])
+  for (const hue of PALETTE_HUES) {
+    for (const shade of PALETTE_SHADES) {
+      const id = `${hue}-${shade}`
+      assert.match(render(`:icon[star]{color=${id}}`), new RegExp(`class="lucide lucide-star [^"]*text-${id}"`), id)
+    }
+  }
+})
+
+test('an icon with no colour, or one that is neither a theme nor a palette colour, takes the text colour', async () => {
+  await preloadIcons(['star'])
+  for (const source of [
+    ':icon[star]',
+    ':icon[star]{color=teal}',
+    ':icon[star]{color=teal-550}',
+    ':icon[star]{color=mauve-500}',
+    ':icon[star]{color="#ff0000"}',
+  ]) {
+    const html = render(source)
+    assert.match(html, /lucide-star/, source)
+    assert.doesNotMatch(html, /text-(primary|success|warning|destructive|muted-foreground)|teal|mauve|#ff0000/, source)
+  }
+})
+
+test('an icon name Lucide does not have renders a neutral placeholder naming it', () => {
+  const html = render(':icon[no-such-icon]{color=destructive}')
+  assert.match(html, /lucide-square-dashed[^"]*text-muted-foreground/)
+  assert.match(html, /<title>Unknown icon “no-such-icon”<\/title>/)
+  assert.doesNotMatch(html, /text-destructive/)
+})
+
+test('attributes other than the colour never reach an icon', async () => {
+  await preloadIcons(['star'])
+  const html = render(':icon[star]{color=primary style="position:fixed" onclick="alert(1)" class="x"}')
+  assert.doesNotMatch(html, /position:fixed|alert\(1\)|onclick|class="x"/)
+})
+
+test('an icon with no label stays the text the author typed', () => {
+  assert.equal(render('Use :icon here.'), '<div class="prose-chat"><p>Use :icon here.</p></div>')
+})
+
+test('inline rendering keeps an icon', async () => {
+  await preloadIcons(['star'])
+  assert.match(render('a :icon[star] b', true), /^<span class="prose-chat">a <svg [^>]*lucide-star/)
 })
 
 test('inline rendering unwraps a block to its text', () => {

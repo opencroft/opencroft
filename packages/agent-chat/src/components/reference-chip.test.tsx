@@ -29,7 +29,7 @@ test('the mark comes first, then the label, the detail and, at the right end, th
   assert.deepEqual(order(html), ['mark', 'label', 'detail', 'state'])
 })
 
-test('the label never truncates; the detail truncates first; the state gives way last', () => {
+test('the label never truncates; the detail is capped and truncates first; the state gives way last', () => {
   const html = renderToStaticMarkup(
     <ReferenceChip label='DEMO-42' detail='Login fails after a reset' state={state} icon={mark} href='/t' />,
   )
@@ -37,7 +37,7 @@ test('the label never truncates; the detail truncates first; the state gives way
   assert.match(html, /<span class="shrink-0 whitespace-nowrap">DEMO-42<\/span>/)
   assert.match(
     html,
-    /<span class="min-w-0 shrink-\[1000\] line-clamp-1 font-normal \[overflow-wrap:anywhere\]">Login fails/,
+    /<span class="min-w-0 max-w-\[28ch\] shrink-\[1000\] line-clamp-1 font-normal \[word-break:break-all\]">Login fails/,
   )
   // Not a flex share: capped, so a short status is never clipped by a sliver.
   assert.match(

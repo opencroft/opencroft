@@ -36,6 +36,7 @@ import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import {
+  attachLocalSessionImpl,
   editTurnLocalImpl,
   ensureLocalSessionImpl,
   findTargetSessionImpl,
@@ -46,7 +47,7 @@ import {
 } from './acp-impl'
 import { readPersistedSession, writePersistedUsage } from './acp-session-store'
 import { saveAttachment } from './attachment-store'
-import { flushSessionEvents, readSessionEvents } from './session-event-store'
+import { appendSessionEvent, flushSessionEvents, readSessionEvents } from './session-event-store'
 
 // The browser must not be able to say who a message is from — the name is
 // resolved server-side, from the session, in promptLocalImpl.
@@ -411,6 +412,55 @@ test('a restore that fails keeps the recorded transcript and the pointer, and th
   seedMockConnection(selection, { canLoad: true, resumable: true })
   const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
   assert.equal(reopened.sessionId, first.sessionId, 'the next open brings the same conversation back')
+})
+
+// A session nobody ever spoke to has no conversation to keep, and a harness
+// may never have stored it: its restore then fails on every attempt, and the
+// thread could be neither opened nor sent to.
+test('a never-prompted session whose restore fails is replaced by a fresh one', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true, resumable: true })
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  // A harness reports its state at session start, and the host records it like
+  // any other event -- so a session nobody spoke to still has a recording, and
+  // its reopen goes through the restore.
+  appendSessionEvent(tabKey, { kind: 'usage', used: 0 })
+  await flushSessionEvents()
+  assert.ok((await readSessionEvents(tabKey)).length > 0, 'precondition: something to restore from')
+  await stopLocalSessionProcessImpl(tabKey)
+
+  seedMockConnection(selection, { canLoad: true, resumable: true, resumeFails: true })
+  const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  assert.notEqual(reopened.sessionId, first.sessionId)
+  assert.equal(reopened.created, true, 'it gets the opening context a new session gets')
+  assert.deepEqual(await readPersistedSession(tabKey), { id: reopened.sessionId, prompted: false })
+})
+
+// ── attach: rejoining without starting ────────────────────────────────────
+
+test('attaching to a held session answers it', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `attach-test-tab-${crypto.randomUUID()}`
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  assert.equal((await attachLocalSessionImpl({ agentNodeId: nodeId, tabKey }))?.sessionId, opened.sessionId)
+})
+
+test('attaching to an unloaded session answers null and starts nothing', async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true })
+  const tabKey = `attach-test-tab-${crypto.randomUUID()}`
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await stopLocalSessionProcessImpl(tabKey)
+
+  assert.equal(await attachLocalSessionImpl({ agentNodeId: nodeId, tabKey }), null)
+  assert.equal(
+    agentClient.listSessions().some((session) => session.id === opened.sessionId),
+    false,
+    'the engine still holds nothing for it',
+  )
+  assert.equal(tabSessions.has(tabKey), false)
 })
 
 // ── forget-session primitive ──────────────────────────────────────────────

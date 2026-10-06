@@ -76,6 +76,7 @@ your shell or process manager; the server does not load a `.env` file itself.
 | `OPENCROFT_CACHE_DIR` | Cache directory. Default: `.cache` under the app's working directory. |
 | `EXTENSION_REGISTRIES` | Comma-separated list of additional extension registries. The default registry is always included. |
 | `EXTENSIONS` | Comma-separated extensions to install at startup, as `owner.name` or `owner.name:version`. |
+| `OPENCROFT_BRAND_COLOR` | Colour the instance draws its brand in: the logo, the wordmark, the tab icon, the installed app's icons. A Tailwind palette name such as `green` or `rose` (the full list is `BRAND_COLORS` in `packages/ui/src/components/ui/logo.tsx`). Default: `blue`. An unknown name logs a warning at startup and uses the default. Use it to tell instances apart, such as a staging copy from production. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Enable Google sign-in when both are set. |
 | `APPLE_CLIENT_ID`, `APPLE_CLIENT_SECRET` | Enable Apple sign-in when both are set. |
 
@@ -183,7 +184,7 @@ All commands run from the repository root.
 | `npm run build` | Builds the app for production. |
 | `npm start` | Serves the production build with `vite preview`. |
 | `npm run typecheck` | Runs each workspace's `typecheck` script (TypeScript `tsc --noEmit`, filtered to that package's own files). |
-| `npm test` | Runs each workspace's `test` script: every `*.test.ts(x)` file through Node's test runner via `tsx`, one file at a time. |
+| `npm test` | Runs every workspace's `test` script at once, printing each workspace's report whole when it finishes, in workspace order. Each runs every `*.test.ts(x)` file through Node's test runner via `tsx`, each file in its own process. At most 16 files run at once across all workspaces together; `OPENCROFT_TEST_CONCURRENCY` sets that number for the whole run (`1` runs them one at a time). A single workspace's `npm test` runs half the machine's cores' worth of its files at once, or `OPENCROFT_TEST_CONCURRENCY`. A suite's database is in memory unless it sets `PGLITE_PATH` itself. |
 | `npm run check` | Runs Biome over the tree and compares the findings with `lint-baseline.json`. Fails on findings above the baseline and on findings below it, so a fix must update the baseline in the same change. |
 | `npm run check:full` | Runs `biome check` over the whole tree without the baseline. |
 | `npm run fix` | Runs `biome check --write` to apply safe fixes. |

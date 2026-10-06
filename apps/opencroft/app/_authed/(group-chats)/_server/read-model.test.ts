@@ -3,14 +3,12 @@
 // is under test is that the resolution actually agrees with the tables and
 // the space graph, which a mock would assume rather than show.
 
-import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test, { after } from 'node:test'
+import '@opencroft/db/test-env'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-group-chats-view-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
+import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import test from 'node:test'
+
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -26,14 +24,10 @@ process.env.DB_MIGRATIONS_DIR = join(
 delete process.env.DATABASE_URL
 process.env.NODE_ENV = 'development'
 
-const { db, groupChatMember, groupChatThread, space } = await import('@opencroft/db')
+const { db, groupChatMember, groupChatThread, space, transcriptMessage } = await import('@opencroft/db')
 const model = await import('./model')
 const view = await import('./read-model')
 const { ensureAuth } = await import('@opencroft/auth/server')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 // Two real agent nodes, seeded before anything reads the space registry.
 await db.insert(space).values({
@@ -274,6 +268,50 @@ test('the view layer refuses a non-member exactly as the model does', async () =
     outsiderList.some((c) => c.id === chat.id),
     false,
     "a non-member's list must not include the chat",
+  )
+})
+
+test("a transcript search answers from this chat's threads only, archived ones only when asked, and refuses a non-member", async () => {
+  const owner = await makeUser('view-search@example.test', 'Search Owner')
+  const outsider = await makeUser('view-search-outsider@example.test', 'Search Outsider')
+  const chat = await model.createGroupChat(reqAs(owner), 'searchable')
+  const other = await model.createGroupChat(reqAs(owner), 'elsewhere')
+  const thread = async (groupChatId: string, key: string, archivedAt: Date | null) => {
+    const [row] = await db
+      .insert(groupChatThread)
+      .values({ groupChatId, agentNodeId: 'agent-a', sessionKey: key, createdByUserId: owner.id, archivedAt })
+      .returning()
+    assert.ok(row)
+    await db.insert(transcriptMessage).values({
+      sessionKey: key,
+      position: 3,
+      segment: 0,
+      role: 'agent',
+      turn: 2,
+      text: 'the rollout finished',
+      createdAt: new Date(),
+    })
+    return row.id
+  }
+  const active = await thread(chat.id, `group-chat:${chat.id}:agent-a:search-active`, null)
+  const archived = await thread(chat.id, `group-chat:${chat.id}:agent-a:search-archived`, new Date())
+  await thread(other.id, `group-chat:${other.id}:agent-a:search-other`, null)
+
+  const threadsOf = (result: { hits: { threadId: string }[] }) => result.hits.map((hit) => hit.threadId).sort()
+  assert.deepEqual(threadsOf(await view.searchThreadTranscriptsView(reqAs(owner), chat.id, 'rollout', false)), [active])
+  assert.deepEqual(
+    threadsOf(await view.searchThreadTranscriptsView(reqAs(owner), chat.id, 'rollout', true)),
+    [active, archived].sort(),
+  )
+  const [hit] = (await view.searchThreadTranscriptsView(reqAs(owner), chat.id, 'rollout', false)).hits
+  assert.deepEqual([hit?.position, hit?.role, hit?.turn], [3, 'agent', 2])
+
+  await assert.rejects(
+    () => view.searchThreadTranscriptsView(reqAs(outsider), chat.id, 'rollout', true),
+    (error: unknown) => {
+      assert.ok(error instanceof model.GroupChatAccessError)
+      return true
+    },
   )
 })
 

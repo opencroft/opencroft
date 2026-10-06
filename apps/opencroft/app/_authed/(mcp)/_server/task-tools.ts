@@ -447,7 +447,7 @@ export function cancelText(taskId: string, outcome: Exclude<CancelOutcome, 'unkn
         'does not honour the request runs on until it ends by itself — task_status shows whether it has stopped.'
       )
     case 'not-running':
-      return `Background task ${taskId} had already ended; nothing was stopped. task_status shows how it ended.`
+      return `Background task ${taskId} had already ended; nothing was stopped.`
   }
 }
 
@@ -481,7 +481,7 @@ export const definitions = [
   {
     name: 'task_cancel',
     description:
-      'Stop a background task. A command on a node is stopped. Work running inside this server, a tool or an action, is only asked to stop, and if it does not honour the request it runs until it ends by itself; the reply says which happened. A task that has already ended is left as it was.',
+      'Stop a background task. A command on a node is stopped. Work running inside this server, a tool or an action, is only asked to stop, and if it does not honour the request it runs until it ends by itself; the reply says which happened and shows the task as it now stands. Cancelling a task your own session started sends no separate notice of its ending: the reply is that notice. A task that has already ended is left as it was.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -522,12 +522,19 @@ export const handlers: Record<string, ToolHandler> = {
   //
   // Gated like every other tool that changes something: stopping a deploy
   // half-way is a change, whoever started it.
-  task_cancel: withApprovalRequired(async (args) => {
+  //
+  // The reply carries the task as the cancel left it. For the session that
+  // started the task this reply is the only word of its ending: the service
+  // sends that session no notification for an ending it asked for.
+  task_cancel: withApprovalRequired(async (args, caller) => {
     const taskId = requireTaskId(args)
-    const outcome = await (await backgroundTaskService()).cancel(taskId)
+    const service = await backgroundTaskService()
+    const outcome = await service.cancel(taskId, taskOwner(caller))
     if (outcome === 'unknown-task') {
       unknownTask(taskId)
     }
-    return textResult(cancelText(taskId, outcome))
+    const record = await service.get(taskId)
+    const reply = cancelText(taskId, outcome)
+    return textResult(record ? `${reply}\n\n${describeTask(record, new Date())}` : reply)
   }),
 }

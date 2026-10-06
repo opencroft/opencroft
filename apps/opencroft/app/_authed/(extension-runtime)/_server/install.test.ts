@@ -21,6 +21,7 @@ import { inArray } from 'drizzle-orm'
 
 import { getExtensionRow, writeExtensionRow } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import {
+  checkForUpdates,
   folderForUrl,
   installExtension,
   sweepInstallDebris,
@@ -265,6 +266,69 @@ test('an update of a folder with no recorded source has nothing to update it fro
   await withScratch([folder], async () => {
     await writeExtensionRow(folder, null)
     await assert.rejects(updateExtension(folder), /nothing to update it from/)
+  })
+})
+
+gitTest('an install at a tag is offered the newest tag, and nothing once it is there', async () => {
+  const folder = `acme.widgets-${suffix}`
+  await withScratch([folder], async ({ sources }) => {
+    const source = await makeSource(sources, 'widgets')
+    const installed = await installExtension({ folder, url: source.url, asLocal: false })
+    assert.deepEqual(await checkForUpdates(folder), {
+      current: 'v1.0.0',
+      currentCommit: installed.commit,
+      latest: 'v1.0.0',
+      latestCommit: null,
+      followsBranch: false,
+      hasUpdate: false,
+      availableTags: ['v1.0.0'],
+    })
+
+    await writeFiles(source.dir, { 'extension.json': manifestOf('1.1.0') })
+    await commitAs(source.dir, '1.1.0')
+
+    assert.deepEqual(await checkForUpdates(folder), {
+      current: 'v1.0.0',
+      currentCommit: installed.commit,
+      latest: 'v1.1.0',
+      latestCommit: null,
+      followsBranch: false,
+      hasUpdate: true,
+      availableTags: ['v1.1.0', 'v1.0.0'],
+    })
+  })
+})
+
+gitTest('an install following a branch is offered its new commits, not the newest tag', async () => {
+  const folder = `acme.widgets-${suffix}`
+  await withScratch([folder], async ({ sources }) => {
+    // The repository has a tag, and the install chose the branch anyway.
+    const source = await makeSource(sources, 'widgets')
+    const installed = await installExtension({ folder, url: source.url, ref: 'main', asLocal: false })
+    const atInstall = await checkForUpdates(folder)
+    assert.equal(atInstall.followsBranch, true)
+    assert.equal(atInstall.hasUpdate, false, 'the tag the repository also has is not an update to a branch install')
+
+    // A commit on the branch, with no tag of its own.
+    await writeFiles(source.dir, { 'extension.json': manifestOf('1.0.1') })
+    await git(source.dir, 'add', '-A')
+    await git(source.dir, 'commit', '-q', '-m', 'unreleased')
+    const tip = await git(source.dir, 'rev-parse', 'HEAD')
+
+    assert.deepEqual(await checkForUpdates(folder), {
+      current: 'main',
+      currentCommit: installed.commit,
+      latest: 'main',
+      latestCommit: tip,
+      followsBranch: true,
+      hasUpdate: true,
+      availableTags: ['v1.0.0'],
+    })
+
+    const updated = await updateExtension(folder)
+    assert.equal(updated.ref, 'main', 'an update with no ref stays on the branch')
+    assert.equal(updated.commit, tip)
+    assert.equal((await checkForUpdates(folder)).hasUpdate, false)
   })
 })
 

@@ -4,7 +4,7 @@ import { useSession } from '@opencroft/auth/client'
 import { AgentPlanControl } from 'agent-chat/components/agent-plan-control'
 import { PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useCallback, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
 import {
   DropdownMenu,
@@ -169,6 +169,26 @@ function ModeMenu({ mode, onModeChange }: { mode: ChatDockMode; onModeChange: (m
   )
 }
 
+/** What the surface inside a chat dock can ask of the dock around it. */
+export interface ChatDockControl {
+  /** The chat this dock shows: the slug it was given as `space`. */
+  space: string
+  /**
+   * Opens the panel -- the full-screen cover on a phone -- on this thread of
+   * the dock's chat. The same as picking the thread on the chat's home, so it
+   * becomes the remembered conversation; the panel's position and size stay
+   * as the reader left them.
+   */
+  openThread: (threadId: string) => void
+}
+
+const ChatDockContext = createContext<ChatDockControl | null>(null)
+
+/** The chat dock around the calling surface, or null when it has none. */
+export function useChatDock(): ChatDockControl | null {
+  return useContext(ChatDockContext)
+}
+
 interface Props {
   /** The group chat's address: the space's slug. */
   space: string
@@ -196,7 +216,8 @@ interface Props {
  *
  * It does NOT provide the selection scope: which elements feed the composer
  * is the surface's own affair, so callers mount their SelectionProvider
- * around this component and their selection bridges inside it.
+ * around this component and their selection bridges inside it. What it does
+ * provide is `useChatDock`, so the surface can open a thread in the panel.
  *
  * The covering container is a plain positioned element rather than the kit's
  * Sheet, deliberately: it is not a modal at all. No overlay, no focus trap,
@@ -263,6 +284,16 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     setGoneThreadId(null)
     setOpen(false)
   }
+  const control = useMemo<ChatDockControl>(
+    () => ({
+      space,
+      openThread: (threadId) => {
+        select({ threadId })
+        setOpen(true)
+      },
+    }),
+    [space, select, setOpen],
+  )
 
   // What the open thread's header says -- who it is with, where it is, what
   // it has delegated -- as the surface reports it; null while no thread is
@@ -431,7 +462,11 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       />
     ) : null
 
-  const surface = <div className='flex min-h-0 min-w-0 flex-1'>{children}</div>
+  const surface = (
+    <ChatDockContext.Provider value={control}>
+      <div className='flex min-h-0 min-w-0 flex-1'>{children}</div>
+    </ChatDockContext.Provider>
+  )
 
   const closeButton = (buttonSize: 'icon' | 'icon-sm') => (
     <Button variant='ghost' size={buttonSize} aria-label='Close chat' title='Close chat' onClick={close}>

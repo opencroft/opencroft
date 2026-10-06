@@ -626,14 +626,15 @@ export async function listSpaceApps(spaceSlug?: string): Promise<SpaceAppListing
   const provided = await providedApps()
   const apps: Record<string, SpaceAppInfo> = {}
   const actions: Record<string, string[]> = {}
-  for (const row of rows) {
+  const listed = rows.filter((row) => !spaceSlug || slugById.get(row.spaceId) === spaceSlug)
+  // Each App is asked for its live handles at once rather than in turn: one
+  // slow App would otherwise hold up every app listed after it.
+  const liveByRow = await Promise.all(listed.map((row) => liveHandles(row, appEntryFor(provided, row))))
+  for (const [index, row] of listed.entries()) {
     const space = slugById.get(row.spaceId) ?? ''
-    if (spaceSlug && space !== spaceSlug) {
-      continue
-    }
     const entry = appEntryFor(provided, row)
     const info: SpaceAppInfo = { type: row.type, name: row.name }
-    const handles = await liveHandles(row, entry)
+    const handles = liveByRow[index]
     if (handles.length > 0) {
       info.handles = handles.map(({ handleId }) => handleId)
     }
@@ -765,6 +766,8 @@ export interface AppHandleInfo {
   /** The qualified handle type. */
   handleType: string
   label?: string
+  /** What the App calls this live handle (its `handleLabel` hook), when it says. */
+  liveLabel?: string
   dynamic: boolean
 }
 
@@ -775,24 +778,23 @@ export interface AppHandleInfo {
  * this moment. An instance that cannot be asked is logged and contributes
  * nothing rather than failing the listing it is part of.
  *
- * The one definition of "live", shared by the two listings that need it: the
- * ids `app_list` prints, and the descriptions `listAppHandles` builds.
+ * The one definition of "live", shared by the listings that need it: the ids
+ * `app_list` prints, and the descriptions `listAppHandleOwners` builds.
  */
 async function liveHandles(
   row: SpaceAppRow,
   entry: AppEntry | undefined,
   handleType?: string,
-): Promise<Array<{ handle: AppHandle; handleId: string }>> {
-  const declared = (entry?.handles ?? []).filter(
-    (handle) => handleType === undefined || handle.handleType === handleType,
-  )
+): Promise<Array<{ handle: AppHandle; handleId: string; liveLabel?: string }>> {
+  const declared = declaredHandles(entry, handleType)
   if (declared.length === 0) {
     return []
   }
   let liveIds: string[] = []
+  let hooks: AppServerHooks | undefined
   if (declared.some((handle) => handle.dynamic)) {
     try {
-      const hooks = await hooksFor(row.type)
+      hooks = await hooksFor(row.type)
       liveIds = (await hooks?.listHandles?.(await instanceContext(row))) ?? []
     } catch (error) {
       console.error(`[apps] listHandles failed for ${row.type} (${row.id})`, error)
@@ -801,13 +803,73 @@ async function liveHandles(
   }
   return declared.flatMap((handle) =>
     handle.dynamic
-      ? liveIds.filter((id) => id.startsWith(handle.id)).map((handleId) => ({ handle, handleId }))
+      ? liveIds
+          .filter((id) => id.startsWith(handle.id))
+          .map((handleId) => ({ handle, handleId, liveLabel: labelOf(hooks, row, handleId) }))
       : [{ handle, handleId: handle.id }],
   )
 }
 
-/** Every live handle every App instance exposes, described for a handle picker. */
-export async function listAppHandles(handleType?: string): Promise<AppHandleInfo[]> {
+// A label is only a nicer name for an id the caller can show anyway, so an App
+// whose hook throws loses its labels, not its handles.
+function labelOf(hooks: AppServerHooks | undefined, row: SpaceAppRow, handleId: string): string | undefined {
+  try {
+    return hooks?.handleLabel?.(handleId)
+  } catch (error) {
+    console.error(`[apps] handleLabel failed for ${row.type} (${row.id})`, error)
+    return undefined
+  }
+}
+
+/**
+ * What an app's App calls some of its handles, for a caller that already holds
+ * the ids -- a saved terminal target -- and only wants them named. Asks the
+ * `handleLabel` hook alone, never `listHandles`, so naming a route costs no
+ * listing. An id the App does not name is left out.
+ */
+export async function appHandleLabels(row: SpaceAppRow, handleIds: string[]): Promise<Record<string, string>> {
+  if (handleIds.length === 0) {
+    return {}
+  }
+  let hooks: AppServerHooks | undefined
+  try {
+    hooks = await hooksFor(row.type)
+  } catch (error) {
+    console.error(`[apps] loading hooks failed for ${row.type} (${row.id})`, error)
+    return {}
+  }
+  const labels: Record<string, string> = {}
+  for (const handleId of handleIds) {
+    const label = labelOf(hooks, row, handleId)
+    if (label) {
+      labels[handleId] = label
+    }
+  }
+  return labels
+}
+
+function declaredHandles(entry: AppEntry | undefined, handleType?: string): AppHandle[] {
+  return (entry?.handles ?? []).filter((handle) => handleType === undefined || handle.handleType === handleType)
+}
+
+/**
+ * An App instance that declares handles of the asked type, before its live
+ * handles are listed. Listing them can mean asking the App (its `listHandles`
+ * hook), which is as slow as whatever the App asks in turn, so it is a call of
+ * its own: a caller waits for all owners in parallel, or for one at a time.
+ */
+export interface AppHandleOwner {
+  instanceId: string
+  spaceSlug: string
+  /** The App's qualified type. */
+  type: string
+  /** Whether listing its handles asks the App, i.e. any matching declaration is dynamic. */
+  dynamic: boolean
+  handles: () => Promise<AppHandleInfo[]>
+}
+
+/** Every App instance with a handle of `handleType` (any type when omitted). Asks no App anything. */
+export async function listAppHandleOwners(handleType?: string): Promise<AppHandleOwner[]> {
   const rows = await db.query.spaceApp.findMany({ orderBy: asc(spaceApp.createdAt) })
   if (rows.length === 0) {
     return []
@@ -815,28 +877,41 @@ export async function listAppHandles(handleType?: string): Promise<AppHandleInfo
   const r = await registry()
   const slugById = new Map(r.list().map((s) => [s.id, s.slug]))
   const provided = await providedApps()
-  const results: AppHandleInfo[] = []
-  for (const row of rows) {
+  return rows.flatMap((row) => {
     const entry = appEntryFor(provided, row)
+    const declared = declaredHandles(entry, handleType)
+    if (declared.length === 0) {
+      return []
+    }
     const base = {
       instanceId: row.id,
       spaceSlug: slugById.get(row.spaceId) ?? '',
       type: row.type,
       title: entry?.title ?? row.type,
     }
-    for (const { handle, handleId } of await liveHandles(row, entry, handleType)) {
-      results.push({ ...base, ...handleFields(handle, handleId) })
-    }
-  }
-  return results
+    return [
+      {
+        instanceId: row.id,
+        spaceSlug: base.spaceSlug,
+        type: row.type,
+        dynamic: declared.some((handle) => handle.dynamic),
+        handles: async () =>
+          (await liveHandles(row, entry, handleType)).map(({ handle, handleId, liveLabel }) => ({
+            ...base,
+            ...handleFields(handle, handleId, liveLabel),
+          })),
+      },
+    ]
+  })
 }
 
-function handleFields(handle: AppHandle, liveId: string) {
+function handleFields(handle: AppHandle, liveId: string, liveLabel?: string) {
   return {
     handleId: liveId,
     declaredId: handle.id,
     handleType: handle.handleType,
     label: handle.label,
+    liveLabel,
     dynamic: Boolean(handle.dynamic),
   }
 }

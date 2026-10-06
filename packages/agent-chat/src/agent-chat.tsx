@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode, RefObject } from 'react'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { LogoLoader } from 'ui/components/ui/logo-loader'
 
 import type { AgentComposerHandle } from './agent-command-bar'
@@ -118,6 +118,19 @@ export interface AgentChatProps {
   // which quotes the message (or the selected part of it) at the end of the
   // composer; without it the menu offers Copy alone.
   composerRef?: RefObject<AgentComposerHandle | null>
+  // Open the conversation at a turn instead of at its end: older history is
+  // loaded until a block with one of these ids is rendered, and its turn is
+  // scrolled to the top. Several ids because a turn renders as its question
+  // or, when that renders nothing, as its replies -- the host names both.
+  // A new object is a new request; the same object is never acted on twice.
+  reveal?: AgentChatReveal | null
+}
+
+export interface AgentChatReveal {
+  blockIds: readonly string[]
+  // Told once per request: whether the turn was found, or the history ran out
+  // without it.
+  onSettled?: (found: boolean) => void
 }
 
 export function AgentChat({
@@ -137,6 +150,7 @@ export function AgentChat({
   onDeliverUnread,
   footerExtra,
   composerRef,
+  reveal,
 }: AgentChatProps) {
   const displayName = agentName ?? session.botName
   // Provided around both renderings below, since unread messages show in the
@@ -169,6 +183,43 @@ export function AgentChat({
     }
     conversationRef.current?.holdAcrossLoadOlder(() => session.loadMoreHistory?.())
   }, [session])
+
+  // One step of a reveal per commit: reveal the turn if it has rendered, else
+  // fetch the next older page, else report that the history ran out. Paged
+  // without a hold -- nothing the reader is looking at needs keeping, since
+  // the view moves to the turn the moment it arrives.
+  const settledRevealRef = useRef<AgentChatReveal | null>(null)
+  // Set from the call until its page has landed: the host's own loading flag
+  // only turns on at its next render, and a commit in between must not fetch
+  // the same page a second time. Clearing it is a render of its own, since the
+  // page's commit can land while it is still set.
+  const revealPagingRef = useRef(false)
+  const [revealPages, setRevealPages] = useState(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies(revealPages): a finished page is a reason to take the next step, not something the body reads
+  useLayoutEffect(() => {
+    if (!reveal || settledRevealRef.current === reveal || session.loading) {
+      return
+    }
+    const rendered = reveal.blockIds.find((id) => blocks.some((block) => block.id === id))
+    if (rendered !== undefined && conversationRef.current?.revealBlock(rendered)) {
+      settledRevealRef.current = reveal
+      reveal.onSettled?.(true)
+      return
+    }
+    if (revealPagingRef.current || session.loadingMoreHistory === true) {
+      return
+    }
+    if (session.hasMoreHistory === true && session.loadMoreHistory) {
+      revealPagingRef.current = true
+      void Promise.resolve(session.loadMoreHistory()).finally(() => {
+        revealPagingRef.current = false
+        setRevealPages((pages) => pages + 1)
+      })
+      return
+    }
+    settledRevealRef.current = reveal
+    reveal.onSettled?.(false)
+  }, [reveal, blocks, session, revealPages])
 
   const footer = (
     <>

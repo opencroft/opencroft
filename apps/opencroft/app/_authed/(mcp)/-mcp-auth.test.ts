@@ -55,9 +55,8 @@ async function agentNode(name: string): Promise<string> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const slug = `mcp-auth-test-${crypto.randomUUID()}`
-  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
   const id = `mcp-auth-agent-${crypto.randomUUID()}`
-  await registry.saveGraph(space.slug, {
+  await registry.create(slug, slug, {
     nodes: [{ id, type: 'builtin.core.agent', position: { x: 0, y: 0 }, data: { name } }],
     edges: [],
   })

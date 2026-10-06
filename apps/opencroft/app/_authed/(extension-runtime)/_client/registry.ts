@@ -1,7 +1,8 @@
 'use client'
 
-import * as lucideIcons from 'lucide-react'
+import { Box, type LucideIcon } from 'lucide-react'
 import type { ComponentType } from 'react'
+import { iconComponent } from 'ui/media/named-icon'
 
 import type {
   CommandModeDefinition,
@@ -13,12 +14,14 @@ import { providerRegistry } from '@/app/_authed/(extension-runtime)/_client/prov
 import { isLocalFolder, parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import type { ExtensionHandle, ExtensionHandleType, ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 
-/** Resolved icon: LucideIcon component or fallback Box. */
-export function resolveIcon(name?: string): lucideIcons.LucideIcon {
-  if (!name) {
-    return lucideIcons.Box
-  }
-  return (lucideIcons as unknown as Record<string, lucideIcons.LucideIcon>)[name] ?? lucideIcons.Box
+/**
+ * The icon a declaration names, as a component; `fallback` (Box unless given)
+ * for no name or one Lucide doesn't have. Loaded on first use -- the loader
+ * preloads every name a declaration carries before registering it, so the
+ * surfaces that draw them never wait (see `declaredIconNames`).
+ */
+export function resolveIcon(name?: string, fallback: LucideIcon = Box): LucideIcon {
+  return name ? iconComponent(name, fallback) : fallback
 }
 
 /** Flat view of a single node — what consumer components need. */
@@ -32,7 +35,7 @@ export interface ResolvedNode {
   name: string
   category?: string
   description?: string
-  icon: lucideIcons.LucideIcon
+  icon: LucideIcon
   accent: string
   handles: ExtensionHandle[]
   defaultData: Record<string, unknown>

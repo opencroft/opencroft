@@ -42,8 +42,10 @@ import { extensionsRoot, folderDir } from '@/app/_authed/(extension-runtime)/_se
 import { findRegistryExtension, parseExtensionsEnv } from '@/app/_authed/(extension-runtime)/_server/registry'
 import {
   fetchSource,
-  listRemoteTags,
+  followedBranchTip,
+  listRemoteRefs,
   parseRepoUrl,
+  type RemoteRefs,
   resolveAuth,
   type SourceRequest,
 } from '@/app/_authed/(extension-runtime)/_server/source-repository'
@@ -311,16 +313,25 @@ async function sourceRow(folder: string): Promise<ExtensionRow & { sourceUrl: st
   return row as ExtensionRow & { sourceUrl: string }
 }
 
-/** Reinstall a folder from the source it was installed from, at `ref` or its newest version. */
+async function remoteRefsOf(row: ExtensionRow & { sourceUrl: string }): Promise<RemoteRefs> {
+  return listRemoteRefs(row.sourceUrl, await resolveAuth(authOf(row)))
+}
+
+/**
+ * Reinstall a folder from the source it was installed from: at `ref` when
+ * given; otherwise along the branch it follows, or at its newest version when
+ * it was installed at a tag.
+ */
 export async function updateExtension(folder: string, ref?: string): Promise<ExtensionRow> {
   const row = await sourceRow(folder)
+  const followed = ref === undefined && followedBranchTip(row.ref, await remoteRefsOf(row)) ? row.ref : null
   return installExtension(
     {
       folder,
       url: row.sourceUrl,
       registryName: row.registryName ?? undefined,
       auth: authOf(row),
-      ref,
+      ref: ref ?? followed ?? undefined,
       asLocal: false,
     },
     { update: true },
@@ -328,18 +339,37 @@ export async function updateExtension(folder: string, ref?: string): Promise<Ext
 }
 
 export interface UpdateCheck {
+  /** The ref installed, and the commit it was at. */
   current: string | null
+  currentCommit: string | null
+  /** What an update moves to: the newest tag, or for an install following a branch, that branch. */
   latest: string | null
+  /** The commit `latest` is at, for a branch. Null for a tag. */
+  latestCommit: string | null
+  /** The install follows a branch, so an update is a new commit on it rather than a new tag. */
+  followsBranch: boolean
   hasUpdate: boolean
   availableTags: string[]
 }
 
-/** The versions a folder's source offers, newest first, against the one installed. */
+/** Where a folder's source stands against what is installed: the branch it follows, or its tags, newest first. */
 export async function checkForUpdates(folder: string): Promise<UpdateCheck> {
   const row = await sourceRow(folder)
-  const tags = (await listRemoteTags(row.sourceUrl, await resolveAuth(authOf(row)))).reverse()
-  const latest = tags[0] ?? null
-  return { current: row.ref, latest, hasUpdate: latest !== null && row.ref !== latest, availableTags: tags }
+  const refs = await remoteRefsOf(row)
+  const availableTags = [...refs.tags].reverse()
+  const installed = { current: row.ref, currentCommit: row.commit, availableTags }
+  const tip = followedBranchTip(row.ref, refs)
+  if (tip) {
+    return { ...installed, latest: row.ref, latestCommit: tip, followsBranch: true, hasUpdate: tip !== row.commit }
+  }
+  const latest = availableTags[0] ?? null
+  return {
+    ...installed,
+    latest,
+    latestCommit: null,
+    followsBranch: false,
+    hasUpdate: latest !== null && row.ref !== latest,
+  }
 }
 
 /**

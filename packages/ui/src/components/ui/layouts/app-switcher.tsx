@@ -162,8 +162,12 @@ function AppMenu({ groups, headings, activeId, createHref, onNavigate, trigger, 
  * The apps of a space as one entry per type across the title bar. A type with
  * a single app is a plain link; a type with several opens a searchable list of
  * them. The open type is highlighted; which of its apps is open is marked in
- * its list. When the bar is too narrow
- * for the row, the whole thing folds into one list grouped by type.
+ * its list. When the title bar is too narrow for the row, the whole thing
+ * folds into one list grouped by type.
+ *
+ * It takes only the width its entries need and folds by the width of the
+ * title bar around it (its `title-bar` container), so the free width of the
+ * bar stays the bar's own.
  */
 export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitcherProps) {
   const groups = groupByType(apps)
@@ -171,8 +175,8 @@ export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitc
   const menu = { activeId, createHref, onNavigate }
 
   return (
-    <div className='@container/apps min-w-0 flex-1'>
-      <nav aria-label='Apps' className='hidden items-center gap-0.5 @lg/apps:flex'>
+    <div className='flex min-w-0 items-center'>
+      <nav aria-label='Apps' className='hidden items-center gap-0.5 @4xl/title-bar:flex'>
         {groups.map(([type, items]) => {
           const current = items.find((app) => app.id === activeId)
           const shown = current ?? items[0]
@@ -216,7 +220,7 @@ export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitc
         })}
       </nav>
 
-      <div className='@lg/apps:hidden'>
+      <div className='min-w-0 @4xl/title-bar:hidden'>
         <AppMenu
           {...menu}
           groups={groups}

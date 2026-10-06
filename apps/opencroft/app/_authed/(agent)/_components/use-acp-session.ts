@@ -40,7 +40,9 @@ import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
 import { useReconnect } from '@/app/_authed/(agent)/_lib/use-reconnect'
+import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import {
+  attachLocalSession,
   attachmentSizes,
   cancelLocal,
   deliverQueueLocal,
@@ -56,7 +58,8 @@ import {
   stopBackgroundTaskLocal,
   stopLocal,
 } from '@/app/_authed/(agent)/_server/acp'
-import { sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
+import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
+import { SendRefusedError, sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
 import { openedOrThrow, SessionOpenRefusedError } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 
 export interface LocalSource {
@@ -116,8 +119,14 @@ const promptLocalTransport: SendTransport = ({ sessionId, text, front, queue, or
  * A transport throws a SessionOpenRefusedError for a refusal only the reader
  * can remove (see session-open-refusal.ts). The hook shows that one and stops;
  * anything else it throws is retried with backoff.
+ *
+ * `wake` says whether this open may start the session. Only a reader's own act
+ * does -- opening the chat, sending into it. Rejoining after the stream ended
+ * does not: the transport answers null when the engine holds no session, and
+ * the chat stays as it is, offline, until one of those acts or the session's
+ * return (see the offline effect in useAcpSession).
  */
-export type OpenTransport = (source: LocalSource) => Promise<OpenedSessionResult>
+export type OpenTransport = (source: LocalSource, options: { wake: boolean }) => Promise<OpenedSessionResult | null>
 
 /** What opening a session answers with, whichever transport did it. */
 export interface OpenedSessionResult {
@@ -141,9 +150,9 @@ export interface OpenedSessionResult {
   } | null
 }
 
-// The default: exactly the call this hook has always made.
-const ensureLocalSessionTransport: OpenTransport = async (source) =>
-  openedOrThrow(await ensureLocalSession({ data: source }))
+// The default: the generic session endpoints, addressed by tab key.
+const ensureLocalSessionTransport: OpenTransport = async (source, { wake }) =>
+  wake ? openedOrThrow(await ensureLocalSession({ data: source })) : attachLocalSession({ data: source })
 
 /** Shown when a run of failed attempts ran out, rather than a refusal. */
 export const OPEN_GAVE_UP_MESSAGE = 'The connection to this agent could not be restored, so this chat stopped trying.'
@@ -793,7 +802,7 @@ export function useAcpSession(
   // the reader's point of view.
   const openRef = useRef<OpenTransport>(openTransport ?? ensureLocalSessionTransport)
   openRef.current = openTransport ?? ensureLocalSessionTransport
-  const open = useCallback((source: LocalSource) => openRef.current(source), [])
+  const open = useCallback((source: LocalSource, options: { wake: boolean }) => openRef.current(source, options), [])
   // Read by the history callbacks to draw a header's pictures (see
   // headerFromWindow), through a ref so the key is not one more reason for the
   // stream effect to re-run: the session it opens already follows the key.
@@ -848,10 +857,20 @@ export function useAcpSession(
   const baseIndexRef = useRef(0)
   // Re-establishing this tab's connection: the session went (an unload, a
   // restart), the stream failed for good, or opening failed. Each is answered
-  // the same way -- open the tab's session again and stream what that gives --
+  // the same way -- ask for the tab's session again and stream what that gives --
   // and the hook decides when (see useReconnect: backoff, not while hidden, and
   // not past a limit). An open that was refused is not among them.
   const reconnect = useReconnect()
+  // Whether the next open may start the session (see OpenTransport). True for
+  // the reader's own acts -- opening this conversation, sending into it -- and
+  // false once a session has been reached, so that every reconnect after that
+  // only rejoins what the engine still holds.
+  const wakeRef = useRef(true)
+  // The session is not held by the engine and this tab has not started it
+  // again. What is on screen stays; the tab rejoins when the reader sends or
+  // the session comes back by another hand.
+  const [offline, setOffline] = useState(false)
+  const sessionAlive = useSessionActivity().alive.has(tabKey)
   // The refusal the last open answered with, if it was one. Not retried: the
   // same open gives the same answer until the reader acts on it.
   const [openRefusal, setOpenRefusal] = useState<string | undefined>(undefined)
@@ -930,6 +949,9 @@ export function useAcpSession(
     setSessionId(null)
     setOpenRefusal(undefined)
     if (!reconnecting) {
+      // Opening a conversation is the reader's act, so it may start it.
+      wakeRef.current = true
+      setOffline(false)
       // Held for the conversation being left, so not for this one.
       pending.current = []
       setEvents([])
@@ -941,31 +963,48 @@ export function useAcpSession(
       setLiveTokens(undefined)
     }
     sendChainRef.current = Promise.resolve()
-    open({ agentNodeId, tabKey })
+    open({ agentNodeId, tabKey }, { wake: wakeRef.current })
       .then((result) => {
-        if (!cancelled) {
-          setSessionId(result.sessionId)
-          // The new seed is the database's account as of THIS open, which
-          // already holds every turn the live increments counted since the
-          // last one -- so they start again from nothing with it.
-          setLiveTokens(undefined)
-          setCanFork(result.canFork)
-          setCanSteer(result.canSteer)
-          setCanAttachImages(result.canAttachImages)
-          setAdapterId(result.adapterId)
-          setSeedUsage(
-            result.contextUsage
-              ? {
-                  used: result.contextUsage.usedTokens,
-                  size: result.contextUsage.contextLimit ?? undefined,
-                  ...(result.contextUsage.cost ? { cost: result.contextUsage.cost } : {}),
-                  ...(result.contextUsage.rateLimits ? { rateLimits: result.contextUsage.rateLimits } : {}),
-                  ...(result.contextUsage.tokens ? { tokens: result.contextUsage.tokens } : {}),
-                  asOf: result.contextUsage.asOf,
-                }
-              : undefined,
-          )
+        if (cancelled) {
+          return
         }
+        if (!result) {
+          // A rejoin found nothing held. The attempt got its answer, so it is
+          // not a failure to back off from.
+          reconnect.connected()
+          if (pending.current.length > 0) {
+            // The reader sent while the rejoin was out: that send starts it.
+            wakeRef.current = true
+            reconnect.retry()
+            return
+          }
+          setOffline(true)
+          setLoading(false)
+          return
+        }
+        wakeRef.current = false
+        setOffline(false)
+        setSessionId(result.sessionId)
+        // The new seed is the database's account as of THIS open, which
+        // already holds every turn the live increments counted since the
+        // last one -- so they start again from nothing with it.
+        setLiveTokens(undefined)
+        setCanFork(result.canFork)
+        setCanSteer(result.canSteer)
+        setCanAttachImages(result.canAttachImages)
+        setAdapterId(result.adapterId)
+        setSeedUsage(
+          result.contextUsage
+            ? {
+                used: result.contextUsage.usedTokens,
+                size: result.contextUsage.contextLimit ?? undefined,
+                ...(result.contextUsage.cost ? { cost: result.contextUsage.cost } : {}),
+                ...(result.contextUsage.rateLimits ? { rateLimits: result.contextUsage.rateLimits } : {}),
+                ...(result.contextUsage.tokens ? { tokens: result.contextUsage.tokens } : {}),
+                asOf: result.contextUsage.asOf,
+              }
+            : undefined,
+        )
       })
       .catch((error) => {
         console.error('opening the session failed', error)
@@ -986,7 +1025,26 @@ export function useAcpSession(
     return () => {
       cancelled = true
     }
-  }, [agentNodeId, tabKey, generation, open, reconnect.attempt, reconnect.schedule])
+  }, [
+    agentNodeId,
+    tabKey,
+    generation,
+    open,
+    reconnect.attempt,
+    reconnect.schedule,
+    reconnect.connected,
+    reconnect.retry,
+  ])
+
+  // An offline tab rejoins when the session is back -- somebody sent into it,
+  // a delivery or a schedule reached it. Still only a rejoin: if the activity
+  // read is stale and the engine holds nothing, the answer is offline again,
+  // and nothing here changes until the activity does.
+  useEffect(() => {
+    if (offline && sessionAlive) {
+      reconnect.retry()
+    }
+  }, [offline, sessionAlive, reconnect.retry])
 
   // Stream events once the session id is known.
   useEffect(() => {
@@ -1013,9 +1071,11 @@ export function useAcpSession(
         // this stream read it (server restart, stopped process, idle unload,
         // an edit's teardown). Close before anything else: the server has
         // ended the stream and a native EventSource would reconnect to the
-        // same dead id forever. Then reopen the tab's session, which brings
-        // the recorded transcript back and re-runs this effect under the id
-        // it hands out; the transcript on screen stays until that arrives.
+        // same dead id forever. Then rejoin: a session replaced under the same
+        // id (an edit, a restore) is still held and streams again; one that
+        // was dropped is not started by this, and the tab goes offline with
+        // the transcript left on screen. Starting it here would undo every
+        // idle unload for as long as a tab watched the thread.
         eventSource.close()
         reconnect.schedule()
         return
@@ -1101,6 +1161,10 @@ export function useAcpSession(
       setSendError(undefined)
       const chained = sendChainRef.current.then(async () => {
         try {
+          const oversized = oversizedTextNotice(value)
+          if (oversized) {
+            throw new SendRefusedError(oversized)
+          }
           await (transportRef.current ?? promptLocalTransport)({
             sessionId,
             text: value,
@@ -1142,6 +1206,11 @@ export function useAcpSession(
         // it, flush once there is one.
         pending.current.push({ text: value, attachments: options?.attachments })
         setLocalWaiting(true)
+        // Sending is the reader's act, so an offline session is started for it.
+        if (offline) {
+          wakeRef.current = true
+          reconnect.retry()
+        }
         return
       }
       // Always hand the message to the server: it delivers immediately when the
@@ -1149,7 +1218,7 @@ export function useAcpSession(
       // the requests so rapid sends reach the server in send order.
       deliver(value, { queue: 'wait', origin: READER_ORIGIN, attachments: options?.attachments })
     },
-    [sessionId, deliver],
+    [sessionId, deliver, offline, reconnect.retry],
   )
 
   // Flush the messages held while there was no session, in the order typed.
@@ -1410,8 +1479,12 @@ export function useAcpSession(
 
   const openError = openRefusal ?? (reconnect.exhausted ? OPEN_GAVE_UP_MESSAGE : undefined)
   // The open effect clears the refusal as it starts, so the notice gives way to
-  // the loading state for the attempt this starts.
-  const retryOpen = reconnect.retry
+  // the loading state for the attempt this starts. The reader pressed it, so it
+  // may start the session.
+  const retryOpen = useCallback(() => {
+    wakeRef.current = true
+    reconnect.retry()
+  }, [reconnect.retry])
 
   // Discards this tab's session entirely (transcript, durable pointer, live
   // process) and bumps `generation` so the resolve-session effect opens a

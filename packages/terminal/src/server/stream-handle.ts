@@ -159,16 +159,35 @@ export function makeStreamHandle(kill: () => void, filter?: OutputFilter): Strea
  * as two replacement characters; and the `'error'` listener, without which a command that is not
  * on PATH — or a cwd that does not exist — raises an unhandled exception and takes the process
  * down. The caller cannot install that itself: it is handed a key, not the child.
+ *
+ * Stopping it signals the child's process group, so a child spawned `detached` (the leader of its
+ * own group) is stopped together with everything it started. A job is usually `sh -c '…'`, and a
+ * shell that does not exec its last command — dash, which is `/bin/sh` on Debian — runs the
+ * command as its own child. Signalling the shell alone leaves that command running, holding the
+ * output pipe, so the session would report it alive until the command ended by itself.
+ *
+ * Once the stream has closed, stopping it signals nothing. An ended job is still stopped when its
+ * session is reclaimed, and by then the group may be gone and its id handed to an unrelated
+ * process. The guard is the close rather than the child's exit: between the two, a command the
+ * shell left behind still holds the pipe, and that is exactly the case the group signal is for.
  */
 export function pipedProcessHandle(child: ChildProcess, filter?: OutputFilter): StreamHandle {
-  const handle = makeStreamHandle(() => child.kill(), filter)
+  let closed = false
+  const handle = makeStreamHandle(() => {
+    if (!closed) {
+      stopProcessGroup(child)
+    }
+  }, filter)
 
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')
   child.stdout?.on('data', (data: string) => handle.emit(data))
   child.stderr?.on('data', (data: string) => handle.emit(data))
 
-  child.on('close', handle.finish)
+  child.on('close', () => {
+    closed = true
+    handle.finish()
+  })
 
   // A job that cannot start ends like a job that finished, and says why.
   child.on('error', (err: Error) => {
@@ -182,4 +201,20 @@ export function pipedProcessHandle(child: ChildProcess, filter?: OutputFilter): 
   child.stdin?.on('error', () => {})
 
   return handle
+}
+
+/**
+ * SIGTERM to the child's process group, or to the child alone when there is no group to signal:
+ * a child that never started has no pid, and one spawned without `detached` leads no group.
+ */
+function stopProcessGroup(child: ChildProcess): void {
+  if (child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGTERM')
+      return
+    } catch {
+      /* no such group — signal the child itself below */
+    }
+  }
+  child.kill()
 }

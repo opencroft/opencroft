@@ -2,14 +2,12 @@
 // whole claim is about rows: that a rename reaches messages already written,
 // and that a handle nobody holds resolves to nothing rather than to somebody.
 
-import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test, { after, beforeEach } from 'node:test'
+import '@opencroft/db/test-env'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-account-directory-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
+import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import test, { beforeEach } from 'node:test'
+
 process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'packages', 'db', 'migrations')
 delete process.env.DATABASE_URL
 process.env.NODE_ENV = 'development'
@@ -18,10 +16,6 @@ const { db, user, username: usernames } = await import('@opencroft/db')
 const { eq } = await import('drizzle-orm')
 const store = await import('./usernames')
 const { authorsByIdentifier } = await import('./account-directory')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 beforeEach(async () => {
   await db.delete(usernames)

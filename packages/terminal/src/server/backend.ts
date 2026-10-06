@@ -178,6 +178,9 @@ const localBackend: TerminalBackend = {
       cwd: opts.cwd ?? ctx.cwd,
       env: opts.env ? { ...process.env, ...opts.env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Its own process group, so stopping the job reaches everything it started — see
+      // `pipedProcessHandle`.
+      detached: true,
       windowsHide: true,
     })
     // The handle is built before anything is written, because it is what installs the `'error'`

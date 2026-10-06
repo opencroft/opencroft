@@ -6,7 +6,7 @@ import {
 } from '@/app/_authed/(extension-editor)/_actions/local-extensions-actions-impl'
 import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { authOf, getExtensionRow } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
-import { runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
+import { remoteFailure, runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import { resolveAuth } from '@/app/_authed/(extension-runtime)/_server/source-repository'
 import type { BuildResult } from '@/app/_authed/(extension-runtime)/_types'
 
@@ -41,6 +41,8 @@ export interface LocalRemoteState {
   blocked: string | null
   /** The check itself failed — offline, no remote, a credential. */
   error: string | null
+  /** What git said when the check failed against the remote, for whoever fixes the cause. */
+  errorDetail: string | null
 }
 
 export interface LocalPullResult {
@@ -115,6 +117,7 @@ export async function checkLocalExtensionRemoteImpl(folder: string): Promise<Loc
     behind: false,
     blocked: blockedReason(state.branch, state.sourceDirty, state.sourceDirtyPaths),
     error: null,
+    errorDetail: null,
   }
   if (!state.sourceCommit) {
     return { ...base, error: 'Not a git checkout, so there is no branch to follow.' }
@@ -141,28 +144,54 @@ export async function checkLocalExtensionRemoteImpl(folder: string): Promise<Loc
     const { stdout } = await runGit(['-C', dir, 'ls-remote', authedUrl, state.branch], { env: gitEnvFor(env) })
     remoteCommit = stdout.split('\n')[0]?.split('\t')[0]?.trim() || null
   } catch (err) {
-    return { ...base, error: err instanceof Error ? err.message : String(err) }
+    const failure = remoteFailure(err, url)
+    return { ...base, error: failure.message, errorDetail: failure.detail }
   } finally {
     await cleanup()
   }
   if (!remoteCommit) {
     return { ...base, error: `origin has no branch "${state.branch}".` }
   }
-  if (remoteCommit === state.sourceCommit) {
-    return { ...base, remoteCommit }
-  }
   // The commit differs, which is not the same as being behind: a checkout with
   // local commits on top is AHEAD, and offering it an update would propose
   // undoing them. It is behind only when origin's commit is one it does not
   // already contain.
-  let has = false
-  try {
-    await runGit(['-C', dir, 'merge-base', '--is-ancestor', remoteCommit, 'HEAD'])
-    has = true
-  } catch {
-    has = false
+  if (remoteCommit === state.sourceCommit || (await isAncestor(dir, remoteCommit, 'HEAD'))) {
+    return { ...base, remoteCommit }
   }
-  return { ...base, remoteCommit, behind: !has }
+  // ls-remote brings no objects, so origin's commit is in this checkout only
+  // when an earlier fetch brought it. Then its history can tell behind from
+  // diverged now; otherwise the pull, which fetches, tells them apart and
+  // refuses a diverged checkout before it merges.
+  const diverged = (await hasCommit(dir, remoteCommit)) && !(await isAncestor(dir, 'HEAD', remoteCommit))
+  return {
+    ...base,
+    remoteCommit,
+    behind: true,
+    blocked: base.blocked ?? (diverged ? divergedReason(state.branch) : null),
+  }
+}
+
+async function isAncestor(dir: string, ancestor: string, descendant: string): Promise<boolean> {
+  try {
+    await runGit(['-C', dir, 'merge-base', '--is-ancestor', ancestor, descendant])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function hasCommit(dir: string, commit: string): Promise<boolean> {
+  try {
+    await runGit(['-C', dir, 'cat-file', '-e', `${commit}^{commit}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function divergedReason(branch: string): string {
+  return `The checkout has commits origin/${branch} does not, and origin has moved on, so it cannot fast-forward. Merge or rebase them first.`
 }
 
 export async function pullLocalExtensionImpl(folder: string): Promise<LocalPullResult> {
@@ -183,10 +212,15 @@ export async function pullLocalExtensionImpl(folder: string): Promise<LocalPullR
   const { url: authedUrl, env, cleanup } = await withGitAuth(url, creds)
   try {
     await runGit(['-C', dir, 'fetch', authedUrl, branch], { maxBuffer: 64 * 1024 * 1024, env: gitEnvFor(env) })
+  } catch (err) {
+    throw remoteFailure(err, url)
   } finally {
     await cleanup()
   }
   const before = state.sourceCommit
+  if (!(await isAncestor(dir, 'HEAD', 'FETCH_HEAD')) && !(await isAncestor(dir, 'FETCH_HEAD', 'HEAD'))) {
+    throw new Error(`Refusing to update ${folder}. ${divergedReason(branch)}`)
+  }
   // Fast-forward only. A merge commit written by a background update is work
   // nobody asked for and nobody is watching; a checkout that has diverged is a
   // decision for whoever diverged it.

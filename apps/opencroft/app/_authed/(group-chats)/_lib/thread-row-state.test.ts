@@ -15,6 +15,7 @@ function activity(over: Partial<SessionActivity> = {}): SessionActivity {
     active: new Set(),
     background: new Set(),
     queued: new Set(),
+    compacting: new Set(),
     alive: new Set(),
     usage: new Map(),
     departedUsage: new Map(),
@@ -23,7 +24,7 @@ function activity(over: Partial<SessionActivity> = {}): SessionActivity {
 }
 
 function frame(over: Partial<SessionActivitySnapshot> = {}): SessionActivitySnapshot {
-  return { pending: [], active: [], background: [], queued: [], alive: [], usage: {}, ...over }
+  return { pending: [], active: [], background: [], queued: [], compacting: [], alive: [], usage: {}, ...over }
 }
 
 // The list loaded with the stored reading, then the session ran live, then it

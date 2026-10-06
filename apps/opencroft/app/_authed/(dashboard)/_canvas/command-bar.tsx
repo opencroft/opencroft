@@ -13,7 +13,7 @@
 import { cn } from 'cn'
 import { type ReactNode, useEffect, useRef } from 'react'
 import { CommandBarFrame } from 'ui/agent-chat/command-bar-frame'
-import { ScrollArea } from 'ui/scroll-area'
+import { ScrollArea } from 'ui/layout/scroll-area'
 
 import { NodeCard } from '@/app/_authed/(dashboard)/_canvas/node-card'
 
@@ -27,8 +27,13 @@ interface CommandBarMenuProps {
 
 export function CommandBarMenu({ accent = 'var(--primary)', children, className }: CommandBarMenuProps) {
   return (
-    <NodeCard accent={accent} selected className={cn('overflow-hidden', 'pointer-events-auto', className)}>
-      <ScrollArea className='[&>[data-slot=scroll-area-viewport]]:max-h-80'>
+    <NodeCard
+      accent={accent}
+      selected
+      tinted={false}
+      className={cn('overflow-hidden', 'pointer-events-auto', className)}
+    >
+      <ScrollArea viewportClassName='max-h-80'>
         <ul className='py-1'>{children}</ul>
       </ScrollArea>
     </NodeCard>

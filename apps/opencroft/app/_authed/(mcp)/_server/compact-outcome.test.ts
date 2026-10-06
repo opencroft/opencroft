@@ -4,8 +4,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { COMPACT_WAIT_MS, type CompactWait, waitForCompact } from '@/app/_authed/(group-chats)/_server/compact-wait'
 import type { ThreadCompactAck, ThreadCompactStatus } from '@/app/_authed/(group-chats)/_server/model'
-import { COMPACT_WAIT_MS, type CompactWait, compactOutcome, waitForCompact } from './compact-outcome'
+import { compactOutcome } from './compact-outcome'
 
 const THREAD = 'my-chat.my-agent.scratch'
 const ACK: ThreadCompactAck = { thread: THREAD, accepted: true, coalesced: false, state: 'pending' }

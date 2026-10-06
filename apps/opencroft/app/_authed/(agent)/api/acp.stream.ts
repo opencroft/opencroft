@@ -40,7 +40,7 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
         // only ever sent to a member, about a session that ended while they read
         // it or between the check and the subscribe. A member whose tab kept a
         // dead id is refused and recovers the same way: EventSource closes on a
-        // non-stream answer, and the client reopens the thread's session.
+        // non-stream answer, and the client rejoins the thread's session.
         const refused = await sessionAccessRefusal(requireSessionMember(request, sessionId))
         if (refused) return refused
         const encoder = new TextEncoder()
@@ -59,8 +59,8 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             // stopped process and an idle unload, and its EventSource
             // reconnects on its own; answering that reconnect with an empty
             // history closed at index 0 is what wiped open chats blank. Say
-            // so instead, and end the stream: the client reopens the tab's
-            // session and connects again under the id that gives it.
+            // so instead, and end the stream: the client rejoins the tab's
+            // session if the engine holds one, and connects under its id.
             if (!window) {
               controller.enqueue(goneFrame)
               controller.close()

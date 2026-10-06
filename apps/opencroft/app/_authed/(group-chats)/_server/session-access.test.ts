@@ -23,6 +23,8 @@
 // Environment set up exactly as model.test.ts does it, and for the same
 // reason: `@opencroft/db` opens and migrates its connection at import time.
 
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -30,7 +32,7 @@ import { join } from 'node:path'
 import test, { after } from 'node:test'
 
 // None of these opens a database connection, so importing them statically
-// cannot make `@opencroft/db` connect before PGLITE_PATH is in place.
+// cannot make `@opencroft/db` connect before the environment is in place.
 import { requestHandler } from '@tanstack/react-start/server'
 import { connectionKey } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
@@ -41,7 +43,6 @@ import { slug } from '@/app/_authed/(server)/_server/types'
 import type { SessionActivitySnapshot } from '@/lib/sse-events'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-session-access-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,

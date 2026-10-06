@@ -1,7 +1,6 @@
-import { AdminActionError, requireAdminUser } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
-import { getRequest } from '@tanstack/react-start/server'
 
+import { requireAdmin } from '@/app/_authed/(settings)/_server/require-admin'
 import type { Setting } from '@/app/_authed/(settings)/_server/setting'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
 import * as db from '@/server/data'
@@ -21,16 +20,6 @@ import * as db from '@/server/data'
 // `@/server/data` layer directly and run their own appropriate check (a group
 // chat member's thread layout, the agent runtime's stores),
 // so gating the endpoint does not touch them.
-
-// `requireAdminUser` RETURNS the admin or null -- it does not throw -- so the
-// result has to be acted on. A bare `await requireAdminUser(...)` with the
-// value dropped type-checks and gates nothing. This mirrors the guard every
-// admin-only function in packages/auth/src/server.ts already uses.
-async function requireAdmin(): Promise<void> {
-  if (!(await requireAdminUser(getRequest()))) {
-    throw new AdminActionError('forbidden', 'Only an administrator can access settings')
-  }
-}
 
 export const getSetting = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((id: string) => id)

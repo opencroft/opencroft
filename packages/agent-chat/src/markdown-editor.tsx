@@ -1,22 +1,21 @@
 'use client'
 
-import { TableKit } from '@tiptap/extension-table'
-import { Placeholder } from '@tiptap/extensions'
-import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
+import { Dropcursor, Gapcursor, Placeholder, TrailingNode, UndoRedo } from '@tiptap/extensions'
+import { type Node as ProseMirrorNode, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { type AnyExtension, type Editor, EditorContent, Extension, useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
 import { cn } from 'cn'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { Markdown, type MarkdownStorage } from 'tiptap-markdown'
 import { Flex } from 'ui/components/ui/layout/flex'
 
 import { prepareLanguage, resolveLanguage, tokenize } from './components/code-highlight'
-import { directiveBlockExtensions } from './markdown-editor-blocks'
-import { DirectiveSafeText } from './markdown-editor-directives'
+import { directiveBlockViews } from './markdown-editor-blocks'
+import { IconNode } from './markdown-editor-icon'
 import { MarkdownEditorReferences } from './markdown-editor-references'
+import { markdownConverter, markdownSchemaExtensions } from './markdown-editor-schema'
 import { createSlashMenuStore, SlashMenu, SlashMenuPopup, type SlashMenuStore } from './markdown-editor-slash-menu'
+import { MarkdownTableEditing, MarkdownTableNode } from './markdown-editor-table'
 import { ALL_TOOLBAR_GROUPS, type MarkdownEditorToolbarGroup, Toolbar } from './markdown-editor-toolbar'
 
 export type { MarkdownEditorToolbarGroup }
@@ -28,11 +27,17 @@ export type { MarkdownEditorToolbarGroup }
  * WYSIWYGs in this product -- the skill body editor that lived there and the
  * documentation extension's page editor -- are now this one component, and the
  * package's `SkillEditor` export is now `MarkdownEditor`. The editor was not
- * merely moved: the package went from TipTap 2.11 to 3.31.3, which is a
- * breaking major, and `tiptap-markdown` from 0.8.10 to 0.9.0, which is what
- * supports it. `@tiptap/extension-link` was dropped as a direct dependency
- * because StarterKit 3 contains Link and configures it through a `link` option;
- * `@tiptap/extension-table` and `@tiptap/extensions` were added.
+ * merely moved: the package went from TipTap 2.11 to 3.31, which is a
+ * breaking major, and it reads and writes markdown through TipTap's own
+ * `@tiptap/markdown` (`./markdown-editor-markdown`), which replaced
+ * `tiptap-markdown` and `markdown-it-container`.
+ *
+ * The markdown it writes is the same as before for what this product stores,
+ * with the differences listed in `./markdown-editor-markdown` and its tests:
+ * a line break inside a paragraph's source reads as a space, HTML other than
+ * `<br>` reads as its own characters, underline is gone (markdown has none),
+ * and GFM task items keep their boxes. A consumer whose stored markdown leans
+ * on raw HTML should check it against those tests at the sync.
  *
  * A consumer outside this repository therefore has two things to do at the
  * sync, and neither can be checked from here: point whatever rendered
@@ -72,7 +77,8 @@ export type { MarkdownEditorToolbarGroup }
  * `./markdown-editor-*` files beside this one.
  */
 
-export interface MarkdownEditorProps {
+/** A document the caller holds as markdown. */
+export interface MarkdownEditorOwnDocument {
   /**
    * The markdown being edited. Controlled -- the caller holds it, and markdown
    * is what both the editor reads and what `onChange` reports, because markdown
@@ -80,6 +86,27 @@ export interface MarkdownEditorProps {
    */
   value: string
   onChange: (markdown: string) => void
+  collaboration?: never
+}
+
+/** A document several editors share, held by whatever the extensions bind it to. */
+export interface MarkdownEditorSharedDocument {
+  /**
+   * Extensions that bind the editor to a shared document -- TipTap's
+   * `Collaboration` and anything that goes with it. The document and its undo
+   * history are theirs: the editor neither loads content nor keeps a history
+   * of its own. Read once, when the editor is created.
+   */
+  collaboration: AnyExtension[]
+  value?: never
+  onChange?: never
+}
+
+export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
+  (MarkdownEditorOwnDocument | MarkdownEditorSharedDocument)
+
+/** How the editor looks and behaves, whichever document it edits. */
+export interface MarkdownEditorSurfaceProps {
   /** Shown while the document is empty. Read once, when the editor is created. */
   placeholder?: string
   /** Editable by default; `false` renders the same prose read-only. */
@@ -122,11 +149,40 @@ const DEFAULT_CONTENT_CLASS = 'prose-chat max-w-none p-3'
 // space below the last paragraph puts the caret in it.
 const CONTENT_CLASS = 'markdown-editor min-h-full focus:outline-none'
 
+/** The editor's document as markdown. */
 export function readMarkdown(editor: Editor): string {
-  // `tiptap-markdown` adds its storage without augmenting TipTap's `Storage`
-  // interface, so the cast is how its own README reaches it.
-  return (editor.storage as unknown as { markdown: MarkdownStorage }).markdown.getMarkdown()
+  return markdownConverter().serialize(editor.getJSON())
 }
+
+/** Markdown as the editor's content. */
+export function markdownContent(markdown: string) {
+  return markdownConverter().parse(markdown)
+}
+
+/*
+ * Plain text pasted into the editor is read as markdown, so a pasted page
+ * arrives as the page it is. Shift-paste keeps it plain text, and a paste
+ * carrying HTML is ProseMirror's own.
+ */
+const MarkdownPaste = Extension.create({
+  name: 'markdownPaste',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('markdownPaste'),
+        props: {
+          clipboardTextParser: (text, _context, plain, view) => {
+            if (plain) {
+              return null as unknown as Slice
+            }
+            const doc = view.state.schema.nodeFromJSON(markdownContent(text))
+            return Slice.maxOpen(doc.content)
+          },
+        },
+      }),
+    ]
+  },
+})
 
 /*
  * Code blocks are coloured by the same highlighter as everything else on the
@@ -231,7 +287,7 @@ const CodeBlockHighlight = Extension.create({
 
 /**
  * Everything the editor is made of: the schema, the markdown both ways, the
- * documentation blocks and the `/` menu. One list, so anything that builds an
+ * documentation blocks, icons and the `/` menu. One list, so anything that builds an
  * editor outside the component -- a test -- builds this one.
  *
  * Headings, lists, quotes, code and the divider are typed as their markdown
@@ -241,41 +297,30 @@ const CodeBlockHighlight = Extension.create({
 export function markdownEditorExtensions({
   placeholder,
   slashMenu,
+  collaboration,
 }: {
   placeholder?: string
   /** Where the `/` menu reports; without one there is no `/` menu. */
   slashMenu?: SlashMenuStore
+  /** Binds a shared document; see `MarkdownEditorSharedDocument`. */
+  collaboration?: AnyExtension[]
 }): AnyExtension[] {
   return [
-    StarterKit.configure({
-      // Not opened on click: inside an editor a click is how you put the
-      // caret in the text, and autolink is what turns a typed URL into one.
-      link: { openOnClick: false, autolink: true },
-      // Replaced by `DirectiveSafeText` below.
-      text: false,
-      // Marked as `CodeBlock` marks its own, so a code block takes the same
-      // box, size and no-wrap rule being edited as it does rendered.
-      codeBlock: { HTMLAttributes: { 'data-code-block': '' } },
-    }),
-    // Text that writes a line-leading `:::` so it reads back as text rather
-    // than as a directive fence.
-    DirectiveSafeText,
-    TableKit,
+    // The document: schema and markdown, with the nodes the editor draws.
+    ...markdownSchemaExtensions([...directiveBlockViews, IconNode, MarkdownTableNode]),
+    // A shared document's history is its binding's. So is its content: the
+    // trailing empty paragraph an editor keeps for the caret would be added to
+    // the shared document by every editor that opened it.
+    ...(collaboration ?? [UndoRedo, TrailingNode]),
+    Dropcursor,
+    Gapcursor,
+    MarkdownTableEditing,
+    MarkdownPaste,
     Placeholder.configure({ placeholder: placeholder ?? '' }),
     CodeBlockHighlight,
     // Identifiers the installed reference source recognises, styled in place.
     MarkdownEditorReferences,
-    ...directiveBlockExtensions,
     ...(slashMenu ? [SlashMenu.configure({ store: slashMenu })] : []),
-    // Read and write markdown. `html: true` keeps legacy HTML bodies readable
-    // while they migrate to markdown on the next save.
-    Markdown.configure({
-      html: true,
-      linkify: true,
-      breaks: false,
-      transformPastedText: true,
-      transformCopiedText: false,
-    }),
   ]
 }
 
@@ -285,16 +330,13 @@ export function markdownEditorExtensions({
  * Controlled on markdown in both directions, because markdown is the storage
  * format for everything edited this way -- an agent skill's instruction body, a
  * documentation page. The editor never holds a representation the caller cannot
- * see.
- *
- * Reading legacy HTML is deliberate. `html: true` on the markdown extension
- * means a body that was written as HTML before anything stored markdown still
- * opens as the rich text it describes, and is written back as markdown the next
- * time it is saved. Turning it off would show those bodies as their own source.
+ * see. A document several people edit at once is the exception: it is bound
+ * through `collaboration` instead, and its markdown is whatever holds it.
  */
 export function MarkdownEditor({
   value,
   onChange,
+  collaboration,
   placeholder,
   editable = true,
   autoFocus = false,
@@ -319,10 +361,10 @@ export function MarkdownEditor({
     // Deferred to the client to avoid an SSR hydration mismatch.
     immediatelyRender: false,
     autofocus: autoFocus ? 'end' : false,
-    extensions: markdownEditorExtensions({ placeholder, slashMenu }),
-    content: value,
+    extensions: markdownEditorExtensions({ placeholder, slashMenu, collaboration }),
+    content: value === undefined ? undefined : markdownContent(value),
     editable,
-    onUpdate: ({ editor }) => onChangeRef.current(readMarkdown(editor)),
+    onUpdate: ({ editor }) => onChangeRef.current?.(readMarkdown(editor)),
     editorProps: {
       attributes: {
         class: cn(CONTENT_CLASS, contentClassName ?? DEFAULT_CONTENT_CLASS),
@@ -335,8 +377,8 @@ export function MarkdownEditor({
   // came back from our own `onChange` is already what the editor holds, and
   // re-setting it would collapse the selection on every keystroke.
   useEffect(() => {
-    if (editor && !editor.isDestroyed && value !== readMarkdown(editor)) {
-      editor.commands.setContent(value, { emitUpdate: false })
+    if (editor && !editor.isDestroyed && value !== undefined && value !== readMarkdown(editor)) {
+      editor.commands.setContent(markdownContent(value), { emitUpdate: false })
     }
   }, [value, editor])
 
@@ -356,7 +398,12 @@ export function MarkdownEditor({
       {toolbar === false ? null : (
         <Toolbar editor={editor} groups={toolbar} extra={toolbarExtra} className={toolbarClassName} />
       )}
-      <EditorContent editor={editor} className='flex-1 min-h-0 overflow-y-auto' />
+      {/* Layout containment makes the text area the box that anything positioned
+          inside it is laid out against, fixed included. An overlay drawn over the
+          text -- a collaborator's name tag -- then stays in the text area: it
+          scrolls with the text and goes under the toolbar with it, while the
+          boxes inside the text (a table's frame) neither clip it nor scroll. */}
+      <EditorContent editor={editor} className='flex-1 min-h-0 overflow-y-auto contain-layout' />
       <SlashMenuPopup store={slashMenu} />
     </Flex>
   )

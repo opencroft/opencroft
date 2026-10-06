@@ -65,14 +65,23 @@ test('a field hint renders markdown and keeps its muted small type', () => {
   )
 })
 
-test('an option hint renders inline inside the label, link included, in the hint type', () => {
+test('an option renders its label over its hint, both inline markdown inside the label, the hint in its small muted type', () => {
   const label = optionLabel(render(undefined, oneSelect(undefined, 'per [the spec](https://example.com/spec)')))
   assert.match(
     label,
-    /<span class="ml-1 text-xs text-muted-foreground"><span class="prose-chat prose-chat-inherit">per <a href="https:\/\/example\.com\/spec"/,
+    /^<label[^>]*class="[^"]*flex-col[^"]*"[^>]*><span class="min-w-0 wrap-break-word"><span class="prose-chat prose-chat-inherit">Option A<\/span><\/span><span class="min-w-0 text-xs text-muted-foreground wrap-break-word"><span class="prose-chat prose-chat-inherit">per <a href="https:\/\/example\.com\/spec"/,
   )
   // A label holds phrasing content only: no paragraph, no div, no list.
   assert.doesNotMatch(label, /<(p|div|ul|ol|h\d)[\s>]/)
+})
+
+test('an option label renders markdown', () => {
+  const schema = {
+    type: 'object',
+    properties: { pick: { type: 'string', title: 'Pick', oneOf: [{ const: 'a', title: 'Use **bold** and `code`' }] } },
+  } as ElicitationSchema
+  const label = optionLabel(render(undefined, schema))
+  assert.match(label, /Use <strong>bold<\/strong> and <code>code<\/code>/)
 })
 
 test('inline markdown unwraps block constructs to their text instead of dropping it', () => {

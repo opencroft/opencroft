@@ -30,8 +30,8 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 1073,
-  "total": 313,
+  "filesScanned": 1223,
+  "total": 309,
   "entries": {
     "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
       "format": 1
@@ -82,9 +82,6 @@
     },
     "apps/opencroft/app/_authed/(extension-editor)/_components/code-panel.tsx": {
       "format": 1
-    },
-    "apps/opencroft/app/_authed/(extension-editor)/_components/extensions-list-panel.tsx": {
-      "lint/correctness/useExhaustiveDependencies": 2
     },
     "apps/opencroft/app/_authed/(extension-editor)/_components/preview-panel.tsx": {
       "lint/correctness/useExhaustiveDependencies": 1
@@ -365,9 +362,6 @@
     "apps/opencroft/app/_authed/(settings)/_components/token-settings.tsx": {
       "lint/correctness/useExhaustiveDependencies": 1
     },
-    "apps/opencroft/app/_authed/(settings)/_server/token-actions.test.ts": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(space)/_server/store.test.ts": {
       "lint/style/noNonNullAssertion": 1
     },
@@ -503,9 +497,6 @@
     },
     "packages/terminal/src/server/ssh.ts": {
       "lint/style/noNonNullAssertion": 6
-    },
-    "packages/ui/src/ext.ts": {
-      "assist/source/organizeImports": 1
     },
     "scripts/run-typecheck.mjs": {
       "assist/source/organizeImports": 1,

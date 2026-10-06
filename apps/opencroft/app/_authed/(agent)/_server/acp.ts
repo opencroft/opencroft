@@ -18,24 +18,26 @@ import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-strea
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import {
   attachImageImpl,
+  attachLocalSessionImpl,
   attachmentSizesImpl,
   cancelLocalImpl,
   deliverQueueLocalImpl,
   editTurnLocalImpl,
   ensureLocalSessionImpl,
   forgetLocalSessionImpl,
+  locateRecordedTurnImpl,
   type OpenedSession,
   promptLocalImpl,
   sessionHistoryPageImpl,
+  setLocalConfigOptionImpl,
   setPresenceLocalImpl,
   stopLocalImpl,
   stopLocalSessionProcessImpl,
-  tabSessions,
 } from '@/app/_authed/(agent)/_server/acp-impl'
-import { writePersistedConfigOption } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
-import { modeLockedByYolo } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
+import type { TurnLocation } from '@/app/_authed/(agent)/_server/transcript-locate'
+import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
 import { refusalAsData, type SessionOpenRefusal } from '@/app/_authed/(agent)/_shared/session-open-refusal'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
 import { requireSessionAccess, requireSessionKeyAccess } from '@/app/_authed/(group-chats)/_server/session-access'
@@ -50,6 +52,16 @@ export const ensureLocalSession = createServerFn({ method: 'POST', strict: { out
   .handler(async ({ data }): Promise<OpenedSession | SessionOpenRefusal> => {
     const { agentNodeId } = await requireSessionKeyAccess(data.tabKey)
     return refusalAsData(() => ensureLocalSessionImpl({ agentNodeId, tabKey: data.tabKey }))
+  })
+
+// The same session if the engine holds it, null if it does not -- never
+// starting it. What a chat whose stream ended uses to rejoin (see
+// attachLocalSessionImpl).
+export const attachLocalSession = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { agentNodeId: string; tabKey: string }) => data)
+  .handler(async ({ data }): Promise<OpenedSession | null> => {
+    const { agentNodeId } = await requireSessionKeyAccess(data.tabKey)
+    return attachLocalSessionImpl({ agentNodeId, tabKey: data.tabKey })
   })
 
 // An image the reader attached, on its way to the store. `data` is base64 with
@@ -99,6 +111,12 @@ export const promptLocal = createServerFn({ method: 'POST', strict: { output: fa
   )
   .handler(async ({ data }): Promise<{ interrupted: boolean }> => {
     await requireSessionAccess(data.sessionId)
+    // Checked here rather than in promptLocalImpl, which also receives a
+    // group-chat message with its standing context framed around it.
+    const oversized = oversizedTextNotice(data.text)
+    if (oversized) {
+      throw new Error(oversized)
+    }
     return promptLocalImpl(data)
   })
 
@@ -145,41 +163,16 @@ export const stopBackgroundTaskLocal = createServerFn({ method: 'POST', strict: 
     return { stopped: await backgroundTasks.requestStop(data.asyncTaskId) }
   })
 
-// Change one of the session's agent-advertised config options (model/effort/
-// mode/…). Applies to this session only — never written back into the
-// profile the session was started from.
-//
-// While YOLO is on, every session is pinned to bypass and mode changes are
-// refused here rather than applied and then quietly undone by the enforcement
-// pass. Returns the refusal as DATA, not a thrown error: a thrown createServerFn
-// error reaches the browser with only its message, leaving the client unable to
-// tell a refusal from a transport failure.
+// Change one of the session's agent-advertised config options — see
+// setLocalConfigOptionImpl. A YOLO refusal comes back as DATA, not a thrown
+// error: a thrown createServerFn error reaches the browser with only its
+// message, leaving the client unable to tell a refusal from a transport
+// failure.
 export const setLocalConfigOption = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { sessionId: string; configId: string; value: string | boolean }) => data)
   .handler(async ({ data }): Promise<{ ok: true } | { ok: false; reason: 'yolo-locked' }> => {
     await requireSessionAccess(data.sessionId)
-    // Modes reach the client twice — as session modes AND as a `mode` config
-    // option built from the same list — and this is the one door that changes
-    // either, so the YOLO lock holds here or the selector becomes a way around
-    // it. The refusal is returned as data rather than swallowed: a caller that
-    // cannot tell refused from applied can only present the change as having
-    // worked.
-    if (data.configId === 'mode' && modeLockedByYolo()) {
-      return { ok: false, reason: 'yolo-locked' }
-    }
-    await agentClient.setConfigOption(data.sessionId, data.configId, data.value)
-    // Also persist it per-tab so a later cold-start resume (openLocalSession's
-    // session/load path) can replay it — see the comment there. Assumes the
-    // sessionId is already in tabSessions (true for every current caller, all
-    // of which go through a tab); an override set through any future path
-    // that bypasses the tab map would silently skip persistence.
-    for (const [tabKey, entry] of tabSessions) {
-      if (entry.id === data.sessionId) {
-        await writePersistedConfigOption(tabKey, data.configId, data.value)
-        break
-      }
-    }
-    return { ok: true }
+    return setLocalConfigOptionImpl(data)
   })
 
 export const cancelLocal = createServerFn({ method: 'POST', strict: { output: false } })
@@ -280,6 +273,16 @@ export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict
   .handler(async ({ data }): Promise<AuthoredRecordsWindow | null> => {
     await requireSessionAccess(data.sessionId)
     return sessionHistoryPageImpl(data.sessionId, data.beforeIndex, HISTORY_PAGE_RECORDS)
+  })
+
+// The log index of a recorded turn, for opening the conversation at it. The
+// key it is looked up under is the one the gate resolves for the session, never
+// one the caller names.
+export const locateRecordedTurnLocal = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; position: number }) => data)
+  .handler(async ({ data }): Promise<TurnLocation> => {
+    const sessionKey = await requireSessionAccess(data.sessionId)
+    return locateRecordedTurnImpl(data.sessionId, sessionKey, data.position)
   })
 
 // Answers a permission request or a question. `sessionId` is the session that

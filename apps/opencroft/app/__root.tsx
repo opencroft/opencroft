@@ -1,8 +1,13 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
+import type { CSSProperties } from 'react'
+import { BRAND_ACCENT_VAR, BRAND_COLORS, DEFAULT_BRAND_COLOR } from 'ui/logo'
 import { Toaster } from 'ui/sonner'
 import { ThemeProvider } from 'ui/theme-provider'
 
+import { brandIconHref } from '@/app/_lib/brand-icon-href'
 import { PRODUCT_NAME } from '@/app/_lib/page-title'
+import { getBrandColor } from '@/app/_server/brand-color-actions'
+import { ThemeColorMeta } from '@/app/_shell/theme-color-meta'
 import appCss from '@/app/globals.css?url'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +86,12 @@ import appCss from '@/app/globals.css?url'
 //                                    Its own file says what it is for:
 //                                    "proxies, webhooks, SSE all work" — same
 //                                    reasoning as /api/route/$, one layer down.
+//   /favicon.svg, /icons/*,
+//   /manifest.webmanifest           the app's icons and its manifest, drawn
+//                                    in the instance's brand colour. A
+//                                    browser asks for them on the login page
+//                                    and while installing, and the colour is
+//                                    no secret: the icon shows it to anyone.
 //   /api/build-info                 branch + commit only, no secret, and the
 //                                    one surface this whole night's work has
 //                                    depended on as an unauthenticated
@@ -119,32 +130,56 @@ import appCss from '@/app/globals.css?url'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1, interactive-widget=resizes-content' },
-      // The fallback title, for a route that names nothing more specific. Any
-      // route's own `head` overrides it: the tag builder walks the matches from
-      // the deepest one up and keeps the first title it finds.
-      { title: PRODUCT_NAME },
-      { name: 'description', content: 'Platform for your home lab' },
-    ],
-    links: [
-      { rel: 'stylesheet', href: appCss },
-      { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
-    ],
-  }),
+  // The instance's brand colour, for every page including the signed-out ones.
+  // Read once per page load and kept: it is instance configuration, fixed for
+  // the life of the server process.
+  loader: async () => ({ brandColor: await getBrandColor() }),
+  staleTime: Number.POSITIVE_INFINITY,
+  head: ({ loaderData }) => {
+    const brandColor = loaderData?.brandColor ?? DEFAULT_BRAND_COLOR
+    return {
+      meta: [
+        { charSet: 'utf-8' },
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, interactive-widget=resizes-content' },
+        // The fallback title, for a route that names nothing more specific. Any
+        // route's own `head` overrides it: the tag builder walks the matches from
+        // the deepest one up and keeps the first title it finds.
+        { title: PRODUCT_NAME },
+        { name: 'description', content: 'Platform for your home lab' },
+      ],
+      links: [
+        { rel: 'stylesheet', href: appCss },
+        // The icons and the manifest are drawn in the instance's brand colour
+        // (see brandIconHref for why the colour is in their addresses).
+        { rel: 'icon', href: brandIconHref('/favicon.svg', brandColor), type: 'image/svg+xml' },
+        { rel: 'apple-touch-icon', href: brandIconHref('/icons/apple-touch-icon.png', brandColor) },
+        // A manifest is fetched without credentials unless asked otherwise, so
+        // behind a reverse-proxy basic-auth gate it would come back 401 and the
+        // app would not be installable.
+        {
+          rel: 'manifest',
+          href: brandIconHref('/manifest.webmanifest', brandColor),
+          crossOrigin: 'use-credentials',
+        },
+      ],
+    }
+  },
   component: RootDocument,
 })
 
 function RootDocument() {
+  const { brandColor } = Route.useLoaderData()
+  // Set on the document element so every drawing of the mark on the page,
+  // whichever bundle it came from, reads the same value.
+  const brandAccent = { [BRAND_ACCENT_VAR]: BRAND_COLORS[brandColor] } as CSSProperties
   return (
-    <html lang='en' suppressHydrationWarning>
+    <html lang='en' style={brandAccent} suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body className='antialiased'>
         <ThemeProvider attribute='class' defaultTheme='system' enableSystem>
+          <ThemeColorMeta />
           <Outlet />
           <Toaster position='top-center' richColors />
         </ThemeProvider>

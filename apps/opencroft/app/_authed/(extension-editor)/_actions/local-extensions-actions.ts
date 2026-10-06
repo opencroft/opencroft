@@ -62,13 +62,6 @@ export const pullLocalExtension = createServerFn({ method: 'POST', strict: { out
   .inputValidator((folder: string) => folder)
   .handler(async ({ data: folder }): Promise<LocalPullResult> => pullLocalExtensionImpl(folder))
 
-// A bare folder still means "compile it"; the object form is how a caller opts
-// into building a checkout the guard would otherwise decline.
 export const compileLocalExtension = createServerFn({ method: 'POST', strict: { output: false } })
-  .inputValidator((data: string | { folder: string; allowUnclean?: boolean }) => data)
-  .handler(
-    async ({ data }): Promise<BuildResult> =>
-      typeof data === 'string'
-        ? compileLocalExtensionImpl(data)
-        : compileLocalExtensionImpl(data.folder, { allowUnclean: data.allowUnclean }),
-  )
+  .inputValidator((folder: string) => folder)
+  .handler(async ({ data: folder }): Promise<BuildResult> => compileLocalExtensionImpl(folder))

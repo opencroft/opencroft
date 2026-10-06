@@ -6,9 +6,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 import { installTestDom } from './test-dom'
 
-// The editor parses markdown through the DOM, so these tests need one.
+// The editor draws into the DOM, so these tests need one.
 let Editor: typeof import('@tiptap/core').Editor
+let Extension: typeof import('@tiptap/core').Extension
 let TextSelection: typeof import('@tiptap/pm/state').TextSelection
+let NodeSelection: typeof import('@tiptap/pm/state').NodeSelection
 let editorModule: typeof import('./markdown-editor')
 let blocks: typeof import('./markdown-editor-blocks')
 let inserts: typeof import('./markdown-editor-block-inserts')
@@ -17,8 +19,8 @@ let Markdown: typeof import('./components/markdown').Markdown
 
 before(async () => {
   installTestDom()
-  ;({ Editor } = await import('@tiptap/core'))
-  ;({ TextSelection } = await import('@tiptap/pm/state'))
+  ;({ Editor, Extension } = await import('@tiptap/core'))
+  ;({ TextSelection, NodeSelection } = await import('@tiptap/pm/state'))
   editorModule = await import('./markdown-editor')
   blocks = await import('./markdown-editor-blocks')
   inserts = await import('./markdown-editor-block-inserts')
@@ -30,7 +32,7 @@ function open(markdown: string, slashMenu?: import('./markdown-editor-slash-menu
   return new Editor({
     element: document.createElement('div'),
     extensions: editorModule.markdownEditorExtensions({ slashMenu }),
-    content: markdown,
+    content: editorModule.markdownContent(markdown),
   })
 }
 
@@ -41,6 +43,40 @@ function roundTrip(markdown: string): string {
   editor.destroy()
   return out
 }
+
+/** Types `text` at the end of the document's first textblock, then lists the document's top-level nodes. */
+function typeIntoFirstBlock(editor: EditorType, text: string): string[] {
+  let end = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (end < 0 && node.isTextblock) {
+      end = pos + 1 + node.content.size
+    }
+    return end < 0
+  })
+  editor.view.dispatch(editor.state.tr.insertText(text, end))
+  return editor.state.doc.content.content.map((node) => node.type.name)
+}
+
+test('an editor of its own document keeps a paragraph after a final block and a history of its own', () => {
+  const editor = open(':::note\nx\n:::')
+  assert.deepEqual(typeIntoFirstBlock(editor, 'y'), ['markdownCallout', 'paragraph'])
+  assert.ok(editor.can().undo())
+  editor.destroy()
+})
+
+test('an editor of a shared document adds nothing to it and leaves its history to the binding', () => {
+  // A binding that keeps no history, so any history left would be the editor's.
+  const binding = Extension.create({ name: 'testBinding' })
+  const editor = new Editor({
+    element: document.createElement('div'),
+    extensions: editorModule.markdownEditorExtensions({ collaboration: [binding] }),
+    content: editorModule.markdownContent(':::note\nx\n:::'),
+  })
+  assert.deepEqual(typeIntoFirstBlock(editor, 'y'), ['markdownCallout'])
+  // No undo command at all: the binding brings its own.
+  assert.equal('undo' in editor.commands, false)
+  editor.destroy()
+})
 
 function nodeNames(editor: EditorType): string[] {
   const names: string[] = []
@@ -185,7 +221,7 @@ test('text around the blocks is untouched, and text directives stay text', () =>
 test('the Blocks list is the expected list, in order, and each entry inserts its block', () => {
   assert.deepEqual(
     inserts.BLOCK_INSERTS.map((item) => item.label),
-    ['Note', 'Tip', 'Important', 'Warning', 'Caution', 'Spoiler', 'Tabs', 'Table', 'Divider'],
+    ['Note', 'Tip', 'Important', 'Warning', 'Caution', 'Spoiler', 'Tabs', 'Table', 'Divider', 'Icon'],
   )
   const expected: Record<string, RegExp> = {
     note: /^:::note\n/,
@@ -197,6 +233,7 @@ test('the Blocks list is the expected list, in order, and each entry inserts its
     tabs: /^::::tabs\n:::tab\{label="Tab 1"\}\n[\s\S]*:::tab\{label="Tab 2"\}/,
     table: /^\| +\| +\| +\|\n\| -+ \| -+ \| -+ \|/,
     divider: /^---/,
+    icon: /^:icon\[smile\]$/,
   }
   for (const item of inserts.BLOCK_INSERTS) {
     const editor = open('')
@@ -204,6 +241,81 @@ test('the Blocks list is the expected list, in order, and each entry inserts its
     assert.match(editorModule.readMarkdown(editor), expected[item.id], item.id)
     editor.destroy()
   }
+})
+
+test('an icon opens as one icon node and is written back as it was read', () => {
+  const editor = open('Ship :icon[rocket]{color=primary} now, :icon[star] later.')
+  const icons: { name: unknown; color: unknown }[] = []
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'markdownIcon') {
+      icons.push({ name: node.attrs.name, color: node.attrs.color })
+    }
+  })
+  assert.deepEqual(icons, [
+    { name: 'rocket', color: 'primary' },
+    { name: 'star', color: null },
+  ])
+  assert.equal(editorModule.readMarkdown(editor), 'Ship :icon[rocket]{color=primary} now, :icon[star] later.')
+  editor.destroy()
+})
+
+test('an icon label is read as its text, and a colour the renderer does not know is kept as written', () => {
+  assert.equal(roundTrip(':icon[*rocket*]{color=teal}'), ':icon[rocket]{color=teal}')
+})
+
+test('an icon inside a block leaves the block fence as it was', () => {
+  assert.equal(roundTrip(':::note\nA :icon[star] here.\n:::'), ':::note\nA :icon[star] here.\n\n:::')
+})
+
+test('an icon with no label, a leaf directive and other text directives stay text', () => {
+  assert.equal(roundTrip('Use :icon or :icon[] or key:value.'), 'Use :icon or :icon\\[\\] or key:value.')
+  assert.ok(!nodeNames(open('Use :icon or ::icon[x].')).includes('markdownIcon'))
+})
+
+test('typed text that looks like an icon is saved so it reopens as text', () => {
+  const editor = open('')
+  // A plain text insertion, as typing makes; `insertContent` would read it as markdown.
+  editor.view.dispatch(editor.state.tr.insertText(':icon[rocket]', 1))
+  const saved = editorModule.readMarkdown(editor)
+  editor.destroy()
+  assert.ok(!nodeNames(open(saved)).includes('markdownIcon'), saved)
+  assert.equal(roundTrip(saved), saved)
+})
+
+test('inserting an icon leaves the caret just after it, not on it, and marks it as the one whose picker opens', () => {
+  const editor = open('Before')
+  editor.commands.focus('end')
+  inserts.BLOCK_INSERTS.find((item) => item.id === 'icon')
+    ?.insert(editor.chain().focus())
+    .run()
+  const { selection } = editor.state
+  assert.ok(!(selection instanceof NodeSelection), 'the icon is not selected')
+  assert.ok(selection.empty)
+  const before = editor.state.doc.resolve(selection.from).nodeBefore
+  assert.equal(before?.type.name, 'markdownIcon', 'the caret is just after the icon')
+  assert.equal(
+    (editor.storage as unknown as Record<string, { openAt?: number }>).markdownIcon.openAt,
+    selection.from - 1,
+  )
+  assert.equal(editorModule.readMarkdown(editor), 'Before:icon[smile]')
+  editor.destroy()
+})
+
+test('an icon is not a node the selection can stop on', () => {
+  const editor = open('A :icon[star] b')
+  let icon: import('@tiptap/pm/model').Node | undefined
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'markdownIcon') {
+      icon = node
+    }
+  })
+  assert.ok(icon)
+  assert.equal(NodeSelection.isSelectable(icon), false)
+  editor.destroy()
+})
+
+test('a palette colour round-trips as written', () => {
+  assert.equal(roundTrip('A :icon[star]{color=sky-300} b'), 'A :icon[star]{color=sky-300} b')
 })
 
 test('inserting tabs leaves the caret in the first tab, which is the one shown', () => {
@@ -234,13 +346,13 @@ test('loading another document starts its tabs on the first tab, whatever the la
   const second = editor.state.doc.firstChild?.child(0).nodeSize ?? 0
   editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(editor.state.doc.resolve(1 + second + 2))))
   assert.equal(blocks.activeTab(editor.state, 0), 1)
-  editor.commands.setContent(tabs('C', 'D'))
+  editor.commands.setContent(editorModule.markdownContent(tabs('C', 'D')))
   assert.equal(blocks.activeTab(editor.state, 0), 0)
   editor.destroy()
 })
 
 test('the / menu matches by name first, then by keyword', () => {
-  assert.equal(inserts.matchBlockInserts('').length, 9)
+  assert.equal(inserts.matchBlockInserts('').length, 10)
   assert.deepEqual(
     inserts.matchBlockInserts('war').map((item) => item.label),
     ['Warning'],
@@ -291,7 +403,7 @@ test('/ on an empty line opens the menu; / inside a sentence does not', async ()
   editor.commands.focus('end')
   type(editor, '/')
   await settle()
-  assert.equal(store.get()?.items.length, 9)
+  assert.equal(store.get()?.items.length, 10)
   type(editor, 'tab')
   await settle()
   assert.deepEqual(
@@ -316,6 +428,26 @@ test('/ on an empty line opens the menu; / inside a sentence does not', async ()
   await settle()
   assert.equal(onText.get(), null)
   worded.destroy()
+})
+
+test('/ in a table cell opens no menu, and Enter still moves to the cell below', async () => {
+  const store = slash.createSlashMenuStore()
+  const editor = open('| a | b |\n| --- | --- |\n|  | x |\n', store)
+  let cellPos = -1
+  editor.state.doc.descendants((node, pos) => {
+    if (cellPos < 0 && node.type.name === 'tableCell') {
+      cellPos = pos
+    }
+    return cellPos < 0
+  })
+  editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(editor.state.doc.resolve(cellPos + 1))))
+  type(editor, '/tab')
+  await settle()
+  assert.equal(store.get(), null)
+  const enter = new KeyboardEvent('keydown', { key: 'Enter' })
+  editor.view.someProp('handleKeyDown', (handle) => handle(editor.view, enter))
+  assert.equal(editorModule.readMarkdown(editor), '| a | b |\n| --- | --- |\n| /tab | x |\n|  |  |')
+  editor.destroy()
 })
 
 test('choosing from the / menu replaces the typed command with the block', async () => {

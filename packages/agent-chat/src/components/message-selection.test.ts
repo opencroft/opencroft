@@ -87,6 +87,42 @@ test('no selection, or a collapsed one, gives nothing', () => {
   assert.equal(selectedTextWithin(first, selection), '')
 })
 
+// A chip drawn for an identifier: what it shows is not what it stands for.
+const CHIP =
+  '<p>Before <span data-selection-text="ABC-1"><a href="#"><span>ABC-1</span><span>Fix the login</span></a></span> after</p>'
+
+test('a selection across a stand-in reads it as its text, not as what it shows', () => {
+  document.body.innerHTML = `<div id="chip">${CHIP}</div>`
+  const message = document.getElementById('chip') as HTMLElement
+  const paragraph = message.querySelector('p') as HTMLElement
+  const selection = select(paragraph.firstChild as Text, 0, paragraph.lastChild as Text, 6)
+  assert.equal(selectedTextWithin(message, selection), 'Before ABC-1 after')
+})
+
+test('a selection ending inside a stand-in takes the whole of it', () => {
+  document.body.innerHTML = `<div id="chip">${CHIP}</div>`
+  const message = document.getElementById('chip') as HTMLElement
+  const paragraph = message.querySelector('p') as HTMLElement
+  const summary = message.querySelectorAll('a span')[1].firstChild as Text
+  const selection = select(paragraph.firstChild as Text, 0, summary, 3)
+  assert.equal(selectedTextWithin(message, selection), 'Before ABC-1')
+})
+
+test("reading a stand-in puts the reader's selection back and leaves nothing behind", () => {
+  document.body.innerHTML = `<div id="chip">${CHIP}</div>`
+  const message = document.getElementById('chip') as HTMLElement
+  const paragraph = message.querySelector('p') as HTMLElement
+  const end = paragraph.lastChild as Text
+  const selection = select(end, 6, paragraph.firstChild as Text, 0)
+  const html = document.body.innerHTML
+  selectedTextWithin(message, selection)
+  assert.equal(document.body.innerHTML, html)
+  assert.equal(selection.anchorNode, end)
+  assert.equal(selection.anchorOffset, 6)
+  assert.equal(selection.focusNode, paragraph.firstChild)
+  assert.equal(selection.focusOffset, 0)
+})
+
 test('a selection covering only whitespace in the message gives nothing', () => {
   document.body.innerHTML = '<div id="spaced"><p>one</p> <p>two</p></div>'
   const spaced = document.getElementById('spaced') as HTMLElement

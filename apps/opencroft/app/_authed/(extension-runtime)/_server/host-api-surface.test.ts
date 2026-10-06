@@ -169,3 +169,29 @@ test('a name the host does not provide fails the build rather than becoming unde
   const result = await buildExtension('local.absent-name', manifest)
   assert.equal(result.success, false, 'importing a name the shim does not export must not build')
 })
+
+test("a toast raised through sonner is the host's toast, not a bundled copy's", async () => {
+  // A bundled sonner keeps its toasts in a store no Toaster on the page reads,
+  // so the toast would vanish without an error. Read off the host is the one
+  // shape in which it reaches the page's Toaster.
+  const bundle = await buildProbe(
+    'sonner-toast',
+    ["import { toast } from 'sonner'", '', "export const probe = () => toast.success('Copied')", ''].join('\n'),
+  )
+
+  assert.match(bundle, /__extHost\.host\.toast/)
+})
+
+test('a second Toaster cannot be imported from sonner', async () => {
+  const dir = path.join(root, 'extensions', 'local.sonner-toaster')
+  await fs.mkdir(path.join(dir, 'src'), { recursive: true })
+  await fs.writeFile(
+    path.join(dir, 'src', 'client.tsx'),
+    "import { Toaster } from 'sonner'\n\nexport const probe = Toaster\n",
+  )
+  const manifest: ExtensionManifest = { id: 'local.sonner-toaster', name: 'sonner-toaster', version: '0.0.0' }
+  await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
+
+  const result = await buildExtension('local.sonner-toaster', manifest)
+  assert.equal(result.success, false, 'the host mounts the one Toaster; an extension importing its own must not build')
+})

@@ -6,17 +6,15 @@
 // path, identically. Against a real database, because the failure being
 // simulated is a database one and the resolver is the real one.
 
+import '@opencroft/db/test-env'
+
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import test, { after, beforeEach } from 'node:test'
+import test, { beforeEach } from 'node:test'
 
 import { buildDelivery } from 'agent-client/queue-tags'
 import type { ChatEvent } from 'agent-client/types'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-attach-authors-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
 process.env.DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -36,10 +34,6 @@ const { db, user, username: usernames } = await import('@opencroft/db')
 const { sql } = await import('drizzle-orm')
 const store = await import('@/app/_server/usernames')
 const { withAuthors } = await import('./attach-authors')
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 beforeEach(async () => {
   await db.delete(usernames)

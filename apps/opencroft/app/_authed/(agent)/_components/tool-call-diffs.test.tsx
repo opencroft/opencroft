@@ -34,9 +34,11 @@ function renderedTool(events: ChatEvent[]): string {
 
 const textOf = (html: string) => html.replace(/<!-- -->/g, '').replace(/<[^>]*>/g, '')
 
+// A line's text may hold the spans that mark its changed words, so it runs to
+// the end of its row rather than to the first closing tag.
 const markedLines = (html: string) =>
-  [...html.matchAll(/<span class="sr-only">(added|removed): <\/span><span[^>]*>([^<]*)<\/span>/g)].map(
-    ([, kind, text]) => `${kind === 'added' ? '+' : '-'} ${text}`,
+  [...html.matchAll(/<span class="sr-only">(added|removed): <\/span><span[^>]*>(.*?)<\/span><\/div>/g)].map(
+    ([, kind, text]) => `${kind === 'added' ? '+' : '-'} ${text.replace(/<[^>]*>/g, '')}`,
   )
 
 test('an Edit reported only as diffs is drawn as those diffs in the transcript', () => {
@@ -58,7 +60,7 @@ test('an Edit reported only as diffs is drawn as those diffs in the transcript',
   assert.ok(!textOf(html).includes('The change is not in the transcript.'))
 })
 
-test('a Write reported without a before side is drawn as the written file, not as every line added', () => {
+test('a Write reported without a before side is drawn as a new file, every line added', () => {
   const html = renderedTool([
     { kind: 'user', text: 'write it' },
     {
@@ -72,7 +74,30 @@ test('a Write reported without a before side is drawn as the written file, not a
     },
     { kind: 'tool_update', toolCallId: 'w1', status: 'completed', output: 'ok' },
   ])
-  assert.deepEqual(markedLines(html), [], 'no line is claimed as added')
-  assert.ok(textOf(html).includes('first\nsecond'), 'the written text is shown')
-  assert.ok(!textOf(html).includes('+2'), 'no diff size is claimed')
+  assert.deepEqual(markedLines(html), ['+ first', '+ second'])
+  assert.ok(textOf(html).includes('+2 −0'))
+})
+
+test('a Write whose post-write report carries the before side is drawn as that diff', () => {
+  const html = renderedTool([
+    { kind: 'user', text: 'write it' },
+    {
+      kind: 'tool_call',
+      toolCallId: 'w1',
+      title: 'Write /tmp/notes.txt',
+      status: 'pending',
+      name: 'Write',
+      input: { file_path: '/tmp/notes.txt' },
+      diffs: [{ path: '/tmp/notes.txt', oldText: null, newText: 'first\nsecond, changed' }],
+    },
+    // The report that follows the write replaces the first one as a whole.
+    {
+      kind: 'tool_update',
+      toolCallId: 'w1',
+      diffs: [{ path: '/tmp/notes.txt', oldText: 'first\nsecond', newText: 'first\nsecond, changed' }],
+    },
+    { kind: 'tool_update', toolCallId: 'w1', status: 'completed', output: 'ok' },
+  ])
+  assert.deepEqual(markedLines(html), ['- second', '+ second, changed'])
+  assert.ok(textOf(html).includes('+1 −1'))
 })

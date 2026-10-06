@@ -3,7 +3,7 @@
 import { customAnswerTarget, isSecretField } from 'agent-client/elicitation-form'
 import type { ElicitationContentValue, ElicitationSchema } from 'agent-client/types'
 import { Check, ExternalLink, MessageCircleQuestion, X } from 'lucide-react'
-import { type KeyboardEvent, useState } from 'react'
+import { type ComponentProps, type KeyboardEvent, type MouseEvent, type ReactNode, useRef, useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import { Checkbox } from 'ui/components/ui/checkbox'
@@ -21,6 +21,14 @@ import { Markdown } from './markdown'
 // first (agent-client/elicitation-form) — so there is exactly one renderer and
 // one answer shape, and the two paths cannot drift apart.
 
+/** One choice of a select or multi field. `label` and `description` are
+ * markdown. */
+export interface AskUserOption {
+  value: string
+  label: string
+  description?: string
+}
+
 /** One tab: a question field, with its paired free-text "Other" box when the
  * schema marked one (see customAnswerTarget). */
 export interface AskUserField {
@@ -37,8 +45,8 @@ export interface AskUserField {
   customKey?: string
   customSecret?: true
   kind:
-    | { type: 'select'; options: { value: string; label: string; description?: string }[] }
-    | { type: 'multi'; options: { value: string; label: string; description?: string }[] }
+    | { type: 'select'; options: AskUserOption[] }
+    | { type: 'multi'; options: AskUserOption[] }
     | { type: 'boolean' }
     | { type: 'number'; integer: boolean }
     | { type: 'text' }
@@ -46,7 +54,7 @@ export interface AskUserField {
 
 type PropertyRecord = Record<string, unknown>
 
-function enumOptions(raw: unknown): { value: string; label: string; description?: string }[] | null {
+function enumOptions(raw: unknown): AskUserOption[] | null {
   if (!Array.isArray(raw)) {
     return null
   }
@@ -218,15 +226,27 @@ export function buildAskContent(
 
 // ── The component ────────────────────────────────────────────────────────────
 
-// An option's description sits inside the option's <label>, so it renders
-// inline (a label holds phrasing content only) and in the hint's own type.
-// A link in it does not pick the option: a label's activation skips clicks
-// whose target is interactive content inside it, which an <a href> is.
-function OptionHint({ text }: { text: string }) {
+// One choice: the control, then its label over its description, both markdown.
+// They sit inside the option's <label>, so they render inline (a label holds
+// phrasing content only), and the label takes the rest of the row, so a press
+// anywhere on the row picks the option. A link or a reference chip in the text
+// does not: a label's activation skips clicks whose target is interactive
+// content inside it, which an <a href> and a <button> are.
+function OptionRow({ id, option, control }: { id: string; option: AskUserOption; control: ReactNode }) {
   return (
-    <span className='ml-1 text-xs text-muted-foreground'>
-      <Markdown text={text} typography='inherit' inline />
-    </span>
+    <div className='flex items-start'>
+      <span className='flex h-5 shrink-0 items-center'>{control}</span>
+      <Label htmlFor={id} className='flex-1 cursor-pointer flex-col items-start gap-0.5 pl-2 text-sm leading-5 font-normal'>
+        <span className='min-w-0 wrap-break-word'>
+          <Markdown text={option.label} typography='inherit' inline />
+        </span>
+        {option.description ? (
+          <span className='min-w-0 text-xs text-muted-foreground wrap-break-word'>
+            <Markdown text={option.description} typography='inherit' inline />
+          </span>
+        ) : null}
+      </Label>
+    </div>
   )
 }
 
@@ -244,6 +264,9 @@ export interface AskUserProps {
 export function AskUser({ message, schema, onSubmit, onCancel, pending = false }: AskUserProps) {
   const [currentIdx, setCurrentIdx] = useState(0)
   const [state, setState] = useState<AskUserState>({ values: {}, customs: {} })
+  // Set while focus is moving onto something in the radio group; read by its
+  // click handler below.
+  const radioTakingFocus = useRef(false)
   const fields = askFields(schema)
   const field = fields[Math.min(currentIdx, fields.length - 1)]
   if (!field) {
@@ -274,7 +297,45 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
   }
 
   const picks = Array.isArray(state.values[field.key]) ? (state.values[field.key] as string[]) : []
+  const picked = typeof state.values[field.key] === 'string' ? (state.values[field.key] as string) : ''
   const customText = state.customs[field.key] ?? ''
+
+  // Pressing the picked option again clears it, so a question with a custom
+  // answer box can be answered by the box alone. A press on the option's row,
+  // on its control, or Space on the control all end as a click on the radio's
+  // hidden <input>, which keeps that click from bubbling: so this listens on
+  // the way down. The radio also clicks that input itself as it takes focus
+  // during Arrow navigation, which is not a press: a click during a radio's
+  // focus never unpicks.
+  const onRadioClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (
+      !radioTakingFocus.current &&
+      target instanceof HTMLInputElement &&
+      target.type === 'radio' &&
+      picked !== '' &&
+      target.value === picked
+    ) {
+      setValue(field.key, '')
+    }
+  }
+
+  // An Arrow key makes the group remember to pick whichever radio takes focus
+  // next, which is how Arrow navigation picks. When the Arrow cannot move
+  // focus (Ctrl, Alt or Meta held, or no other option to move to), nothing
+  // takes focus and the request would wait for whatever focus comes next: Tab
+  // back onto the group, or a press on an option's text. Such an Arrow is
+  // kept from the group, so focus alone never changes the answer.
+  const onRadioKeyDownCapture: ComponentProps<typeof RadioGroup>['onKeyDownCapture'] = (event) => {
+    if (!event.key.startsWith('Arrow')) {
+      return
+    }
+    const modified = (['Control', 'Alt', 'Meta'] as const).some((key) => event.getModifierState(key))
+    const options = event.currentTarget.querySelectorAll('[role="radio"]:not([data-disabled])').length
+    if (modified || options < 2) {
+      event.preventBaseUIHandler()
+    }
+  }
 
   return (
     <div className='flex flex-col gap-2 px-3 py-2'>
@@ -325,41 +386,53 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
       {/* Field body */}
       {field.kind.type === 'select' ? (
         <RadioGroup
-          value={typeof state.values[field.key] === 'string' ? (state.values[field.key] as string) : ''}
+          value={picked}
           onValueChange={(value) => setValue(field.key, value)}
+          onKeyDownCapture={onRadioKeyDownCapture}
+          onFocusCapture={() => {
+            radioTakingFocus.current = true
+          }}
+          onFocus={() => {
+            radioTakingFocus.current = false
+          }}
+          onClickCapture={onRadioClickCapture}
           className='gap-1.5'
         >
-          {field.kind.options.map((option) => (
-            <div key={option.value} className='flex items-center gap-2'>
-              <RadioGroupItem value={option.value} id={`${field.key}-${option.value}`} />
-              <Label htmlFor={`${field.key}-${option.value}`} className='cursor-pointer text-sm font-normal'>
-                {option.label}
-                {option.description ? <OptionHint text={option.description} /> : null}
-              </Label>
-            </div>
-          ))}
+          {field.kind.options.map((option) => {
+            const id = `${field.key}-${option.value}`
+            return (
+              <OptionRow
+                key={option.value}
+                id={id}
+                option={option}
+                control={<RadioGroupItem value={option.value} id={id} />}
+              />
+            )
+          })}
         </RadioGroup>
       ) : field.kind.type === 'multi' ? (
         <div className='flex flex-col gap-1.5'>
           {field.kind.options.map((option) => {
             const checked = picks.includes(option.value)
+            const id = `${field.key}-${option.value}`
             return (
-              <div key={option.value} className='flex items-center gap-2'>
-                <Checkbox
-                  id={`${field.key}-${option.value}`}
-                  checked={checked}
-                  onCheckedChange={() =>
-                    setValue(
-                      field.key,
-                      checked ? picks.filter((pick) => pick !== option.value) : [...picks, option.value],
-                    )
-                  }
-                />
-                <Label htmlFor={`${field.key}-${option.value}`} className='cursor-pointer text-sm font-normal'>
-                  {option.label}
-                  {option.description ? <OptionHint text={option.description} /> : null}
-                </Label>
-              </div>
+              <OptionRow
+                key={option.value}
+                id={id}
+                option={option}
+                control={
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={() =>
+                      setValue(
+                        field.key,
+                        checked ? picks.filter((pick) => pick !== option.value) : [...picks, option.value],
+                      )
+                    }
+                  />
+                }
+              />
             )
           })}
         </div>

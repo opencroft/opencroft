@@ -46,13 +46,7 @@ const API_KEY_SECRET_FIELD = 'apiKeySecret'
 /** Value prefix standing in for a literal value, anywhere in a node's data. */
 const SECRET_VALUE_PREFIX = 'secret:'
 
-/**
- * The parameter a caller passes to delete a secret that is still referenced.
- *
- * Deliberately the name `compile_extension` already uses for its own override
- * rather than a second word for the same idea: a caller who has met one of
- * these refusals can get past this one without looking anything up.
- */
+/** The parameter a caller passes to delete a secret that is still referenced. */
 export const DELETE_OVERRIDE_PARAM = 'allowUnclean'
 
 export interface SecretReference {

@@ -8,8 +8,19 @@ import '@opencroft/db/test-env'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
+import { getCollabServer } from '@/server/collab/collab-server'
 import { MAX_HISTORY, processDueEvents, type RunHistoryEntry, type ScheduleRule } from './event-scheduler'
+
+// The scheduler writes a fire's outcome through the graph's document, held by
+// an in-process collaboration server until it is unloaded.
+test.after(async () => {
+  const server = getCollabServer()
+  for (const document of [...server.documents.values()]) {
+    await server.unloadDocument(document)
+  }
+})
 
 // The space's nodes across its graphs -- the created space keeps everything on
 // its default graph, but the lookup should not care.
@@ -125,23 +136,46 @@ test('processDueEvents ignores a disabled rule even when its slot is due', async
   assert.deepEqual(historyOf(slug, eventId), [])
 })
 
-test('processDueEvents caps run history at MAX_HISTORY, newest first', async () => {
+test('processDueEvents caps run history at MAX_HISTORY, newest first', async (t) => {
   const slug = `scheduler-cap-${crypto.randomUUID()}`
   const eventId = await freshSpaceWithEventAndScript(slug, [
     { id: 'r1', enabled: true, mode: 'cron', cron: '* * * * *' },
   ])
+  // A run outcome that fails to persist is logged and dropped, not thrown, so
+  // this is the only place a missing entry can be explained from.
+  const errors = t.mock.method(console, 'error')
 
-  // No inter-iteration delay: each fire gets its own identity (fireId), not
-  // one derived from Date.now(), so back-to-back calls landing in the same
-  // millisecond no longer collide.
-  for (let i = 0; i < MAX_HISTORY + 3; i++) {
-    await processDueEvents(Date.now() - 65_000, Date.now())
+  // The clock is driven, a second per fire, rather than read: an entry is
+  // stamped with the time its fire started, and "newest first" is a claim about
+  // those stamps, which off the real clock rests on it never stepping back.
+  // Each fire still gets its own identity (fireId), so calls a real clock would
+  // put in the same millisecond do not collide either.
+  const fires = MAX_HISTORY + 3
+  const start = Date.now()
+  const realDateNow = Date.now
+  try {
+    for (let i = 0; i < fires; i++) {
+      Date.now = () => start + i * 1000
+      await processDueEvents(Date.now() - 65_000, Date.now())
+    }
+  } finally {
+    Date.now = realDateNow
   }
 
   const history = historyOf(slug, eventId)
-  assert.equal(history.length, MAX_HISTORY)
-  // Newest entry first.
-  assert.ok(history[0].at >= history[history.length - 1].at)
+  // On failure, says what was recorded and what the scheduler logged.
+  const recorded = () =>
+    JSON.stringify({
+      entries: history.map((entry) => ({ fire: (entry.at - start) / 1000, status: entry.status, error: entry.error })),
+      logged: errors.mock.calls.map((call) => call.arguments.map(String).join(' ')),
+    })
+  assert.equal(history.length, MAX_HISTORY, `${fires} fires left ${history.length} entries: ${recorded()}`)
+  // Newest first: the last MAX_HISTORY fires, latest at the top.
+  assert.deepEqual(
+    history.map((entry) => entry.at),
+    Array.from({ length: MAX_HISTORY }, (_, k) => start + (fires - 1 - k) * 1000),
+    recorded(),
+  )
 })
 
 // Freezes Date.now() so two genuinely separate processDueEvents calls read
@@ -251,7 +285,7 @@ async function freshSpaceWithEventOnNamedGraph(
   await registry.createGraph(slug, graphSlug, graphSlug, `instance-${crypto.randomUUID()}`)
   const eventId = `${slug}-event`
   const scriptId = `${slug}-script`
-  await registry.saveGraph(`${slug}.${graphSlug}`, {
+  const graph = {
     nodes: [
       { id: eventId, type: 'builtin.core.event', position: { x: 0, y: 0 }, data: { schedules } },
       ...(connectScript
@@ -271,7 +305,11 @@ async function freshSpaceWithEventOnNamedGraph(
     edges: connectScript
       ? [{ id: 'edge-1', source: eventId, target: scriptId, sourceHandle: 'exec-out', targetHandle: 'exec-in' }]
       : [],
-  } as never)
+  }
+  await mutateLiveGraph(`${slug}.${graphSlug}`, { kind: 'system', name: 'test setup' }, (current) => {
+    current.nodes = graph.nodes
+    current.edges = graph.edges
+  })
   return eventId
 }
 

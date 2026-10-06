@@ -20,6 +20,21 @@ test('a plan with entries draws one button that says how far along it is', () =>
   assert.match(markup, /<button[^>]*aria-label="Plan, 1 of 3 done"/)
 })
 
+// The badge is the one rounded count inside the button.
+const badgeCount = (markup: string) =>
+  markup.match(/<span aria-hidden="true" class="[^"]*rounded-full[^"]*">(\d+)</)?.[1]
+
+test('the badge counts the entries not yet completed, pending and in progress alike', () => {
+  assert.equal(badgeCount(renderToStaticMarkup(<AgentPlanControl entries={ENTRIES} />)), '2')
+})
+
+test('a plan with every entry completed shows no badge', () => {
+  const finished = ENTRIES.map((entry) => ({ ...entry, status: 'completed' }))
+  const markup = renderToStaticMarkup(<AgentPlanControl entries={finished} />)
+  assert.match(markup, /aria-label="Plan, 3 of 3 done"/)
+  assert.equal(badgeCount(markup), undefined, markup)
+})
+
 test('each entry shows its status and its priority, in the order given', () => {
   const markup = renderToStaticMarkup(<AgentPlanList entries={ENTRIES} />)
   const rows = markup.split('<li').slice(1)

@@ -4,6 +4,7 @@ import { Bot, ListTodo, TerminalSquare } from 'lucide-react'
 import { useState } from 'react'
 
 import { Button } from 'ui/components/ui/button'
+import { CountBadge } from 'ui/components/ui/count-badge'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { cn } from 'cn'
 
@@ -96,16 +97,7 @@ export function ThreadWorkControl({ work, size = 'icon', className }: ThreadWork
         }
       >
         <ListTodo />
-        {work.liveCount > 0 ? (
-          // Overlaid on the corner rather than beside the icon, so the button
-          // keeps the exact footprint of its neighbours whatever the count.
-          <span
-            aria-hidden
-            className='absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground'
-          >
-            {work.liveCount}
-          </span>
-        ) : null}
+        <CountBadge count={work.liveCount} />
       </PopoverTrigger>
       <PopoverContent align='end' className='w-72 p-1'>
         <div className='flex max-h-72 flex-col gap-0.5 overflow-y-auto'>

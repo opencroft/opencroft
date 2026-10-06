@@ -63,6 +63,14 @@ export const actions = {}
   )
   const manifest = { id, name: id, version: '0.0.0' }
   await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
+  // Dated an hour back, directories included because the freshness walk reads
+  // their mtimes too. A cached module is fresh while its sources are no newer
+  // than its activation time, and the wall clock can step back during the
+  // build, which would date the activation before sources written just now.
+  const old = new Date(Date.now() - 60 * 60 * 1000)
+  for (const entry of ['src/client.tsx', 'src', 'server/index.ts', 'server', 'extension.json']) {
+    await fs.utimes(path.join(dir, entry), old, old)
+  }
   return { id, manifest, logFile }
 }
 

@@ -43,10 +43,20 @@ const textOf = (html: string) =>
     .replace(/&#x27;/g, "'")
     .replace(/&amp;/g, '&')
 
-// The marked lines of a rendered diff, in order, as "+ text" / "- text".
+// The marked lines of a rendered diff, in order, as "+ text" / "- text". A
+// line's text may hold the spans that mark its changed words, so it runs to the
+// end of its row rather than to the first closing tag.
 function markedLines(html: string): string[] {
-  return [...html.matchAll(/<span class="sr-only">(added|removed): <\/span><span[^>]*>([^<]*)<\/span>/g)].map(
-    ([, kind, text]) => `${kind === 'added' ? '+' : '-'} ${text}`,
+  return [...html.matchAll(/<span class="sr-only">(added|removed): <\/span><span[^>]*>(.*?)<\/span><\/div>/g)].map(
+    ([, kind, text]) => `${kind === 'added' ? '+' : '-'} ${text.replace(/<[^>]*>/g, '')}`,
+  )
+}
+
+// The text of each word-level mark in a rendered diff, in order, as
+// "+ text" / "- text".
+function markedWords(html: string): string[] {
+  return [...html.matchAll(/<span class="rounded-sm bg-(success|destructive)\/30">([^<]*)<\/span>/g)].map(
+    ([, tone, text]) => `${tone === 'success' ? '+' : '-'} ${text}`,
   )
 }
 
@@ -59,6 +69,28 @@ test('Edit renders the replaced lines as a diff with its size in the header', ()
   assert.deepEqual(markedLines(html), ['- const b = 2', '+ const b = 3'])
   assert.ok(html.includes('src/config.ts'), 'the file is named in the header')
   assert.ok(textOf(html).includes('+1 −1'), 'the header states the diff size')
+})
+
+test('a replaced line marks the words that changed, also when unchanged runs around it fold', () => {
+  const context = Array.from({ length: 10 }, (_, index) => `const v${index} = ${index}`)
+  const html = render(
+    'Edit',
+    {
+      file_path: 'src/config.ts',
+      old_string: [...context, 'const b = 2', ...context].join('\n'),
+      new_string: [...context, 'const b = 3', ...context].join('\n'),
+    },
+    { text: 'ok' },
+  )
+  assert.ok(textOf(html).includes('unchanged lines'), 'the unchanged runs are folded')
+  assert.deepEqual(markedLines(html), ['- const b = 2', '+ const b = 3'])
+  assert.deepEqual(markedWords(html), ['- 2', '+ 3'])
+})
+
+test('a rewritten line is marked whole rather than in part', () => {
+  const html = render('Edit', { file_path: 'a.ts', old_string: 'const x = 1', new_string: 'let y = 2' }, { text: 'ok' })
+  assert.deepEqual(markedLines(html), ['- const x = 1', '+ let y = 2'])
+  assert.deepEqual(markedWords(html), ['- const x = 1', '+ let y = 2'])
 })
 
 // The shape claude-agent-acp 0.84.0 sends to a client declaring the AIR
@@ -97,23 +129,39 @@ test('an Edit whose change is neither reported nor in its arguments says so inst
   assert.ok(!textOf(html).includes('+0 −0'), 'no diff size is claimed')
 })
 
-test('Write renders a reported overwrite as a diff, and an unreported one without content as unknown', () => {
-  const overwrite = render('Write', { file_path: 'notes.md' }, { text: 'ok' }, [
+test('Write renders a reported overwrite as a diff against what the file held', () => {
+  const html = render('Write', { file_path: 'notes.md' }, { text: 'ok' }, [
     { path: 'notes.md', oldText: 'old line\nkept', newText: 'new line\nkept' },
   ])
-  assert.deepEqual(markedLines(overwrite), ['- old line', '+ new line'])
-  // No before side: the harness may not have read a file that existed, so the
-  // text is shown as written rather than as every line added.
-  const beforeUnknown = render('Write', { file_path: 'new.md' }, { text: 'ok' }, [
-    { path: 'new.md', oldText: null, newText: 'hello' },
+  assert.deepEqual(markedLines(html), ['- old line', '+ new line'])
+  assert.ok(textOf(html).includes('+1 −1'))
+})
+
+test('Write without a before side renders as a new file, every line added', () => {
+  const reported = render('Write', { file_path: 'new.md' }, { text: 'ok' }, [
+    { path: 'new.md', oldText: null, newText: 'hello\nworld\n' },
   ])
-  assert.deepEqual(markedLines(beforeUnknown), [])
-  assert.ok(textOf(beforeUnknown).includes('hello'))
-  assert.ok(!textOf(beforeUnknown).includes('+1'))
-  const unknown = render('Write', { file_path: 'gone.md' }, { text: 'ok' })
-  assert.ok(textOf(unknown).includes('The change is not in the transcript.'))
+  assert.deepEqual(markedLines(reported), ['+ hello', '+ world'])
+  assert.ok(textOf(reported).includes('+2 −0'))
+  assert.deepEqual(markedWords(reported), [], 'an added line with no pair has no word marks')
   const fromArgs = render('Write', { file_path: 'a.md', content: 'body text' }, { text: 'ok' })
-  assert.ok(textOf(fromArgs).includes('body text'), 'without a report, the written content is shown')
+  assert.deepEqual(markedLines(fromArgs), ['+ body text'], 'without a report, the arguments are the new file')
+})
+
+test('Write whose change is neither reported nor in its arguments says so', () => {
+  const html = render('Write', { file_path: 'gone.md' }, { text: 'ok' })
+  assert.ok(textOf(html).includes('The change is not in the transcript.'))
+  assert.ok(!textOf(html).includes('+0'), 'no diff size is claimed')
+})
+
+test('a finished remote_write renders its content as added lines', () => {
+  const html = render(
+    'remote_write',
+    { target: 'node-1/terminal', path: 'notes.md', content: 'one\ntwo' },
+    { text: 'ok' },
+  )
+  assert.deepEqual(markedLines(html), ['+ one', '+ two'])
+  assert.ok(textOf(html).includes('+2 −0'))
 })
 
 test('MultiEdit renders one diff per edit, numbered', () => {
@@ -194,6 +242,19 @@ test('AskUserQuestion records the question and the answer rather than dumping it
   assert.ok(html.includes('Colour'))
   assert.ok(html.includes('Which colour?'))
   assert.ok(!html.includes('&quot;options&quot;'), 'the raw arguments are not shown')
+})
+
+test('AskUserQuestion still being written shows "Preparing question" with a spinner and no body', () => {
+  const html = render('AskUserQuestion', {})
+  assert.equal(textOf(html), 'Preparing question')
+  assert.ok(html.includes('animate-spin'), 'a spinner sits in the header')
+  assert.ok(!html.includes('role="button"'), 'no body block under the header')
+})
+
+test('AskUserQuestion that finished without questions shows its reply, not the preparing state', () => {
+  const html = render('AskUserQuestion', {}, { text: 'AskUserQuestion called with no valid questions.', isError: true })
+  assert.ok(!textOf(html).includes('Preparing'))
+  assert.ok(textOf(html).includes('AskUserQuestion called with no valid questions.'))
 })
 
 // The reply Claude Code sends back once the card is answered.

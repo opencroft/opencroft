@@ -1,7 +1,10 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
+import { useEffect } from 'react'
+import { preloadIcons } from 'ui/media/named-icon'
 
 import { useFullPageAppRoute } from '@/app/_authed/(apps)/_components/full-page-route'
 import { MarkdownResolversHost } from '@/app/_authed/(extension-runtime)/_client/markdown-resolvers'
+import { listDeclaredIconNames } from '@/app/_authed/(extension-runtime)/_server/actions'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
 import { AppShell } from '@/app/_shell/app-shell'
@@ -57,12 +60,25 @@ export const Route = createFileRoute('/_authed')({
     // truth, both consumers.
     return { isAdmin }
   },
-  loader: async () => ({ spaces: await listSpaces() }),
+  // The icons the chrome draws by name -- an app in the title bar, a node on
+  // the canvas, a settings page -- are the ones installed extensions declare.
+  // Loaded here, before anything below renders: on the server so the page
+  // arrives with them drawn, and on a client navigation so it never waits for
+  // one. A hydrating page keeps the server's markup until its own copy has
+  // loaded (see `ui/media/named-icon`), and the effect below starts that load.
+  loader: async () => {
+    const [spaces, iconNames] = await Promise.all([listSpaces(), listDeclaredIconNames()])
+    await preloadIcons(iconNames)
+    return { spaces, iconNames }
+  },
   component: AuthedLayout,
 })
 
 function AuthedLayout() {
-  const { spaces } = Route.useLoaderData()
+  const { spaces, iconNames } = Route.useLoaderData()
+  useEffect(() => {
+    void preloadIcons(iconNames)
+  }, [iconNames])
   const fullPage = useFullPageAppRoute()
   return (
     <SSEProvider>

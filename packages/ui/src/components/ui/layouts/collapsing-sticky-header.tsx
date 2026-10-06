@@ -25,13 +25,23 @@ import { cn } from 'cn'
 //   * the slide IS the browser's own sticky slide -- `top` is negative by
 //     exactly the distance that should scroll away, so the header travels off
 //     the container's edge and the preview stays behind;
-//   * only in the last stretch, once the preview's own height is all that is
-//     left of the travel, do the two cross-fade. Progress is read from the
-//     scroll offset and drives opacity only. Nothing in the layout may read it
-//     back.
+//   * only once the slide has finished -- the header pinned, the preview's
+//     strip all that is left in view -- do the two forms swap, instantly and
+//     with no transition. A fade runs for a fixed time while the scroll
+//     carries on, so a fast or long scroll would show the outgoing form
+//     dissolving over the content passing beneath it. Before that, the full
+//     form occupies the very lines the preview would cover, so swapping
+//     earlier would blank the rest of it above the preview and leave a gap.
+//     Whether the slide has finished is read from the scroll offset and
+//     drives appearance only. Nothing in the layout may read it back.
+//
+// The swap is a state with two values, not a position along a ramp, so a
+// scroll that stops anywhere -- including a last turn too short to scroll the
+// whole travel, which simply keeps its full form -- leaves exactly one form
+// showing, fully.
 //
 // Because the geometry is CSS rather than JavaScript, a dropped frame or a
-// late measurement can only delay a cross-fade. It can never move the page.
+// late measurement can only delay the swap. It can never move the page.
 //
 // Compound, so the host says which part does what:
 //
@@ -43,7 +53,7 @@ import { cn } from 'cn'
 //   </CollapsingStickyHeader>
 //
 // `Pinned` holds the container's edge while everything else slides past it, so
-// an avatar is rendered ONCE and never cross-fades with a copy of itself.
+// an avatar is rendered ONCE and never swaps with a copy of itself.
 // Anything not wrapped in either part simply scrolls away with the rest.
 
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect
@@ -88,13 +98,8 @@ function nearestScrollParent(node: HTMLElement | null): HTMLElement | null {
 const PREVIEW_ATTR = 'data-collapse-preview'
 
 export interface CollapseState {
-  /** 0 at rest, 1 once the header has finished sliding, continuous between. */
-  progress: number
-  /** The cross-fade, which runs only over the last stretch of the travel --
-      the preview's own height of it. 0 for the whole readable part of the
-      slide. */
-  fade: number
-  /** `progress >= 1`. */
+  /** The preview has taken over: the slide has finished and the header is
+      pinned. False for the whole of the slide before that. */
   collapsed: boolean
 }
 
@@ -111,45 +116,31 @@ export function useCollapseState(): CollapseState {
   return state
 }
 
-const clamp01 = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n)
+// How far short of its full travel a header may read and still count as
+// pinned. The sticky offset is set from a measured, fractional travel and is
+// laid out on the engine's sub-pixel grid, so a pinned header can read a
+// fraction of a pixel short -- and without this it would never hand over.
+const PINNED_TOLERANCE = 1
 
-// Two readings are "the same" when equal, or mid-collapse and within noise --
-// endpoints always commit exactly, so `collapsed` and a finished fade are never
-// lost to the tolerance.
-const near = (a: number, b: number) => a === b || (b !== 0 && b !== 1 && Math.abs(a - b) < 0.001)
-
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = React.useState(false)
-  React.useEffect(() => {
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const apply = () => setReduced(query.matches)
-    apply()
-    query.addEventListener('change', apply)
-    return () => query.removeEventListener('change', apply)
-  }, [])
-  return reduced
+/** Whether a header pushed `scrolled` px above its container's edge has handed
+    over to its preview: it has slid its whole `travel` and is pinned. One that
+    stops short of that -- however close -- still shows its full form, and one
+    with no travel never hands over. */
+export function isPastHandOver(scrolled: number, travel: number): boolean {
+  return travel > 0 && scrolled >= travel - PINNED_TOLERANCE
 }
 
 export interface CollapsingStickyHeaderProps extends React.ComponentPropsWithoutRef<'div'> {
   /** The scrolling element. Falls back to the nearest provider, then to the
       nearest scrollable ancestor, then to the page. */
   scrollRef?: ScrollContainerRef
-  onProgressChange?: (progress: number) => void
 }
 
-export function CollapsingStickyHeader({
-  children,
-  scrollRef,
-  onProgressChange,
-  className,
-  style,
-  ...props
-}: CollapsingStickyHeaderProps) {
+export function CollapsingStickyHeader({ children, scrollRef, className, style, ...props }: CollapsingStickyHeaderProps) {
   const rootRef = React.useRef<HTMLDivElement>(null)
   const contextRef = useScrollContainer()
-  const reduced = usePrefersReducedMotion()
 
-  const [metrics, setMetrics] = React.useState({ progress: 0, fade: 0, travel: 0 })
+  const [metrics, setMetrics] = React.useState({ travel: 0, collapsed: false })
 
   useIsomorphicLayoutEffect(() => {
     const root = rootRef.current
@@ -172,7 +163,6 @@ export function CollapsingStickyHeader({
       const previewEl = el.querySelector<HTMLElement>(`[${PREVIEW_ATTR}]`)
       const previewRect = previewEl?.getBoundingClientRect() ?? null
       const travel = previewRect ? Math.max(0, previewRect.top - rootRect.top) : 0
-      const strip = previewRect ? previewRect.height : 0
 
       // `clientTop` is the container's top border. Sticky pins against the
       // SCROLLPORT -- the padding box, inside that border -- so measuring from
@@ -181,25 +171,23 @@ export function CollapsingStickyHeader({
       const containerTop = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0
 
       // How far the header's top edge has been pushed above the container's.
-      // Sticky clamps that at exactly the travel, so the reading saturates on
-      // its own and there is no threshold anywhere to cross. Note what is NOT
-      // in this expression: the header's own height. It cannot be, or the
-      // oscillation is back.
+      // Sticky clamps that at exactly the travel. Note what is NOT in this
+      // expression: the header's own height. It cannot be, or the oscillation
+      // is back.
       const scrolled = containerTop - rootRect.top
-      const progress = travel > 0 ? clamp01(scrolled / travel) : 0
 
-      // The cross-fade waits. It runs only over the last `strip` px of the
-      // travel -- the preview's own height of it -- so everything before that
-      // is an ordinary scroll through content at full opacity, and a message
-      // taller than the screen can actually be read. Only once the preview's
-      // height is all that remains do the two forms swap.
-      const span = Math.min(strip, travel)
-      const fade = span > 0 ? clamp01((scrolled - (travel - span)) / span) : progress
+      // The swap waits for the end of the travel, so everything before that is
+      // an ordinary scroll through content at full opacity, and a message
+      // taller than the screen can actually be read.
+      //
+      // There is no hysteresis band around the point, because nothing can
+      // bounce across it on its own: the state drives opacity only, so
+      // flipping it moves no geometry and produces no scroll event. Only the
+      // reader's own scrolling crosses it.
+      const collapsed = isPastHandOver(scrolled, travel)
 
       setMetrics((prev) =>
-        prev.travel === travel && near(prev.progress, progress) && near(prev.fade, fade)
-          ? prev
-          : { progress, fade, travel },
+        prev.travel === travel && prev.collapsed === collapsed ? prev : { travel, collapsed },
       )
     }
 
@@ -209,7 +197,7 @@ export function CollapsingStickyHeader({
 
     // Content that grows or shrinks mid-slide changes where the header rests
     // and how far it has to travel. Both are re-read here; neither can move the
-    // scroll, because neither is derived from progress.
+    // scroll, because neither is derived from the collapse state.
     const observer = new ResizeObserver(schedule)
 
     // Which element scrolls is read from computed style, and computed style is
@@ -251,21 +239,7 @@ export function CollapsingStickyHeader({
     }
   }, [scrollRef, contextRef])
 
-  const notify = React.useRef(onProgressChange)
-  React.useEffect(() => {
-    notify.current = onProgressChange
-  })
-  React.useEffect(() => {
-    notify.current?.(metrics.progress)
-  }, [metrics.progress])
-
-  // Reduced motion takes the interpolation away, not the slide: the slide is
-  // the reader's own scrolling, and stopping that would be a scroll trap. The
-  // guarantee is untouched either way -- the fade is cosmetic, so snapping it
-  // cannot move anything.
-  const progress = reduced ? (metrics.progress >= 0.5 ? 1 : 0) : metrics.progress
-  const fade = reduced ? (metrics.fade >= 0.5 ? 1 : 0) : metrics.fade
-  const state: CollapseState = { progress, fade, collapsed: progress >= 1 }
+  const state: CollapseState = { collapsed: metrics.collapsed }
 
   return (
     <CollapseContext.Provider value={state}>
@@ -292,10 +266,8 @@ export function CollapsingStickyHeader({
             // The height it occupies in flow is its natural one and never
             // changes, which is what keeps the collapse out of the layout.
             top: -metrics.travel,
-            '--collapse-progress': progress,
-            '--collapse-fade': fade,
             ...style,
-          } as React.CSSProperties
+          }
         }
         {...props}
       >
@@ -309,8 +281,8 @@ export function CollapsingStickyHeader({
 
     For the parts that identify a header rather than fill it -- an avatar, a
     status dot, a rail marker. Rendered once and never faded, so it cannot
-    cross-fade with a copy of itself, which is what happens to anything placed
-    in both forms of a `Content` region.
+    swap with a copy of itself, which is what happens to anything placed in
+    both forms of a `Content` region.
 
     It stays put with `position: sticky`, so the browser holds it against the
     scrollport on the same frame it moves the header.
@@ -355,7 +327,7 @@ export interface CollapsingStickyHeaderContentProps extends React.ComponentProps
 }
 
 /** The region that hands over: its children scroll away and its `preview` is
-    what stays behind, the two cross-fading in the last stretch of the slide.
+    what stays behind, the two swapping once the slide has finished.
 
     Both forms occupy the same place -- the preview is laid over the children's
     final strip -- so style them alike and the swap lands where the reader is
@@ -367,22 +339,18 @@ export function CollapsingStickyHeaderContent({
   previewClassName,
   ...props
 }: CollapsingStickyHeaderContentProps) {
-  const { fade, collapsed } = useCollapseState()
+  const { collapsed } = useCollapseState()
   return (
     <div className={cn('relative', className)} {...props}>
-      <div style={{ opacity: 1 - fade }} aria-hidden={collapsed} inert={collapsed || undefined}>
+      <div className={cn(collapsed && 'opacity-0')} aria-hidden={collapsed} inert={collapsed || undefined}>
         {children}
       </div>
       <div
         {...{ [PREVIEW_ATTR]: '' }}
         // Out of flow and pinned to this region's bottom edge, so it adds no
         // height of its own and the header's flow box never depends on it.
-        className={cn('absolute inset-x-0 bottom-0', previewClassName)}
-        style={{
-          opacity: fade,
-          // Nothing invisible may take a click aimed at the text underneath it.
-          pointerEvents: collapsed ? undefined : 'none',
-        }}
+        // Nothing invisible may take a click aimed at the text underneath it.
+        className={cn('absolute inset-x-0 bottom-0', !collapsed && 'pointer-events-none opacity-0', previewClassName)}
         // Exactly one of the two forms is exposed to assistive technology at a
         // time: the preview repeats the children's opening until they are gone,
         // at which point it is all there is.

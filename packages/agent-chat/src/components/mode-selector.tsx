@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Shield,
   ShieldAlert,
   ShieldBan,
   ShieldCheck,
@@ -14,6 +15,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
 
@@ -71,6 +73,8 @@ const MODE_LABEL = {
 // from the least permissive — so it is stated rather than derived.
 const MODE_ORDER: PermissionMode[] = ['auto', 'plan', 'manual-edits', 'accept-edits', 'reject-edits', 'bypass']
 
+const NOT_SET_COLOUR = 'text-muted-foreground stroke-muted-foreground'
+
 function isKnown(option: ModeOption): option is PermissionMode {
   return (MODE_ORDER as string[]).includes(option)
 }
@@ -87,8 +91,11 @@ function labelOf(option: ModeOption): string {
 export interface ModeSelectorProps {
   /** The modes on offer. Order does not matter; the menu sorts them. */
   options: ModeOption[]
-  current: ModeOption
+  /** `null` means no mode has been chosen. */
+  current: ModeOption | null
   onSelect: (option: ModeOption) => void
+  /** When given, the menu ends with a "Not set" item that calls this. */
+  onUnset?: () => void
   /** When set, the control is inert and this is the reason, shown on hover. */
   lockedReason?: string
   className?: string
@@ -102,7 +109,7 @@ export interface ModeSelectorProps {
  * the agent may DO, and as an icon the colour alone says how much is being
  * waved through.
  */
-export function ModeSelector({ options, current, onSelect, lockedReason, className }: ModeSelectorProps) {
+export function ModeSelector({ options, current, onSelect, onUnset, lockedReason, className }: ModeSelectorProps) {
   if (options.length === 0) {
     return null
   }
@@ -110,13 +117,22 @@ export function ModeSelector({ options, current, onSelect, lockedReason, classNa
   // A pinned bypass is not this session's choice, so it alerts rather than
   // sitting there looking like a setting someone picked.
   const forcedBypass = locked && current === 'bypass'
-  const Icon = forcedBypass ? ShieldAlert : isKnown(current) ? MODE_ICON[current] : undefined
+  // Nothing chosen is drawn as the plain shield, muted: the family's glyph
+  // without any one mode's behaviour or severity.
+  const Icon = forcedBypass
+    ? ShieldAlert
+    : current === null
+      ? Shield
+      : isKnown(current)
+        ? MODE_ICON[current]
+        : undefined
   const colour = forcedBypass
     ? 'text-destructive animate-pulse'
-    : isKnown(current)
+    : current !== null && isKnown(current)
       ? MODE_COLOR[current]
-      : 'text-muted-foreground stroke-muted-foreground'
-  const title = lockedReason ?? `Permission mode: ${labelOf(current)}`
+      : NOT_SET_COLOUR
+  const currentLabel = current === null ? 'Not set' : labelOf(current)
+  const title = lockedReason ?? `Permission mode: ${currentLabel}`
   const ordered = [...options].sort((a, b) => orderOf(a) - orderOf(b))
 
   return (
@@ -139,7 +155,7 @@ export function ModeSelector({ options, current, onSelect, lockedReason, classNa
         {Icon ? (
           <Icon className={`size-4 ${colour}`} />
         ) : (
-          <span className='text-xs font-medium'>{labelOf(current).slice(0, 1).toUpperCase()}</span>
+          <span className='text-xs font-medium'>{currentLabel.slice(0, 1).toUpperCase()}</span>
         )}
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
@@ -162,6 +178,18 @@ export function ModeSelector({ options, current, onSelect, lockedReason, classNa
             </DropdownMenuItem>
           )
         })}
+        {/* Offered only where "no choice" is a real state of the value, such as a
+            form field that may stay empty. A composer always has a mode in
+            force, so it does not pass this. */}
+        {onUnset && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onUnset} className={current === null ? 'font-medium' : undefined}>
+              <Shield className={`size-4 ${NOT_SET_COLOUR}`} />
+              Not set
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

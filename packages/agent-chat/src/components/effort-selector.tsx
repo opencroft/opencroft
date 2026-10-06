@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
 
@@ -56,6 +57,8 @@ const EFFORT_LABEL = {
 // they sit a short travel from the top of the menu rather than at the far end.
 const EFFORT_ORDER: Effort[] = ['max', 'extra', 'high', 'medium', 'low', 'default', 'off']
 
+const NOT_SET_COLOUR = 'text-muted-foreground stroke-muted-foreground'
+
 function isKnown(option: EffortOption): option is Effort {
   return (EFFORT_ORDER as string[]).includes(option)
 }
@@ -69,21 +72,26 @@ function labelOf(option: EffortOption): string {
 }
 
 function colourOf(option: EffortOption): string {
-  return isKnown(option) ? EFFORT_COLOR[option] : 'text-muted-foreground stroke-muted-foreground'
+  return isKnown(option) ? EFFORT_COLOR[option] : NOT_SET_COLOUR
 }
 
 // `off` is not a grade on the dial — it is an instruction not to think — so it
 // is the one level drawn with a different glyph.
-function EffortIcon({ option }: { option: EffortOption }) {
-  const className = `size-4 ${colourOf(option)}`
+// `null` is not a level: nothing has been chosen, so the glyph is drawn muted
+// rather than graded.
+function EffortIcon({ option }: { option: EffortOption | null }) {
+  const className = `size-4 ${option === null ? NOT_SET_COLOUR : colourOf(option)}`
   return option === 'off' ? <LightbulbOff className={className} /> : <Lightbulb className={className} />
 }
 
 export interface EffortSelectorProps {
   /** The levels on offer. Order does not matter; the menu sorts them. */
   options: EffortOption[]
-  current: EffortOption
+  /** `null` means no level has been chosen. */
+  current: EffortOption | null
   onSelect: (option: EffortOption) => void
+  /** When given, the menu ends with a "Not set" item that calls this. */
+  onUnset?: () => void
   /** When set, the control is inert and this is the reason, shown on hover. */
   lockedReason?: string
   className?: string
@@ -97,11 +105,11 @@ export interface EffortSelectorProps {
  * model, and an empty dial would imply a setting that does not exist for this
  * one.
  */
-export function EffortSelector({ options, current, onSelect, lockedReason, className }: EffortSelectorProps) {
+export function EffortSelector({ options, current, onSelect, onUnset, lockedReason, className }: EffortSelectorProps) {
   if (options.length === 0) {
     return null
   }
-  const title = lockedReason ?? `Reasoning effort: ${labelOf(current)}`
+  const title = lockedReason ?? `Reasoning effort: ${current === null ? 'Not set' : labelOf(current)}`
   const ordered = [...options].sort((a, b) => orderOf(a) - orderOf(b))
 
   return (
@@ -136,6 +144,18 @@ export function EffortSelector({ options, current, onSelect, lockedReason, class
             {labelOf(option)}
           </DropdownMenuItem>
         ))}
+        {/* Offered only where "no choice" is a real state of the value, such as a
+            form field that may stay empty. A composer always has a level in
+            force, so it does not pass this. */}
+        {onUnset && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onUnset} className={current === null ? 'font-medium' : undefined}>
+              <EffortIcon option={null} />
+              Not set
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

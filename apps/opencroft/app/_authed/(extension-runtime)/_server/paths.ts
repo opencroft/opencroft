@@ -14,6 +14,13 @@ const PROJECT_ROOT = process.cwd()
  */
 export const BUILD_PROVENANCE_FILE = 'built.json'
 
+/**
+ * Written into `dist/` by a client build: the icon names the extension's client
+ * code names in its source, as a JSON array. The browser preloads them before
+ * the extension renders, so its icons are there on its first paint.
+ */
+export const CLIENT_ICONS_FILE = 'icons.json'
+
 /** Where every extension folder lives: `<data dir>/extensions/<extensionFolder>/`. */
 export function extensionsRoot(): string {
   return dataDir('extensions')

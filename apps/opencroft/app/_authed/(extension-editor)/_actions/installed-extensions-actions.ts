@@ -11,6 +11,7 @@ import {
   getExtensionRow,
   type InstallAuth,
 } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
+import { GitRemoteError } from '@/app/_authed/(extension-runtime)/_server/git-exec'
 import {
   checkForUpdates,
   installFromUrl,
@@ -134,6 +135,23 @@ export const uninstallExtension = createServerFn({ method: 'POST', strict: { out
   .inputValidator((folder: string) => folder)
   .handler(async ({ data: folder }): Promise<void> => uninstallExtensionFolder(folder))
 
+/** A check that could not be made: the sentence the page shows, and what git said when it was the remote that failed. */
+export interface UpdateCheckFailure {
+  error: string
+  detail: string | null
+}
+
+// Answered rather than thrown: a rejection reaches the page as its message
+// alone, and what git said is the part whoever fixes the cause needs.
 export const checkInstalledForUpdates = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((folder: string) => folder)
-  .handler(async ({ data: folder }): Promise<UpdateCheck> => checkForUpdates(folder))
+  .handler(async ({ data: folder }): Promise<UpdateCheck | UpdateCheckFailure> => {
+    try {
+      return await checkForUpdates(folder)
+    } catch (err) {
+      return {
+        error: err instanceof Error ? err.message : String(err),
+        detail: err instanceof GitRemoteError ? err.detail : null,
+      }
+    }
+  })

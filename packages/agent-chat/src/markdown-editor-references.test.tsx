@@ -48,7 +48,7 @@ function open(markdown: string): EditorType {
   return new Editor({
     element: document.createElement('div'),
     extensions: editorModule.markdownEditorExtensions({}),
-    content: markdown,
+    content: editorModule.markdownContent(markdown),
   })
 }
 

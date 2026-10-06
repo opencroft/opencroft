@@ -76,7 +76,7 @@
     --prose-rule-space: 0.75em;
     --prose-image-space: 0.5em;
 
-    --prose-table-space: 0.5em;
+    /* Read by `MarkdownTable`, which owns the table's look. */
     --prose-table-size: 0.85em;
     --prose-table-white-space: normal;
     --prose-cell-padding: 0.3em 0.5em;
@@ -134,7 +134,6 @@
     --prose-rule-space: 2em;
     --prose-image-space: 1em;
 
-    --prose-table-space: 1em;
     --prose-table-size: 0.875em;
     --prose-table-white-space: nowrap;
     --prose-cell-padding: 0.5em 0.75em;
@@ -291,36 +290,6 @@
     margin: var(--prose-rule-space) 0;
   }
 
-  :is(.prose-chat, .prose-docs) table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: var(--prose-table-space) 0;
-    font-size: var(--prose-table-size);
-    display: block;
-    overflow-x: auto;
-    white-space: var(--prose-table-white-space);
-  }
-
-  :is(.prose-chat, .prose-docs) :is(th, td) {
-    padding: var(--prose-cell-padding);
-    border: 1px solid var(--border);
-  }
-
-  :is(.prose-chat, .prose-docs) th {
-    font-weight: 600;
-    background: var(--muted);
-    text-align: left;
-  }
-
-  /* A cell's text wraps. A scale may keep the table itself on one line
-     (`--prose-table-white-space: nowrap`), so the header stays a row of labels
-     and the table scrolls sideways; long cell text still wraps inside its
-     column instead of stretching it. */
-  :is(.prose-chat, .prose-docs) td {
-    white-space: normal;
-    word-break: break-word;
-  }
-
   :is(.prose-chat, .prose-docs) img {
     max-width: 100%;
     border-radius: var(--radius);
@@ -335,6 +304,8 @@
    * scale's `pre` above decides it. What stands everywhere is that code does
    * not wrap: prose may wrap a quoted `pre`, but a wrapped line of code loses
    * the indentation the reader is following, so it scrolls sideways instead.
+   * `CodeBlock` also carries that on its own classes, for a host without this
+   * stylesheet; the rule below is what gives the editor's code block the same.
    */
   :where(pre[data-code-block]) {
     background: var(--muted);
@@ -370,14 +341,13 @@
     pointer-events: none;
   }
 
-  /* The editor's own wrappers -- TipTap's box around a table, the element a
-     React node view is mounted in -- are not blocks of the document, so they
-     pass their block's margins through to meet its neighbours', as they do in
-     the rendered view with no wrapper there. Left to the prose's rule for
-     top-level elements, a scale that lets those scroll sideways would make the
-     wrapper keep the margins inside it and add them to the gaps. The block
-     inside still scrolls on its own (a table does). */
-  .markdown-editor > :is(.tableWrapper, .react-renderer) {
+  /* The element a React node view is mounted in is not a block of the
+     document, so it passes its block's margins through to meet its
+     neighbours', as they do in the rendered view with no wrapper there. Left to
+     the prose's rule for top-level elements, a scale that lets those scroll
+     sideways would make the wrapper keep the margins inside it and add them to
+     the gaps. The block inside still scrolls on its own (a table does). */
+  .markdown-editor > .react-renderer {
     overflow-x: visible;
   }
 
@@ -435,19 +405,17 @@
    spacing as a utility (`my-2`), which the layer order would let win, so a
    message opening with a callout would start half a line down. In the editor
    the block is not the first child but inside it -- a node view's block sits two
-   wrappers down, a table one -- so the rule reaches through those, and the text
-   being edited starts where the rendered text does. */
+   wrappers down -- so the rule reaches through those, and the text being edited
+   starts where the rendered text does. */
 /* biome-ignore lint/style/noDescendingSpecificity: unlayered, so it outranks the layered rules above whatever their specificity; source order and specificity do not decide between layers */
 :is(.prose-chat, .prose-docs) > :first-child,
-.markdown-editor > .react-renderer:first-child > [data-node-view-wrapper] > :first-child,
-.markdown-editor > .tableWrapper:first-child > table {
+.markdown-editor > .react-renderer:first-child > [data-node-view-wrapper] > :first-child {
   margin-top: 0;
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: unlayered, so it outranks the layered rules above whatever their specificity; source order and specificity do not decide between layers */
 :is(.prose-chat, .prose-docs) > :last-child,
-.markdown-editor > .react-renderer:last-child > [data-node-view-wrapper] > :last-child,
-.markdown-editor > .tableWrapper:last-child > table {
+.markdown-editor > .react-renderer:last-child > [data-node-view-wrapper] > :last-child {
   margin-bottom: 0;
 }
 

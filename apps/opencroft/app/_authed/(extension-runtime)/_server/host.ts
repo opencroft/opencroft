@@ -9,6 +9,7 @@ import type {
   ExtensionServerHost,
   HostAgentGroupChatsApi,
   HostAgentsApi,
+  HostCompactResult,
   HostMcpTokensApi,
   HostPersonGroupChatsApi,
   HostSecretsApi,
@@ -22,6 +23,7 @@ import {
   resolveKeyContent,
   sshExec,
   startJobSession,
+  stopViewJob,
   terminalExec,
   terminalExecResult,
   terminalRun,
@@ -44,6 +46,7 @@ import {
   parseType,
   resolveTypeRef,
 } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { collabApiFor } from '@/app/_authed/(extension-runtime)/_server/collab-api'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
@@ -54,10 +57,13 @@ import {
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { COMPACT_WAIT_MS, compactResultOf, waitForCompact } from '@/app/_authed/(group-chats)/_server/compact-wait'
 import { mcpTokensApi } from '@/app/_authed/(mcp)/_server/mcp-tokens'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
+import type { GraphWriteOrigin } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
 import { listAgentDirectory, listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { type AttributedSender, registerExtensionSystemSender, senderForSend } from '@/app/_server/message-author'
@@ -111,7 +117,7 @@ export interface GraphSnapshot {
 // One entry per GRAPH, not per space: nodes live on graphs now, and anything
 // enumerating them has to see every canvas of every space.
 interface GraphEntry {
-  /** The graph's address (`<space>.<graph>`) -- what saveGraph takes. */
+  /** The graph's address (`<space>.<graph>`). */
   address: string
   spaceSlug: string
   graph: GraphData
@@ -138,16 +144,16 @@ async function readGraph(): Promise<GraphSnapshot> {
   return { nodes, edges }
 }
 
-async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => boolean): Promise<void> {
+const EXTENSION_HOST_ORIGIN: GraphWriteOrigin = { kind: 'extension', name: 'extension host' }
+
+async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => void): Promise<void> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
   const ref = r.findByNode(nodeId)
   if (!ref) {
     return
   }
-  if (mutate(ref.graph.graph)) {
-    await r.saveGraph(r.addressOf(ref), ref.graph.graph)
-  }
+  await mutateLiveGraph(r.addressOf(ref), EXTENSION_HOST_ORIGIN, mutate, { resolveContexts: false })
 }
 
 export interface HandleInfo {
@@ -168,6 +174,8 @@ export interface HandleInfo {
   handleType: string
   role: 'source' | 'target'
   label?: string
+  /** For an App's dynamic handle: what the App calls this live id, when it says. */
+  liveLabel?: string
   dynamic: boolean
 }
 
@@ -175,6 +183,30 @@ export interface ListHandlesFilter {
   role?: 'source' | 'target'
   /** Qualified here; an extension's host resolves a bare one to its own first. */
   handleType?: string
+}
+
+/**
+ * A node or App instance with handles matching a filter, before its dynamic
+ * handles are expanded. Expanding asks something at runtime -- a docker host
+ * what is running, an App what it has -- and that is as slow as the thing
+ * asked, up to a connection timeout, so it is each owner's own call.
+ */
+export interface HandleOwner {
+  /** The node id, or the App instance id. */
+  id: string
+  spaceSlug: string
+  /** The node's stored, qualified type; `app:<type>` for an App instance. */
+  type: string
+  /** Whether `handles()` asks anything at runtime. False means it answers from the manifest alone. */
+  dynamic: boolean
+  handles: () => Promise<HandleInfo[]>
+}
+
+/** Narrows an owner listing before anything is asked. */
+export interface HandleOwnerScope {
+  spaceSlug?: string
+  /** One node id or App instance id. */
+  ownerId?: string
 }
 
 /**
@@ -247,92 +279,10 @@ const graphApi: HostGraphApi = {
     return (await readGraph()).edges
   },
   async listHandles(filter) {
-    // Lazy imports for the same reason getTerminalContext uses them: loader.ts
-    // imports this module, so a static edge back to it would close a cycle.
-    // Same manifest source as getTerminalContext, so a handle this returns is
-    // one that resolver can actually resolve.
-    const { listExtensionManifestsImpl } = await import(
-      '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
-    )
-    const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
-      '@/app/_authed/(extension-runtime)/_server/node-handles'
-    )
-    const [graphs, manifests] = await Promise.all([loadAllGraphs(), listExtensionManifestsImpl()])
-    const byType = buildNodeTypeHandles(manifests)
-    const dockerExtensionId = findDockerExtensionId(manifests)
-    const wanted = (handle: { role: string; handleType: string }) =>
-      (filter?.role === undefined || handle.role === filter.role) &&
-      (filter?.handleType === undefined || handle.handleType === filter.handleType)
-
-    const results: HandleInfo[] = []
-    for (const entry of graphs) {
-      for (const raw of entry.graph.nodes as unknown as GraphNodeRecord[]) {
-        const type = raw.type
-        if (!type) {
-          continue
-        }
-        const declared = byType.get(type)?.handles ?? []
-        const nodeName = (raw.data?.name as string) || type
-        const base = { nodeId: raw.id, spaceSlug: entry.spaceSlug, type, nodeName }
-
-        const matching = declared.filter(wanted)
-        // Expansion costs a docker.ps per node, so do it once and only when a
-        // dynamic handle actually survived the filter — a caller asking for
-        // targets, or for some other handle type, pays nothing.
-        const liveIds = matching.some((handle) => handle.dynamic)
-          ? await expandDynamicHandles(raw, declared, dockerExtensionId)
-          : []
-
-        for (const handle of matching) {
-          if (!handle.dynamic) {
-            results.push({
-              ...base,
-              handleId: handle.id,
-              declaredId: handle.id,
-              handleType: handle.handleType,
-              role: handle.role,
-              label: handle.label,
-              dynamic: false,
-            })
-            continue
-          }
-          // A dynamic handle's declared id is only a prefix — emit one entry
-          // per live id instead, so every handleId returned is one that
-          // terminal.getContext can actually resolve.
-          for (const liveId of liveIds.filter((id) => id.startsWith(handle.id))) {
-            results.push({
-              ...base,
-              handleId: liveId,
-              declaredId: handle.id,
-              handleType: handle.handleType,
-              role: handle.role,
-              label: handle.label,
-              dynamic: true,
-            })
-          }
-        }
-      }
-    }
-    // App instances expose handles too (addressed as <instanceId>/<handleId>),
-    // and only as sources — an App consumes contexts through its parameters.
-    if (filter?.role === undefined || filter.role === 'source') {
-      const { listAppHandles } = await import('@/app/_authed/(apps)/_server/runtime')
-      for (const handle of await listAppHandles(filter?.handleType)) {
-        results.push({
-          nodeId: handle.instanceId,
-          spaceSlug: handle.spaceSlug,
-          type: `app:${handle.type}`,
-          nodeName: handle.title,
-          handleId: handle.handleId,
-          declaredId: handle.declaredId,
-          handleType: handle.handleType,
-          role: 'source',
-          label: handle.label,
-          dynamic: handle.dynamic,
-        })
-      }
-    }
-    return results
+    // Every owner is expanded at once. In turn, one unreachable docker host
+    // held up every node listed after it for its whole connection timeout.
+    const owners = await listGraphHandleOwners(filter)
+    return (await Promise.all(owners.map((owner) => owner.handles()))).flat()
   },
   async updateNode(nodeId, patch) {
     let updated: GraphNodeRecord | null = null
@@ -341,7 +291,7 @@ const graphApi: HostGraphApi = {
         | GraphNodeRecord
         | undefined
       if (!node) {
-        return false
+        return
       }
       if (patch.data) {
         node.data = { ...node.data, ...patch.data }
@@ -350,7 +300,6 @@ const graphApi: HostGraphApi = {
         node.position = patch.position
       }
       updated = node
-      return true
     })
     return updated
   },
@@ -363,8 +312,14 @@ const graphApi: HostGraphApi = {
     }
     const id = newGraphId()
     const node: GraphNodeRecord = { id, type, data, position }
-    ref.graph.graph.nodes.push(node as unknown as Record<string, unknown>)
-    await r.saveGraph(r.addressOf(ref), ref.graph.graph)
+    await mutateLiveGraph(
+      r.addressOf(ref),
+      EXTENSION_HOST_ORIGIN,
+      (graph) => {
+        graph.nodes.push(node as unknown as Record<string, unknown>)
+      },
+      { resolveContexts: false },
+    )
     return node
   },
   async deleteNode(nodeId) {
@@ -375,16 +330,115 @@ const graphApi: HostGraphApi = {
         const targetId = (e as { target?: string }).target
         return source !== nodeId && targetId !== nodeId
       })
-      return true
     })
   },
 }
 
-// The same enumeration the per-extension host hands to server modules, exported
-// for the app's own callers (the terminal-target picker's server fn) — one
-// discovery, not a second implementation of it.
-export function listGraphHandles(filter?: ListHandlesFilter): Promise<HandleInfo[]> {
-  return graphApi.listHandles(filter)
+/**
+ * The nodes and App instances owning handles that match `filter`, each with
+ * its handles as a call of its own -- the discovery `listHandles` waits on in
+ * full, exported for a caller that shows owners before their handles arrive
+ * (the terminal picker). Reads the graph, the manifests and the App rows;
+ * asks nothing at runtime.
+ */
+export async function listGraphHandleOwners(
+  filter?: ListHandlesFilter,
+  scope: HandleOwnerScope = {},
+): Promise<HandleOwner[]> {
+  // Lazy imports for the same reason getTerminalContext uses them: loader.ts
+  // imports this module, so a static edge back to it would close a cycle.
+  // Same manifest source as getTerminalContext, so a handle this returns is
+  // one that resolver can actually resolve.
+  const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')
+  const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
+    '@/app/_authed/(extension-runtime)/_server/node-handles'
+  )
+  const [graphs, manifests] = await Promise.all([loadAllGraphs(), listExtensionManifestsImpl()])
+  const byType = buildNodeTypeHandles(manifests)
+  const dockerExtensionId = findDockerExtensionId(manifests)
+  const wanted = (handle: { role: string; handleType: string }) =>
+    (filter?.role === undefined || handle.role === filter.role) &&
+    (filter?.handleType === undefined || handle.handleType === filter.handleType)
+  const inScope = (id: string, spaceSlug: string) =>
+    (scope.ownerId === undefined || id === scope.ownerId) &&
+    (scope.spaceSlug === undefined || spaceSlug === scope.spaceSlug)
+
+  const owners: HandleOwner[] = []
+  for (const entry of graphs) {
+    for (const raw of entry.graph.nodes as unknown as GraphNodeRecord[]) {
+      const type = raw.type
+      if (!type || !inScope(raw.id, entry.spaceSlug)) {
+        continue
+      }
+      const declared = byType.get(type)?.handles ?? []
+      const matching = declared.filter(wanted)
+      if (matching.length === 0) {
+        continue
+      }
+      const base = { nodeId: raw.id, spaceSlug: entry.spaceSlug, type, nodeName: (raw.data?.name as string) || type }
+      // Expansion costs a docker.ps, so it happens only when a dynamic handle
+      // survived the filter -- a caller asking for targets, or for some other
+      // handle type, pays nothing.
+      const dynamic = matching.some((handle) => handle.dynamic)
+      owners.push({
+        id: raw.id,
+        spaceSlug: entry.spaceSlug,
+        type,
+        dynamic,
+        handles: async () => {
+          const liveIds = dynamic ? await expandDynamicHandles(raw, declared, dockerExtensionId) : []
+          return matching.flatMap((handle): HandleInfo[] => {
+            const shared = {
+              ...base,
+              declaredId: handle.id,
+              handleType: handle.handleType,
+              role: handle.role,
+              label: handle.label,
+            }
+            // A dynamic handle's declared id is only a prefix -- one entry per
+            // live id instead, so every handleId returned is one that
+            // terminal.getContext can actually resolve.
+            return handle.dynamic
+              ? liveIds
+                  .filter((id) => id.startsWith(handle.id))
+                  .map((id) => ({ ...shared, handleId: id, dynamic: true }))
+              : [{ ...shared, handleId: handle.id, dynamic: false }]
+          })
+        },
+      })
+    }
+  }
+  // App instances expose handles too (addressed as <instanceId>/<handleId>),
+  // and only as sources -- an App consumes contexts through its parameters.
+  if (filter?.role === undefined || filter.role === 'source') {
+    const { listAppHandleOwners } = await import('@/app/_authed/(apps)/_server/runtime')
+    for (const app of await listAppHandleOwners(filter?.handleType)) {
+      if (!inScope(app.instanceId, app.spaceSlug)) {
+        continue
+      }
+      owners.push({
+        id: app.instanceId,
+        spaceSlug: app.spaceSlug,
+        type: `app:${app.type}`,
+        dynamic: app.dynamic,
+        handles: async () =>
+          (await app.handles()).map((handle) => ({
+            nodeId: handle.instanceId,
+            spaceSlug: handle.spaceSlug,
+            type: `app:${handle.type}`,
+            nodeName: handle.title,
+            handleId: handle.handleId,
+            declaredId: handle.declaredId,
+            handleType: handle.handleType,
+            role: 'source' as const,
+            label: handle.label,
+            liveLabel: handle.liveLabel,
+            dynamic: handle.dynamic,
+          })),
+      })
+    }
+  }
+  return owners
 }
 
 // Locate a `send-message` node and its OWN space's full node/edge list — the
@@ -749,7 +803,7 @@ function boundSender(resolve: () => Promise<AttributedSender>, live: () => boole
  * the same threads whether an agent, a person or nobody invoked the action.
  */
 async function threadUsage(systemId: string, ref: string, since: string | undefined): Promise<HostThreadUsage> {
-  const sessionKey = await (await groupChatModel()).usageSessionKeyForSystem(systemId, ref)
+  const { sessionKey, context } = await (await groupChatModel()).usageSourceForSystem(systemId, ref)
   const from = since === undefined ? undefined : new Date(since)
   if (from && Number.isNaN(from.getTime())) {
     throw new Error(`"since" must be an ISO date; got "${since}"`)
@@ -758,25 +812,45 @@ async function threadUsage(systemId: string, ref: string, since: string | undefi
   return {
     turns: turns.map((turn) => ({ ...turn, endedAt: turn.endedAt.toISOString() })),
     busy: agentClient.activeSessionKeys().includes(sessionKey),
+    context: context && {
+      usedTokens: context.usedTokens,
+      contextLimit: context.contextLimit,
+      ...(context.asOf === undefined ? {} : { asOf: new Date(context.asOf).toISOString() }),
+    },
   }
 }
 
-/** What any sender may do: see its chats, open threads, post, resolve a thread, archive the threads it owns, read the usage of its extension's own threads. No transcripts. */
+/**
+ * Compact a thread the extension's own system identity `systemId` opened, and
+ * wait for the job as `group_chat_compact` does: bounded, never stopping the
+ * job when the wait gives up.
+ */
+async function compactOwnThread(systemId: string, ref: string): Promise<HostCompactResult> {
+  const watch = await (await groupChatModel()).compactThreadForSystem(systemId, ref)
+  const { status } = await waitForCompact(watch, { timeoutMs: COMPACT_WAIT_MS })
+  return compactResultOf(status)
+}
+
+/** What any sender may do: see its chats, open threads, post, resolve a thread, archive the threads it owns, read the usage of and compact its extension's own threads. No transcripts. */
 function groupChatsForSender(who: () => Promise<AttributedSender>, systemId: string): HostGroupChatsApi {
   return {
     list: async () => (await groupChatModel()).listGroupChatsForSender(await who()),
-    startThread: async ({ chat, agentNodeId, message, title, folder }) => {
+    startThread: async ({ chat, agentNodeId, message, title, folder, sessionOptions }) => {
       const { startThreadForSender } = await groupChatModel()
-      return startThreadForSender(await who(), chat, agentNodeId, message, { title, folder })
+      return startThreadForSender(await who(), chat, agentNodeId, message, { title, folder, sessionOptions })
     },
-    send: async ({ thread, message, queue }) =>
-      (await groupChatModel()).sendInThreadForSender(await who(), thread, message, queue ?? 'wait'),
+    send: async ({ thread, message, queue, sessionOptions }) =>
+      (await groupChatModel()).sendInThreadForSender(await who(), thread, message, queue ?? 'wait', sessionOptions),
     thread: async (ref) => (await groupChatModel()).threadForSender(await who(), ref),
     archive: async (ref) => (await groupChatModel()).setThreadArchivedForSender(await who(), ref, true),
     unarchive: async (ref) => (await groupChatModel()).setThreadArchivedForSender(await who(), ref, false),
     usage: async (ref, options) => {
       await who()
       return threadUsage(systemId, ref, options?.since)
+    },
+    compact: async (ref) => {
+      await who()
+      return compactOwnThread(systemId, ref)
     },
   }
 }
@@ -975,11 +1049,12 @@ export interface ExtensionHost {
    * far end — an extension's own typecheck, or a call that is undefined at runtime.
    * Pointing at the package's declaration makes that a compile error here instead.
    *
-   * Only `terminal` is shared this way. The two host interfaces are deliberately
-   * different elsewhere, so do not widen this to the whole object without
-   * establishing that they agree.
+   * Only `terminal` and `collab` are shared this way. The two host interfaces
+   * are deliberately different elsewhere, so do not widen this to the whole
+   * object without establishing that they agree.
    */
   terminal: ExtensionServerHost['terminal']
+  collab: ExtensionServerHost['collab']
   ssh: {
     exec(config: ServerConfig, command: string): Promise<string>
     resolveKey(keyPath?: string): Promise<string | undefined>
@@ -1104,8 +1179,10 @@ export function createHost(extensionId: string): ExtensionHost {
       runResult: terminalRunResult,
       getContext: getTerminalContext,
       startJob: startJobSession,
+      stopViewJob,
     },
     ssh: { exec: sshExec, resolveKey: resolveKeyContent },
     execContext: { dispatch: dispatchExecutionContextForHost },
+    collab: collabApiFor(extensionId),
   }
 }

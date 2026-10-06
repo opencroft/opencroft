@@ -2,14 +2,12 @@
 // because the agent branch resolves a stored username and a mock would assume
 // the very mapping under test.
 
-import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test, { after, beforeEach } from 'node:test'
+import '@opencroft/db/test-env'
 
-const workdir = await mkdtemp(join(tmpdir(), 'opencroft-message-author-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
+import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import test, { beforeEach } from 'node:test'
+
 process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'packages', 'db', 'migrations')
 delete process.env.DATABASE_URL
 process.env.NODE_ENV = 'development'
@@ -37,10 +35,6 @@ const authorForSourceNode = async (
 const authorForSend = async (...args: Parameters<typeof senderForSend>) => (await senderForSend(...args)).author
 const authorForCallingAgent = async (agentName: string, agents: { nodeId?: string; name?: string }[]) =>
   (await senderForSend({ callerAgent: agentName }, [], async () => agents)).author
-
-after(async () => {
-  await rm(workdir, { recursive: true, force: true })
-})
 
 beforeEach(async () => {
   // Handles first: they point at the accounts, so the other order leaves the

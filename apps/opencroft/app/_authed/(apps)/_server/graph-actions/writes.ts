@@ -1,7 +1,7 @@
 /**
  * The graph's write actions: node CRUD, node properties by path, and edges.
- * Every one queues for approval, and every one goes through
- * withGraphConflictRetry so a concurrent canvas save is merged, not lost.
+ * Every one queues for approval, and every one writes through the graph's
+ * document, so a concurrent canvas edit is merged, not lost.
  */
 
 import {
@@ -23,7 +23,9 @@ import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { parseEndpoint } from '@/app/_authed/(mcp)/_server/endpoint'
 import { replaceExact } from '@/app/_authed/(mcp)/_server/exact-replace'
 import { fail } from '@/app/_authed/(mcp)/_server/tool-refusal'
-import { withGraphConflictRetry } from '@/app/_authed/(space)/_server/graph-conflict-retry'
+import type { GraphWriteOrigin } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
+import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
+import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { newGraphId } from '@/lib/graph-id'
 
 const POSITION_SCHEMA = {
@@ -51,6 +53,21 @@ const EDGES_SCHEMA = {
 
 /** Where a write's approval is shown: the space of the graph it writes. */
 const approvalSpace = async (ctx: { instanceId: string }) => (await graphTarget(ctx)).spaceSlug
+
+// Writes as whoever invoked the action, so a client can tell an agent's
+// change from its own.
+function writeGraph<T>(
+  ctx: { callerAgent?: string; callerPerson?: { name: string } },
+  address: string,
+  mutate: (graph: GraphData) => T | Promise<T>,
+): Promise<T> {
+  const origin: GraphWriteOrigin = ctx.callerAgent
+    ? { kind: 'agent', name: ctx.callerAgent }
+    : ctx.callerPerson
+      ? { kind: 'user', name: ctx.callerPerson.name }
+      : { kind: 'system', name: 'graph action' }
+  return mutateLiveGraph(address, origin, mutate)
+}
 
 export const writeActions: HostAppAction[] = [
   {
@@ -94,7 +111,7 @@ export const writeActions: HostAppAction[] = [
         }
       }
       const { address } = await graphTarget(ctx)
-      const created = await withGraphConflictRetry(address, (graph) => {
+      const created = await writeGraph(ctx, address, (graph) => {
         let maxY = graph.nodes.reduce((max, n) => {
           const py = (n as { position?: { y?: number } }).position?.y ?? 0
           return Math.max(max, py)
@@ -156,7 +173,7 @@ export const writeActions: HostAppAction[] = [
     run: async (ctx, params) => {
       const items = requireArray<Record<string, unknown>>(params.updates, 'updates')
       const { address } = await graphTarget(ctx)
-      const updated = await withGraphConflictRetry(address, (graph) => {
+      const updated = await writeGraph(ctx, address, (graph) => {
         const index = new Map<string, GraphNode>()
         for (const n of graph.nodes) {
           const node = n as unknown as GraphNode
@@ -236,7 +253,7 @@ export const writeActions: HostAppAction[] = [
         fail(-32602, 'Pass either a value to write, or unset: true to remove the property — exactly one of the two')
       }
       const { address } = await graphTarget(ctx)
-      await withGraphConflictRetry(address, (graph) => {
+      await writeGraph(ctx, address, (graph) => {
         const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined
         if (!node) {
           fail(-32602, `Node not found: ${nodeId}`)
@@ -292,7 +309,7 @@ export const writeActions: HostAppAction[] = [
       }
       const replaceAll = Boolean(params.replaceAll)
       const { address } = await graphTarget(ctx)
-      await withGraphConflictRetry(address, (graph) => {
+      await writeGraph(ctx, address, (graph) => {
         const node = graph.nodes.find((n) => (n as { id: string }).id === nodeId) as GraphNode | undefined
         if (!node) {
           fail(-32602, `Node not found: ${nodeId}`)
@@ -336,7 +353,7 @@ export const writeActions: HostAppAction[] = [
     run: async (ctx, params) => {
       const nodeIds = requireArray<string>(params.nodeIds, 'nodeIds')
       const { address } = await graphTarget(ctx)
-      const removedEdges = await withGraphConflictRetry(address, (graph) => {
+      const removedEdges = await writeGraph(ctx, address, (graph) => {
         const existing = new Set(graph.nodes.map((n) => (n as { id: string }).id))
         const missing = nodeIds.filter((id) => !existing.has(id))
         if (missing.length > 0) {
@@ -364,7 +381,7 @@ export const writeActions: HostAppAction[] = [
     run: async (ctx, params) => {
       const items = requireArray<Record<string, unknown>>(params.edges, 'edges')
       const { address } = await graphTarget(ctx)
-      const created = await withGraphConflictRetry(address, (graph) => {
+      const created = await writeGraph(ctx, address, (graph) => {
         const nodeIds = new Set(graph.nodes.map((n) => (n as { id: string }).id))
         const parsed = items.map((it) => {
           if (!it.source || !it.target || typeof it.source !== 'string' || typeof it.target !== 'string') {
@@ -414,7 +431,7 @@ export const writeActions: HostAppAction[] = [
     run: async (ctx, params) => {
       const items = requireArray<Record<string, unknown>>(params.edges, 'edges')
       const { address } = await graphTarget(ctx)
-      const removed = await withGraphConflictRetry(address, (graph) => {
+      const removed = await writeGraph(ctx, address, (graph) => {
         const indices: number[] = []
         for (const it of items) {
           if (!it.source || !it.target || typeof it.source !== 'string' || typeof it.target !== 'string') {

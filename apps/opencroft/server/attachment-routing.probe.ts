@@ -35,6 +35,9 @@ const server = await createServer({
   configFile: false,
   logLevel: 'silent',
   resolve: { alias: { '@': APP_ROOT } },
+  // A route that draws a component needs JSX compiled; the app's tsconfig
+  // leaves it to the React plugin, which this bare config does not load.
+  esbuild: { jsx: 'automatic' },
   server: { host: '127.0.0.1', port, strictPort: true, hmr: false, watch: null },
   plugins: [nitro({ serverDir: './server' })],
 })

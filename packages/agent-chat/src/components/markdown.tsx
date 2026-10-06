@@ -4,17 +4,21 @@ import {
   isValidElement,
   type ReactElement,
   type ReactNode,
+  useMemo,
   useSyncExternalStore,
 } from 'react'
-import type { Components, ExtraProps } from 'react-markdown'
-import ReactMarkdown from 'react-markdown'
+import type { Parent, Root } from 'mdast'
+import type { Components, ExtraProps, UrlTransform } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkDirective from 'remark-directive'
 import remarkGfm from 'remark-gfm'
 import { cn } from 'cn'
 
 import { CodeBlock } from './code-block'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
+import { DATA_IMAGE_MAX_BYTES, isDataImage, readDataImage } from './markdown-data-image'
 import { DIRECTIVE_ELEMENTS, remarkDirectiveBlocks } from './markdown-directives'
+import { MarkdownIcon } from './markdown-icon'
 import {
   getMarkdownReferences,
   REFERENCE_ELEMENT,
@@ -22,8 +26,10 @@ import {
   subscribeMarkdownReferences,
 } from './markdown-references'
 import { MarkdownSpoiler } from './markdown-spoiler'
+import { MarkdownTable } from './markdown-table'
 import { MarkdownTabs } from './markdown-tabs'
 import { MermaidDiagram } from './mermaid-diagram'
+import { SELECTION_TEXT_ATTRIBUTE } from './message-selection'
 
 // `rel="noopener noreferrer"` travels with `target="_blank"` -- without it the
 // opened page keeps a handle on the one it came from.
@@ -39,14 +45,59 @@ function MarkdownLink({ node: _node, ...props }: ComponentProps<'a'> & ExtraProp
   return <a {...props} target='_blank' rel='noopener noreferrer' />
 }
 
-// A picture in the text takes a fixed-height box before it loads. Markdown
-// says nothing about a picture's size, so without one the picture is nothing
-// until its bytes land and then suddenly its full height, moving every line
-// under it -- long after the reader has settled on them. Fitted inside the box,
-// never enlarged, so a small badge stays small; only the width follows the
-// picture, and a change in width moves nothing below.
-function MarkdownImage({ node: _node, alt = '', className, ...props }: ComponentProps<'img'> & ExtraProps) {
-  return <img {...props} alt={alt} className={cn('block h-64 w-full object-scale-down object-left', className)} />
+// Every URL keeps react-markdown's own allow-list (http(s), mailto and the
+// like), with one addition: a raster picture carried in the text as a `data:`
+// URL, as a picture's source and nowhere else. A `data:` link is a whole page
+// the author wrote, so a link never takes one.
+const markdownUrlTransform: UrlTransform = (url, key, node) =>
+  key === 'src' && node.tagName === 'img' && isDataImage(url) ? url : defaultUrlTransform(url)
+
+// The tallest a picture in the text is drawn: the band's `h-64`.
+const IMAGE_MAX_HEIGHT = 256
+
+const mebibytes = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1)
+
+// A picture in the text takes its box before it loads. Without one the picture
+// is nothing until its bytes land and then suddenly its full height, moving
+// every line under it -- long after the reader has settled on them.
+//
+// A `data:` picture brings its header with it, so its box is its own size,
+// at most the band's height and the column's width, with its ratio kept. Any
+// other picture has no size in markdown and takes a fixed-height band, fitted
+// inside it and never enlarged, so a small badge stays small; only the width
+// follows the picture, and a change in width moves nothing below.
+//
+// A `data:` picture too large to draw is a short note in its place: drawing
+// it would hold that many bytes in the page for one picture.
+function MarkdownImage({ node: _node, alt = '', src, className, ...props }: ComponentProps<'img'> & ExtraProps) {
+  const inline = useMemo(() => (typeof src === 'string' ? readDataImage(src) : null), [src])
+  if (inline && inline.bytes > DATA_IMAGE_MAX_BYTES) {
+    return (
+      <span
+        title={alt || undefined}
+        className='inline-block rounded-md border border-dashed bg-muted px-2 py-1 text-xs text-muted-foreground'
+      >
+        Image too large to show ({mebibytes(inline.bytes)} MiB, over the {mebibytes(DATA_IMAGE_MAX_BYTES)} MiB limit)
+      </span>
+    )
+  }
+  if (inline?.size) {
+    const { width, height } = inline.size
+    return (
+      <img
+        {...props}
+        src={src}
+        alt={alt}
+        width={width}
+        height={height}
+        style={{ width: Math.min(width, (IMAGE_MAX_HEIGHT * width) / height) }}
+        className={cn('block h-auto max-w-full', className)}
+      />
+    )
+  }
+  return (
+    <img {...props} src={src} alt={alt} className={cn('block h-64 w-full object-scale-down object-left', className)} />
+  )
 }
 
 /**
@@ -130,15 +181,62 @@ function TabElement({ children }: TabElementProps) {
   return <>{children}</>
 }
 
+function IconElement({ name, color }: BlockProps<{ name?: string; color?: string }>) {
+  return <MarkdownIcon name={name ?? ''} color={color} />
+}
+
+// A GFM table, drawn as the editor draws it. Every attribute the renderer put
+// on the table travels on, so a surface that stamps its own (source lines, say)
+// keeps them.
+function TableElement({ node: _node, ...props }: ComponentProps<'table'> & ExtraProps) {
+  return <MarkdownTable {...props} />
+}
+
 // An identifier the installed reference source recognised; drawn however that
-// source draws it, or as the identifier's own text if the source has gone.
-function ReferenceElement({ kind, id, trailing, children }: BlockProps<{ kind: string; id: string; trailing?: string }>) {
+// source draws it, or as the identifier's own text if the source has gone. A
+// selection across the drawing reads the identifier as it was written.
+function ReferenceElement({
+  kind,
+  id,
+  text,
+  trailing,
+  children,
+}: BlockProps<{ kind: string; id: string; text: string; trailing?: string }>) {
   const source = getMarkdownReferences()
-  return <>{source ? source.render({ kind, id, trailing: trailing === 'true' }) : children}</>
+  if (!source) {
+    return <>{children}</>
+  }
+  return <span {...{ [SELECTION_TEXT_ATTRIBUTE]: text }}>{source.render({ kind, id, trailing: trailing === 'true' })}</span>
+}
+
+/*
+ * A `<br>` in the text, drawn as a line break: it is the only way GFM has to
+ * break a line inside a table cell, and what the editor writes for one. It is
+ * the one piece of raw HTML that renders; every other tag is still dropped.
+ * Only inside a line -- an `html` node directly in a container of blocks is a
+ * block of HTML, which stays dropped too.
+ */
+const BREAK_TAG = /^<br\s*\/?>$/i
+const BLOCK_CONTAINERS = ['root', 'blockquote', 'listItem', 'containerDirective', 'footnoteDefinition']
+
+function replaceBreakTags(parent: Parent): void {
+  const inLine = !BLOCK_CONTAINERS.includes(parent.type)
+  parent.children = parent.children.map((child) =>
+    inLine && child.type === 'html' && BREAK_TAG.test(child.value.trim()) ? { type: 'break' } : child,
+  ) as Parent['children']
+  for (const child of parent.children) {
+    if ('children' in child) {
+      replaceBreakTags(child)
+    }
+  }
+}
+
+function remarkBreakTags() {
+  return (tree: Root) => replaceBreakTags(tree)
 }
 
 /**
- * The documentation blocks, and the references the installed source
+ * The documentation blocks and tables, and the references the installed source
  * recognises (see `./markdown-references`), as the two halves `react-markdown`
  * takes: the remark plugins that read them, and the renderers for the
  * elements those plugins produce.
@@ -150,7 +248,7 @@ function ReferenceElement({ kind, id, trailing, children }: BlockProps<{ kind: s
  * `Markdown` itself is built from this, so the two cannot drift apart.
  */
 export const markdownDirectiveBlocks = {
-  remarkPlugins: [remarkDirective, remarkDirectiveBlocks, remarkInlineReferences],
+  remarkPlugins: [remarkDirective, remarkDirectiveBlocks, remarkInlineReferences, remarkBreakTags],
   // `Components` only knows HTML's element names; the blocks' own names are
   // keys beside them.
   components: {
@@ -158,7 +256,9 @@ export const markdownDirectiveBlocks = {
     [DIRECTIVE_ELEMENTS.spoiler]: SpoilerElement,
     [DIRECTIVE_ELEMENTS.tabs]: TabsElement,
     [DIRECTIVE_ELEMENTS.tab]: TabElement,
+    [DIRECTIVE_ELEMENTS.icon]: IconElement,
     [REFERENCE_ELEMENT]: ReferenceElement,
+    table: TableElement,
   } as Components,
 }
 
@@ -176,7 +276,7 @@ const remarkPlugins = [remarkGfm, ...markdownDirectiveBlocks.remarkPlugins]
 // author wrote goes missing -- it only stops being a paragraph, list or heading,
 // which a label or a one-line hint has no room for (and `<label>` does not
 // permit: its content model is phrasing content only).
-const inlineElements = ['a', 'strong', 'em', 'del', 'code', 'br', REFERENCE_ELEMENT]
+const inlineElements = ['a', 'strong', 'em', 'del', 'code', 'br', REFERENCE_ELEMENT, DIRECTIVE_ELEMENTS.icon]
 
 export interface MarkdownProps {
   /** The markdown source. */
@@ -215,8 +315,8 @@ export interface MarkdownProps {
  * same markdown.
  *
  * Documentation blocks written as directives -- callouts, `details` spoilers
- * and `tabs` -- render as those blocks; any other directive renders as its
- * plain content. Identifiers the installed reference source recognises render
+ * and `tabs` -- render as those blocks, and `:icon[name]{color=…}` as an icon
+ * in the line; any other directive renders as its plain content. Identifiers the installed reference source recognises render
  * as that source draws them; code never does.
  */
 export function Markdown({ text, className, typography = 'chat', inline = false }: MarkdownProps) {
@@ -230,6 +330,7 @@ export function Markdown({ text, className, typography = 'chat', inline = false 
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         components={markdownComponents}
+        urlTransform={markdownUrlTransform}
         {...(inline ? { allowedElements: inlineElements, unwrapDisallowed: true } : {})}
       >
         {text}

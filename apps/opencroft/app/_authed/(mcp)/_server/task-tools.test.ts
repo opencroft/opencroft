@@ -317,13 +317,43 @@ test('without a session it lists the agent’s own; with neither it refuses inst
 test('each cancel outcome is reported as what it was', async () => {
   const replies: Partial<Record<CancelOutcome, string>> = {}
   for (const outcome of ['stopped', 'requested', 'not-running'] as const) {
-    fakeService({ cancel: async () => outcome })
+    fakeService({ cancel: async () => outcome, get: async () => null })
     replies[outcome] = text(await handleToolCall('task_cancel', { taskId: 'task-3' }, { internal: true }))
   }
   assert.equal(replies.stopped, 'Stopped background task task-3.')
   assert.match(replies.requested ?? '', /^Asked background task task-3 to stop\. It runs inside this server/)
   assert.match(replies.requested ?? '', /does not honour the request runs on until it ends by itself/)
-  assert.match(replies['not-running'] ?? '', /^Background task task-3 had already ended; nothing was stopped\./)
+  assert.equal(replies['not-running'], 'Background task task-3 had already ended; nothing was stopped.')
+})
+
+test('a cancel is asked on behalf of the calling session, and its reply carries the task as the cancel left it', async () => {
+  const asked: (BackgroundTaskOwner | undefined)[] = []
+  const ended = record({
+    taskId: 'task-3',
+    state: 'stopped',
+    reason: 'cancelled',
+    finishedAt: at(5_000),
+    outputTail: 'partial\n',
+    logPath: '/tmp/opencroft-tasks/task-3/log',
+  })
+  fakeService({
+    cancel: async (_taskId, by) => {
+      asked.push(by)
+      return 'stopped'
+    },
+    get: async () => ended,
+  })
+  const reply = text(
+    await handleToolCall(
+      'task_cancel',
+      { taskId: 'task-3' },
+      { internal: true, callerAgent: 'Agent Solo', callerSessionId: 's-9' },
+    ),
+  )
+  assert.deepEqual(asked, [{ agent: 'Agent Solo', sessionId: 's-9' }])
+  assert.equal(reply, `Stopped background task task-3.\n\n${describeTask(ended, new Date())}`)
+  assert.match(reply, /Task task-3: stopped — cancelled/)
+  assert.match(reply, /Output \(the end of it\):\npartial/)
 })
 
 test('cancelling an id that names no task is a bad argument', async () => {

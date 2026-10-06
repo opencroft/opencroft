@@ -51,11 +51,13 @@ function readBaseline() {
 }
 
 function runSuite() {
-  // Through the workspaces' own test scripts rather than a second way of
-  // invoking them, so this can never disagree with what `npm test` does.
-  // OPENCROFT_TEST_TAP asks those scripts for machine-readable output; without
-  // it a human still gets the reporter they had before.
-  const result = spawnSync('npm', ['run', 'test', '--workspaces', '--if-present'], {
+  // The script the root `npm test` runs, rather than a second way of invoking
+  // the workspaces' tests, so this can never disagree with what `npm test`
+  // does. Not `npm test` itself, whose own banner would be counted as one more
+  // workspace starting. OPENCROFT_TEST_TAP asks the workspaces' test scripts
+  // for machine-readable output; without it a human still gets the reporter
+  // they had before.
+  const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'run-workspace-tests.mjs')], {
     cwd: repoRoot,
     encoding: 'utf-8',
     maxBuffer: 256 * 1024 * 1024,

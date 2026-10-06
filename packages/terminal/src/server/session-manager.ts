@@ -282,7 +282,7 @@ export class SessionManager {
   // only the command.
   //
   // There is deliberately no client-facing way to stop a job: one ends when it exits, when its
-  // bound expires, or when server code kills it. A cancel, if one is ever wanted, needs its own
+  // bound expires, or when server code kills it, as `stopViewJob` does for a job that is only a view. A cancel, if one is ever wanted, needs its own
   // message with its own authority rather than the watch channel — which is why `handleDisconnect`
   // detaches instead of growing a special case.
   //
@@ -480,6 +480,32 @@ export class SessionManager {
     this.unbindPeersOf(id)
     this.log(`end id=${id} key=${session.sessionKey ?? '-'}`)
     this.dropEndedJobsOverCap()
+  }
+
+  /**
+   * Stop a job that exists only to be watched, because the server code that started it says its
+   * viewer is done with it. The job and its output are dropped, since there is nobody left to read
+   * them.
+   *
+   * Without this, a view that its tab let go of runs on until `stopWhenUnwatchedMs` passes, and
+   * every view holds a job slot until then. A tab left and opened again a few times would fill the
+   * cap for a minute.
+   *
+   * Only a job started with `stopWhenUnwatchedMs` can be stopped this way. That option is how a job
+   * declares that it is only a view; a job started without it, such as a deploy, is refused. A key
+   * that names nothing is `gone`: a view can already have ended or been reclaimed by the time its
+   * owner lets go of it.
+   */
+  stopViewJob(sessionKey: string): 'stopped' | 'gone' | 'refused' {
+    const session = this.findByKey(sessionKey)
+    if (!session) {
+      return 'gone'
+    }
+    if (session.kind !== 'job' || session.stopWhenUnwatchedMs === undefined) {
+      return 'refused'
+    }
+    this.kill(session.id, 'explicit', undefined, 'view closed')
+    return 'stopped'
   }
 
   private dropEndedJobsOverCap(): void {

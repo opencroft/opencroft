@@ -1,7 +1,9 @@
+import { declaredIconNames } from '@/app/_authed/(extension-runtime)/_declared-icons'
 import {
   type ActionAccess,
   activateLifecycleExtensions,
   clientBundleVersion,
+  clientIconNames,
   ensureExtensionBuilt,
   extensionHasClient,
   getExtensionModule,
@@ -96,7 +98,19 @@ export async function listExtensionManifestsImpl({
         folder: folderOf(manifest.id),
         hasClient,
         clientVersion: await clientBundleVersion(manifest.id),
+        clientIcons: hasClient ? await clientIconNames(manifest.id) : [],
       }
     }),
   )
+}
+
+/**
+ * Every icon name the installed extensions' manifests declare: the set the
+ * app's own chrome draws by name -- an app, a node type -- which the browser
+ * loads before it is needed. The icons an extension's own code draws are
+ * loaded with that extension instead (see `clientIcons`).
+ */
+export async function listDeclaredIconNamesImpl(): Promise<string[]> {
+  const manifests = await loadAllManifests()
+  return [...new Set(manifests.flatMap(declaredIconNames))]
 }

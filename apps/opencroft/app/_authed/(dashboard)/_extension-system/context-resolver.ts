@@ -39,6 +39,40 @@ export function resolveInputContexts(nodeId: string, graph: GraphSnapshot): Reco
   return resolveInputs(nodeId, graph, new Set())
 }
 
+/**
+ * Whether two resolved contexts carry the same content. Plain objects and
+ * arrays compare by their entries; anything else an extension exposes — a
+ * stream, a Blob, a function — compares by identity, since it is live and a
+ * copy of it is not the same thing.
+ */
+export function sameContext(a: ResolvedContext | null, b: ResolvedContext | null): boolean {
+  return sameValue(a, b)
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) {
+    return true
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, i) => sameValue(item, b[i]))
+  }
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const keys = Object.keys(a)
+    return (
+      keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && sameValue(a[key], b[key]))
+    )
+  }
+  return false
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
 // `resolving` holds the nodes whose inputs are being resolved further up this
 // chain. A node met again is a wiring cycle: it contributes no inputs there,
 // so the chain ends instead of recursing forever.

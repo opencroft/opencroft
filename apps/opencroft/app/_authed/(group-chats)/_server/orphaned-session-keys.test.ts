@@ -80,7 +80,7 @@ test('an orphan in each store is forgotten, whatever its spelling, and owned key
     [pointerOrphan]: ['agent-tab-sessions'],
     [presenceOrphan]: ['agent-session-presence'],
     [configOrphan]: ['agent-tab-config-options'],
-    [queueAndTranscriptOrphan]: ['queue', 'transcript'],
+    [queueAndTranscriptOrphan]: ['queue', 'search index', 'transcript'],
   })
   assert.deepEqual(report.aliasHeld, [])
   assert.equal(await readPersistedSession(pointerOrphan), null)
@@ -163,7 +163,7 @@ test('state a half-finished move left under its colon key is kept, and so is the
 
   const report = forgotten(await sweepOrphanedSessionKeys())
   assert.deepEqual(report.forgotten, [])
-  assert.deepEqual(report.aliasHeld, [{ key: colonKey, stores: ['queue', 'transcript'] }])
+  assert.deepEqual(report.aliasHeld, [{ key: colonKey, stores: ['queue', 'transcript', 'search index'] }])
   assert.equal(await queued(colonKey), 1, 'the unmoved message survives')
   assert.equal(await recorded(colonKey), 1, 'the unmoved transcript survives')
 

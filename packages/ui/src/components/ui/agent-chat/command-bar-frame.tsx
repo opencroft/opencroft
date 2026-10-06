@@ -34,7 +34,7 @@ export interface CommandBarFrameProps {
 // the top rather than drift down the growing textarea.
 export function CommandBarFrame({ accent = 'var(--primary)', children, className }: CommandBarFrameProps) {
   return (
-    <NodeCard accent={accent} selected className={cn('pointer-events-auto', className)}>
+    <NodeCard accent={accent} selected tinted={false} className={cn('pointer-events-auto', className)}>
       <div className='flex items-start gap-2 px-2 py-1.5'>{children}</div>
     </NodeCard>
   )

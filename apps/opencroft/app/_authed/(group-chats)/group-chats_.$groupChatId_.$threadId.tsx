@@ -13,6 +13,7 @@ import {
 } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
+import { parseRevealPosition } from '@/app/_authed/(group-chats)/_lib/reveal-position'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
 import {
@@ -44,6 +45,10 @@ type ThreadPageData =
     }
 
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$groupChatId_/$threadId')({
+  // `?at=` is the turn a message search opened this thread for; absent for
+  // every other way in. Not a loader input: the turn is found once the
+  // session is open, which the loader cannot wait for.
+  validateSearch: (search: Record<string, unknown>): { at?: number } => ({ at: parseRevealPosition(search.at) }),
   // Refusals come back as data rather than as a throw — see
   // _lib/load-or-refusal.ts for the measurement behind that.
   loader: async ({ params }) =>
@@ -117,6 +122,7 @@ function BackToChats() {
 function GroupChatThreadPage() {
   const data = Route.useLoaderData()
   const { groupChatId } = Route.useParams()
+  const { at } = Route.useSearch()
   const navigate = useNavigate()
   const goToChat = useCallback(
     () => navigate({ to: '/group-chats/$groupChatId', params: { groupChatId } }),
@@ -149,6 +155,7 @@ function GroupChatThreadPage() {
       thread={data.thread}
       chat={data.chat}
       artifacts={data.artifacts}
+      revealPosition={at}
       onBack={onBack}
       onThreadForked={onThreadForked}
     />
@@ -159,12 +166,14 @@ function ThreadConversation({
   thread,
   chat,
   artifacts: initialArtifacts,
+  revealPosition,
   onBack,
   onThreadForked,
 }: {
   artifacts: ThreadArtifact[]
   thread: GroupChatThreadEntry & { draft: string | null }
   chat: GroupChatDetailView
+  revealPosition?: number
   onBack: () => void
   onThreadForked: (threadId: string) => void
 }) {
@@ -202,6 +211,7 @@ function ThreadConversation({
     <ScrollPage>
       <GroupChatThreadChat
         thread={thread}
+        revealPosition={revealPosition}
         onTurnSettled={onTurnSettled}
         onThreadForked={onThreadForked}
         renderFrame={({ conversation, composer, work, plan }) => (

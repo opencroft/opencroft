@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom'
 import { BackButton } from '../utils/back-button'
 import { Button } from 'ui/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'ui/components/ui/dropdown-menu'
+import { TitleDragHandle } from './title-drag-handle'
 import { cn } from 'cn'
 
 export interface TitleBarProps extends Omit<ComponentProps<'header'>, 'title'> {
@@ -54,6 +55,16 @@ const ICON_BUTTON = 'size-8 shrink-0 pointer-coarse:size-10'
 // sit the mark above the row's centre. Flexing the direct child centres it on
 // the same axis as the buttons around it.
 const BRAND = 'flex h-8 shrink-0 items-center px-1 leading-none *:flex *:items-center'
+
+// An installed app in window-controls-overlay mode draws the bar into the
+// window's own title bar, with the window buttons laid over one side of it
+// (the right on Windows and Linux, the left on macOS). The buttons cover only
+// the title bar area the browser reports, which is the bar's first row, so
+// that row alone keeps clear of them and the toolbar row below keeps the
+// window's full width. The first row folds by the width it has left, so it
+// is a title-bar container of its own, nearer to its contents than the bar.
+const WINDOW_CONTROLS =
+  '[@media(display-mode:window-controls-overlay)]:ml-[env(titlebar-area-x,0px)] [@media(display-mode:window-controls-overlay)]:mr-[calc(100vw-env(titlebar-area-x,0px)-env(titlebar-area-width,100vw))]'
 
 export function TitleBarIconButton({ className, ...props }: ComponentProps<typeof Button>) {
   return <Button type='button' variant='ghost' size='icon' className={cn(ICON_BUTTON, className)} {...props} />
@@ -197,29 +208,37 @@ export function TitleBar({
   return (
     <header
       data-slot='title-bar'
-      className={cn('@container/title-bar w-full shrink-0 border-b bg-background pt-[env(safe-area-inset-top)]', className)}
+      className={cn(
+        '@container/title-bar w-full shrink-0 border-b bg-background pt-[env(safe-area-inset-top)]',
+        className,
+      )}
       {...props}
     >
-      <div className='flex h-12 items-center gap-1 px-2 pointer-fine:h-10'>
-        {onMenu && (
-          <TitleBarIconButton aria-label='Open sidebar' onClick={onMenu}>
-            <PanelLeft />
-          </TitleBarIconButton>
-        )}
-        {onBack && <BackButton onClick={onBack} className='pointer-coarse:size-10' />}
+      <div className={cn('@container/title-bar', WINDOW_CONTROLS)}>
+        <div className='flex h-12 items-center gap-1 px-2 pointer-fine:h-10'>
+          {onMenu && (
+            <TitleBarIconButton aria-label='Open sidebar' onClick={onMenu}>
+              <PanelLeft />
+            </TitleBarIconButton>
+          )}
+          {onBack && <BackButton onClick={onBack} className='pointer-coarse:size-10' />}
 
-        {brand && <div className={cn(BRAND, brandCompact && 'hidden md:flex')}>{brand}</div>}
-        {brandCompact && <div className={cn(BRAND, 'md:hidden')}>{brandCompact}</div>}
-        {(brand || brandCompact) && context && <TitleBarSeparator />}
-        <div className='flex min-w-0 flex-1 items-center gap-1'>
-          {context}
-          {title && <h1 className='min-w-0 truncate px-1 text-sm font-medium'>{title}</h1>}
-          {register && <div ref={titleRef} className='contents' />}
+          {brand && <div className={cn(BRAND, brandCompact && 'hidden md:flex')}>{brand}</div>}
+          {brandCompact && <div className={cn(BRAND, 'md:hidden')}>{brandCompact}</div>}
+          {(brand || brandCompact) && context && <TitleBarSeparator />}
+          {/* The row's free width is the bar's one drag handle: the context and the
+              title take only what they need, and the handle takes the rest. */}
+          <div className='flex min-w-0 flex-1 items-center gap-1 self-stretch'>
+            {context}
+            {title && <h1 className='min-w-0 truncate px-1 text-sm font-medium'>{title}</h1>}
+            {register && <div ref={titleRef} className='contents' />}
+            <TitleDragHandle />
+          </div>
+
+          {actions}
+          {register && <div ref={actionsRef} className='contents' />}
+          {trailing && <div className='flex shrink-0 items-center gap-1'>{trailing}</div>}
         </div>
-
-        {actions}
-        {register && <div ref={actionsRef} className='contents' />}
-        {trailing && <div className='flex shrink-0 items-center gap-1'>{trailing}</div>}
       </div>
 
       <div

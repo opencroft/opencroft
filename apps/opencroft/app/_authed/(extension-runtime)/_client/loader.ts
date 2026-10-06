@@ -1,5 +1,7 @@
 'use client'
 
+import { preloadIcons } from 'ui/media/named-icon'
+
 import {
   type ExtensionDeclaration,
   installClientHost,
@@ -7,6 +9,7 @@ import {
 } from '@/app/_authed/(extension-runtime)/_client/host'
 import { loadedDeclaration } from '@/app/_authed/(extension-runtime)/_client/loaded-declaration'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { declaredIconNames } from '@/app/_authed/(extension-runtime)/_declared-icons'
 import { extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { listExtensionManifests } from '@/app/_authed/(extension-runtime)/_server/actions'
 import type { ExtensionManifest, ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
@@ -66,23 +69,34 @@ function injectStyles(extensionId: string, version: number): void {
   document.head.insertBefore(link, hostStyles)
 }
 
+type LoadableManifest = ExtensionManifest & { folder: string; clientIcons?: string[] }
+
 // Fetches and validates a bundle WITHOUT registering it, so several can be in
 // flight at once while registration order stays under the caller's control.
+//
+// The icons the extension names -- in its sources, and in what it declares --
+// are loaded before it is handed back, so that nothing it renders, and nothing
+// the host renders for it, draws an icon that is still on its way.
 async function importExtension(
-  manifest: ExtensionManifest & { folder: string },
+  manifest: LoadableManifest,
   clientVersion?: number,
 ): Promise<LoadedExtensionDeclaration | null> {
   installClientHost()
   const version = bundleVersion(clientVersion)
   injectStyles(manifest.id, version)
   try {
-    const mod = await importBundle(bundleUrl(manifest.id, 'client.js', version))
+    const [mod] = await Promise.all([
+      importBundle(bundleUrl(manifest.id, 'client.js', version)),
+      preloadIcons(manifest.clientIcons ?? []),
+    ])
     const decl = mod.default ?? mod.extension
     if (!decl?.manifest) {
       console.error(`[ext] ${manifest.id}: bundle default export is not a valid ExtensionDeclaration`)
       return null
     }
-    return loadedDeclaration(decl, { id: manifest.id, folder: manifest.folder })
+    const loaded = loadedDeclaration(decl, { id: manifest.id, folder: manifest.folder })
+    await preloadIcons(declaredIconNames(loaded))
+    return loaded
   } catch (err) {
     console.error(`[ext] ${manifest.id}: load failed`, err)
     return null
@@ -90,7 +104,7 @@ async function importExtension(
 }
 
 export async function loadExtension(
-  manifest: ExtensionManifest & { folder: string },
+  manifest: LoadableManifest,
   clientVersion?: number,
 ): Promise<LoadedExtensionDeclaration | null> {
   const decl = await importExtension(manifest, clientVersion)

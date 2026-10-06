@@ -1,8 +1,7 @@
 'use client'
 
 import { cn } from 'cn'
-import * as lucideIcons from 'lucide-react'
-import { type LucideIcon, X } from 'lucide-react'
+import { type LucideIcon, Puzzle, X } from 'lucide-react'
 import type * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Flex } from 'ui/layout/flex'
@@ -18,7 +17,7 @@ import {
 } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { SearchFindBar } from '@/app/_authed/(dashboard)/_canvas/search-find-bar'
 import type { CommandModeDefinition, CommandModeShortcut } from '@/app/_authed/(extension-runtime)/_client/host'
-import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { extensionRegistry, resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 
 interface CanvasOverlayProps {
   nodes: CommandNodeEntry[]
@@ -298,8 +297,7 @@ export function CanvasOverlay({
 }
 
 function modeIcon(name?: string): LucideIcon {
-  const icons = lucideIcons as unknown as Record<string, LucideIcon>
-  return (name && icons[name]) || lucideIcons.Puzzle
+  return resolveIcon(name, Puzzle)
 }
 
 // Launcher buttons for extension command modes, pinned to the overlay's top-left corner.

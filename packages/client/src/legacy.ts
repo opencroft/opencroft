@@ -113,8 +113,10 @@ export interface NodeDefinition<D = Record<string, unknown>> {
    * as the open canvas has them (`contexts`, keyed by target handle id, as in
    * `NodeContextMenuContext`). An output built from an input reads it there,
    * not from `data.__resolvedContexts`, which lags wiring done in the open page.
-   * The value must be JSON-serialisable: consumers on the canvas are handed a
-   * structural copy of it.
+   * Consumers on the canvas get the value as returned, so it may be live, such
+   * as a stream. They get a new context only when the value changes: plain
+   * objects and arrays by content, anything else by identity, so an unchanged
+   * live value must be the same instance each call.
    */
   exposeOutput?: (
     handleId: string,
@@ -385,6 +387,20 @@ export interface ChatDockProps {
  * docks plus the floating window, the mobile cover and its Back behaviour.
  */
 export declare const ChatDock: FC<ChatDockProps>
+
+/** What the surface inside a `ChatDock` can ask of the dock around it. */
+export interface ChatDockControl {
+  /** The chat this dock shows: the slug it was given as `space`. */
+  space: string
+  /**
+   * Opens the panel (the full-screen cover on a phone) on this thread of the
+   * dock's chat. It becomes the remembered conversation, as if picked on the
+   * chat's home; the panel's position and size stay as the reader left them.
+   */
+  openThread: (threadId: string) => void
+}
+/** The `ChatDock` around the calling surface, or null when it has none. */
+export declare const useChatDock: () => ChatDockControl | null
 
 // ── Selection scope ─────────────────────────────────────────────────────────
 // What the reader has selected on the surface the chat sits beside, and

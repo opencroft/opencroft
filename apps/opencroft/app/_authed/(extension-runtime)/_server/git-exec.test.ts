@@ -7,11 +7,13 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
+import http from 'node:http'
+import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { effectiveGitArgs, runGit, withGitAuth } from './git-exec'
+import { effectiveGitArgs, remoteFailure, runGit, withGitAuth } from './git-exec'
 
 const FAKE_TOKEN = 'fake-token-should-never-appear-in-output'
 const CREDENTIALED_URL = `https://fake-user:${FAKE_TOKEN}@nonexistent-host-for-testing.invalid/repo.git`
@@ -237,4 +239,87 @@ test('withGitAuth and runGit compose: an authenticated read carries the cleared 
   } finally {
     await cleanup()
   }
+})
+
+// What the page says when a read of a remote fails, from real git against a
+// local HTTP server that answers each path with one status. The helper planted
+// for the sign-in case is the broken one a deployment image shipped: its bash
+// error lands in git's stderr, which is what the page used to show.
+async function withStatusServer(run: (base: string) => Promise<void>): Promise<void> {
+  const server = http.createServer((req, res) => {
+    const status = Number(req.url?.split('/')[1]) || 404
+    res.writeHead(status, status === 401 ? { 'WWW-Authenticate': 'Basic realm="test"' } : {})
+    res.end()
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    await run(`http://127.0.0.1:${(server.address() as AddressInfo).port}`)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+}
+
+async function remoteFailureOf(url: string, env: NodeJS.ProcessEnv = {}): Promise<string> {
+  const quiet = console.warn
+  console.warn = () => {}
+  try {
+    await runGit(['ls-remote', url], { env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env } })
+  } catch (err) {
+    return remoteFailure(err, url).message
+  } finally {
+    console.warn = quiet
+  }
+  assert.fail(`ls-remote ${url} was expected to fail`)
+}
+
+test('a remote that wants a sign-in nothing can give is said as such, without the helper noise', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-broken-helper-'))
+  try {
+    const helper = path.join(dir, 'helper.sh')
+    await fs.writeFile(helper, `#!/bin/bash\necho "password=\${!GIT_PASSWORD}"\necho "username=$GIT_USERNAME"\n`, {
+      mode: 0o700,
+    })
+    const config = path.join(dir, 'gitconfig')
+    await fs.writeFile(config, `[credential]\n\thelper = ${helper}\n`)
+    await withStatusServer(async (base) => {
+      const host = new URL(base).host
+      const message = await remoteFailureOf(`${base}/401/repo.git`, { GIT_CONFIG_GLOBAL: config })
+      assert.equal(
+        message,
+        `Could not sign in to ${host}: no credential is set up for this source, or the one it uses was refused.`,
+      )
+      assert.match(await remoteFailureOf(`${base}/403/repo.git`), /^Could not sign in to /)
+    })
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a missing repository and an unreachable host are each said in a sentence', async () => {
+  await withStatusServer(async (base) => {
+    const host = new URL(base).host
+    assert.equal(await remoteFailureOf(`${base}/404/repo.git`), `There is no repository at this address on ${host}.`)
+  })
+  assert.equal(await remoteFailureOf('http://127.0.0.1:1/repo.git'), 'Could not reach 127.0.0.1:1.')
+  assert.equal(
+    await remoteFailureOf('https://nonexistent-host-for-testing.invalid/repo.git'),
+    'Could not reach nonexistent-host-for-testing.invalid.',
+  )
+})
+
+test('a directory that holds no repository is a missing repository too', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-not-a-repo-'))
+  try {
+    assert.equal(await remoteFailureOf(`file://${dir}`), 'There is no repository at this address on the remote.')
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('any other remote failure is what git last said, without the command that ran', async () => {
+  // A transport git has no helper for fails in none of the ways named above,
+  // and git 2.43 says so without a fatal line.
+  const message = await remoteFailureOf('nosuchtransport::somewhere')
+  assert.match(message, /remote-nosuchtransport/)
+  assert.doesNotMatch(message, /Command failed|ls-remote/)
 })

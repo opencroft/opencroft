@@ -208,7 +208,7 @@ function referenceNode(reference: InlineReference, text: string): ReferenceNode 
     children: [{ type: 'text', value: text }],
     data: {
       hName: REFERENCE_ELEMENT,
-      hProperties: { kind: reference.kind, id: reference.id, ...(reference.trailing ? { trailing: 'true' } : {}) },
+      hProperties: { kind: reference.kind, id: reference.id, text, ...(reference.trailing ? { trailing: 'true' } : {}) },
     },
   }
 }

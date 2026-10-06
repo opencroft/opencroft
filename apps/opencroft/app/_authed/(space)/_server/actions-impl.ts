@@ -10,14 +10,12 @@
 //    server-only imports straight to the browser. That is the acp.ts leak
 //    (see acp.ts/acp-impl.ts, token-actions.ts/token-actions-impl.ts).
 //
-// 2. IN-PROCESS CALLERS WITH NO SESSION. (mcp)/_server/tools.ts and
-//    graph-conflict-retry.ts call these operations directly, in-process, to
-//    serve MCP tool calls. /mcp is a bearer-token surface and carries no
-//    session cookie by design. A session check placed in
-//    the only implementation therefore throws for every agent tool. That is
-//    exactly what happened: gating listSpaces/loadSpaceGraph/saveSpaceGraph
-//    inline broke list/read tools AND — via withGraphConflictRetry's default
-//    load/save — all seven MCP graph-write tools.
+// 2. IN-PROCESS CALLERS WITH NO SESSION. (mcp)/_server/tools.ts calls these
+//    operations directly, in-process, to serve MCP tool calls. /mcp is a
+//    bearer-token surface and carries no session cookie by design. A session
+//    check placed in the only implementation therefore throws for every agent
+//    tool: gating listSpaces/loadSpaceGraph inline breaks the list and read
+//    tools.
 //
 // So: EVERY operation lives here as a plain, session-free `*Impl`, and every
 // export in actions.ts is a thin createServerFn wrapper that checks the
@@ -30,12 +28,11 @@
 
 import { isSpaceIconPreset } from '@opencroft/db/space-icon-presets'
 
-import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
-import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
+import type { LiveGraphSession } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
+import { liveGraphSession } from '@/app/_authed/(space)/_server/graph-collab'
 import { slugify, uniqueSlug } from '@/app/_authed/(space)/_server/slug'
 import { getSpacesRegistry, type SpaceRuntime, SpaceSlugTakenError } from '@/app/_authed/(space)/_server/store'
 import type { GraphData, SpaceSummary } from '@/app/_authed/(space)/_server/types'
-import { toastStore } from '@/lib/toast-store'
 
 export async function registry() {
   const r = getSpacesRegistry()
@@ -55,52 +52,25 @@ export function toSummary(runtime: SpaceRuntime): SpaceSummary {
   }
 }
 
-async function resolveGraph(graph: GraphData): Promise<GraphData> {
-  const snapshot: GraphSnapshot = {
-    nodes: graph.nodes as unknown as GraphSnapshot['nodes'],
-    edges: graph.edges as unknown as GraphSnapshot['edges'],
-  }
-  const resolved = await resolveGraphContexts(snapshot)
-  return {
-    nodes: resolved.nodes as unknown as GraphData['nodes'],
-    edges: resolved.edges as unknown as GraphData['edges'],
-  }
-}
-
 export async function listSpacesImpl(): Promise<SpaceSummary[]> {
   const r = await registry()
   return r.list()
 }
 
 /** `slug` is a graph address: `<space>` (its default graph) or `<space>.<graph>`. */
-export async function loadSpaceGraphImpl(slug: string): Promise<{ graph: GraphData; updatedAt: string } | null> {
+export async function loadSpaceGraphImpl(
+  slug: string,
+): Promise<{ graph: GraphData; updatedAt: string; live: LiveGraphSession } | null> {
   const r = await registry()
   const ref = r.resolveGraph(slug)
   if (!ref) {
     return null
   }
-  return { graph: ref.graph.graph, updatedAt: ref.graph.updatedAt.toISOString() }
-}
-
-export async function saveSpaceGraphImpl(data: {
-  /** Graph address, same grammar loadSpaceGraphImpl takes. */
-  slug: string
-  graph: GraphData
-  expectedUpdatedAt?: string
-}): Promise<{ updatedAt: string }> {
-  const r = await registry()
-  const resolved = await resolveGraph(data.graph)
-  const ref = await r.saveGraph(data.slug, resolved, data.expectedUpdatedAt)
-  if (!ref) {
-    throw new Error(`Graph not found: ${data.slug}`)
+  return {
+    graph: ref.graph.graph,
+    updatedAt: ref.graph.updatedAt.toISOString(),
+    live: await liveGraphSession(ref.graph.id),
   }
-  // Single broadcast point for every graph mutation (canvas autosave and
-  // MCP node/edge tools alike) so any other open tab resyncs instead of
-  // later overwriting this write with a stale snapshot. Scoped to the SPACE:
-  // the version signal stays one per space, so a canvas showing another
-  // graph of it refetches its own address -- a spare fetch, never a miss.
-  toastStore.broadcast({ type: 'graph_updated', spaceId: ref.space.slug })
-  return { updatedAt: ref.graph.updatedAt.toISOString() }
 }
 
 /**

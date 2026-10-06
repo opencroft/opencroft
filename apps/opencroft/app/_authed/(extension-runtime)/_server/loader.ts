@@ -4,8 +4,6 @@ import path from 'node:path'
 
 import type * as opencroft from '@opencroft/server'
 
-import { isBuiltinFolder } from '@/app/_authed/(extension-runtime)/_extension-id'
-import { readCheckoutState, refuseCompile } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import {
   buildExtension,
   CLIENT_ENTRY_CANDIDATES,
@@ -14,8 +12,8 @@ import {
 import { listAllExtensionIds, MANIFEST_FILE } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
 import { readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
-import { extDir, extDistFile, folderOf } from '@/app/_authed/(extension-runtime)/_server/paths'
-import { newestMtime, sourceMtime, statMaybe } from '@/app/_authed/(extension-runtime)/_server/source-mtime'
+import { CLIENT_ICONS_FILE, extDir, extDistFile } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { sourceMtime, statMaybe } from '@/app/_authed/(extension-runtime)/_server/source-mtime'
 import type { ExposeOutputFn, ExtensionManifest, ExtensionRoute } from '@/app/_authed/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
 
@@ -106,8 +104,14 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
   if (manifest.main || (await hasEntry(extensionId, SERVER_ENTRY_CANDIDATES))) {
     expectedMtimes.push(serverMtime)
   }
+  // Every client build records its icon names beside the bundle. A bundle
+  // without that record predates it, and so also carries its own copy of
+  // lucide-react: it is rebuilt like a stale one, and still served as the
+  // fallback below if the rebuild fails.
+  let iconsRecorded = true
   if (await hasEntry(extensionId, CLIENT_ENTRY_CANDIDATES)) {
     expectedMtimes.push(clientMtime)
+    iconsRecorded = (await statMaybe(extDistFile(extensionId, CLIENT_ICONS_FILE))) > 0
   }
   // No entry on either side: a build would emit no bundle, so there is no
   // staleness to measure and nothing to publish.
@@ -115,71 +119,22 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
     return
   }
   const bundleMtime = Math.min(...expectedMtimes)
-  if (bundleMtime > 0 && bundleMtime >= srcMtime) {
+  if (bundleMtime > 0 && bundleMtime >= srcMtime && iconsRecorded) {
     unbuildable.delete(extensionId)
     return
   }
   // Every expected side has a (possibly stale) bundle on disk — the fallback
-  // both the refusal and a failed build keep serving rather than leaving
-  // nothing.
+  // a failed build keeps serving rather than leaving nothing.
   const hasExistingBundle = expectedMtimes.every((mtime) => mtime > 0)
 
   // Consulted on every page load, so an outcome that cannot change until its
   // inputs do is not attempted, nor announced to everyone, again.
   const remembered = unbuildable.get(extensionId)
-  if (
-    remembered &&
-    (remembered.retryAt === undefined || Date.now() < remembered.retryAt) &&
-    remembered.key === (await unbuildableKey(remembered.kind, extensionId, srcMtime))
-  ) {
+  if (remembered && Date.now() < remembered.retryAt && remembered.srcMtime === srcMtime) {
     if (hasExistingBundle) {
       return
     }
     throw new Error(remembered.message)
-  }
-
-  // A rebuild here republishes whatever the registered checkout currently holds,
-  // and this path fires on ANY write into it -- an edit, a `git checkout`, a
-  // `git pull` -- with no explicit compile. `compile_extension` already refuses
-  // to publish a tree that carries uncommitted changes or sits on a branch other
-  // than its default; that refusal lived only on the manual door. The same check
-  // here is what stops an unreviewed branch deploying itself on the next load,
-  // which is exactly what the "never compile on the main instance" guidance was
-  // wrongly assumed to prevent.
-  //
-  // No override on this path, deliberately: the manual door takes `allowUnclean`
-  // because a person asked for that particular build. Nothing asked for this
-  // one, so there is no intent to honour -- a deliberate build of a branch is
-  // what `compile_extension` is for.
-  //
-  // Builtin extensions are exempt: they are compiled from the application's OWN
-  // source tree, not from an independently registered checkout, so reading their
-  // git state reads the app repo's -- dirty through all of development, and on
-  // whatever branch the app itself is deployed from. That state says nothing
-  // about an unreviewed extension parked in a dev checkout, which is the only
-  // thing this refusal is about; a builtin simply tracks the app it ships in.
-  const isRegisteredCheckout = !isBuiltinFolder(folderOf(extensionId))
-  const refusal = isRegisteredCheckout ? refuseCompile(await readCheckoutState(extDir(extensionId)), false) : null
-  if (refusal) {
-    // Loud in BOTH directions. A silent refusal only trades an unnoticed deploy
-    // for an unnoticed stale bundle -- the same defect wearing the other coat --
-    // so the reason is logged and toasted whether or not a previous bundle
-    // survives to be served.
-    console.error(`[ext] ${extensionId} auto-rebuild refused: ${refusal.message}`)
-    toastStore.broadcast({
-      type: 'toast',
-      toastType: 'error',
-      message: `${extensionId} was not rebuilt. ${refusal.message}`,
-    })
-    // Nothing built to fall back on, and this tree may not be published
-    // automatically: fail loudly rather than silently building it anyway. Mirrors
-    // the no-bundle branch of the build-failure handling just below.
-    const message = `Extension ${extensionId} was not built: ${refusal.message}`
-    await rememberUnbuildable(extensionId, 'refused', srcMtime, message)
-    if (hasExistingBundle) {
-      return
-    }
-    throw new Error(message)
   }
 
   const result = await buildExtension(extensionId, manifest)
@@ -191,7 +146,7 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
       message: `${extensionId} build failed:\n${summary}`,
     })
     const message = `Extension ${extensionId} failed to build:\n${summary}`
-    await rememberUnbuildable(extensionId, 'failed', srcMtime, message)
+    unbuildable.set(extensionId, { srcMtime, message, retryAt: Date.now() + FAILED_BUILD_RETRY_MS })
     if (hasExistingBundle) {
       console.error(`[ext] ${extensionId} rebuild failed, keeping previous bundle:\n${summary}`)
       return
@@ -201,13 +156,14 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
   unbuildable.delete(extensionId)
 }
 
-/** An auto-rebuild that was refused or failed, and what decided it. */
+/**
+ * An auto-rebuild that failed. It stands while the sources it read are
+ * unchanged, up to `retryAt`.
+ */
 interface Unbuildable {
-  kind: 'refused' | 'failed'
-  key: string
+  srcMtime: number
   message: string
-  /** When a failure is attempted again even though its key is unchanged. */
-  retryAt?: number
+  retryAt: number
 }
 
 const unbuildable = new Map<string, Unbuildable>()
@@ -216,60 +172,6 @@ const unbuildable = new Map<string, Unbuildable>()
 // install that hit the network or timed out, so a failure is kept only this
 // long before it is attempted once more.
 const FAILED_BUILD_RETRY_MS = 5 * 60 * 1000
-
-// What an outcome depends on, so it is kept only while that is unchanged. A
-// build reads the sources, so a failure stands while they do. A refusal reads
-// the checkout's git state: a commit, checkout or reset moves the index or the
-// HEAD reflog without touching a source, and adding or removing an untracked
-// file anywhere moves the tree. Null when the git files cannot be read, and
-// the refusal is not kept.
-async function unbuildableKey(
-  kind: Unbuildable['kind'],
-  extensionId: string,
-  srcMtime: number,
-): Promise<string | null> {
-  if (kind === 'failed') {
-    return String(srcMtime)
-  }
-  const dir = extDir(extensionId)
-  const gitDir = await gitDirOf(dir)
-  const [tree, ...gitFiles] = await Promise.all([
-    newestMtime(dir),
-    statMaybe(path.join(gitDir, 'HEAD')),
-    statMaybe(path.join(gitDir, 'index')),
-    statMaybe(path.join(gitDir, 'logs', 'HEAD')),
-  ])
-  return gitFiles.every((mtime) => mtime > 0) ? `${srcMtime}|${tree}|${gitFiles.join('|')}` : null
-}
-
-/** The checkout's git directory: `.git` itself, or where a linked worktree's `.git` file points. */
-async function gitDirOf(dir: string): Promise<string> {
-  const dotGit = path.join(dir, '.git')
-  const pointer = await fs.readFile(dotGit, 'utf-8').catch(() => null)
-  const target = pointer?.match(/^gitdir: (.+)$/m)?.[1].trim()
-  return target ? path.resolve(dir, target) : dotGit
-}
-
-// Keyed after the outcome was decided, so a `.git/index` that git refreshed
-// while reading the state is part of the key rather than a change to it.
-async function rememberUnbuildable(
-  extensionId: string,
-  kind: Unbuildable['kind'],
-  srcMtime: number,
-  message: string,
-): Promise<void> {
-  const key = await unbuildableKey(kind, extensionId, srcMtime)
-  if (key === null) {
-    unbuildable.delete(extensionId)
-    return
-  }
-  unbuildable.set(extensionId, {
-    kind,
-    key,
-    message,
-    retryAt: kind === 'failed' ? Date.now() + FAILED_BUILD_RETRY_MS : undefined,
-  })
-}
 
 interface ExtensionServerModule {
   actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
@@ -523,6 +425,17 @@ export async function clientBundleVersion(extensionId: string): Promise<number> 
   const js = await statMaybe(extDistFile(extensionId, 'client.js'))
   const css = await statMaybe(extDistFile(extensionId, 'client.css'))
   return Math.max(js, css)
+}
+
+/** The icon names the last client build found in the extension's sources; none before a build. */
+export async function clientIconNames(extensionId: string): Promise<string[]> {
+  const text = await fs.readFile(extDistFile(extensionId, CLIENT_ICONS_FILE), 'utf-8').catch(() => '[]')
+  try {
+    const names: unknown = JSON.parse(text)
+    return Array.isArray(names) ? names.filter((name): name is string => typeof name === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 function runUnload(extensionId: string): void {

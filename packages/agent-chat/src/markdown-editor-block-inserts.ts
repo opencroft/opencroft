@@ -1,15 +1,16 @@
 import { TextSelection } from '@tiptap/pm/state'
 import type { ChainedCommands } from '@tiptap/react'
-import { ListCollapse, Minus, PanelsTopLeft, Table } from 'lucide-react'
+import { ListCollapse, Minus, PanelsTopLeft, Smile, Table } from 'lucide-react'
 
 import type { MarkdownBlockMenuItem } from './components/markdown-block-menu'
 import { MARKDOWN_CALLOUT_KINDS, markdownCalloutKind } from './components/markdown-callout'
 import { DIRECTIVE_NODES } from './markdown-editor-directives'
+import { insertIcon } from './markdown-editor-icon'
 
 /**
- * A block the editor offers to insert beyond the ones typed as markdown. The
- * toolbar's Blocks menu and the `/` menu both list exactly these, in this
- * order, so the two can never offer different things.
+ * A block the editor offers to insert beyond the ones typed as markdown, or an
+ * icon in the line. The toolbar's Blocks menu and the `/` menu both list
+ * exactly these, in this order, so the two can never offer different things.
  *
  * The simple elements -- headings, lists, quotes, code, a divider -- are
  * typed as their markdown (`#`, `-`, `>`, a backtick fence, `---`). The
@@ -19,7 +20,7 @@ export interface BlockInsert extends MarkdownBlockMenuItem {
   /** Other words the `/` menu finds it by. */
   keywords: string[]
   /** Which run of the menu it belongs to; the toolbar menu separates runs. */
-  group: 'callout' | 'block'
+  group: 'callout' | 'block' | 'inline'
   /** Queue the insertion on a chain whose selection is where the block goes. */
   insert: (chain: ChainedCommands) => ChainedCommands
 }
@@ -90,6 +91,14 @@ export const BLOCK_INSERTS: readonly BlockInsert[] = [
     keywords: ['rule', 'separator', 'hr', 'line'],
     group: 'block',
     insert: (chain) => chain.setHorizontalRule(),
+  },
+  {
+    id: 'icon',
+    label: 'Icon',
+    icon: Smile,
+    keywords: ['lucide', 'symbol', 'glyph'],
+    group: 'inline',
+    insert: insertIcon,
   },
 ]
 

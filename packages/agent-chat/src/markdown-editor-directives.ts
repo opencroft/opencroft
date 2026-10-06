@@ -1,26 +1,32 @@
-import { Text } from '@tiptap/extension-text'
-import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import container from 'markdown-it-container'
+import { Extension, type JSONContent, type MarkdownLexerConfiguration, type MarkdownToken, Node } from '@tiptap/core'
+import { decodeNamedCharacterReference } from 'decode-named-character-reference'
 
-import { blockAttribute } from './components/markdown-directives'
+import {
+  blockAttribute,
+  isCalloutKind,
+  SPOILER_DIRECTIVE,
+  TAB_DIRECTIVE,
+  TABS_DIRECTIVE,
+} from './components/markdown-directives'
 
 /*
- * The documentation blocks' markdown syntax, as the editor reads and writes it.
+ * The documentation blocks as the editor reads and writes them: the
+ * container-directive syntax, and the schema nodes it becomes -- a callout, a
+ * spoiler, tabs of tabs, and a node for any directive the editor does not know,
+ * which keeps it exactly as it was read so that opening and saving a page never
+ * rewrites or loses a block added after this editor was written.
  *
- * `Markdown` renders these through remark; the editor's markdown extension
- * parses with markdown-it instead, so the same syntax is read a second time
- * here. What each name MEANS -- which names are blocks, which attribute each
- * reads -- is not restated: it comes from `components/markdown-directives`.
+ * `Markdown` renders these through remark; the editor reads them a second time
+ * here, by the rule remark-directive and markdown-it-container share: a fence
+ * of three or more colons opens a block, and the first line of at least as
+ * many colons and nothing else closes it. Fences do not count nesting, so a
+ * block holding another is written with a longer fence. What each name MEANS
+ * -- which names are blocks, which attribute each reads -- is not restated: it
+ * comes from `components/markdown-directives`.
  *
- * Parsing is markdown-it -> HTML -> the editor's schema. A container fence is
- * rendered as a `div` carrying the directive's name, its heading (the one
- * attribute the block reads, else its label) and the raw rest of its info
- * line, and each block node claims the `div`s that are its own. What no block
- * claims becomes the unknown-directive node, which writes its name and info
- * back exactly as read.
+ * How the blocks look while edited is `./markdown-editor-blocks`, which adds
+ * node views to the nodes defined here; nothing in this file needs a DOM.
  */
-
-type MarkdownIt = Parameters<typeof container>[0]
 
 /** Node names of the directive blocks in the editor's schema. */
 export const DIRECTIVE_NODES = {
@@ -33,43 +39,68 @@ export const DIRECTIVE_NODES = {
 
 const DIRECTIVE_NODE_NAMES: readonly string[] = Object.values(DIRECTIVE_NODES)
 
-/** The DOM attributes a parsed fence carries into the schema's parse rules. */
+/** The DOM attributes a block carries in the editor's HTML, which copy and paste read back. */
 export const DIRECTIVE_DOM = {
   name: 'data-md-directive',
   heading: 'data-md-heading',
   info: 'data-md-info',
 } as const
 
+const DIRECTIVE_TOKEN = 'markdownDirectiveBlock'
+
 // Name, then an optional `[label]`, then optional `{attributes}`, as
 // remark-directive reads a container's opening line.
 const INFO = /^\s*([A-Za-z][\w-]*)(\[[^\]\n]*\])?(\{.*\})?\s*$/
 
+const OPENING = /^ {0,3}(:{3,})([^\n]*)(?:\n|$)/
+
+const CLOSING = /^ {0,3}(:{3,})[ \t]*$/
+
 const ATTRIBUTE = /([.#]?)([^\s"'={}.#]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s"'{}]+)))?/g
 
-/**
- * The value of one attribute in a `{...}` list, or undefined when the list
- * does not set it. Values are unescaped the way markdown-it unescapes any
- * text, so `&quot;` written by `formatDirectiveInfo` reads back as `"`.
- */
-function readAttribute(list: string, wanted: string, md: MarkdownIt): string | undefined {
+const CHARACTER_REFERENCE = /&(?:#(\d{1,7})|#[xX]([\da-fA-F]{1,6})|([a-zA-Z][a-zA-Z\d]{0,31}));/g
+
+/** Text with its backslash escapes and character references resolved, as markdown reads text. */
+export function unescapeMarkdown(text: string): string {
+  return text
+    .replace(/\\([!-/:-@[-`{-~])/g, '$1')
+    .replace(CHARACTER_REFERENCE, (reference, decimal?: string, hex?: string, name?: string) => {
+      if (name !== undefined) {
+        const decoded = decodeNamedCharacterReference(name)
+        return decoded === false ? reference : decoded
+      }
+      const code = decimal !== undefined ? Number.parseInt(decimal, 10) : Number.parseInt(hex ?? '', 16)
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '�'
+    })
+}
+
+/** The value of one attribute in a `{...}` list, or undefined when the list does not set it. */
+export function readAttribute(list: string, wanted: string): string | undefined {
   for (const match of list.slice(1, -1).matchAll(ATTRIBUTE)) {
     const [, prefix, key, doubleQuoted, singleQuoted, bare] = match
     if (prefix === '' && key === wanted) {
-      return md.utils.unescapeAll(doubleQuoted ?? singleQuoted ?? bare ?? '')
+      return unescapeMarkdown(doubleQuoted ?? singleQuoted ?? bare ?? '')
     }
   }
   return undefined
 }
 
-/** A label's text without its markup, as the renderer reads one. */
-function labelText(label: string, md: MarkdownIt): string {
-  const tokens = md.parseInline(label.slice(1, -1), {})
+function plainText(tokens: MarkdownToken[]): string {
   return tokens
-    .flatMap((token) => token.children ?? [])
-    .filter((token) => token.type === 'text' || token.type === 'code_inline')
-    .map((token) => token.content)
+    .map((token) => {
+      if (token.tokens?.length) {
+        return plainText(token.tokens)
+      }
+      return token.type === 'text' || token.type === 'codespan' || token.type === 'escape'
+        ? unescapeMarkdown(token.text ?? '')
+        : ''
+    })
     .join('')
-    .trim()
+}
+
+/** A `[label]`'s text without its markup, as the renderer reads one. */
+export function labelText(label: string, lexer: MarkdownLexerConfiguration): string {
+  return plainText(lexer.inlineTokens(label.slice(1, -1))).trim()
 }
 
 function escapeAttributeValue(value: string): string {
@@ -88,105 +119,304 @@ export function formatDirectiveInfo(name: string, heading: string): string {
   return attribute && value !== '' ? `${name}{${attribute}="${escapeAttributeValue(value)}"}` : name
 }
 
-function renderOpening(info: string, md: MarkdownIt): string {
-  const match = INFO.exec(info)
-  if (!match) {
-    return '<div>'
+interface DirectiveToken extends MarkdownToken {
+  name: string
+  /** The opening line after the name, exactly as written: label and attributes. */
+  info: string
+  /** What the block's one attribute says, else its label as text; empty for a block that reads none. */
+  heading: string
+}
+
+function isDirectiveToken(token: MarkdownToken): token is DirectiveToken {
+  return token.type === DIRECTIVE_TOKEN
+}
+
+/**
+ * Where the next opening fence starts, so the paragraph before it ends there.
+ * marked asks from one character into the paragraph, so the start of `src` is
+ * not the start of a line: only a fence after a newline counts. Without that,
+ * `\:::note` would be cut after its backslash and read as a block.
+ */
+function openingAt(src: string): number {
+  for (const match of src.matchAll(/^ {0,3}:{3,}([^\n]*)$/gm)) {
+    if (match.index > 0 && INFO.test(match[1])) {
+      return match.index
+    }
   }
-  const [, name, label, attributes] = match
+  return -1
+}
+
+/** One container directive at the start of `src`; a fence never closed runs to the end. */
+function tokenizeDirective(src: string, lexer: MarkdownLexerConfiguration): DirectiveToken | undefined {
+  const opening = OPENING.exec(src)
+  const info = opening ? INFO.exec(opening[2]) : null
+  if (!opening || !info) {
+    return undefined
+  }
+  const fence = opening[1].length
+  let bodyEnd = src.length
+  let end = src.length
+  for (let pos = opening[0].length; pos < src.length; ) {
+    const newline = src.indexOf('\n', pos)
+    const lineEnd = newline === -1 ? src.length : newline
+    const closing = CLOSING.exec(src.slice(pos, lineEnd))
+    if (closing && closing[1].length >= fence) {
+      bodyEnd = pos
+      end = newline === -1 ? src.length : newline + 1
+      break
+    }
+    pos = lineEnd + 1
+  }
+  const [, name, label = '', attributes = ''] = info
   const attribute = blockAttribute(name)
   const heading = attribute
-    ? ((attributes ? readAttribute(attributes, attribute, md) : undefined) ?? (label ? labelText(label, md) : ''))
+    ? ((attributes ? readAttribute(attributes, attribute) : undefined) ?? (label ? labelText(label, lexer) : ''))
     : ''
-  const html = md.utils.escapeHtml
-  return (
-    `<div ${DIRECTIVE_DOM.name}="${html(name)}" ${DIRECTIVE_DOM.heading}="${html(heading)}"` +
-    ` ${DIRECTIVE_DOM.info}="${html((label ?? '') + (attributes ?? ''))}">`
-  )
-}
-
-// The editor's markdown extension calls its parse setup on every parse, with
-// the same markdown-it instance each time; registering the rule twice would
-// run it twice.
-const installed = new WeakSet<MarkdownIt>()
-
-/** Teach a markdown-it instance container directives (`:::name[label]{attrs}`). */
-export function installDirectiveSyntax(md: MarkdownIt) {
-  if (installed.has(md)) {
-    return
+  return {
+    type: DIRECTIVE_TOKEN,
+    raw: src.slice(0, end),
+    name,
+    info: label + attributes,
+    heading,
+    tokens: lexer.blockTokens(src.slice(opening[0].length, bodyEnd)),
   }
-  installed.add(md)
-  md.use(container, 'directive', {
-    marker: ':',
-    validate: (params: string) => INFO.test(params),
-    render: (tokens: { nesting: number; info: string }[], index: number) =>
-      tokens[index].nesting === 1 ? renderOpening(tokens[index].info, md) : '</div>',
-  })
 }
+
+type ParseChildren = (tokens: MarkdownToken[]) => JSONContent[]
+
+/** A block's body: what it holds, or one empty paragraph, which every block must hold at least. */
+function bodyOf(token: MarkdownToken, parseChildren: ParseChildren): JSONContent[] {
+  const content = parseChildren(token.tokens ?? [])
+  return content.length > 0 ? content : [{ type: 'paragraph' }]
+}
+
+function directiveNode(token: DirectiveToken, parseChildren: ParseChildren): JSONContent {
+  const { name, heading } = token
+  if (isCalloutKind(name)) {
+    return { type: DIRECTIVE_NODES.callout, attrs: { kind: name, heading }, content: bodyOf(token, parseChildren) }
+  }
+  if (name === SPOILER_DIRECTIVE) {
+    return { type: DIRECTIVE_NODES.spoiler, attrs: { heading }, content: bodyOf(token, parseChildren) }
+  }
+  const children = (token.tokens ?? []).filter((child) => child.type !== 'space')
+  const tabs = children.filter(isDirectiveToken).filter((child) => child.name === TAB_DIRECTIVE)
+  if (name === TABS_DIRECTIVE && children.length > 0 && tabs.length === children.length) {
+    return {
+      type: DIRECTIVE_NODES.tabs,
+      content: tabs.map((tab) => ({
+        type: DIRECTIVE_NODES.tab,
+        attrs: { heading: tab.heading },
+        content: bodyOf(tab, parseChildren),
+      })),
+    }
+  }
+  // Includes a `tabs` holding anything besides tabs, and a `tab` outside one:
+  // kept as written, so nothing the author wrote is dropped.
+  return { type: DIRECTIVE_NODES.unknown, attrs: { name, info: token.info }, content: bodyOf(token, parseChildren) }
+}
+
+/** Registers the container syntax with the markdown reader. */
+const DirectiveSyntax = Extension.create({
+  name: 'markdownDirectiveSyntax',
+  markdownTokenName: DIRECTIVE_TOKEN,
+  markdownTokenizer: {
+    name: DIRECTIVE_TOKEN,
+    level: 'block',
+    start: openingAt,
+    tokenize: (src, _tokens, lexer) => tokenizeDirective(src, lexer),
+  },
+  parseMarkdown: (token, h) => directiveNode(token as DirectiveToken, h.parseChildren),
+})
 
 /**
  * How many directive blocks deep a node's contents go. A container's fence has
  * to be longer than every fence inside it, so this is what decides how many
  * colons it is written with.
  */
-function directiveDepth(node: ProseMirrorNode): number {
+function directiveDepth(node: JSONContent): number {
   let depth = 0
-  node.forEach((child) => {
-    depth = Math.max(depth, (DIRECTIVE_NODE_NAMES.includes(child.type.name) ? 1 : 0) + directiveDepth(child))
-  })
+  for (const child of node.content ?? []) {
+    depth = Math.max(depth, (DIRECTIVE_NODE_NAMES.includes(child.type ?? '') ? 1 : 0) + directiveDepth(child))
+  }
   return depth
 }
 
-/** The part of the markdown serializer's state a directive block writes through. */
-export interface DirectiveSerializerState {
-  write(content?: string): void
-  renderContent(node: ProseMirrorNode): void
-  closeBlock(node: ProseMirrorNode): void
-}
-
-/** Write a directive block: its fence and info line, its contents, its closing fence. */
-export function writeDirective(state: DirectiveSerializerState, node: ProseMirrorNode, info: string) {
+/** A directive block as markdown: its fence and info line, its contents, its closing fence. */
+function writeDirective(node: JSONContent, body: string, info: string): string {
   const fence = ':'.repeat(3 + directiveDepth(node))
-  state.write(`${fence}${info}\n`)
-  state.renderContent(node)
-  state.write(fence)
-  state.closeBlock(node)
+  return `${fence}${info}\n${body}${body === '' ? '\n' : '\n\n'}${fence}`
 }
 
-/** The part of the markdown serializer's state a text node writes through. */
-interface TextSerializerState {
-  write(content?: string): void
-  text(text: string, escaped?: boolean): void
+function directiveName(element: HTMLElement): string {
+  return element.getAttribute(DIRECTIVE_DOM.name) ?? ''
 }
 
-/**
- * Text as the editor writes it, with one addition: text that starts a line
- * with three or more colons gets its first colon escaped.
- *
- * Written plain, a line of `:::` in a block's body would be read back as the
- * block's closing fence -- or any other colon run as an opening one -- and the
- * rest of the body would fall out of the block on the next open. `\:` is the
- * standard markdown escape for a literal colon, so the text reads back
- * unchanged. A line starts at the beginning of a paragraph or heading and
- * after a hard break; a colon run in the middle of a line is left as typed.
- *
- * Replaces the text node's markdown writer, which otherwise only escapes `<`
- * and `>` into entities; that is repeated here unchanged.
- */
-export const DirectiveSafeText = Text.extend({
-  addStorage() {
+function isTabsElement(element: Element | null): boolean {
+  if (!element || element.getAttribute(DIRECTIVE_DOM.name) !== TABS_DIRECTIVE) {
+    return false
+  }
+  const children = [...element.children]
+  return children.length > 0 && children.every((child) => child.getAttribute(DIRECTIVE_DOM.name) === TAB_DIRECTIVE)
+}
+
+/** The heading attribute every known block keeps. */
+function headingAttribute() {
+  return {
+    default: '',
+    parseHTML: (element: HTMLElement) => element.getAttribute(DIRECTIVE_DOM.heading) ?? '',
+    renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.heading]: attributes.heading }),
+  }
+}
+
+export const CalloutNode = Node.create({
+  name: DIRECTIVE_NODES.callout,
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  addAttributes() {
     return {
-      markdown: {
-        serialize(state: TextSerializerState, node: ProseMirrorNode, parent: ProseMirrorNode, index: number) {
-          const text = node.text ?? ''
-          const startsLine = index === 0 || parent.child(index - 1).type.name === 'hardBreak'
-          if (startsLine && /^:{3}/.test(text)) {
-            state.write('\\')
-          }
-          state.text(text.replace(/</g, '&lt;').replace(/>/g, '&gt;'))
-        },
-        parse: {},
+      kind: {
+        default: 'note',
+        parseHTML: (element: HTMLElement) => directiveName(element),
+        renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.name]: attributes.kind }),
+      },
+      heading: headingAttribute(),
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: `div[${DIRECTIVE_DOM.name}]`,
+        getAttrs: (element) => (isCalloutKind(directiveName(element)) ? null : false),
+      },
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', HTMLAttributes, 0]
+  },
+  renderMarkdown: (node, h) =>
+    writeDirective(
+      node,
+      h.renderChildren(node.content ?? [], '\n\n'),
+      formatDirectiveInfo(node.attrs?.kind, node.attrs?.heading),
+    ),
+})
+
+export const SpoilerNode = Node.create({
+  name: DIRECTIVE_NODES.spoiler,
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  addAttributes() {
+    return { heading: headingAttribute() }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: `div[${DIRECTIVE_DOM.name}]`,
+        getAttrs: (element) => (directiveName(element) === SPOILER_DIRECTIVE ? null : false),
+      },
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', { ...HTMLAttributes, [DIRECTIVE_DOM.name]: SPOILER_DIRECTIVE }, 0]
+  },
+  renderMarkdown: (node, h) =>
+    writeDirective(
+      node,
+      h.renderChildren(node.content ?? [], '\n\n'),
+      formatDirectiveInfo(SPOILER_DIRECTIVE, node.attrs?.heading),
+    ),
+})
+
+export const TabsNode = Node.create({
+  name: DIRECTIVE_NODES.tabs,
+  group: 'block',
+  content: `${DIRECTIVE_NODES.tab}+`,
+  defining: true,
+  parseHTML() {
+    return [{ tag: `div[${DIRECTIVE_DOM.name}]`, getAttrs: (element) => (isTabsElement(element) ? null : false) }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', { ...HTMLAttributes, [DIRECTIVE_DOM.name]: TABS_DIRECTIVE }, 0]
+  },
+  renderMarkdown: (node, h) => writeDirective(node, h.renderChildren(node.content ?? [], '\n\n'), TABS_DIRECTIVE),
+})
+
+export const TabNode = Node.create({
+  name: DIRECTIVE_NODES.tab,
+  content: 'block+',
+  defining: true,
+  addAttributes() {
+    return { heading: headingAttribute() }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: `div[${DIRECTIVE_DOM.name}]`,
+        getAttrs: (element) =>
+          directiveName(element) === TAB_DIRECTIVE && isTabsElement(element.parentElement) ? null : false,
+      },
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', { ...HTMLAttributes, [DIRECTIVE_DOM.name]: TAB_DIRECTIVE }, 0]
+  },
+  renderMarkdown: (node, h) =>
+    writeDirective(
+      node,
+      h.renderChildren(node.content ?? [], '\n\n'),
+      formatDirectiveInfo(TAB_DIRECTIVE, node.attrs?.heading),
+    ),
+})
+
+export const UnknownDirectiveNode = Node.create({
+  name: DIRECTIVE_NODES.unknown,
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  addAttributes() {
+    return {
+      name: {
+        default: '',
+        parseHTML: (element: HTMLElement) => directiveName(element),
+        renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.name]: attributes.name }),
+      },
+      info: {
+        default: '',
+        parseHTML: (element: HTMLElement) => element.getAttribute(DIRECTIVE_DOM.info) ?? '',
+        renderHTML: (attributes: Record<string, unknown>) => ({ [DIRECTIVE_DOM.info]: attributes.info }),
       },
     }
   },
+  parseHTML() {
+    // Below every known block's rule, so it only takes what none of them claimed.
+    return [{ tag: `div[${DIRECTIVE_DOM.name}]`, priority: 40 }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    // Its content is shown as plain content, in a dashed box headed by the
+    // directive's name, so the author can see the block is there and which
+    // one it is without the editor pretending to know what it means.
+    return [
+      'div',
+      {
+        ...HTMLAttributes,
+        class:
+          'my-2 rounded-md border border-dashed px-3 py-2 before:mb-1 before:block before:font-mono before:text-xs before:text-muted-foreground before:content-[attr(data-md-directive)]',
+      },
+      0,
+    ]
+  },
+  renderMarkdown: (node, h) =>
+    writeDirective(node, h.renderChildren(node.content ?? [], '\n\n'), `${node.attrs?.name}${node.attrs?.info}`),
 })
+
+/** The documentation blocks' syntax and schema, without their node views. */
+export const directiveSchemaExtensions = [
+  DirectiveSyntax,
+  CalloutNode,
+  SpoilerNode,
+  TabsNode,
+  TabNode,
+  UnknownDirectiveNode,
+]

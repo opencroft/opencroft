@@ -1,6 +1,6 @@
 import { db, space, spaceApp, spaceGraph, spaceSlugAlias } from '@opencroft/db'
 import { randomSpaceIconValue } from '@opencroft/db/space-icon-presets'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
 
 import { slugify } from '@/app/_authed/(space)/_server/slug'
 import {
@@ -72,16 +72,6 @@ export class SpaceSlugTakenError extends Error {
   }
 }
 
-// Thrown by `saveGraph` when `expectedUpdatedAt` no longer matches the
-// stored row — another writer (a different browser tab, or an MCP tool
-// call) persisted a newer graph in between this caller's load and save.
-export class GraphConflictError extends Error {
-  constructor(readonly address: string) {
-    super(`Graph "${address}" was modified concurrently`)
-    this.name = 'GraphConflictError'
-  }
-}
-
 // Thrown by `createGraph` when the name slugifies onto a graph the space
 // already has. A refusal for the same reason a space rename refuses: handing
 // back a suffixed slug would leave an instance pointing at an address nobody
@@ -103,7 +93,7 @@ export class DefaultGraphRemovalError extends Error {
   }
 }
 
-function parseGraph(data: string): GraphData {
+export function parseGraph(data: string): GraphData {
   const parsed = JSON.parse(data) as Partial<GraphData>
   return {
     nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
@@ -122,6 +112,18 @@ class SpacesRegistry {
   private graphsByInstance = new Map<string, GraphRuntime>()
   private loaded = false
   private loadPromise: Promise<void> | null = null
+  private graphRemovedListeners: Array<(graphIds: string[]) => void> = []
+
+  /** Called with the ids of graphs once their rows are gone, by graph or by space removal. */
+  onGraphsRemoved(listener: (graphIds: string[]) => void): void {
+    this.graphRemovedListeners.push(listener)
+  }
+
+  private graphsRemoved(graphIds: string[]): void {
+    for (const listener of this.graphRemovedListeners) {
+      listener(graphIds)
+    }
+  }
 
   async ensureLoaded(): Promise<void> {
     if (this.loaded) {
@@ -416,6 +418,17 @@ class SpacesRegistry {
     return this.spaces.get(id) ?? null
   }
 
+  graphById(graphId: string): GraphRef | null {
+    for (const s of this.spaces.values()) {
+      for (const graph of s.graphs.values()) {
+        if (graph.id === graphId) {
+          return { space: s, graph }
+        }
+      }
+    }
+    return null
+  }
+
   findByNode(nodeId: string): GraphRef | null {
     for (const s of this.spaces.values()) {
       for (const graph of s.graphs.values()) {
@@ -490,6 +503,7 @@ class SpacesRegistry {
     await db.delete(spaceGraph).where(eq(spaceGraph.id, graph.id))
     owner?.graphs.delete(graph.slug)
     this.graphsByInstance.delete(instanceId)
+    this.graphsRemoved([graph.id])
   }
 
   /**
@@ -769,46 +783,13 @@ class SpacesRegistry {
     for (const graph of runtime?.graphs.values() ?? []) {
       this.graphsByInstance.delete(graph.instanceId)
     }
+    this.graphsRemoved([...(runtime?.graphs.values() ?? [])].map((graph) => graph.id))
     for (const [aliasSlug, aliasId] of this.aliasBySlug) {
       if (aliasId === id) {
         this.aliasBySlug.delete(aliasSlug)
       }
     }
     return true
-  }
-
-  // `expectedUpdatedAt`, when given, must match the graph row's current
-  // `updatedAt` or the write is rejected (GraphConflictError) instead of
-  // silently clobbering a newer save from another tab/tool call. The
-  // condition is enforced by the UPDATE's WHERE clause so the
-  // check-then-write is atomic even across concurrent requests.
-  async saveGraph(address: string, graph: GraphData, expectedUpdatedAt?: string): Promise<GraphRef | null> {
-    const ref = this.resolveGraph(address)
-    if (!ref) {
-      return null
-    }
-    // `updatedAt` is millisecond-precision, not a monotonic counter, so two
-    // writers racing within the same millisecond — plus a third stale writer
-    // whose expectedUpdatedAt happens to match — could theoretically both pass
-    // this check. Accepted risk for v1: real writers are paced well above 1ms
-    // (canvas autosave debounces 500ms, MCP tool calls run sequentially per
-    // session). If conflict reports ever show writes slipping through, replace
-    // this with a monotonic integer `version` column instead of tightening the
-    // timestamp comparison.
-    const condition = expectedUpdatedAt
-      ? and(eq(spaceGraph.id, ref.graph.id), eq(spaceGraph.updatedAt, new Date(expectedUpdatedAt)))
-      : eq(spaceGraph.id, ref.graph.id)
-    const [row] = await db
-      .update(spaceGraph)
-      .set({ data: JSON.stringify(graph) })
-      .where(condition)
-      .returning()
-    if (!row) {
-      throw new GraphConflictError(address)
-    }
-    ref.graph.graph = graph
-    ref.graph.updatedAt = row.updatedAt
-    return ref
   }
 }
 

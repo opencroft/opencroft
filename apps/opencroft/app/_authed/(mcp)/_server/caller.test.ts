@@ -29,9 +29,8 @@ async function agentNodes(names: string[]): Promise<string[]> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const slug = `caller-test-${crypto.randomUUID()}`
-  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
   const ids = names.map((_, i) => `caller-agent-${i}-${crypto.randomUUID()}`)
-  await registry.saveGraph(space.slug, {
+  await registry.create(slug, slug, {
     nodes: names.map((name, i) => ({
       id: ids[i],
       type: 'builtin.core.agent',
@@ -173,16 +172,15 @@ test('a token whose agent node no longer exists resolves to nobody', async () =>
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const slug = `caller-test-gone-${crypto.randomUUID()}`
-  const space = await registry.create(slug, slug, { nodes: [], edges: [] })
   const nodeId = `caller-agent-gone-${crypto.randomUUID()}`
-  await registry.saveGraph(space.slug, {
+  const space = await registry.create(slug, slug, {
     nodes: [{ id: nodeId, type: 'builtin.core.agent', position: { x: 0, y: 0 }, data: { name: 'Caller Gone' } }],
     edges: [],
   })
   const token = await mint(nodeId)
   assert.equal((await resolveCaller(bearer(token))).credential, 'present', 'live while the node exists')
 
-  await registry.saveGraph(space.slug, { nodes: [], edges: [] })
+  assert.equal(await registry.remove(space.slug), true)
 
   const caller = await resolveCaller(bearer(token))
   assert.equal(caller.credential, 'unknown')
