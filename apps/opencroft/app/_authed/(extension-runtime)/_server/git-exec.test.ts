@@ -318,8 +318,9 @@ test('a directory that holds no repository is a missing repository too', async (
 
 test('any other remote failure is what git last said, without the command that ran', async () => {
   // A transport git has no helper for fails in none of the ways named above,
-  // and git 2.43 says so without a fatal line.
+  // and git says so without a fatal line. The wording differs between git
+  // versions; each names the transport.
   const message = await remoteFailureOf('nosuchtransport::somewhere')
-  assert.match(message, /remote-nosuchtransport/)
+  assert.match(message, /nosuchtransport/)
   assert.doesNotMatch(message, /Command failed|ls-remote/)
 })
