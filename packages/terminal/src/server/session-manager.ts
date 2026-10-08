@@ -32,17 +32,36 @@ export type KillReason = 'explicit' | 'ttl' | 'evicted' | 'exit'
  */
 export type SessionKind = 'interactive' | 'job'
 
+/**
+ * The capacity a session counts against. Shared shells are interactive, but they get a pool of
+ * their own because nothing reclaims them: in the interactive pool, a full set of them would refuse
+ * every per-tab shell until one of their owners ended it.
+ */
+type SessionPool = 'interactive' | 'shared' | 'job'
+
 export interface ManagedSession {
   id: string
   handle: SessionHandle
   scrollback: ScrollbackBuffer
-  attachedPeer: SocketPeer | null
+  /**
+   * The connections watching the session. An unshared session has at most one, and a newcomer
+   * takes the watch from whoever held it; a shared one has any number (see `shared`).
+   */
+  viewers: Set<SocketPeer>
   createdAt: number
+  /** When the last viewer left, or null while anyone watches. */
   detachedAt: number | null
   sessionKey?: string
   /** false ⇒ legacy client (no sessionKey): killed on socket close instead of detached. */
   persistent: boolean
   kind: SessionKind
+  /**
+   * One shell for everyone who opens its key: every viewer sees the output and may type, and a
+   * newcomer joins rather than replacing anyone. Nobody leaving ends it, and neither the TTL nor
+   * eviction reclaims it; it ends when its owner ends it by key (`endShared`), when a viewer
+   * restarts it, or when its process exits.
+   */
+  shared: boolean
   /**
    * When a job's command ended, or null while it runs. Always null for interactive sessions.
    *
@@ -55,8 +74,15 @@ export interface ManagedSession {
   stopWhenUnwatchedMs?: number
 }
 
+function poolOf(session: Pick<ManagedSession, 'kind' | 'shared'>): SessionPool {
+  return session.shared ? 'shared' : session.kind
+}
+
 /** What every watcher of a job, then and later, is told when its command has ended. */
 export const JOB_ENDED_REASON = 'Job finished'
+
+/** What the other viewers of a shared shell are told when one of them restarts it. */
+export const SHARED_RESTARTED_REASON = 'Session restarted'
 
 export const DETACHED_TTL_MS = 15 * 60 * 1000
 export const SWEEP_INTERVAL_MS = 30 * 1000
@@ -68,6 +94,10 @@ export const MAX_SESSIONS = 20
  * session to make room. Separate budgets make it unreachable rather than unlikely.
  */
 export const MAX_JOB_SESSIONS = 10
+/** Cap on shared sessions, counted apart from the other two pools. See `SessionPool`. */
+export const MAX_SHARED_SESSIONS = 20
+/** How many applied restart tokens a shared key remembers. See `restartShared`. */
+const RESTART_TOKENS_KEPT = 16
 export const MAX_SCROLLBACK_BYTES = 512 * 1024
 
 /** Bounded byte ring buffer for scrollback replay — drops the oldest bytes once over cap. */
@@ -111,6 +141,8 @@ export interface SessionManagerOptions {
   maxSessions?: number
   /** Cap on server-started job sessions, counted separately from interactive ones. */
   maxJobSessions?: number
+  /** Cap on shared sessions, counted separately from the other kinds. */
+  maxSharedSessions?: number
   /** Cap on ended jobs kept for replay; the oldest is dropped past it. Defaults to maxJobSessions. */
   maxEndedJobSessions?: number
   maxScrollbackBytes?: number
@@ -143,11 +175,14 @@ export type ConnectDecision =
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>()
   private readonly peerSession = new Map<SocketPeer, string>()
+  /** Per shared key, the restart tokens already applied, oldest first. See `restartShared`. */
+  private readonly appliedRestarts = new Map<string, string[]>()
   private readonly sweepTimer: ReturnType<typeof setInterval>
 
   private readonly detachedTtlMs: number
   private readonly maxSessions: number
   private readonly maxJobSessions: number
+  private readonly maxSharedSessions: number
   private readonly maxEndedJobSessions: number
   private readonly maxScrollbackBytes: number
   private readonly now: () => number
@@ -158,6 +193,7 @@ export class SessionManager {
     this.detachedTtlMs = opts.detachedTtlMs ?? DETACHED_TTL_MS
     this.maxSessions = opts.maxSessions ?? MAX_SESSIONS
     this.maxJobSessions = opts.maxJobSessions ?? MAX_JOB_SESSIONS
+    this.maxSharedSessions = opts.maxSharedSessions ?? MAX_SHARED_SESSIONS
     this.maxEndedJobSessions = opts.maxEndedJobSessions ?? this.maxJobSessions
     this.maxScrollbackBytes = opts.maxScrollbackBytes ?? MAX_SCROLLBACK_BYTES
     this.now = opts.now ?? (() => Date.now())
@@ -204,10 +240,11 @@ export class SessionManager {
    * it is created detached, because it starts before anyone is watching, and reclaiming one means
    * killing a deploy that is still running. So a job is reclaimable only once its process has
    * exited, at which point it is what these policies were written for — stale output nobody came
-   * back for.
+   * back for. A shared session is never reclaimable: nobody watching it is its ordinary state, and
+   * it lasts until its owner ends it.
    */
   private isReclaimable(session: ManagedSession): boolean {
-    if (session.detachedAt === null) {
+    if (session.detachedAt === null || session.shared) {
       return false
     }
     return !(session.kind === 'job' && session.handle.isAlive())
@@ -215,10 +252,10 @@ export class SessionManager {
 
   // Ended jobs are records, not running commands, and have a cap of their own (`endJob`), so they
   // take no part in the capacity for running ones — neither counted nor evicted to make room.
-  private countLive(kind: SessionKind): number {
+  private countLive(pool: SessionPool): number {
     let count = 0
     for (const session of this.sessions.values()) {
-      if (session.kind === kind && session.endedAt === null) {
+      if (poolOf(session) === pool && session.endedAt === null) {
         count++
       }
     }
@@ -226,21 +263,23 @@ export class SessionManager {
   }
 
   /**
-   * Make room for one more session OF THIS KIND, counting and evicting only within that kind.
+   * Make room for one more session IN THIS POOL, counting and evicting only within that pool.
    *
    * The scoping is the whole point and is not an optimisation: a job must never be able to take
    * capacity from, or evict, an interactive session. Someone watching a build start must not
    * lose the shell they had open in another tab. Counting across both kinds would allow exactly
-   * that, and no amount of headroom would rule it out — only the separation does.
+   * that, and no amount of headroom would rule it out — only the separation does. Shared shells
+   * are kept apart for the same reason (see `SessionPool`); a full shared pool is refused, since
+   * none of them is reclaimable.
    */
-  private reserveSlot(kind: SessionKind): { ok: true } | { ok: false; message: string } {
-    const limit = kind === 'job' ? this.maxJobSessions : this.maxSessions
-    if (this.countLive(kind) < limit) {
+  private reserveSlot(pool: SessionPool): { ok: true } | { ok: false; message: string } {
+    const limit = { interactive: this.maxSessions, shared: this.maxSharedSessions, job: this.maxJobSessions }[pool]
+    if (this.countLive(pool) < limit) {
       return { ok: true }
     }
     let oldest: ManagedSession | undefined
     for (const session of this.sessions.values()) {
-      if (session.kind !== kind || session.endedAt !== null) {
+      if (poolOf(session) !== pool || session.endedAt !== null) {
         continue
       }
       if (session.detachedAt === null || !this.isReclaimable(session)) {
@@ -253,6 +292,12 @@ export class SessionManager {
     if (oldest) {
       this.kill(oldest.id, 'evicted', 'Evicted to make room for a new session')
       return { ok: true }
+    }
+    if (pool === 'shared') {
+      return {
+        ok: false,
+        message: `Shared session limit reached (${limit} open); remove another shared terminal and retry.`,
+      }
     }
     return {
       ok: false,
@@ -298,8 +343,16 @@ export class SessionManager {
    *
    * A key naming an ENDED job is answered like `attach` answers it — output, then the end — and
    * the caller spawns nothing. An ended job is never replaced by a fresh session under its key.
+   *
+   * `shared` is what the connect asks to open, and it picks the pool a new session is counted in.
    */
-  prepareConnect(peer: SocketPeer, sessionKey: string | undefined, cols: number, rows: number): ConnectDecision {
+  prepareConnect(
+    peer: SocketPeer,
+    sessionKey: string | undefined,
+    cols: number,
+    rows: number,
+    shared = false,
+  ): ConnectDecision {
     if (sessionKey) {
       const existing = this.findByKey(sessionKey)
       if (existing?.endedAt != null) {
@@ -307,29 +360,33 @@ export class SessionManager {
         return { kind: 'ended' }
       }
       if (existing) {
-        // Four cases, and they are written out because the job column is the one that ends a
+        // Five cases, and they are written out because the job column is the one that ends a
         // running deploy if it is got wrong:
         //
+        //  shared                  join, live or not. Everyone who opens the key gets this shell.
         //  interactive + detached  reattach. The tab came back; this is the whole point of a key.
         //  interactive + live      kill and replace. At most one live session per key, and the
         //                          newcomer wins: the incumbent is usually a socket that has not
-        //                          noticed it is gone, and the shell is replaceable anyway.
+        //                          noticed it is gone, and the shell is replaceable anyway. The
+        //                          Terminal client narrows its key to its browser tab, so a second
+        //                          tab never lands here; the newcomer is the same tab again.
         //  job + detached          attach and watch. This is how a deploy gets watched at all.
         //  job + live              attach and TAKE OVER the watch — never kill-and-replace, because
         //                          "replace" on a job means killing the command, and a deploy is not
         //                          a shell: the client cannot start another one, and the work that
         //                          was already done does not come back.
         //
-        // So both job rows are the same action, and the condition says so rather than reaching the
-        // same place twice. See the class note above for why this takes over rather than refusing.
-        if (existing.detachedAt !== null || existing.kind === 'job') {
-          this.doAttach(existing, peer, cols, rows)
+        // So all but one row are the same action, and the condition says so rather than reaching the
+        // same place four times. See the class note above for why a job is taken over rather than
+        // refused.
+        if (existing.shared || existing.detachedAt !== null || existing.kind === 'job') {
+          this.doAttach(existing, peer, { cols, rows })
           return { kind: 'reattached', session: existing }
         }
         this.kill(existing.id, 'evicted', 'Session replaced by another connection')
       }
     }
-    const slot = this.reserveSlot('interactive')
+    const slot = this.reserveSlot(shared && sessionKey ? 'shared' : 'interactive')
     if (!slot.ok) {
       return { kind: 'refused', message: slot.message }
     }
@@ -364,24 +421,38 @@ export class SessionManager {
    *
    * `peer` is null for a session nobody is watching yet — a job started by server code, which a
    * client attaches to later by key.
+   *
+   * A shared session that another connect created in the meantime is joined instead: `handle` is
+   * killed and the session that was there first is returned.
    */
   create(
     peer: SocketPeer | null,
     handle: SessionHandle,
-    opts: { sessionKey?: string; id?: string; kind?: SessionKind; stopWhenUnwatchedMs?: number } = {},
+    opts: { sessionKey?: string; id?: string; kind?: SessionKind; stopWhenUnwatchedMs?: number; shared?: boolean } = {},
   ): ManagedSession {
     const id = opts.id ?? randomUUID()
     const persistent = !!opts.sessionKey
+    const shared = !!opts.shared && persistent
 
     // `prepareConnect`'s same-key check and this insertion are separated by an async spawn/dial
     // (the caller decides 'create', then awaits pty.spawn/sshShell, then calls this) — two
-    // concurrent connects for the same sessionKey (two tabs, or a reconnect racing a still-in-flight
-    // dial) can both observe "no existing session" and both reach here. Re-check at the actual,
-    // synchronous insertion point and kill any session that slipped in during that gap, so the
-    // invariant "at most one live session per key" holds regardless of interleaving — otherwise the
-    // loser's handle would stay registered but unreachable (peerSession only ever points at one id).
+    // concurrent connects for the same sessionKey (a reconnect racing a still-in-flight dial, or two
+    // viewers opening a shared key at once) can both observe "no existing session" and both reach
+    // here. Re-check at the actual, synchronous insertion point, so the invariant "at most one live
+    // session per key" holds regardless of interleaving — otherwise the loser's handle would stay
+    // registered but unreachable (peerSession only ever points at one id). A shared session that got
+    // there first keeps its shell and takes the newcomer as a viewer; anything else is replaced.
     if (opts.sessionKey) {
       const stale = this.findByKey(opts.sessionKey)
+      if (stale?.shared && shared && peer) {
+        try {
+          handle.kill()
+        } catch {
+          /* best-effort */
+        }
+        this.doAttach(stale, peer)
+        return stale
+      }
       if (stale) {
         this.kill(stale.id, 'evicted', 'Session replaced by another connection')
       }
@@ -391,7 +462,8 @@ export class SessionManager {
       id,
       handle,
       scrollback: new ScrollbackBuffer(this.maxScrollbackBytes),
-      attachedPeer: peer,
+      viewers: new Set(peer ? [peer] : []),
+      shared,
       createdAt: this.now(),
       // A job starts detached: it is running and nobody is watching yet. A running job is never
       // reclaimed by the TTL (see isReclaimable); once it ends, the TTL counts from the end.
@@ -405,16 +477,16 @@ export class SessionManager {
 
     handle.onData((data) => {
       managed.scrollback.push(data)
-      if (managed.attachedPeer) {
-        this.sendToPeer(managed.attachedPeer, { type: 'data', payload: { data } })
-      }
+      this.sendToViewers(managed, { type: 'data', payload: { data } })
     })
 
     this.sessions.set(id, managed)
     if (peer) {
       this.peerSession.set(peer, id)
     }
-    this.log(`create id=${id} key=${opts.sessionKey ?? '-'} persistent=${persistent} kind=${managed.kind}`)
+    this.log(
+      `create id=${id} key=${opts.sessionKey ?? '-'} persistent=${persistent} kind=${managed.kind} shared=${shared}`,
+    )
     // Registered after the session is: a stream handle whose command has already ended calls a
     // late exit listener at once, and the job has to be found to be marked ended.
     handle.onExit(() => (managed.kind === 'job' ? this.endJob(id) : this.kill(id, 'exit')))
@@ -449,7 +521,7 @@ export class SessionManager {
       this.replayEnded(session, peer)
       return { ok: true, session, ended: true }
     }
-    this.doAttach(session, peer, cols, rows)
+    this.doAttach(session, peer, { cols, rows })
     return { ok: true, session, ended: false }
   }
 
@@ -472,10 +544,8 @@ export class SessionManager {
     }
     const now = this.now()
     session.endedAt = now
-    if (session.attachedPeer) {
-      this.sendToPeer(session.attachedPeer, { type: 'disconnected', payload: { reason: JOB_ENDED_REASON } })
-    }
-    session.attachedPeer = null
+    this.sendToViewers(session, { type: 'disconnected', payload: { reason: JOB_ENDED_REASON } })
+    session.viewers.clear()
     session.detachedAt = now
     this.unbindPeersOf(id)
     this.log(`end id=${id} key=${session.sessionKey ?? '-'}`)
@@ -535,20 +605,48 @@ export class SessionManager {
     }
   }
 
-  private doAttach(session: ManagedSession, peer: SocketPeer, cols: number, rows: number): void {
+  private sendToViewers(session: ManagedSession, message: { type: string; payload: Record<string, unknown> }): void {
+    for (const viewer of session.viewers) {
+      this.sendToPeer(viewer, message)
+    }
+  }
+
+  /** Bind `peer` as a viewer. Unless the session is shared, whoever watched before is let go. */
+  private doAttach(session: ManagedSession, peer: SocketPeer, size?: { cols: number; rows: number }): void {
     const backlog = session.scrollback.toString()
     if (backlog) {
       this.sendToPeer(peer, { type: 'data', payload: { data: backlog } })
     }
-    session.attachedPeer = peer
+    if (!session.shared) {
+      for (const previous of session.viewers) {
+        if (previous !== peer) {
+          this.peerSession.delete(previous)
+        }
+      }
+      session.viewers.clear()
+    }
+    session.viewers.add(peer)
     session.detachedAt = null
     this.peerSession.set(peer, session.id)
-    try {
-      session.handle.resize(cols, rows)
-    } catch {
-      /* best-effort repaint trigger */
+    if (size) {
+      try {
+        session.handle.resize(size.cols, size.rows)
+      } catch {
+        /* best-effort repaint trigger */
+      }
     }
-    this.log(`attach id=${session.id} key=${session.sessionKey ?? '-'}`)
+    this.log(`attach id=${session.id} key=${session.sessionKey ?? '-'} viewers=${session.viewers.size}`)
+  }
+
+  /** `peer` stops watching; the session is detached once nobody is left. */
+  private dropViewer(session: ManagedSession, peer: SocketPeer, reason: string): void {
+    session.viewers.delete(peer)
+    if (session.viewers.size === 0) {
+      session.detachedAt = this.now()
+    }
+    this.log(
+      `detach id=${session.id} key=${session.sessionKey ?? '-'} viewers=${session.viewers.size} reason=${reason}`,
+    )
   }
 
   /** Client `data`/`resize` messages route here via the peer→session lookup. */
@@ -570,6 +668,9 @@ export class SessionManager {
    * away is not a decision about the deploy. Without this branch the door `prepareConnect` closes
    * stays open right behind it — the watcher that could no longer evict a job could still end it by
    * saying goodbye. See the class note above `prepareConnect`.
+   *
+   * **Shared: detach, never kill**, as for a job. The shell is everyone's, so one viewer leaving
+   * ends nothing; restarting it is `restartShared`.
    */
   handleDisconnect(peer: SocketPeer): void {
     const id = this.peerSession.get(peer)
@@ -578,16 +679,46 @@ export class SessionManager {
       return
     }
     const session = this.sessions.get(id)
-    if (!session || session.attachedPeer !== peer) {
+    if (!session?.viewers.has(peer)) {
       return
     }
-    if (session.kind === 'job') {
-      session.attachedPeer = null
-      session.detachedAt = this.now()
-      this.log(`detach id=${id} key=${session.sessionKey ?? '-'} reason=disconnect`)
+    if (session.kind === 'job' || session.shared) {
+      this.dropViewer(session, peer, 'disconnect')
       return
     }
     this.kill(id, 'explicit')
+  }
+
+  /**
+   * Client `restart { token }`: replace the shared shell `peer` watches with a fresh one. Every
+   * viewer is told to rejoin, the sender too, and the first of them back opens the replacement.
+   *
+   * A press reaches every viewer, because the token travels as synced data, and it can arrive long
+   * after the press: a tab that slept, or one whose sync reconnected after its socket had already
+   * joined the replacement. So one press is delivered many times, and each delivery would end
+   * whatever shell is live by then. A token is therefore applied once per key and ignored after
+   * that. The record outlives the session it restarted, since the deliveries that matter arrive at
+   * the replacement, and goes when the key's owner ends it (`endShared`).
+   *
+   * Anything other than a viewer of a shared session is ignored: an unshared shell is restarted
+   * by its one viewer's `disconnect` and a fresh connect.
+   */
+  restartShared(peer: SocketPeer, token: string): 'restarted' | 'already-applied' | 'ignored' {
+    const session = this.getSessionForPeer(peer)
+    if (!session?.shared || !session.sessionKey || !session.viewers.has(peer)) {
+      return 'ignored'
+    }
+    const key = session.sessionKey
+    const applied = this.appliedRestarts.get(key) ?? []
+    if (applied.includes(token)) {
+      this.log(`restart-skipped id=${session.id} key=${key} (token already applied)`)
+      return 'already-applied'
+    }
+    this.appliedRestarts.set(key, [...applied, token].slice(-RESTART_TOKENS_KEPT))
+    this.sendToViewers(session, { type: 'disconnected', payload: { reason: SHARED_RESTARTED_REASON, rejoin: true } })
+    session.viewers.clear()
+    this.kill(session.id, 'explicit', undefined, 'restart')
+    return 'restarted'
   }
 
   /** Socket close: detach persistent (keyed) sessions, kill legacy (unkeyed) ones. */
@@ -598,21 +729,34 @@ export class SessionManager {
       return
     }
     const session = this.sessions.get(id)
-    if (!session || session.attachedPeer !== peer) {
+    if (!session?.viewers.has(peer)) {
       return
     }
     if (!session.persistent) {
       this.kill(id, 'explicit', undefined, 'legacy-close')
       return
     }
-    session.attachedPeer = null
-    session.detachedAt = this.now()
-    this.log(`detach id=${id} key=${session.sessionKey ?? '-'}`)
+    this.dropViewer(session, peer, 'close')
   }
 
   /**
-   * The single choke point for ending a session: stops the process/channel, notifies the
-   * attached peer (if any and if a message applies), then removes the session and every
+   * End the shared session under `sessionKey`, for the code that owns what the key names: the
+   * thing the shell belongs to is gone. Its viewers are told `reason`. A key naming no shared
+   * session is left alone and answers false. The key's restart record goes either way.
+   */
+  endShared(sessionKey: string, reason: string): boolean {
+    this.appliedRestarts.delete(sessionKey)
+    const session = this.findByKey(sessionKey)
+    if (!session?.shared) {
+      return false
+    }
+    this.kill(session.id, 'explicit', reason, 'owner ended it')
+    return true
+  }
+
+  /**
+   * The single choke point for ending a session: stops the process/channel, notifies its
+   * viewers (if a message applies), then removes the session and every
    * peer→session pointer to it. Safe to call on an already-removed id (no-op).
    */
   kill(id: string, reason: KillReason, notifyMessage?: string, context?: string): void {
@@ -625,11 +769,9 @@ export class SessionManager {
     } catch {
       /* best-effort */
     }
-    if (session.attachedPeer) {
-      const message = notifyMessage ?? (reason === 'exit' ? 'Shell exited' : undefined)
-      if (message) {
-        this.sendToPeer(session.attachedPeer, { type: 'disconnected', payload: { reason: message } })
-      }
+    const message = notifyMessage ?? (reason === 'exit' ? 'Shell exited' : undefined)
+    if (message) {
+      this.sendToViewers(session, { type: 'disconnected', payload: { reason: message } })
     }
     this.sessions.delete(id)
     this.unbindPeersOf(id)

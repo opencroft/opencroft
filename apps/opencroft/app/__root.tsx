@@ -41,6 +41,7 @@ import appCss from '@/app/globals.css?url'
 //   /api/spaces, /api/spaces/*       space read/write (not /route/$,
 //                                    see below — a different thing entirely)
 //   /api/files/upload                file upload
+//   /api/avatars/<userId>            a person's stored avatar picture
 //   /api/backup/*                    database backup downloads
 //   /api/sse, /api/yolo,
 //   /api/test-s3                     dashboard toasts, yolo status, an S3

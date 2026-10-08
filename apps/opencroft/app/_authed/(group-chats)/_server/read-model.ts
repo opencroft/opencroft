@@ -14,12 +14,17 @@
 // content without going through model.ts first is a bug.
 
 import { db, groupChatMember, groupChatThread, user } from '@opencroft/db'
+import type { QueuedPrompt } from 'agent-client/types'
 import { and, inArray, isNull } from 'drizzle-orm'
 
+import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
+import { waitingEntries } from '@/app/_authed/(agent)/_server/queue-store'
 import { type SnippetPart, searchTranscripts } from '@/app/_authed/(agent)/_server/transcript-search'
 import type { ContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type { GroupChatThreadSummary } from '@/app/_authed/(group-chats)/_server/model'
 import {
+  countThreadsInGroupChat,
   findThreadBySlug,
   findThreadInGroupChat,
   getGroupChat,
@@ -28,7 +33,10 @@ import {
   listMembers,
   listThreadsInGroupChat,
 } from '@/app/_authed/(group-chats)/_server/model'
+import type { ThreadList } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
 import { listAgentDirectory } from '@/app/_authed/(space)/_server/agents-impl'
+import { agentAvatarUrl } from '@/app/_server/agent-avatar'
+import { userAvatarUrl } from '@/app/_server/user-avatar'
 
 /** A participant in a group chat — a person or an agent, rendered alike. */
 export interface MemberRef {
@@ -61,6 +69,9 @@ export interface GroupChatDetailView {
   /** What agents are told this chat is for. Shown too, as the secondary line. */
   topic: string
   members: MemberRef[]
+  /** How many threads the chat's archive holds. The archived threads
+   *  themselves are a separate read, made only where they are drawn. */
+  archivedThreadCount: number
 }
 
 export interface GroupChatThreadEntry {
@@ -102,6 +113,22 @@ export interface GroupChatThreadEntry {
   archived: boolean
 }
 
+/** Messages waiting for a thread's agent, and the accounts their senders
+ *  resolve to -- the same pair a `queue` event carries on the stream. */
+export interface ThreadQueue {
+  items: QueuedPrompt[]
+  authors?: Record<string, ResolvedAuthor>
+}
+
+/**
+ * One thread as its own screen opens it: the list entry, plus the draft's
+ * text and the messages waiting for its agent. The queue is here for the
+ * screen to draw while the conversation is still opening -- the session's
+ * stream is what carries it after that, and on a cold load the page is drawn
+ * long before the stream starts.
+ */
+export type GroupChatThreadView = GroupChatThreadEntry & { draft: string | null; queue: ThreadQueue }
+
 /** A thread as a list row carries it: the entry, plus what the list shows while its session is not running. */
 export interface GroupChatThreadListEntry extends GroupChatThreadEntry {
   /**
@@ -134,11 +161,18 @@ function missingUser(userId: string): MemberRef {
  * `listAgentDirectory()` walks every space's graph, so calling it per thread
  * or per member would re-read the whole registry for each row. One call, one
  * map, however many rows. It is also what extensions read as `host.agents`,
- * so an agent's face here and in an App is the same one.
+ * so an agent's face here and in an App is the same one -- handed to the page
+ * as an address rather than the picture's bytes, so every row naming the
+ * agent costs a URL and the browser fetches the picture once.
  */
 async function agentsByNodeId(): Promise<Map<string, AgentRef>> {
   const agents = await listAgentDirectory()
-  return new Map(agents.map((a) => [a.id, { nodeId: a.id, name: a.name, avatarUrl: a.avatarUrl }] as const))
+  return new Map(
+    agents.map((a) => {
+      const avatarUrl = agentAvatarUrl({ nodeId: a.id, avatar: a.avatarUrl })
+      return [a.id, { nodeId: a.id, name: a.name, avatarUrl }] as const
+    }),
+  )
 }
 
 /**
@@ -162,7 +196,7 @@ async function usersById(userIds: string[]): Promise<Map<string, MemberRef>> {
     .from(user)
     .where(inArray(user.id, userIds))
   return new Map(
-    rows.map((r) => [r.id, { kind: 'user' as const, id: r.id, name: r.name, avatarUrl: r.image ?? null }] as const),
+    rows.map((r) => [r.id, { kind: 'user' as const, id: r.id, name: r.name, avatarUrl: userAvatarUrl(r) }] as const),
   )
 }
 
@@ -256,15 +290,17 @@ export async function getGroupChatDetailView(request: Request, groupChatId: stri
     name: chat.name,
     topic: chat.topic,
     members: toMemberRefs(memberRows, agents, users),
+    archivedThreadCount: await countThreadsInGroupChat(request, groupChatId, 'archive'),
   }
 }
 
-/** The threads inside one group chat, each with its agent resolved. */
+/** The threads in one of a group chat's lists, each with its agent resolved. */
 export async function listThreadsInGroupChatView(
   request: Request,
   groupChatId: string,
+  list: ThreadList,
 ): Promise<GroupChatThreadListEntry[]> {
-  const threads = await listThreadsInGroupChat(request, groupChatId)
+  const threads = await listThreadsInGroupChat(request, groupChatId, list)
   if (threads.length === 0) {
     return []
   }
@@ -296,7 +332,7 @@ export async function findThreadViewInGroupChat(
   request: Request,
   groupChatId: string,
   threadId: string,
-): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
+): Promise<GroupChatThreadView | null> {
   const thread = await findThreadInGroupChat(request, groupChatId, threadId)
   if (!thread) {
     return null
@@ -315,7 +351,7 @@ export async function findThreadViewBySlug(
   groupChatId: string,
   agentNodeId: string,
   threadSlug: string,
-): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> {
+): Promise<GroupChatThreadView | null> {
   const thread = await findThreadBySlug(request, groupChatId, agentNodeId, threadSlug)
   if (!thread) {
     return null
@@ -358,9 +394,7 @@ export async function searchThreadTranscriptsView(
   query: string,
   includeArchived: boolean,
 ): Promise<ThreadTranscriptSearch> {
-  const threads = (await listThreadsInGroupChat(request, groupChatId)).filter(
-    (t) => includeArchived || t.archivedAt === null,
-  )
+  const threads = await listThreadsInGroupChat(request, groupChatId, includeArchived ? undefined : 'active')
   const threadIdByKey = new Map(threads.map((t) => [t.sessionKey, t.id] as const))
   const { hits, truncated } = await searchTranscripts([...threadIdByKey.keys()], query, TRANSCRIPT_SEARCH_LIMIT)
   return {
@@ -374,12 +408,10 @@ export async function searchThreadTranscriptsView(
 
 /** The shared tail of the single-thread reads: resolve the agent and its
  *  current membership for one already-gated thread row. */
-async function enrichThread(
-  request: Request,
-  thread: GroupChatThreadSummary,
-): Promise<GroupChatThreadEntry & { draft: string | null }> {
+async function enrichThread(request: Request, thread: GroupChatThreadSummary): Promise<GroupChatThreadView> {
   const agents = await agentsByNodeId()
   const agentMembers = await agentMemberIds(request, thread.groupChatId)
+  const queue = await waitingQueue(thread.sessionKey)
   return {
     id: thread.id,
     groupChatId: thread.groupChatId,
@@ -391,5 +423,27 @@ async function enrichThread(
     sessionKey: thread.sessionKey,
     draft: thread.draft,
     archived: thread.archivedAt !== null,
+    queue,
   }
+}
+
+/**
+ * The thread's waiting messages, authored the way the stream authors them.
+ * Read only behind `enrichThread`'s callers, which have already checked the
+ * reader is in the chat. A failed read costs the preview, not the thread:
+ * the open replaces it with the live queue moments later either way.
+ */
+async function waitingQueue(sessionKey: string): Promise<ThreadQueue> {
+  let items: QueuedPrompt[]
+  try {
+    items = await waitingEntries(sessionKey)
+  } catch (err) {
+    console.error("[group-chats] Could not read a thread's waiting messages:", err instanceof Error ? err.message : err)
+    return { items: [] }
+  }
+  if (items.length === 0) {
+    return { items }
+  }
+  const authored = await withAuthors({ kind: 'queue', items })
+  return { items, ...(authored.authors ? { authors: authored.authors } : {}) }
 }

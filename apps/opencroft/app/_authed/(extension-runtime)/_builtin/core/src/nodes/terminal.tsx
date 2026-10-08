@@ -9,7 +9,7 @@ const { useState } = React
 interface WindowData {
   title: string
   connection?: TerminalConnection
-  /** Bumped by the inspector's "Restart session" button to force a fresh shell. */
+  /** Bumped by the inspector's "Restart session" button to force a fresh shell, for every viewer. */
   restartNonce?: number
 }
 
@@ -75,6 +75,11 @@ export function connectionFromContext(value: Record<string, unknown> | undefined
 
 type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
+/**
+ * The window is one shell on the canvas for everyone who opens the graph: all of them see it and
+ * can type into it, and a reload joins it again. It ends when the node is removed, which is also
+ * what the window's own close does; "Restart session" replaces it for everyone.
+ */
 export function TerminalWindowNode({ id, data, selected }: { id: string; data: WindowData; selected?: boolean }) {
   const ctx = useNodeContext<Record<string, unknown>>(id, 'ssh-in')
   const connection: TerminalConnection | null = data.connection ?? connectionFromContext(ctx?.value)
@@ -96,6 +101,7 @@ export function TerminalWindowNode({ id, data, selected }: { id: string; data: W
           connection={connection as unknown as import('@opencroft/terminal/client').TerminalConfig}
           fontSize={13}
           sessionKey={id}
+          shared
           restartToken={data.restartNonce}
           onStatusChange={setStatus}
         />

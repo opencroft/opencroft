@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { Input, Label, NodeFrame, OutputHandle, React, icons, useGraphEdges } = legacy
 
 const { useMemo } = React
@@ -42,17 +43,18 @@ export function ApiRouteNode({ id, data, selected }: { id: string; data: ApiRout
   // A route with no edge on its exec-out handle silently 502s every request
   // ("API Route has no connected handler"). Surface that on the canvas.
   const edges = useGraphEdges() as { source: string; sourceHandle?: string }[]
-  const hasHandler = useMemo(
-    () => edges.some((e) => e.source === id && e.sourceHandle === 'exec-out'),
-    [edges, id],
-  )
+  const hasHandler = useMemo(() => edges.some((e) => e.source === id && e.sourceHandle === 'exec-out'), [edges, id])
 
   return (
     <NodeFrame
       icon={icons.Route}
       title={'API'}
       selected={selected ?? false}
-      errors={hasHandler ? undefined : ['No connected handler — this route returns 502 until the exec-out handle is connected.']}
+      errors={
+        hasHandler
+          ? undefined
+          : ['No connected handler — this route returns 502 until the exec-out handle is connected.']
+      }
       output={<OutputHandle type='execution-context' id='exec-out' />}
       extra={
         <div className='flex flex-wrap gap-1 align-baseline text-[10px] font-mono'>

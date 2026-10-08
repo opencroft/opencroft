@@ -30,7 +30,7 @@ import {
   sameGraphContent,
 } from '@/app/_authed/(space)/_lib/graph-doc'
 import { resolveGraph } from '@/app/_authed/(space)/_server/resolve-graph'
-import { type GraphRef, getSpacesRegistry, parseGraph } from '@/app/_authed/(space)/_server/store'
+import { type GraphRef, getSpacesRegistry, parseGraph, removedNodeIds } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { STALE_LINEAGE_REASON } from '@/lib/collab-protocol'
 import { toastStore } from '@/lib/toast-store'
@@ -261,12 +261,15 @@ function forgetGraphDocs(graphIds: string[]): void {
 }
 
 function project(graphId: string, document: Document): void {
-  const ref = getSpacesRegistry().graphById(graphId)
+  const registry = getSpacesRegistry()
+  const ref = registry.graphById(graphId)
   if (!ref) {
     return
   }
+  const before = ref.graph.graph
   ref.graph.graph = readGraphFromDoc(document)
   ref.graph.updatedAt = new Date()
+  registry.nodesRemoved(removedNodeIds(before, ref.graph.graph))
   later(`broadcast:${graphId}`, BROADCAST_DELAY_MS, () =>
     toastStore.broadcast({ type: 'graph_updated', spaceId: ref.space.slug }),
   )

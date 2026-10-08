@@ -32,6 +32,11 @@ type Group = [type: string, apps: SwitcherApp[]]
 
 const TRIGGER = 'h-8 shrink-0 gap-1.5 px-2 pointer-coarse:h-10'
 
+// On a phone the folded list opens from an icon alone, square like the bar's
+// other icon buttons; its name stays for screen readers. "Phone" is the
+// viewport under 768px, the line the title bar's compact mark draws.
+const PHONE_ICON = 'max-md:w-8 max-md:px-0 max-md:pointer-coarse:w-10'
+
 // Types keep the order their first app arrives in.
 function groupByType(apps: SwitcherApp[]) {
   const groups: Group[] = []
@@ -163,7 +168,7 @@ function AppMenu({ groups, headings, activeId, createHref, onNavigate, trigger, 
  * a single app is a plain link; a type with several opens a searchable list of
  * them. The open type is highlighted; which of its apps is open is marked in
  * its list. When the title bar is too narrow for the row, the whole thing
- * folds into one list grouped by type.
+ * folds into one list grouped by type, which on a phone opens from an icon.
  *
  * It takes only the width its entries need and folds by the width of the
  * title bar around it (its `title-bar` container), so the free width of the
@@ -225,11 +230,13 @@ export function AppSwitcher({ apps, activeId, createHref, onNavigate }: AppSwitc
           {...menu}
           groups={groups}
           headings
-          trigger={<Button variant='ghost' size='sm' className={cn(TRIGGER, 'max-w-full')} />}
+          trigger={
+            <Button variant='ghost' size='sm' title={active?.type ?? 'Apps'} className={cn(TRIGGER, PHONE_ICON, 'max-w-full')} />
+          }
         >
           {active ? <Glyph icon={active.icon} /> : <LayoutGrid className='size-4' />}
-          <span className='min-w-0 truncate'>{active?.type ?? 'Apps'}</span>
-          <ChevronDown className='size-3.5 text-muted-foreground' />
+          <span className='min-w-0 truncate max-md:sr-only'>{active?.type ?? 'Apps'}</span>
+          <ChevronDown className='size-3.5 text-muted-foreground max-md:hidden' />
         </AppMenu>
       </div>
     </div>

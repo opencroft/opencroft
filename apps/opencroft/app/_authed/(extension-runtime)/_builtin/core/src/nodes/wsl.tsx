@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { Input, Label, NodeFrame, OutputHandle, React, Terminal, icons, inspectorIntent, invoke, useReactFlow } = legacy
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'

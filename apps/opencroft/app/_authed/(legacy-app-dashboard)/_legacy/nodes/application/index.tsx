@@ -9,7 +9,10 @@ import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Separator } from 'ui/separator'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import {
   type AppData,
   type AppService,
@@ -19,7 +22,11 @@ import {
   loadApp,
   saveApp,
 } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/application/actions'
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
+import {
+  NodeCard,
+  NodeCardContent,
+  NodeCardHeader,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 
 export type ApplicationNodeData = {
   appName: string

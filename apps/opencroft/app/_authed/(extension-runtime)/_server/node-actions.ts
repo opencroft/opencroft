@@ -11,8 +11,8 @@ import {
   getNodeActionAccess,
   listNodeActionsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
-import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 import type { NodeActionDescriptor } from '@/app/_authed/(extension-runtime)/_types'
+import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 
 // Client-callable wrapper — see node-actions-impl.ts's listNodeActionsImpl for why
 // the plain implementation lives in its own module, separate from this file.

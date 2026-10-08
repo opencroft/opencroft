@@ -149,17 +149,37 @@ const partsOf = (items: MarkdownDiffItem[]): MarkdownDiffItem[] => {
   return only.kind === 'parts' ? only.parts : []
 }
 
-test('a changed code block is the line diff of its code', () => {
+test('a changed code block is the line diff of its code, with each version fence', () => {
   const code = (body: string) => `\`\`\`ts\n${body}\n\`\`\``
   assert.deepEqual(diff(code('const a = 1\nconst b = 2'), code('const a = 1\nconst b = 3')), [
-    { kind: 'code', removed: 'const a = 1\nconst b = 2', added: 'const a = 1\nconst b = 3' },
+    {
+      kind: 'code',
+      removed: 'const a = 1\nconst b = 2',
+      added: 'const a = 1\nconst b = 3',
+      fence: { removed: 'ts', added: 'ts' },
+    },
   ])
 })
 
-test('a code block whose language or meta changed is a pair, its code unchanged or not', () => {
+test('a code block whose language or meta changed is the line diff of its code, with the change of its fence', () => {
+  assert.deepEqual(diff('```yaml\na: 1\n```', '```json\n{ "a": 1 }\n```'), [
+    { kind: 'code', removed: 'a: 1', added: '{ "a": 1 }', fence: { removed: 'yaml', added: 'json' } },
+  ])
+  assert.deepEqual(diff('```yaml\na: 1\n```', '```json\na: 1\n```'), [
+    { kind: 'code', removed: 'a: 1', added: 'a: 1', fence: { removed: 'yaml', added: 'json' } },
+  ])
+  assert.deepEqual(diff('```ts\nconst a = 1\n```', '```ts title="a.ts"\nconst a = 2\n```'), [
+    { kind: 'code', removed: 'const a = 1', added: 'const a = 2', fence: { removed: 'ts', added: 'ts title="a.ts"' } },
+  ])
+  assert.deepEqual(diff('```\nplain\n```', '```sh\nplain\n```'), [
+    { kind: 'code', removed: 'plain', added: 'plain', fence: { removed: '', added: 'sh' } },
+  ])
+})
+
+test('a code block that became a diagram, or stopped being one, is a pair', () => {
   const pair = (before: string, after: string) => [{ kind: 'pair', removed: before, added: after }]
-  assert.deepEqual(diff('```yaml\na: 1\n```', '```json\na: 1\n```'), pair('```yaml\na: 1\n```', '```json\na: 1\n```'))
-  assert.deepEqual(diff('```ts\nconst a = 1\n```', '```ts title="a.ts"\nconst a = 2\n```'), pair('```ts\nconst a = 1\n```', '```ts title="a.ts"\nconst a = 2\n```'))
+  assert.deepEqual(diff('```text\nA --> B\n```', '```mermaid\nA --> B\n```'), pair('```text\nA --> B\n```', '```mermaid\nA --> B\n```'))
+  assert.deepEqual(diff('```mermaid\nA --> B\n```', '```text\nA --> B\n```'), pair('```mermaid\nA --> B\n```', '```text\nA --> B\n```'))
 })
 
 test('a changed diagram is a pair, drawn as its two pictures rather than its source', () => {
@@ -173,6 +193,7 @@ test('a changed list marks only the items that changed, the unchanged ones drawn
   assert.deepEqual(diff(list('three'), list('three, changed')), [
     {
       kind: 'parts',
+      of: 'items',
       parts: [
         { kind: 'same', block: '- one\n- two' },
         { kind: 'pair', removed: '- three', added: '- three, changed' },
@@ -186,6 +207,7 @@ test('an item added to or removed from a list is that item alone', () => {
   assert.deepEqual(diff('- one\n- two\n- three', '- one\n- three\n- four'), [
     {
       kind: 'parts',
+      of: 'items',
       parts: [
         { kind: 'same', block: '- one' },
         { kind: 'removed', block: '- two' },
@@ -207,6 +229,7 @@ test('a change in a nested list draws the item above it once, with the nested ch
   assert.deepEqual(diff(before, after), [
     {
       kind: 'parts',
+      of: 'items',
       parts: [
         {
           kind: 'nested',
@@ -227,18 +250,86 @@ test('a list that changed only in how it holds its items is one pair', () => {
   assert.deepEqual(diff('- one\n- two', '- one\n\n- two'), [{ kind: 'pair', removed: '- one\n- two', added: '- one\n\n- two' }])
 })
 
-test('a changed loose list is one pair: an item drawn alone would lose its paragraph', () => {
-  const before = '- one\n\n- two\n\n- three'
-  const after = '- one\n\n- 2\n\n- three'
-  assert.deepEqual(diff(before, after), [{ kind: 'pair', removed: before, added: after }])
+// What a run of a loose list's items is drawn with: a definition after a blank
+// line in its last item, at that item's content column, which draws nothing and
+// keeps the run loose.
+const loose = (run: string, indent = 2, label = 'loose-list-item') => `${run}\n\n${' '.repeat(indent)}[${label}]: #`
+
+test('a changed item of a loose list is drawn alone, as loose as in its list', () => {
+  assert.deepEqual(diff('- one\n\n- two\n\n- three', '- one\n\n- 2\n\n- three'), [
+    {
+      kind: 'parts',
+      of: 'items',
+      parts: [
+        { kind: 'same', block: loose('- one') },
+        { kind: 'pair', removed: loose('- two'), added: loose('- 2') },
+        { kind: 'same', block: loose('- three') },
+      ],
+    },
+  ])
 })
 
-test('an item loose in itself draws its nested change with it, not under a tight copy of its text', () => {
+test('an item added to a loose list is that item alone, as loose as in its list', () => {
+  assert.deepEqual(partsOf(diff('- one\n\n- two', '- one\n\n- two\n\n- three')), [
+    { kind: 'same', block: loose('- one\n\n- two') },
+    { kind: 'added', block: loose('- three') },
+  ])
+})
+
+test('an item of a loose ordered list keeps its number and its looseness, the definition at its content column', () => {
+  const parts = partsOf(diff('9. nine\n\n10. ten', '9. nine\n\n10. ten!'))
+  assert.deepEqual(parts[1], { kind: 'pair', removed: loose('10. ten', 4), added: loose('10. ten!', 4) })
+})
+
+test('an item of a loose task list is drawn alone, the definition at its content column, not past its checkbox', () => {
+  assert.deepEqual(partsOf(diff('- [ ] one\n\n- [x] two\n\n- [ ] three', '- [ ] one\n\n- [x] 2\n\n- [ ] three')), [
+    { kind: 'same', block: loose('- [ ] one') },
+    { kind: 'pair', removed: loose('- [x] two'), added: loose('- [x] 2') },
+    { kind: 'same', block: loose('- [ ] three') },
+  ])
+})
+
+test('an item added to a loose task list is that item alone, as loose as in its list', () => {
+  assert.deepEqual(partsOf(diff('- [ ] one\n\n- [x] two', '- [ ] one\n\n- [x] two\n\n- [ ] three')), [
+    { kind: 'same', block: loose('- [ ] one\n\n- [x] two') },
+    { kind: 'added', block: loose('- [ ] three') },
+  ])
+})
+
+test('a list loose through one item draws its tight-written items loose', () => {
+  // The second item's two paragraphs make the whole list loose.
+  const before = '- one\n- two\n\n  more\n- three'
+  const after = '- one\n- two\n\n  more\n- 3'
+  assert.deepEqual(partsOf(diff(before, after)), [
+    { kind: 'same', block: loose('- one\n- two\n\n  more') },
+    { kind: 'pair', removed: loose('- three'), added: loose('- 3') },
+  ])
+})
+
+test('the definition takes a label the document does not use', () => {
+  const doc = (last: string) => `- see [loose-list-item]\n\n- ${last}\n\n[loose-list-item]: https://example.com`
+  assert.deepEqual(partsOf(diff(doc('old'), doc('new')))[1], {
+    kind: 'pair',
+    removed: loose('- old', 2, 'loose-list-item-2'),
+    added: loose('- new', 2, 'loose-list-item-2'),
+  })
+})
+
+test('an item loose in itself draws its text once, as a paragraph, with its nested change under it', () => {
   // The blank line makes the item, and so its list, loose: its text is a
-  // paragraph, which the item's text drawn alone is not.
+  // paragraph, and so is the text drawn above the nested change.
   const before = '- fruit\n\n  - apples\n  - pears'
   const after = '- fruit\n\n  - apples\n  - plums'
-  assert.deepEqual(diff(before, after), [{ kind: 'parts', parts: [{ kind: 'pair', removed: before, added: after }] }])
+  assert.deepEqual(partsOf(diff(before, after)), [
+    {
+      kind: 'nested',
+      head: loose('- fruit'),
+      parts: [
+        { kind: 'same', block: '- apples' },
+        { kind: 'pair', removed: '- pears', added: '- plums' },
+      ],
+    },
+  ])
 })
 
 test('an item with a reference link is narrowed, drawn with its link definitions', () => {
@@ -253,6 +344,7 @@ test('a paragraph with hard breaks marks only the lines that changed', () => {
   assert.deepEqual(diff('Opens at eight\\\nCloses at dusk\\\nNo dogs', 'Opens at nine\\\nCloses at dusk\\\nNo dogs'), [
     {
       kind: 'parts',
+      of: 'lines',
       parts: [
         { kind: 'pair', removed: 'Opens at eight', added: 'Opens at nine' },
         { kind: 'same', block: 'Closes at dusk\\\nNo dogs' },

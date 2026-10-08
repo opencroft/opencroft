@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { requireSession } from '@/app/_server/require-session'
 import { invokeExtensionAction } from '@/app/_authed/(extension-runtime)/_server/actions'
+import { requireSession } from '@/app/_server/require-session'
 
 // No caller found anywhere in this app or in any built-in extension's source
 // — checked before gating rather than assumed. Session-gated regardless: an

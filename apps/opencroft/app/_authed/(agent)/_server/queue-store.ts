@@ -145,6 +145,28 @@ export async function dropWaitingEntries(sessionKey: string): Promise<void> {
     .where(and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)))
 }
 
+/**
+ * The entries still waiting under a key, oldest first: what `load` restores,
+ * without the housekeeping `load` sets off. Also what a screen shows of a
+ * queue before its session has answered -- written behind the engine's own
+ * queue (see the header), so at most a moment behind it.
+ */
+export async function waitingEntries(sessionKey: string): Promise<QueuedPrompt[]> {
+  // A queue holds as many waiting messages as were sent, more than one
+  // SELECT can return, so it is read in bounded batches.
+  const rows: (typeof agentQueueEntry.$inferSelect)[] = []
+  for await (const row of boundedSelect<typeof agentQueueEntry.$inferSelect>(db, {
+    from: agentQueueEntry,
+    fields: getTableColumns(agentQueueEntry),
+    // Positions are not declared unique, so the id breaks a tie.
+    key: [agentQueueEntry.position, agentQueueEntry.id],
+    where: and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)),
+  })) {
+    rows.push(row)
+  }
+  return rows.map(toEntry).filter((entry): entry is QueuedPrompt => entry !== null)
+}
+
 export const queueStore: QueueStore = {
   async append(sessionKey, entry, placement) {
     await db
@@ -202,25 +224,14 @@ export const queueStore: QueueStore = {
   },
 
   async load(sessionKey) {
-    // A queue holds as many waiting messages as were sent, more than one
-    // SELECT can return, so it is read in bounded batches.
-    const rows: (typeof agentQueueEntry.$inferSelect)[] = []
-    for await (const row of boundedSelect<typeof agentQueueEntry.$inferSelect>(db, {
-      from: agentQueueEntry,
-      fields: getTableColumns(agentQueueEntry),
-      // Positions are not declared unique, so the id breaks a tie.
-      key: [agentQueueEntry.position, agentQueueEntry.id],
-      where: and(eq(agentQueueEntry.sessionKey, sessionKey), isNull(agentQueueEntry.removedAt)),
-    })) {
-      rows.push(row)
-    }
+    const entries = await waitingEntries(sessionKey)
     // After the read rather than before it, so an open never waits on
     // housekeeping. Not awaited for the same reason; a failed sweep only
     // leaves marked rows for the next one.
     void sweepRemovedEntries(new Date(Date.now() - REMOVED_ROW_TTL_MS)).catch((error) => {
       console.error('[queue-store] sweep of removed queue rows failed', error)
     })
-    return rows.map(toEntry).filter((entry): entry is QueuedPrompt => entry !== null)
+    return entries
   },
 
   async pendingKeys() {

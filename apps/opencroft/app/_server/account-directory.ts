@@ -2,6 +2,8 @@ import { db, user } from '@opencroft/db'
 import { inArray } from 'drizzle-orm'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { agentAvatarUrl } from '@/app/_server/agent-avatar'
+import { userAvatarUrl } from '@/app/_server/user-avatar'
 import { resolveUsernames } from '@/app/_server/usernames'
 
 /**
@@ -85,10 +87,10 @@ async function peopleById(userIds: string[]): Promise<Map<string, ResolvedAuthor
     .select({ id: user.id, name: user.name, image: user.image })
     .from(user)
     .where(inArray(user.id, userIds))
-  return new Map(rows.map((row) => [row.id, { name: row.name, avatarUrl: row.image ?? null }] as const))
+  return new Map(rows.map((row) => [row.id, { name: row.name, avatarUrl: userAvatarUrl(row) }] as const))
 }
 
 async function agentsByNodeId(): Promise<Map<string, ResolvedAuthor>> {
   const nodes = await listAgentNodesImpl()
-  return new Map(nodes.map((node) => [node.nodeId, { name: node.name, avatarUrl: node.avatar ?? null }] as const))
+  return new Map(nodes.map((node) => [node.nodeId, { name: node.name, avatarUrl: agentAvatarUrl(node) }] as const))
 }

@@ -160,12 +160,16 @@ export const definitions = [
   {
     name: 'extension_update',
     description:
-      'Re-install an installed extension from its source at a new (or the same) ref, replacing its folder only once the new one has built. Defaults to the latest version tag. Reuses the auth recorded at install time. A local extension is updated by pulling instead.',
+      "Re-install an installed extension from its source at a new (or the same) ref, replacing its folder only once the new one has built. An install on a branch moves to that branch's newest commit; one at a tag, to the latest version tag. Reuses the auth recorded at install time. A local extension is updated by pulling instead.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         ...INSTALLED_FOLDER_PARAM,
-        ref: { type: 'string', description: 'Optional tag or branch. Defaults to the latest version tag.' },
+        ref: {
+          type: 'string',
+          description:
+            'Optional tag or branch; a branch given here is followed by later updates. Defaults to the branch the install follows, else the latest version tag.',
+        },
       },
       required: ['extensionFolder'],
     },
@@ -203,7 +207,11 @@ export const definitions = [
           type: 'string',
           description: 'Extension id from the registry (e.g. "acme.demo-extension").',
         },
-        ref: { type: 'string', description: 'Optional tag or branch to install. Defaults to the latest version tag.' },
+        ref: {
+          type: 'string',
+          description:
+            'Optional tag or branch to install. Defaults to the branch the registry entry names, else the latest version tag.',
+        },
         asLocal: {
           type: 'boolean',
           description: 'Install as an editable development checkout in "local.<extension>".',
@@ -432,6 +440,9 @@ export const handlers: Record<string, ToolHandler> = {
         parts.push(`  ${ext.description}`)
       }
       parts.push(`  Repository: ${ext.repository}`)
+      if (ext.branch) {
+        parts.push(`  Branch: ${ext.branch}`)
+      }
       if (ext.author) {
         parts.push(`  Author: ${ext.author}`)
       }

@@ -206,7 +206,9 @@ export interface CodeBlockProps {
   code: string
   /**
    * The fence's info string or a bare language name (`ts`, `bash`, `json`).
-   * Aliases are resolved for you; anything unrecognised renders as plain text.
+   * Its first word labels the block, over the code; without one the block has
+   * no label. Aliases are resolved for the colours; anything unrecognised
+   * renders as plain text.
    */
   language?: string
   /** Offer the copy control, on by default. */
@@ -421,7 +423,8 @@ export interface MarkdownDiffViewProps {
    * wrapper of its own: the blocks are set side by side in the view's prose,
    * where their margins meet as they do on your page. It is also handed parts
    * of a block -- a list's items, a paragraph's lines -- each as markdown that
-   * stands on its own.
+   * stands on its own. Items of a loose list end with a link definition, which
+   * draws nothing and keeps them loose.
    */
   renderBlock: (markdown: string) => ReactNode
   /** Unchanged blocks kept around each change before a run folds. Defaults to 1. */
@@ -438,10 +441,13 @@ export interface MarkdownDiffViewProps {
  * heading, a list, a table, a callout -- with the host's markdown dialect, and
  * the blocks are compared by what they draw. An added block is framed green, a
  * removed one red; a changed one is shown removed then added, with the words
- * that differ marked in its rendered text. A changed tight list, or paragraph
- * with line breaks, is narrowed to the items or lines that changed, and a code
- * block whose code changed under the same fence line is a line diff of its
- * code; a `mermaid` diagram stays its two pictures. Longer unchanged runs fold
+ * that differ marked in its rendered text. A changed list, or paragraph with
+ * line breaks, is narrowed to the items or lines that changed, and a changed
+ * code block is a line diff of its code, set and coloured as the host's code
+ * blocks are -- removed lines in the earlier fence's language, the rest in the
+ * later's -- and labelled as they are, with its language, or `old → new` when
+ * its fence changed; a
+ * `mermaid` diagram stays its two pictures. Longer unchanged runs fold
  * into a row that opens in place. Two equal versions show "No changes".
  *
  * Every block is drawn by `renderBlock`, so links, code and documentation
@@ -532,9 +538,9 @@ export interface AppLinkProps extends Omit<ComponentProps<'a'>, 'href'> {
 export declare const AppLink: FC<AppLinkProps>
 
 /**
- * The App's heading in the title bar, after the space and App switchers: a
- * slash, then `children`. Rendered where the App already is and sent into the
- * bar, so it follows the App's state and leaves with it.
+ * The App's heading in the title bar, after the space and App switchers:
+ * `children` as the heading. Rendered where the App already is and sent into
+ * the bar, so it follows the App's state and leaves with it.
  */
 export declare const AppTitle: FC<{ children: ReactNode }>
 

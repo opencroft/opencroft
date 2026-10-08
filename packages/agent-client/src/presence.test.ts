@@ -41,8 +41,14 @@ test('hourly lands inside 30–45 minutes, deliberately short of the hour', () =
   // A full-hour wait lands exactly on the typical prompt-cache TTL and
   // reopens the conversation cold every time; the range reads at hourly
   // scale while staying inside the cache's lifetime.
-  assert.equal(presenceWindowMs({ kind: 'hourly' }, () => 0), HOURLY_WINDOW_MIN_MS)
-  assert.equal(presenceWindowMs({ kind: 'hourly' }, () => 1), HOURLY_WINDOW_MAX_MS)
+  assert.equal(
+    presenceWindowMs({ kind: 'hourly' }, () => 0),
+    HOURLY_WINDOW_MIN_MS,
+  )
+  assert.equal(
+    presenceWindowMs({ kind: 'hourly' }, () => 1),
+    HOURLY_WINDOW_MAX_MS,
+  )
   const middle = presenceWindowMs({ kind: 'hourly' }, () => 0.5)
   assert.ok(middle > HOURLY_WINDOW_MIN_MS && middle < HOURLY_WINDOW_MAX_MS, String(middle))
 })
@@ -55,8 +61,14 @@ test('online opens no window: the turn gate holds it, never a wait after', () =>
 })
 
 test('minutes lands inside its range at both ends of the roll', () => {
-  assert.equal(presenceWindowMs({ kind: 'minutes' }, () => 0), MINUTES_WINDOW_MIN_MS)
-  assert.equal(presenceWindowMs({ kind: 'minutes' }, () => 1), MINUTES_WINDOW_MAX_MS)
+  assert.equal(
+    presenceWindowMs({ kind: 'minutes' }, () => 0),
+    MINUTES_WINDOW_MIN_MS,
+  )
+  assert.equal(
+    presenceWindowMs({ kind: 'minutes' }, () => 1),
+    MINUTES_WINDOW_MAX_MS,
+  )
   const middle = presenceWindowMs({ kind: 'minutes' }, () => 0.5)
   assert.ok(middle > MINUTES_WINDOW_MIN_MS && middle < MINUTES_WINDOW_MAX_MS, String(middle))
 })

@@ -87,16 +87,22 @@ const ALIASES: Record<string, string> = {
 }
 
 /**
- * The grammar to highlight a fence with, or null when there is none to use.
+ * The language a fence names, as its author wrote it, or null for a fence that
+ * names none.
  *
  * A fence's info string carries more than a language in the wild -- `ts {1,3}`,
  * `bash title="install"` -- so only the first word is read.
  */
+export function fenceLanguage(info?: string): string | null {
+  return info?.trim().split(/[\s:{]/)[0] || null
+}
+
+/** The grammar to highlight a fence with, or null when there is none to use. */
 export function resolveLanguage(info?: string): string | null {
-  if (!info) {
+  const first = fenceLanguage(info)?.toLowerCase()
+  if (!first) {
     return null
   }
-  const first = info.trim().toLowerCase().split(/[\s:{]/)[0]
   const name = ALIASES[first] ?? first
   return name in GRAMMARS ? name : null
 }
@@ -152,13 +158,15 @@ function loadGrammar(instance: HighlighterCore, name: string): Promise<boolean> 
 }
 
 /**
- * The classes that make a code block scroll sideways instead of wrapping, on
- * the `pre` that `highlight` returns and on the plain one a caller renders
- * before it. A wrapped line of code loses the indentation the reader is
- * following. The classes travel with the markup, so a block scrolls wherever it
- * is installed, whichever stylesheet the host has.
+ * The classes of a code block's `pre`, on the one `highlight` returns and on
+ * the plain one a caller renders before it. The code scrolls sideways instead
+ * of wrapping: a wrapped line of code loses the indentation the reader is
+ * following. And the `pre` draws no box -- no margin, border, background or
+ * rounding -- because the frame around it does, with the language over the
+ * code. The classes travel with the markup, so a block looks the same wherever
+ * it is installed, whichever stylesheet the host has.
  */
-export const CODE_SCROLL_CLASS = 'overflow-x-auto whitespace-pre'
+export const CODE_PRE_CLASS = 'm-0 rounded-none border-0 bg-transparent overflow-x-auto whitespace-pre'
 
 export interface HighlightOptions {
   /**
@@ -193,11 +201,11 @@ export async function highlight(
       lang: language,
       themes: { light: LIGHT_THEME, dark: DARK_THEME },
       defaultColor: false,
-      // Marks the element as a block that owns its own box: it scrolls sideways
-      // rather than wrapping, and the mark is what the stylesheet hangs the
-      // border on where no prose draws one. The colours do not hang on it --
-      // they hang on shiki's own class -- so a caller that brings its own box
-      // still gets coloured text.
+      // Marks the element as a code block's: it scrolls sideways rather than
+      // wrapping, inside the frame that draws its box, and the mark is what
+      // the stylesheet sets its padding and size on where no prose does. The
+      // colours do not hang on it -- they hang on shiki's own class -- so a
+      // caller that brings its own box still gets coloured text.
       transformers: options?.plain
         ? [
             {
@@ -216,7 +224,7 @@ export async function highlight(
             {
               pre(node) {
                 node.properties['data-code-block'] = ''
-                this.addClassToHast(node, CODE_SCROLL_CLASS)
+                this.addClassToHast(node, CODE_PRE_CLASS)
               },
             },
           ],
@@ -264,6 +272,25 @@ export function prepareLanguage(language: string): Promise<boolean> {
  * returned empty, so a caller decorating a document adds nothing for them.
  */
 export function tokenize(code: string, language: string): CodeToken[] | null {
+  return tokensOf(code, language)
+}
+
+/**
+ * The code's coloured runs for a fence's info string (`ts`, `json title="a"`),
+ * once its grammar has arrived; null when the fence names no grammar there is
+ * to use. The asynchronous counterpart of `tokenize`, for a caller that renders
+ * rather than decorates -- a diff colouring each version of a code block in
+ * its own fence's language.
+ */
+export async function codeColours(code: string, info: string): Promise<CodeToken[] | null> {
+  const language = resolveLanguage(info)
+  if (!language || !(await prepareLanguage(language))) {
+    return null
+  }
+  return tokensOf(code, language)
+}
+
+function tokensOf(code: string, language: string): CodeToken[] | null {
   const instance = ready
   if (!instance || !grammarsReady[language]) {
     return null

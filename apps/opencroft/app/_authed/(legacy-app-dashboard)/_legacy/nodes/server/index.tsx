@@ -28,7 +28,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'u
 import { Separator } from 'ui/separator'
 import { Spinner } from 'ui/spinner'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { type KeyEntry, listKeys } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
 import { applyServerConfig, resolveServer } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/server/actions'
@@ -42,7 +45,12 @@ import {
   spawnFileBrowserWindow,
   spawnTerminalWindow,
 } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/spawn-window'
-import { checkDocker, getServerStats, installDockerUbuntu, type ServerStats } from '@/app/_authed/(server)/_server/remote'
+import {
+  checkDocker,
+  getServerStats,
+  installDockerUbuntu,
+  type ServerStats,
+} from '@/app/_authed/(server)/_server/remote'
 import { type DockerFeature, type ServerFeature, type SshFeature, slug } from '@/app/_authed/(server)/_server/types'
 
 export type ServerData = {

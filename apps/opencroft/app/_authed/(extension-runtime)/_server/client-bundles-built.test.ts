@@ -14,7 +14,7 @@ import test, { after, beforeEach } from 'node:test'
 import { promisify } from 'node:util'
 
 import { toastStore } from '@/lib/toast-store'
-import { listExtensionManifestsImpl } from './extension-action-impl'
+import { listExtensionClientsImpl, listExtensionManifestsImpl } from './extension-action-impl'
 import { clientBundleVersion } from './loader'
 
 const run = promisify(execFile)
@@ -157,6 +157,54 @@ test('a failing extension listed on every page load is announced once', needsGit
   }
 
   assert.equal(events.filter((event) => event.includes('build failed') && event.includes(id)).length, 1)
+})
+
+// Every signed-in page asks for this listing, so it carries what importing a
+// bundle takes and nothing else: a manifest's action descriptions and input
+// schemas are for agents and the extension pages, which read the full manifest.
+test('the browser listing names each client bundle with only what importing it takes', needsGit, async () => {
+  const { id, dir } = await makeClientExtension('described', 'export default {}\n')
+  await fs.writeFile(
+    path.join(dir, 'extension.json'),
+    JSON.stringify({
+      id,
+      name: id,
+      version: '0.0.0',
+      description: 'an extension with a long description',
+      nodes: [
+        {
+          type: 'widget',
+          name: 'Widget',
+          actions: [{ id: 'run', label: 'Run', description: 'runs it', inputSchema: { type: 'object' } }],
+        },
+      ],
+    }),
+  )
+  await commitAll(dir, 'describe')
+  const serverOnly = 'local.server-only'
+  const serverOnlyDir = path.join(process.env.OPENCROFT_DATA_DIR as string, 'extensions', serverOnly)
+  await fs.mkdir(serverOnlyDir, { recursive: true })
+  await fs.writeFile(
+    path.join(serverOnlyDir, 'extension.json'),
+    JSON.stringify({ id: serverOnly, name: serverOnly, version: '0.0.0' }),
+  )
+
+  const clients = await listExtensionClientsImpl()
+
+  assert.deepEqual(
+    clients.find((client) => client.id === id),
+    { id, folder: id, clientVersion: await clientBundleVersion(id), clientIcons: [] },
+  )
+  assert.ok(await clientBundleVersion(id), 'the bundle was built, so the version above is a real one')
+  assert.equal(
+    clients.some((client) => client.id === serverOnly),
+    false,
+    'an extension without a client bundle is not listed',
+  )
+  assert.ok(
+    (await listExtensionManifestsImpl()).some((manifest) => manifest.id === serverOnly),
+    'while the full listing does have it, so its absence above is the filter',
+  )
 })
 
 test('an extension that fails to build does not stop the others', needsGit, async () => {

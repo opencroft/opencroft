@@ -38,23 +38,14 @@ const shape = (parts: readonly ChatUserMessagePart[]) =>
 test('a run ends when the author changes, and a returning sender opens a new one', () => {
   // kim, kim / lee / kim -- three runs, and the last kim is not folded
   // back into the first.
-  assert.deepEqual(shape([said('kim'), said('kim'), said('lee'), said('kim')]), [
-    ['kim', 'kim'],
-    ['lee'],
-    ['kim'],
-  ])
+  assert.deepEqual(shape([said('kim'), said('kim'), said('lee'), said('kim')]), [['kim', 'kim'], ['lee'], ['kim']])
 })
 
 test('the comparison is against the message above, not against everyone seen so far', () => {
   // The same claim isolated, because it is the one a "have we already shown
   // this author?" implementation gets wrong while passing every other case: it
   // would produce two runs here instead of four.
-  assert.deepEqual(shape([said('kim'), said('lee'), said('kim'), said('lee')]), [
-    ['kim'],
-    ['lee'],
-    ['kim'],
-    ['lee'],
-  ])
+  assert.deepEqual(shape([said('kim'), said('lee'), said('kim'), said('lee')]), [['kim'], ['lee'], ['kim'], ['lee']])
 })
 
 test('a new turn always opens a new run, even when the same sender spoke last', () => {

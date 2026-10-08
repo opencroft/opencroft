@@ -42,9 +42,7 @@ test('a completed stream dispatches a downstream text-generation.run with no req
       { id: 'src-1', type: 'builtin.core.prompt', position: { x: 0, y: 0 }, data: {} },
       { id: 'tg-1', type: 'builtin.core.text-generation', position: { x: 200, y: 0 }, data: {} },
     ],
-    edges: [
-      { id: 'edge-1', source: 'src-1', target: 'tg-1', sourceHandle: 'text-out', targetHandle: 'text-in' },
-    ],
+    edges: [{ id: 'edge-1', source: 'src-1', target: 'tg-1', sourceHandle: 'text-out', targetHandle: 'text-in' }],
   })
 
   const errors: string[] = []

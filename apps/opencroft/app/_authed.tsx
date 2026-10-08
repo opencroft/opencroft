@@ -38,7 +38,7 @@ export const Route = createFileRoute('/_authed')({
   // and /login was root's child, so it rendered inside AppShell: 24KB of
   // signed-out sidebar HTML plus this loader's data, shipped unauthenticated.
   beforeLoad: async ({ location }) => {
-    const { needsSetup, signedIn, isAdmin } = await getAuthState()
+    const { needsSetup, signedIn, isAdmin, account } = await getAuthState()
     if (needsSetup) {
       // Nobody has set this instance up: there is no account to sign in with,
       // so the login form would be a dead end.
@@ -58,7 +58,12 @@ export const Route = createFileRoute('/_authed')({
     // entry whose visibility drifted from the redirect would be an entry that
     // bounces whoever clicks it — worse than no entry at all. One call, one
     // truth, both consumers.
-    return { isAdmin }
+    //
+    // The account travels the same way, and for a second reason: route
+    // context is part of the server-rendered page, so the title bar draws the
+    // signed-in person in the first paint instead of after the browser has
+    // loaded its code and asked who is signed in.
+    return { isAdmin, account }
   },
   // The icons the chrome draws by name -- an app in the title bar, a node on
   // the canvas, a settings page -- are the ones installed extensions declare.

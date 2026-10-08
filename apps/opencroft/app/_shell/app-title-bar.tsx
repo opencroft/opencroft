@@ -1,10 +1,10 @@
 'use client'
 
-import { useSession } from '@opencroft/auth/client'
 import { THEME_PREFERENCES, type ThemePreference } from '@opencroft/auth/theme'
-import { Link, useLocation, useRouter } from '@tanstack/react-router'
+import { Link, useLocation, useRouteContext, useRouter } from '@tanstack/react-router'
 import { Heart, LogOut, type LucideIcon, MessagesSquare, Monitor, Moon, Puzzle, SettingsIcon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from 'ui/avatar'
 import {
   DropdownMenu,
@@ -19,7 +19,7 @@ import {
 } from 'ui/dropdown-menu'
 import { AppSwitcher, type SwitcherApp } from 'ui/layouts/app-switcher'
 import { SpaceSelector } from 'ui/layouts/space-selector'
-import { TitleBar, TitleBarIconButton, TitleBarSeparator } from 'ui/layouts/title-bar'
+import { TitleBar, TitleBarIconButton, type TitleBarOpenFailure, TitleBarPageLinks } from 'ui/layouts/title-bar'
 import { Logo } from 'ui/logo'
 import { useSidebar } from 'ui/sidebar'
 import { Wordmark } from 'ui/wordmark'
@@ -30,6 +30,7 @@ import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/typ
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { DEFAULT_GRAPH_SLUG, GRAPH_APP_TYPE, type SpaceSummary } from '@/app/_authed/(space)/_server/types'
 import { useBuildLabel } from '@/app/_components/dev-build-badge'
+import { useHistoryReach } from '@/app/_shell/history-reach'
 import { SPONSOR_URL } from '@/app/_shell/sponsor'
 import { useThemePreference } from '@/app/_shell/theme-preference'
 import { useSignOut } from '@/app/(auth)/_components/sign-out-item'
@@ -135,26 +136,48 @@ function ThemeChoices() {
   )
 }
 
+function announceCopy(copied: boolean) {
+  if (copied) {
+    toast('Link copied')
+  } else {
+    toast.error('The link could not be copied.')
+  }
+}
+
+const OPEN_FAILURE_NOTICES: Record<TitleBarOpenFailure, string> = {
+  unreadable: 'The clipboard could not be read.',
+  'not-a-link': 'The clipboard does not hold a link.',
+  blocked: 'The browser blocked the new window.',
+}
+
+function announceOpenFailure(reason: TitleBarOpenFailure) {
+  toast.error(OPEN_FAILURE_NOTICES[reason])
+}
+
 function AccountMenu() {
-  const { data: session } = useSession()
+  const { account } = useRouteContext({ from: '/_authed' })
   const signOut = useSignOut()
   const buildLabel = useBuildLabel()
-  const user = session?.user
+  const router = useRouter()
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<TitleBarIconButton aria-label='Account' title={user?.email} />}>
+      <DropdownMenuTrigger render={<TitleBarIconButton aria-label='Account' title={account.email} />}>
         <Avatar className='size-6'>
-          {user?.image && <AvatarImage src={user.image} alt='' />}
-          <AvatarFallback className='text-xs'>{initials(user?.name || user?.email || '?')}</AvatarFallback>
+          {/* Kept mounted so the server-rendered page already carries the image. */}
+          {account.avatarUrl && <AvatarImage src={account.avatarUrl} alt='' keepMounted />}
+          <AvatarFallback className='text-xs'>{initials(account.name || account.email)}</AvatarFallback>
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-56'>
-        {user && (
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className='truncate'>{user.name || user.email}</DropdownMenuLabel>
-          </DropdownMenuGroup>
-        )}
+        <TitleBarPageLinks
+          onCopied={announceCopy}
+          onOpenFailed={announceOpenFailure}
+          onNavigate={(path) => router.history.push(path)}
+        />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className='truncate'>{account.name || account.email}</DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem render={<Link to='/settings' />}>
           <SettingsIcon />
@@ -193,14 +216,15 @@ function AccountMenu() {
 }
 
 /**
- * The app's title bar: the sidebar button when the page has a sidebar, the
- * mark linking home, where the reader is (space, then app), chats and the
+ * The app's title bar: Back and Forward when running as an installed app, the
+ * sidebar button when the page has a sidebar, the mark linking home, where the reader is (space, then app), chats and the
  * account menu.
  */
 export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; hasSidebar: boolean }) {
   const pathname = useLocation({ select: (l) => l.pathname })
   const router = useRouter()
   const { toggleSidebar } = useSidebar()
+  const { canGoBack, canGoForward } = useHistoryReach()
   const slug = slugFromPath(pathname)
   const apps = useSpaceApps(slug, pathname)
 
@@ -216,6 +240,10 @@ export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; ha
 
   return (
     <TitleBar
+      onHistoryBack={() => router.history.back()}
+      onHistoryForward={() => router.history.forward()}
+      canGoBack={canGoBack}
+      canGoForward={canGoForward}
       onMenu={hasSidebar ? toggleSidebar : undefined}
       brand={
         <Link to='/' aria-label='Home'>
@@ -239,7 +267,6 @@ export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; ha
               createHref='/spaces?new=1'
               onNavigate={navigate}
             />
-            <TitleBarSeparator />
             <AppSwitcher
               apps={apps}
               activeId={activeApp}

@@ -421,6 +421,59 @@ test('the toolbar ends with the Blocks menu, after the buttons it already had', 
   assert.match(buttons.at(-1)?.textContent ?? '', /Blocks/)
 })
 
+test('a code block draws in the code block frame, labelled with its language outside the editable code', async () => {
+  const changes = await mount('```yaml\nclosing: 19:00\n```\n\n```\nplain\n```')
+  const frames = [...container.querySelectorAll<HTMLElement>('.ProseMirror [data-code-frame]')]
+  assert.equal(frames.length, 2, 'both code blocks are framed')
+  const [named, unnamed] = frames
+  const label = named.querySelector<HTMLElement>('[data-code-label]')
+  assert.equal(label?.textContent, 'yaml')
+  assert.equal(label?.getAttribute('contenteditable'), 'false')
+  assert.equal(named.querySelector('pre[data-code-block] code')?.textContent, 'closing: 19:00')
+  assert.equal(unnamed.querySelector('[data-code-label]'), null, 'a block naming no language has no label')
+  // The label is drawn, not written: the code block's text is its code alone.
+  const editor = mountedEditor()
+  const texts: string[] = []
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'codeBlock') {
+      texts.push(node.textContent)
+    }
+  })
+  assert.deepEqual(texts, ['closing: 19:00', 'plain'])
+  assert.deepEqual(changes, [])
+})
+
+test('a code block’s label follows its language as the language changes', async () => {
+  await mount('```yaml\nclosing: 19:00\n```')
+  const editor = mountedEditor()
+  await act(async () => {
+    editor.chain().setTextSelection(2).updateAttributes('codeBlock', { language: 'json' }).run()
+  })
+  assert.equal(container.querySelector('[data-code-label]')?.textContent, 'json')
+  await act(async () => {
+    editor.chain().updateAttributes('codeBlock', { language: null }).run()
+  })
+  assert.equal(container.querySelector('[data-code-label]'), null)
+})
+
+test('a code block’s lines keep the `pre`’s white-space, so a long line scrolls instead of wrapping', async () => {
+  await mount('```ts\nexport const line = "a line of code far longer than the editor is wide"\n```')
+  const pre = container.querySelector<HTMLElement>('.ProseMirror pre[data-code-block]')
+  assert.ok(pre)
+  // Every element between the `pre` and the text inherits its white-space;
+  // an inline value of its own would outrank the stylesheet's `pre`.
+  const between: HTMLElement[] = []
+  for (let el = pre.querySelector<HTMLElement>('[data-node-view-content]'); el && el !== pre; ) {
+    between.push(el)
+    el = el.querySelector<HTMLElement>(':scope > *')
+  }
+  assert.ok(between.length > 0, 'the code is drawn inside the pre')
+  assert.deepEqual(
+    between.map((el) => el.style.whiteSpace || 'inherit'),
+    between.map(() => 'inherit'),
+  )
+})
+
 test('a callout draws as the kit callout, and its title field writes the title back', async () => {
   const changes = await mount(':::warning{title="Before"}\nBody.\n:::')
   const title = container.querySelector<HTMLInputElement>('input[aria-label="Callout title"]')

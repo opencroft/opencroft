@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { getSetting, upsertSettingCas } from '@/server/data'
 
 // Folder structure and order for ONE group chat's thread list.
@@ -28,10 +30,12 @@ function settingId(groupChatId: string, list: ThreadList): string {
   return `${SETTING_PREFIX[list]}${groupChatId}`
 }
 
+// No open/closed state: that is each reader's own, kept on their side -- see
+// folder-open-cache.ts. A row written before that may still carry an `open`;
+// nothing reads it.
 export interface ThreadLayoutFolder {
   id: string
   name: string
-  open?: boolean
   threadIds: string[]
 }
 
@@ -190,7 +194,7 @@ export async function updateThreadLayout(
  * The thread is taken out of wherever it was first -- top level or another
  * folder -- so it appears once. The first folder with exactly that name takes
  * it; with none, a folder is created the way the list's own "Move to new
- * folder" creates one: open, after the last folder. A folder the thread leaves
+ * folder" creates one: after the last folder. A folder the thread leaves
  * is kept even when empty, as it is after a person drags its last thread out.
  */
 export function withThreadInFolder(layout: ThreadLayout, threadId: string, folderName: string): ThreadLayout | null {
@@ -210,7 +214,7 @@ export function withThreadInFolder(layout: ThreadLayout, threadId: string, folde
     const lastFolder = entries.findLastIndex((entry) => entry.kind === 'folder')
     entries.splice(lastFolder + 1, 0, {
       kind: 'folder',
-      folder: { id: unusedFolderId(layout), name: folderName, open: true, threadIds: [threadId] },
+      folder: { id: newFolderId(), name: folderName, threadIds: [threadId] },
     })
   }
   return { entries }
@@ -262,14 +266,13 @@ export function withoutThread(layout: ThreadLayout, threadId: string): ThreadLay
   }
 }
 
-/** Same id scheme as the list component's, skipping any the layout holds. */
-function unusedFolderId(layout: ThreadLayout): string {
-  const taken = new Set(layout.entries.flatMap((entry) => (entry.kind === 'folder' ? [entry.folder.id] : [])))
-  let n = 1
-  while (taken.has(`folder-${n}`)) {
-    n++
-  }
-  return `folder-${n}`
+/**
+ * Same id scheme as the list component's. Never reused, even once the folder
+ * holding it is deleted: each reader remembers per folder id whether they left
+ * it open, and a reused id would hand a deleted folder's state to a new one.
+ */
+function newFolderId(): string {
+  return `folder-${randomUUID()}`
 }
 
 /** The name of the folder each filed thread is in. A top-level thread has no entry. */

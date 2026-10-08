@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { type CSSProperties, useMemo, useState } from 'react'
 
 import { cn } from 'cn'
 
@@ -138,18 +138,10 @@ const MAX_SPAN_LINE_LENGTH = 400
 // the search stops there.
 const MAX_WORD_EDITS = 50
 
-// Below this share of their visible characters in common, two lines are
-// treated as rewritten: marking the few characters they happen to share would
-// suggest an edit that was not made, so all of each line is marked instead.
-const MIN_SHARED_SHARE = 0.5
-
 // Words, runs of whitespace, and each other character on its own.
 const WORD = /[\p{L}\p{N}_]+|\s+|[^\p{L}\p{N}_\s]/gu
 
 const isBlank = (text: string) => text.trim() === ''
-
-const visibleLength = (texts: readonly string[]) =>
-  texts.reduce((sum, text) => sum + text.replace(/\s+/g, '').length, 0)
 
 // One side of a word diff as spans: adjacent words of the same kind joined, and
 // whitespace between two changed words marked with them, so a changed phrase
@@ -175,9 +167,9 @@ function sideSpans(words: readonly DiffLine[]): LineSpan[] {
 const rewritten = (text: string): LineSpan[] => (text === '' ? [] : [{ text, changed: true }])
 
 // What differs between a removed line and the added line that replaced it,
-// as spans of each: the differing words, or all of each line when the two are
-// too different for a partial mark to be true. Null when either is longer than
-// `maxLength` characters.
+// as spans of each: the differing words, however few the two share, or all of
+// each line when they differ in more words than are worth searching. Null when
+// either is longer than `maxLength` characters.
 export function wordDiff(
   removed: string,
   added: string,
@@ -195,11 +187,6 @@ export function wordDiff(
     return whole
   }
   const words = [...a.slice(0, head).map(line('same')), ...middle, ...a.slice(a.length - tail).map(line('same'))]
-  const shared = visibleLength(words.filter((word) => word.kind === 'same').map((word) => word.text))
-  const total = visibleLength(a) + visibleLength(b)
-  if (total === 0 || (2 * shared) / total < MIN_SHARED_SHARE) {
-    return whole
-  }
   return {
     removed: sideSpans(words.filter((word) => word.kind !== 'added')),
     added: sideSpans(words.filter((word) => word.kind !== 'removed')),
@@ -208,8 +195,8 @@ export function wordDiff(
 
 // The changed spans of every changed line that has them. Within each run of
 // changed lines, the removed lines are paired in order with the added ones,
-// the n-th with the n-th; a line left over, or one too long to compare, has
-// none and keeps only the line's colour.
+// the n-th with the n-th, and a pair too long to compare is marked whole, as a
+// rewrite. A line left over has no pair and keeps only the line's colour.
 export function changedSpans(diff: readonly DiffLine[]): Map<DiffLine, LineSpan[]> {
   const spans = new Map<DiffLine, LineSpan[]>()
   let i = 0
@@ -228,11 +215,12 @@ export function changedSpans(diff: readonly DiffLine[]): Map<DiffLine, LineSpan[
       }
     }
     for (let pair = 0; pair < Math.min(removed.length, added.length); pair++) {
-      const words = wordDiff(removed[pair].text, added[pair].text)
-      if (words) {
-        spans.set(removed[pair], words.removed)
-        spans.set(added[pair], words.added)
+      const words = wordDiff(removed[pair].text, added[pair].text) ?? {
+        removed: rewritten(removed[pair].text),
+        added: rewritten(added[pair].text),
       }
+      spans.set(removed[pair], words.removed)
+      spans.set(added[pair], words.added)
     }
   }
   return spans
@@ -308,11 +296,96 @@ const SIGN_TONE: Record<DiffLine['kind'], string> = {
 // A changed span is the line's own tint again, stronger, over the line's.
 const SPAN_TONE: Record<DiffLine['kind'], string> = {
   same: '',
-  added: 'rounded-sm bg-success/30',
-  removed: 'rounded-sm bg-destructive/30',
+  added: 'bg-success/30',
+  removed: 'bg-destructive/30',
 }
 
-function DiffLineRow({ line: entry, spans }: { line: DiffLine; spans?: readonly LineSpan[] }) {
+/**
+ * A coloured run of a line's code, as offsets into the line's text. `style`
+ * holds the run's colours as CSS declarations -- a syntax highlighter's
+ * custom properties, `--shiki-light:#24292f;--shiki-dark:#9cdcfe` -- and the
+ * run's text carries the `shiki-token` class, so the host's stylesheet picks
+ * the colour for its theme exactly as it does for its own code blocks.
+ */
+export interface ColourRun {
+  start: number
+  end: number
+  style: string
+}
+
+// A run's declarations as a React style object; custom properties keep their
+// names as written.
+function styleOf(declarations: string): CSSProperties {
+  const style: Record<string, string> = {}
+  for (const declaration of declarations.split(';')) {
+    const colon = declaration.indexOf(':')
+    if (colon > 0) {
+      style[declaration.slice(0, colon).trim()] = declaration.slice(colon + 1).trim()
+    }
+  }
+  return style as CSSProperties
+}
+
+interface Piece {
+  text: string
+  changed: boolean
+  style?: string
+}
+
+// A line's text in pieces that each keep one word mark and one colour: the
+// word marks over the colours, as a reader sees a highlighted line marked.
+export function linePieces(text: string, spans: readonly LineSpan[] = [], colours: readonly ColourRun[] = []): Piece[] {
+  const edges = new Set([0, text.length])
+  let at = 0
+  for (const span of spans) {
+    edges.add(at)
+    at += span.text.length
+    edges.add(at)
+  }
+  for (const run of colours) {
+    edges.add(Math.max(0, Math.min(text.length, run.start)))
+    edges.add(Math.max(0, Math.min(text.length, run.end)))
+  }
+  const sorted = [...edges].sort((a, b) => a - b)
+  const pieces: Piece[] = []
+  // The spans and the runs both go along the line in order, so one cursor
+  // into each keeps up with the pieces.
+  let span = 0
+  let spanEnd = spans[0]?.text.length ?? 0
+  let run = 0
+  for (let index = 0; index < sorted.length - 1; index++) {
+    const [from, to] = [sorted[index], sorted[index + 1]]
+    if (from === to) {
+      continue
+    }
+    while (span < spans.length && from >= spanEnd) {
+      span++
+      spanEnd += spans[span]?.text.length ?? 0
+    }
+    while (run < colours.length && colours[run].end <= from) {
+      run++
+    }
+    const changed = span < spans.length && spans[span].changed
+    const style = run < colours.length && colours[run].start <= from ? colours[run].style : undefined
+    const last = pieces[pieces.length - 1]
+    if (last && last.changed === changed && last.style === style) {
+      last.text += text.slice(from, to)
+    } else {
+      pieces.push({ text: text.slice(from, to), changed, style })
+    }
+  }
+  return pieces
+}
+
+function DiffLineRow({
+  line: entry,
+  spans,
+  colours,
+}: {
+  line: DiffLine
+  spans?: readonly LineSpan[]
+  colours?: readonly ColourRun[]
+}) {
   return (
     <div className={cn('flex min-w-0', LINE_TONE[entry.kind])}>
       <span aria-hidden className={cn('w-4 shrink-0 select-none text-center', SIGN_TONE[entry.kind])}>
@@ -321,12 +394,16 @@ function DiffLineRow({ line: entry, spans }: { line: DiffLine; spans?: readonly 
       <span className='sr-only'>{entry.kind === 'same' ? '' : `${entry.kind}: `}</span>
       {/* An empty line still takes a row, so a removed blank line is visible. */}
       <span className='min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere pr-2'>
-        {spans?.length
-          ? spans.map((span, index) => (
-              // Spans are derived from the line alone and never reordered.
-              // biome-ignore lint/suspicious/noArrayIndexKey: a span's position is its identity
-              <span key={index} className={span.changed ? SPAN_TONE[entry.kind] : undefined}>
-                {span.text}
+        {spans?.length || colours?.length
+          ? linePieces(entry.text, spans, colours).map((piece, index) => (
+              // Pieces are derived from the line alone and never reordered.
+              // biome-ignore lint/suspicious/noArrayIndexKey: a piece's position is its identity
+              <span
+                key={index}
+                className={cn(piece.changed && SPAN_TONE[entry.kind], piece.style && 'shiki-token')}
+                style={piece.style ? styleOf(piece.style) : undefined}
+              >
+                {piece.text}
               </span>
             ))
           : entry.text || ' '}
@@ -335,30 +412,58 @@ function DiffLineRow({ line: entry, spans }: { line: DiffLine; spans?: readonly 
   )
 }
 
+export interface DiffViewProps {
+  diff: readonly DiffLine[]
+  /** Unchanged lines kept around each change before a run folds. */
+  context?: number
+  /**
+   * `compact`, the default, is the small type of a tool call's diff. `code`
+   * sets the lines as the prose around it sets a code block -- its font size
+   * and line height, from `--prose-pre-code-size` and
+   * `--prose-pre-code-line-height` -- and shows a diff with no changes as its
+   * lines rather than saying so.
+   */
+  variant?: 'compact' | 'code'
+  /**
+   * Each line's colours, for a diff of code a highlighter has coloured: runs
+   * in order along the line, none overlapping another.
+   */
+  colours?: ReadonlyMap<DiffLine, readonly ColourRun[]>
+}
+
+const VARIANT_TYPE: Record<NonNullable<DiffViewProps['variant']>, string> = {
+  compact: 'text-[11px] leading-4',
+  // A code block is set at 0.85em of the prose, and its code at the scale's
+  // own share of that: one size for the whole diff, which its rows inherit.
+  code: 'text-[length:calc(0.85*var(--prose-pre-code-size,1em))] leading-[var(--prose-pre-code-line-height,1.5)]',
+}
+
 // One line-level diff renderer for every edit-shaped call. Long lines wrap
 // rather than scroll, so it reads the same at phone width as on a desktop;
 // unchanged runs fold into a row that opens them in place; within a replaced
 // line, what differs from the line it replaced is marked.
-export function DiffView({ diff, context = CONTEXT_LINES }: { diff: readonly DiffLine[]; context?: number }) {
+export function DiffView({ diff, context = CONTEXT_LINES, variant = 'compact', colours }: DiffViewProps) {
   const [opened, setOpened] = useState<ReadonlySet<number>>(new Set())
   const spans = useMemo(() => changedSpans(diff), [diff])
   const { added, removed } = diffStats(diff)
-  if (added === 0 && removed === 0) {
+  const unchanged = added === 0 && removed === 0
+  if (unchanged && variant === 'compact') {
     return <div className='px-3 py-2 text-xs text-muted-foreground'>No changes</div>
   }
-  const rows = foldUnchanged(diff, context)
+  // Code with no changes is still shown, every line of it.
+  const rows: DiffRow[] = unchanged ? diff.map((line) => ({ kind: 'line', line })) : foldUnchanged(diff, context)
   return (
-    <div className='min-w-0 py-1 font-mono text-[11px] leading-4'>
+    <div className={cn('min-w-0 py-1 font-mono', VARIANT_TYPE[variant])}>
       {rows.map((row, index) =>
         row.kind === 'line' ? (
           // Rows are derived from the diff alone and never reordered, so a
           // row's position is its identity.
           // biome-ignore lint/suspicious/noArrayIndexKey: a row's position is its identity
-          <DiffLineRow key={index} line={row.line} spans={spans.get(row.line)} />
+          <DiffLineRow key={index} line={row.line} spans={spans.get(row.line)} colours={colours?.get(row.line)} />
         ) : opened.has(index) ? (
           row.lines.map((entry, offset) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a row's position is its identity
-            <DiffLineRow key={`${index}.${offset}`} line={entry} />
+            <DiffLineRow key={`${index}.${offset}`} line={entry} colours={colours?.get(entry)} />
           ))
         ) : (
           <button

@@ -9,11 +9,11 @@ import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
 import {
   getGroupChatThreadLayout,
   getMyGroupChatView,
+  listDirectoryAgentsForPicker,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
-import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 import { pageTitle } from '@/app/_lib/page-title'
 
 // Inside one group chat: its topic, who is taking part, and its threads.
@@ -29,19 +29,17 @@ import { pageTitle } from '@/app/_lib/page-title'
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats_/$groupChatId')({
   loader: async ({ params }) =>
     loadOrRefusal(async () => {
-      // Sequential rather than concurrent: if the membership check refuses, the
-      // second request is pointless, and firing both would mean two refusals to
-      // reconcile instead of one to report.
-      const chat = await getMyGroupChatView({ data: params.groupChatId })
-      const threads = await listGroupChatThreadsView({ data: params.groupChatId })
-      // The picker's candidates, the chat's pins, and how its threads are
-      // arranged. Loaded here rather than on opening anything so the panel and
-      // the actions are usable the moment the screen is: all four are
-      // membership-independent once the two reads above have already passed,
-      // so none of them can refuse.
-      const [directory, agents, pins, layout] = await Promise.all([
+      // All at once: each round trip is a full one on a slow link. The
+      // membership-gated reads refuse a non-member and a missing chat the same
+      // way, so whichever refusal arrives first is the one to report. The
+      // picker's candidates, the chat's pins and how its threads are arranged
+      // are loaded here rather than on opening anything, so the panel and the
+      // actions are usable the moment the screen is.
+      const [chat, threads, directory, agents, pins, layout] = await Promise.all([
+        getMyGroupChatView({ data: params.groupChatId }),
+        listGroupChatThreadsView({ data: { groupChatId: params.groupChatId, list: 'active' } }),
         listDirectoryUsersForPicker(),
-        listAgentNodes(),
+        listDirectoryAgentsForPicker(),
         listMyGroupChatPins({ data: params.groupChatId }),
         getGroupChatThreadLayout({ data: { groupChatId: params.groupChatId, list: 'active' } }),
       ])

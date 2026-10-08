@@ -65,10 +65,11 @@ import {
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
 import { storedGroupChatKeys } from '@/app/_authed/(group-chats)/_server/orphaned-session-keys'
-import { moveThreadBetweenLists, threadListOf } from '@/app/_authed/(group-chats)/_server/thread-archive'
+import { inThreadList, moveThreadBetweenLists, threadListOf } from '@/app/_authed/(group-chats)/_server/thread-archive'
 import {
   folderNameByThreadId,
   readThreadLayout,
+  type ThreadList,
   updateThreadLayout,
   withThreadInFolder,
 } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
@@ -515,10 +516,34 @@ export async function findThreadBySlug(
   return aliased ?? null
 }
 
-/** Every thread in a group chat. Membership-gated, not filtered after the fact. */
-export async function listThreadsInGroupChat(request: Request, groupChatId: string): Promise<GroupChatThreadSummary[]> {
+/**
+ * The threads in a group chat -- every one, or only those of one list.
+ * Membership-gated, not filtered after the fact.
+ */
+export async function listThreadsInGroupChat(
+  request: Request,
+  groupChatId: string,
+  list?: ThreadList,
+): Promise<GroupChatThreadSummary[]> {
   await requireGroupChatMember(request, groupChatId)
-  return db.select(threadSummaryColumns).from(groupChatThread).where(eq(groupChatThread.groupChatId, groupChatId))
+  return db
+    .select(threadSummaryColumns)
+    .from(groupChatThread)
+    .where(and(eq(groupChatThread.groupChatId, groupChatId), list ? inThreadList(list) : undefined))
+}
+
+/** How many threads one of a group chat's lists holds. Membership-gated. */
+export async function countThreadsInGroupChat(
+  request: Request,
+  groupChatId: string,
+  list: ThreadList,
+): Promise<number> {
+  await requireGroupChatMember(request, groupChatId)
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(groupChatThread)
+    .where(and(eq(groupChatThread.groupChatId, groupChatId), inThreadList(list)))
+  return row?.count ?? 0
 }
 
 /**
@@ -1157,11 +1182,9 @@ export type MemberPrincipal =
  * An agent principal is validated against `listAgentNodesImpl()` — the plain
  * implementation in agents-impl.ts, the same source the agent pickers are
  * populated from — so a group chat cannot be given a member that is
- * not, in fact, an agent node that exists. Imported from agents-impl.ts
- * rather than agents.ts for two separate reasons: it avoids nesting one
- * `createServerFn` inside another's handler, and agents.ts must keep no
- * plain exports at all or its native-dependent import tail reaches the
- * client bundle (see that file's header). A user principal is validated
+ * not, in fact, an agent node that exists. A plain function rather than a
+ * server fn, so no `createServerFn` is nested inside another's handler (see
+ * that file's header). A user principal is validated
  * against the `user` table for the same reason: existence, not just shape.
  *
  * A system principal is the explicit grant that lets an automated pipeline —
@@ -2955,7 +2978,25 @@ export interface AgentGroupChatRef {
    * than remembered.
    */
   members: string[]
+  /**
+   * The threads of the list that was asked for: the active ones by default,
+   * or the most recently archived ones when the archive was asked for.
+   */
   threads: AgentThreadRef[]
+  /**
+   * How many threads this chat holds in its archive, whichever list was asked
+   * for — so an active list without them says they exist, and an archive list
+   * shorter than this says it was cut.
+   */
+  archivedThreads: number
+}
+
+/** Which of a chat's two thread lists an agent's view reads. */
+export interface AgentGroupChatViewOptions {
+  /** Read the archive instead of the active list. */
+  archived?: boolean
+  /** The most archived threads to return per chat, most recently archived first; all of them when unset. */
+  archivedLimit?: number
 }
 
 /**
@@ -3091,8 +3132,19 @@ async function resolveThreadForPrincipal(principal: SendPrincipal, threadRef: st
  *
  * The membership gate is the query itself — chats are selected by this agent's
  * own membership row — so nothing here can return a chat the agent is not in.
+ *
+ * Archived threads are left out unless `options.archived` asks for the archive
+ * instead. Closed work is archived rather than deleted, so a chat's archive
+ * grows without bound while its active list stays the size of the live work;
+ * listing both at once would make every read pay for the whole history. The archive
+ * read is newest first and may be capped per chat; each chat carries its
+ * archive's size so a cut list is visible as one.
  */
-export async function listGroupChatsForAgentView(agent: AgentRef): Promise<AgentGroupChatRef[]> {
+export async function listGroupChatsForAgentView(
+  agent: AgentRef,
+  options: AgentGroupChatViewOptions = {},
+): Promise<AgentGroupChatRef[]> {
+  const readArchive = options.archived ?? false
   const agentNodeId = await requireAgentNode(agent)
   const chats = await db
     .select({ id: groupChat.id, name: groupChat.name, topic: groupChat.topic })
@@ -3102,7 +3154,7 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
   if (chats.length === 0) {
     return []
   }
-  const threads = await db
+  const allThreads = await db
     .select({
       id: groupChatThread.id,
       groupChatId: groupChatThread.groupChatId,
@@ -3120,6 +3172,13 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
         chats.map((c) => c.id),
       ),
     )
+  const archivedByChatId = Map.groupBy(
+    allThreads.filter((t) => t.archivedAt !== null).sort((a, b) => Number(b.archivedAt) - Number(a.archivedAt)),
+    (t) => t.groupChatId,
+  )
+  const threads = readArchive
+    ? [...archivedByChatId.values()].flatMap((archived) => archived.slice(0, options.archivedLimit))
+    : allThreads.filter((t) => t.archivedAt === null)
   // Same lookup host.ts's ordinary-session listSessions does: agent-client
   // only holds live (loaded-since-restart) sessions in memory, so a thread
   // whose session isn't in this map is offline, not necessarily unknown —
@@ -3138,20 +3197,13 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
   // defensible default (see startThreadAsAgent): without this the caller would
   // be made to guess a name and get the deliberately vague refusal for a typo.
   const membersByChatId = await agentMembersByChat(chats.map((c) => c.id))
-  // Read from the same shared layouts the thread lists draw, so the folder named
-  // here is the one a person sees the thread in. A thread id is in at most one
-  // of a chat's two lists, so one map per chat answers for both.
+  // Read from the same shared layout the thread list draws, so the folder named
+  // here is the one a person sees the thread in.
   const folderByChatId = new Map(
     await Promise.all(
       chats.map(async (c) => {
-        const [active, archive] = await Promise.all([
-          readThreadLayout(c.id, 'active'),
-          readThreadLayout(c.id, 'archive'),
-        ])
-        return [
-          c.id,
-          new Map([...folderNameByThreadId(active.layout), ...folderNameByThreadId(archive.layout)]),
-        ] as const
+        const { layout } = await readThreadLayout(c.id, readArchive ? 'archive' : 'active')
+        return [c.id, folderNameByThreadId(layout)] as const
       }),
     ),
   )
@@ -3172,6 +3224,7 @@ export async function listGroupChatsForAgentView(agent: AgentRef): Promise<Agent
         contextUsage: contextUsageByKey.get(t.sessionKey) ?? null,
         queuedMessages: metaBySessionKey.get(t.sessionKey)?.queuedMessages ?? 0,
       })),
+    archivedThreads: archivedByChatId.get(chat.id)?.length ?? 0,
   }))
 }
 

@@ -1,5 +1,5 @@
-import host from '@opencroft/server'
 import type { TerminalContext } from '@opencroft/server'
+import host from '@opencroft/server'
 
 export interface ScriptRunParams {
   script: string

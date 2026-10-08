@@ -18,10 +18,10 @@
 // list page's row menu, not this screen's; the topic is gone.
 //
 // Search asks two questions at once. Thread titles and agent names are matched
-// here, on the threads the screen already holds; message text is matched by the
+// here, on the threads the screen holds; message text is matched by the
 // server, because transcripts are not loaded into the page. Both answers are
 // drawn together while a query is typed, and an "Archived" switch in the field
-// widens both to the chat's archive.
+// widens both to the chat's archive, which the screen reads only then.
 
 import { Pin, Search } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -48,23 +48,28 @@ import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { useThreadRowStates } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
+import { useArchivedThreads } from '@/app/_authed/(group-chats)/_lib/use-archived-threads'
 import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type {
+  GroupChatThreadListEntry,
   getGroupChatThreadLayout,
   getMyGroupChatView,
+  listDirectoryAgentsForPicker,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import { searchGroupChatTranscripts, setGroupChatThreadArchived } from '@/app/_authed/(group-chats)/_server/actions'
-import type { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
+
+const NO_THREADS: GroupChatThreadListEntry[] = []
 
 /** Everything the screen draws, in the shape the server functions answer with. */
 export interface GroupChatDetailData {
   chat: Awaited<ReturnType<typeof getMyGroupChatView>>
+  /** The chat's active list; its archive is read where it is drawn. */
   threads: Awaited<ReturnType<typeof listGroupChatThreadsView>>
   directory: Awaited<ReturnType<typeof listDirectoryUsersForPicker>>
-  agents: Awaited<ReturnType<typeof listAgentNodes>>
+  agents: Awaited<ReturnType<typeof listDirectoryAgentsForPicker>>
   pins: Awaited<ReturnType<typeof listMyGroupChatPins>>
   layout: Awaited<ReturnType<typeof getGroupChatThreadLayout>>
 }
@@ -172,13 +177,13 @@ export function GroupChatDetailScreen({
   // group-chat-specific.
   const threadStateById = useThreadRowStates(threads)
 
-  // The active list draws only non-archived threads; an archived one moved to
-  // the chat's own archive, drawn in the settings dialog instead. Split here,
-  // once, rather than filtering at each of the three places that draw the
-  // active list (the tree, the search results, the count that decides whether
-  // to draw a list at all).
-  const activeThreads = useMemo(() => threads.filter((t) => !t.archived), [threads])
-  const archivedThreads = useMemo(() => threads.filter((t) => t.archived), [threads])
+  // `threads` is the active list. The archive is read only while a search is
+  // widened to it -- the settings dialog's Archive section reads its own --
+  // and again whenever the host reloads the active list, so an archive or
+  // unarchive from here shows in the archived matches too.
+  const archive = useArchivedThreads(groupChatId, includeArchived, threads)
+  const archivedThreads = archive.state === 'loaded' ? archive.threads : NO_THREADS
+  const archivedStateById = useThreadRowStates(archivedThreads)
 
   // Archiving needs no confirm -- it is reversible from the settings dialog's
   // Archive section -- so it fires the same way Stop process does: straight
@@ -235,13 +240,15 @@ export function GroupChatDetailScreen({
   // stays presentational and every write goes through one hook, one store and
   // one compare-and-swap guard. A refused write is answered by adopting the
   // arrangement that won, which is state a presentational list cannot hold.
-  const { layout, persist } = useThreadLayout(groupChatId, 'active', loadedLayout)
+  const { layout, persist, folderOpen, setFolderOpen } = useThreadLayout(groupChatId, 'active', loadedLayout)
   const threadTree = (
     <GroupChatThreadTree
-      threads={activeThreads}
+      threads={threads}
       stateById={threadStateById}
       layout={layout}
       onChange={persist}
+      folderOpen={folderOpen}
+      onFolderOpenChange={setFolderOpen}
       activeId={activeThreadId}
       onSelect={(threadId) => onOpenThread(threadId)}
       onStopProcess={stopThread}
@@ -259,12 +266,12 @@ export function GroupChatDetailScreen({
   const searchTerm = query.trim()
   const trimmedQuery = searchTerm.toLowerCase()
   const matches = useMemo(
-    () => (trimmedQuery ? threadTitleMatches(activeThreads, trimmedQuery, threadStateById) : []),
-    [activeThreads, trimmedQuery, threadStateById],
+    () => (trimmedQuery ? threadTitleMatches(threads, trimmedQuery, threadStateById) : []),
+    [threads, trimmedQuery, threadStateById],
   )
   const archivedMatches = useMemo(
-    () => (trimmedQuery && includeArchived ? threadTitleMatches(archivedThreads, trimmedQuery, threadStateById) : []),
-    [archivedThreads, trimmedQuery, includeArchived, threadStateById],
+    () => (trimmedQuery && includeArchived ? threadTitleMatches(archivedThreads, trimmedQuery, archivedStateById) : []),
+    [archivedThreads, trimmedQuery, includeArchived, archivedStateById],
   )
 
   // The message half of the search. Debounced, because every keystroke would
@@ -307,7 +314,7 @@ export function GroupChatDetailScreen({
   }, [groupChatId, searchTerm, includeArchived, searchKey])
   const currentMessageSearch = messageSearch?.key === searchKey ? messageSearch : null
   const messageHits = useMemo<GroupChatMessageHit[]>(() => {
-    const byId = new Map(threads.map((t) => [t.id, t] as const))
+    const byId = new Map([...threads, ...archivedThreads].map((t) => [t.id, t] as const))
     return (currentMessageSearch?.hits ?? []).flatMap((hit) => {
       const thread = byId.get(hit.threadId)
       // A thread deleted since the answer was computed has nothing to open.
@@ -325,7 +332,7 @@ export function GroupChatDetailScreen({
         },
       ]
     })
-  }, [currentMessageSearch, threads])
+  }, [currentMessageSearch, threads, archivedThreads])
   const selectMessage = (hitId: string) => {
     const hit = currentMessageSearch?.hits.find((h) => messageHitId(h) === hitId)
     if (hit) {
@@ -353,7 +360,7 @@ export function GroupChatDetailScreen({
     ) : null
     const actions = searching ? null : (
       <>
-        {threads.length > 0 ? (
+        {threads.length > 0 || chat.archivedThreadCount > 0 ? (
           <Button
             type='button'
             variant='ghost'
@@ -379,8 +386,7 @@ export function GroupChatDetailScreen({
           members={chat.members}
           directory={directory}
           agents={agents}
-          archivedThreads={archivedThreads}
-          stateById={threadStateById}
+          revision={threads}
           onOpenThread={onOpenThread}
         />
       </>
@@ -391,13 +397,12 @@ export function GroupChatDetailScreen({
     query,
     includeArchived,
     pinsOpen,
-    threads.length,
+    threads,
+    chat.archivedThreadCount,
     groupChatId,
     chat.members,
     directory,
     agents,
-    archivedThreads,
-    threadStateById,
     onOpenThread,
   ])
   // Reported through a ref so an inline callback never re-arms this, and
@@ -445,10 +450,10 @@ export function GroupChatDetailScreen({
       threads={titleMatchRows}
       messages={messageHits}
       onSelectMessage={selectMessage}
-      loading={currentMessageSearch === null}
+      loading={currentMessageSearch === null || (includeArchived && archive.state === 'loading')}
       truncated={currentMessageSearch?.truncated}
     />
-  ) : activeThreads.length > 0 ? (
+  ) : threads.length > 0 ? (
     threadTree
   ) : undefined
 

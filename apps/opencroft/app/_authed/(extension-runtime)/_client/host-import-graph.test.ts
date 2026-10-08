@@ -30,6 +30,8 @@ const HOST = path.join(appRoot, 'app/_authed/(extension-runtime)/_client/host.ts
 const SPACE_CANVAS = path.join(appRoot, 'app/_authed/(space)/_components/space-canvas.tsx')
 const FLOW_EDITOR = path.join(appRoot, 'app/_authed/(dashboard)/_canvas/flow-editor.tsx')
 const MARKDOWN_EDITOR = path.join(appRoot, 'components/markdown-editor.tsx')
+const AUTHED_LAYOUT = path.join(appRoot, 'app/_authed.tsx')
+const LOADER = path.join(appRoot, 'app/_authed/(extension-runtime)/_client/loader.ts')
 
 interface Graph {
   /** Every file inside this app reachable from the entry by static import. */
@@ -223,6 +225,26 @@ test('asking the host what it offers does not reach the flow editor', () => {
   assert.ok(
     !fromHost.files.has(FLOW_EDITOR),
     'host.ts must not statically import the flow editor -- reach the graph surface lazily instead',
+  )
+})
+
+// The signed-in layout is on every page, and it loads extensions for the
+// shell's own extension surfaces (the right sidebar, markdown resolvers). The
+// host is most of the app's client code, so it is fetched with the first
+// extension bundle rather than with the layout: a static edge here would put
+// all of it in front of every page's first render.
+//
+// A pair again: the layout must still reach the loader, or "does not reach the
+// host" would hold just as well for a shell that stopped loading extensions.
+test('the signed-in layout reaches the extension loader but not the host', () => {
+  const fromLayout = walkFrom(AUTHED_LAYOUT)
+  assert.ok(
+    fromLayout.files.has(LOADER),
+    "the layout does still load extensions -- if it does not, the next assertion isn't about anything",
+  )
+  assert.ok(
+    !fromLayout.files.has(HOST),
+    'the layout must not statically import host.ts -- the loader imports it lazily, with the first bundle',
   )
 })
 

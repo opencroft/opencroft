@@ -1,5 +1,5 @@
-import host from '@opencroft/server'
 import type { ServerConfig } from '@opencroft/server'
+import host from '@opencroft/server'
 
 import { keyStoreReadPublicKey } from './key-store'
 

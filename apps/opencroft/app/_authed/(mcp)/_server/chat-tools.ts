@@ -23,6 +23,10 @@ import { compactOutcome } from '@/app/_authed/(mcp)/_server/compact-outcome'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, jsonResult, requireCallingAgent, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
 
+// A chat's archive grows with every closed task; the cap keeps one archive read
+// inside a tool result.
+const DEFAULT_ARCHIVED_THREAD_LIMIT = 50
+
 export const definitions = [
   // ── Group chats ───────────────────────────────────────────────────
   //
@@ -33,7 +37,12 @@ export const definitions = [
   {
     name: 'group_chat_list',
     description:
-      'List the group chats you are a member of, with their topic and their threads. ' +
+      'List the group chats you are a member of, with their topic and their active threads. ' +
+      'Archived threads are left out by default: each chat carries `archivedThreads`, how many it holds ' +
+      'in its archive, and `archived: true` lists that archive instead — its threads only, most recently ' +
+      'archived first, at most `limit` per chat (when `archivedThreads` is larger, the list was cut). Read ' +
+      'the archive to find the `ref` of a finished thread, for group_chat_turns or to unarchive it with ' +
+      'group_chat_archive_thread. ' +
       'Use the `ref` values from this result to address a thread in group_chat_send — ' +
       'they are opaque handles, not a format to construct. Each thread carries `folder`: the name of the ' +
       'thread-list folder it is filed in, or null for a thread at the top level. Each thread also carries `contextUsage`: ' +
@@ -46,7 +55,19 @@ export const definitions = [
       "(group_chat_compact) before dispatching into it. A thread with `archived: true` is in the chat's " +
       'archive and refuses every send until it is unarchived (group_chat_archive_thread); its `folder` is ' +
       'its folder in the archive.',
-    inputSchema: { type: 'object' as const, properties: {} },
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        archived: {
+          type: 'boolean',
+          description: 'true to list archived threads instead of active ones (default false).',
+        },
+        limit: {
+          type: 'number',
+          description: `With archived: true, the most threads to return per chat (default ${DEFAULT_ARCHIVED_THREAD_LIMIT}).`,
+        },
+      },
+    },
   },
   {
     name: 'artifact_list',
@@ -350,9 +371,15 @@ export const definitions = [
 
 export const handlers: Record<string, ToolHandler> = {
   // ── group_chat_list ─────────────────────────────────────────────
-  group_chat_list: async (_args, caller) => {
+  group_chat_list: async (args, caller) => {
     const agent = requireCallingAgent(caller)
-    return jsonResult(await listGroupChatsForAgentView(agent))
+    const limit = (args.limit as number | undefined) ?? DEFAULT_ARCHIVED_THREAD_LIMIT
+    if (!(Number.isInteger(limit) && limit > 0)) {
+      fail(-32602, 'Invalid param: limit must be a positive whole number')
+    }
+    return jsonResult(
+      await listGroupChatsForAgentView(agent, { archived: args.archived === true, archivedLimit: limit }),
+    )
   },
 
   // ── artifact_list / artifact_write / artifact_delete ────────────

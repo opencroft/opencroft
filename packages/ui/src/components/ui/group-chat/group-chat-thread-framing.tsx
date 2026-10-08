@@ -152,9 +152,11 @@ export function GroupChatThreadFraming({
             layer is zero extra layers rather than a smaller constant. This is a
             settled decision, not an oversight -- if the composer reads tight,
             that is the value to revisit, not this arrangement. */}
-        <StickySection side='bottom' fade>
-          {composer ? <CommandBarFrame>{composer}</CommandBarFrame> : null}
-        </StickySection>
+        {composer ? (
+          <StickySection side='bottom' fade>
+            <CommandBarFrame>{composer}</CommandBarFrame>
+          </StickySection>
+        ) : null}
       </ScrollArea>
     </>
   )

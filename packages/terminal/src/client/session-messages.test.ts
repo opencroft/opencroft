@@ -5,7 +5,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { ClientMessage, TerminalConfig } from '../types'
-import { openingMessage, type ReattachState, sessionGoneMessage, type TerminalSource } from './session-messages'
+import {
+  openingMessage,
+  type ReattachState,
+  sessionGoneMessage,
+  type TerminalSource,
+  tabScopedSource,
+} from './session-messages'
 
 const OPENING_TYPES = new Set(['connect', 'local', 'wsl'])
 
@@ -63,4 +69,39 @@ test('a connect source falls back to a fresh session when its session is gone, a
     assert.ok(message && OPENING_TYPES.has(message.type))
     assert.equal(payloadOf(message).command, 'top')
   }
+})
+
+test('two tabs open the same keyed terminal under different keys, and one tab under the same key every time', () => {
+  const source: TerminalSource = { kind: 'connect', connection: CONNECTIONS[0], sessionKey: 'terminal-1' }
+  const keyIn = (tabId: string, state: ReattachState) =>
+    payloadOf(openingMessage(tabScopedSource(source, tabId), state, 80, 24)).sessionKey
+  assert.notEqual(keyIn('tab-a', STATES[0]), keyIn('tab-b', STATES[0]))
+  assert.equal(keyIn('tab-a', STATES[0]), keyIn('tab-a', STATES[2]))
+  const gone = sessionGoneMessage(tabScopedSource(source, 'tab-a'), 80, 24)
+  assert.ok(gone)
+  assert.equal(payloadOf(gone).sessionKey, keyIn('tab-a', STATES[0]))
+})
+
+test('a shared source opens under its own key in every tab, and says it is shared', () => {
+  const source: TerminalSource = { kind: 'connect', connection: CONNECTIONS[0], sessionKey: 'node-1', shared: true }
+  for (const tabId of ['tab-a', 'tab-b']) {
+    const payload = payloadOf(openingMessage(tabScopedSource(source, tabId), STATES[0], 80, 24))
+    assert.equal(payload.sessionKey, 'node-1')
+    assert.equal(payload.shared, true)
+  }
+  const gone = sessionGoneMessage(tabScopedSource(source, 'tab-a'), 80, 24)
+  assert.ok(gone)
+  assert.equal(payloadOf(gone).shared, true)
+})
+
+test('an unshared source does not say shared', () => {
+  const source: TerminalSource = { kind: 'connect', connection: CONNECTIONS[0], sessionKey: 'node-1' }
+  assert.equal('shared' in payloadOf(openingMessage(tabScopedSource(source, 'tab-a'), STATES[0], 80, 24)), false)
+})
+
+test('a tab leaves an attach key and an unkeyed connect source as they are', () => {
+  const attach: TerminalSource = { kind: 'attach', sessionKey: 'job:abc' }
+  assert.deepEqual(tabScopedSource(attach, 'tab-a'), attach)
+  const unkeyed: TerminalSource = { kind: 'connect', connection: CONNECTIONS[0] }
+  assert.equal(payloadOf(openingMessage(tabScopedSource(unkeyed, 'tab-a'), STATES[0], 80, 24)).sessionKey, undefined)
 })

@@ -1,6 +1,6 @@
+import { legacy } from '@opencroft/client'
 import type { ComponentType, CSSProperties } from 'react'
 
-import { legacy } from '@opencroft/client'
 const { Input, Label, NodeResizer, icons, useReactFlow } = legacy
 
 export interface SectionData {

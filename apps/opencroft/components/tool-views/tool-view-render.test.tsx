@@ -55,7 +55,7 @@ function markedLines(html: string): string[] {
 // The text of each word-level mark in a rendered diff, in order, as
 // "+ text" / "- text".
 function markedWords(html: string): string[] {
-  return [...html.matchAll(/<span class="rounded-sm bg-(success|destructive)\/30">([^<]*)<\/span>/g)].map(
+  return [...html.matchAll(/<span class="bg-(success|destructive)\/30">([^<]*)<\/span>/g)].map(
     ([, tone, text]) => `${tone === 'success' ? '+' : '-'} ${text}`,
   )
 }
@@ -87,10 +87,26 @@ test('a replaced line marks the words that changed, also when unchanged runs aro
   assert.deepEqual(markedWords(html), ['- 2', '+ 3'])
 })
 
-test('a rewritten line is marked whole rather than in part', () => {
+test('a line that shares few words with its pair marks the rest, and one that shares none is marked whole', () => {
   const html = render('Edit', { file_path: 'a.ts', old_string: 'const x = 1', new_string: 'let y = 2' }, { text: 'ok' })
   assert.deepEqual(markedLines(html), ['- const x = 1', '+ let y = 2'])
-  assert.deepEqual(markedWords(html), ['- const x = 1', '+ let y = 2'])
+  assert.deepEqual(markedWords(html), ['- const x', '- 1', '+ let y', '+ 2'])
+  const rewritten = render(
+    'Edit',
+    { file_path: 'a.ts', old_string: 'return total', new_string: 'throw new Error(message)' },
+    { text: 'ok' },
+  )
+  assert.deepEqual(markedWords(rewritten), ['- return total', '+ throw new Error(message)'])
+})
+
+test('a replaced line too long to compare is marked whole', () => {
+  const long = `// ${'word '.repeat(100)}end`
+  const html = render(
+    'Edit',
+    { file_path: 'a.ts', old_string: long, new_string: long.replace('end', 'stop') },
+    { text: 'ok' },
+  )
+  assert.deepEqual(markedWords(html), [`- ${long}`, `+ ${long.replace('end', 'stop')}`])
 })
 
 // The shape claude-agent-acp 0.84.0 sends to a client declaring the AIR

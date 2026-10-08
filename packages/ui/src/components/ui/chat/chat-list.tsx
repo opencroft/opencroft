@@ -25,6 +25,11 @@ export interface ChatListLeaf {
 export interface ChatListFolderInput {
   id: string
   name: string
+  // Whether the folder is drawn open. Left out, the list decides on its own:
+  // the user's toggles stand, and a folder starts at `defaultFolderOpen`. Set
+  // by the host, it is followed whenever the host's value changes -- a host
+  // that remembers the user's choice hands it back here and keeps it current
+  // through `onFolderOpenChange`.
   open?: boolean
   items: ChatListLeaf[]
 }
@@ -64,6 +69,9 @@ interface ChatListProps {
   onRenameFolder?: (folderId: string, name: string) => void
   onCreateFolder?: (folderId: string) => void
   onDeleteFolder?: (folderId: string) => void
+  // The user opened or closed a folder. Opening is view state, not structure,
+  // so it never goes through `onChange`.
+  onFolderOpenChange?: (folderId: string, open: boolean) => void
   className?: string
 }
 
@@ -209,8 +217,9 @@ function initState(nodes: ChatListNode[], defaultFolderOpen: boolean): ListState
 // rather than on the `nodes` array's identity, because a host that builds the
 // array inline -- the common case -- hands over a new one on every render, and
 // reconciling on identity would then set state on every render and never
-// settle. Folder `open` is deliberately excluded: it is view state this
-// component owns, so a change to it is not an upstream change.
+// settle. Folder `open` is deliberately excluded: it is view state, so a change
+// to it is not an upstream change -- a host's `open` is followed on its own,
+// see `hostOpenSignature`.
 function leafSignature(l: ChatListLeaf) {
   return [
     l.id,
@@ -231,6 +240,13 @@ function nodesSignature(nodes: ChatListNode[]): string {
         ? ['i', leafSignature(n.item)]
         : ['f', n.folder.id, n.folder.name, n.folder.items.map(leafSignature)],
     ),
+  )
+}
+
+// The folders whose `open` the host set, and to what.
+function hostOpenSignature(nodes: ChatListNode[]): string {
+  return JSON.stringify(
+    nodes.flatMap((n) => (n.type === 'folder' && n.folder.open !== undefined ? [[n.folder.id, n.folder.open]] : [])),
   )
 }
 
@@ -375,7 +391,7 @@ function dragPayload(p: Press): Drag {
 // keeps native HTML5 DnD + right-click untouched. Two identical short
 // vibration pulses mark the same two moments -- armed, then menu-open -- where
 // the Vibration API exists.
-export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolders = true, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, className }: ChatListProps) {
+export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolders = true, onSelect, onRename, onStopProcess, onClose, onArchive, onUnarchive, onDelete, onChange, onRenameFolder, onCreateFolder, onDeleteFolder, onFolderOpenChange, className }: ChatListProps) {
   const [state, setState] = useState<ListState>(() => initState(nodes, defaultFolderOpen))
   const [drag, setDrag] = useState<Drag | null>(null)
   const [over, setOver] = useState<Over | null>(null)
@@ -395,7 +411,6 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   // True once the row is being driven by touch or pen. While it is, the row is
   // not `draggable`, so the browser never starts its own drag from a long press.
   const [touchInput, setTouchInput] = useState(false)
-  const idCounter = useRef(0)
   // The list's own box, used to place the drag ghost. See the ghost's comment:
   // it is positioned against this element rather than the viewport. Named for
   // the element rather than the list, so it cannot shadow `listRef` above --
@@ -520,17 +535,15 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
   }
 
   const toggleFolder = (fid: string) => {
-    setState((s) => ({ ...s, folders: { ...s.folders, [fid]: { ...s.folders[fid], open: !s.folders[fid].open } } }))
+    const open = !state.folders[fid].open
+    setState((s) => ({ ...s, folders: { ...s.folders, [fid]: { ...s.folders[fid], open } } }))
+    onFolderOpenChange?.(fid, open)
   }
 
-  const newFolderId = () => {
-    let id = ''
-    do {
-      idCounter.current += 1
-      id = `folder-${idCounter.current}`
-    } while (state.folders[id])
-    return id
-  }
+  // Never reused, not even after the folder holding it is deleted: a host that
+  // remembers something per folder id would otherwise hand a deleted folder's
+  // memory to the new one.
+  const newFolderId = () => `folder-${crypto.randomUUID()}`
 
   // 'Move to new folder': create a folder after the last folder and move the
   // item into it.
@@ -860,6 +873,21 @@ export function ChatList({ nodes, activeId, defaultFolderOpen = true, allowFolde
     pendingNodesRef.current = null
     setState((s) => reconcile(s, pending, defaultFolderOpen))
   }, [nodesSig, nodes, gestureActive, defaultFolderOpen])
+
+  // Follow the host's `open` when it changes. Kept apart from the resync above
+  // on purpose: opening a folder is view state, so it is neither held for a
+  // gesture nor part of what tells the host's tree from our own echo of it.
+  const hostOpenSig = hostOpenSignature(nodes)
+  useEffect(() => {
+    const hostOpen: [string, boolean][] = JSON.parse(hostOpenSig)
+    setState((s) => {
+      const differing = hostOpen.filter(([fid, open]) => s.folders[fid] && s.folders[fid].open !== open)
+      if (differing.length === 0) return s
+      const folders = { ...s.folders }
+      for (const [fid, open] of differing) folders[fid] = { ...folders[fid], open }
+      return { ...s, folders }
+    })
+  }, [hostOpenSig])
 
   // Drop any in-flight press if the list unmounts mid-gesture (no listener leak).
   useEffect(() => () => { cancelPress() }, [])

@@ -92,7 +92,8 @@ export type TerminalConfig =
   | { type: 'local'; config: LocalConfig }
   | { type: 'wsl'; config: WslConfig }
 
-export interface ConnectPayload extends SshConnectionConfig {
+/** What every message that opens a session carries beside its transport's config. */
+export interface OpeningFields {
   cols: number
   rows: number
   cwd?: string
@@ -102,21 +103,18 @@ export interface ConnectPayload extends SshConnectionConfig {
    * legacy behavior: the session dies when the socket closes.
    */
   sessionKey?: string
+  /**
+   * With a sessionKey: everyone who opens the key shares one shell, all watching and typing, and
+   * nobody leaving ends it. Without it, a newcomer takes the shell over from whoever held it.
+   */
+  shared?: boolean
 }
 
-export interface LocalPayload extends LocalConfig {
-  cols: number
-  rows: number
-  cwd?: string
-  sessionKey?: string
-}
+export interface ConnectPayload extends SshConnectionConfig, OpeningFields {}
 
-export interface WslPayload extends WslConfig {
-  cols: number
-  rows: number
-  cwd?: string
-  sessionKey?: string
-}
+export interface LocalPayload extends LocalConfig, OpeningFields {}
+
+export interface WslPayload extends WslConfig, OpeningFields {}
 
 export interface AttachPayload {
   /** Prefer sessionId when known (survives across the same client's reconnects). */
@@ -135,11 +133,17 @@ export type ClientMessage =
   | { type: 'data'; payload: { data: string } }
   | { type: 'resize'; payload: { cols: number; rows: number } }
   | { type: 'disconnect' }
+  /**
+   * Restart the shared shell this socket watches. Every viewer may deliver the same press, and at
+   * any time after it, so the server applies a token once and ignores it from then on.
+   */
+  | { type: 'restart'; payload: { token: string } }
 
 export type ServerMessage =
   | { type: 'data'; payload: { data: string } }
   | { type: 'connected'; payload: { sessionId: string; reattached?: boolean } }
   | { type: 'error'; payload: { message: string } }
-  | { type: 'disconnected'; payload: { reason: string } }
+  /** `rejoin`: the shared shell was restarted, and its viewers open the key again to join the next. */
+  | { type: 'disconnected'; payload: { reason: string; rejoin?: boolean } }
   /** Sent in reply to `attach` when the sessionId/sessionKey is unknown or expired. */
   | { type: 'session-gone'; payload: { message: string } }

@@ -8,10 +8,10 @@
  */
 export * from '@opencroft/core'
 
+export * from './apps'
 export * from './host'
 export * as legacy from './host'
 export { default } from './host'
-export * from './apps'
 export * from './lifecycle'
 export * from './routes'
 export * from './tools'

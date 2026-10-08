@@ -22,11 +22,16 @@ import type { ProbeRequest, ProbeResult } from './attachment-routing.probe'
 // for as an image, must still get the HTML 404. If it did not, the header would
 // no longer be doing anything here and the first assertion would prove nothing.
 
+// A person's avatar is drawn the same way, by the title bar's <img>, and so is
+// an agent's, by every row that names it, so both routes are probed as images.
+
 // The app's icons and its manifest ride on the same rule: a browser asks for an
 // icon as an image and for the manifest as a `manifest`, so they are Nitro
 // routes too, and are probed here the way a browser asks for them.
 
 const PICTURE = '/api/acp/attachments/att-1?key=space.agent.thread'
+const AVATAR = '/api/avatars/user-1?v=0123456789abcdef'
+const AGENT_AVATAR = '/api/avatars/agents/agent-1?v=0123456789abcdef'
 const NOT_A_ROUTE = '/api/acp/not-a-route/att-1'
 const TAB_ICON = '/favicon.svg?color=green'
 const APP_ICON = '/icons/icon-192.png?color=green'
@@ -35,6 +40,9 @@ const MANIFEST = '/manifest.webmanifest?color=green'
 const REQUESTS: ProbeRequest[] = [
   { path: PICTURE, dest: 'image' },
   { path: PICTURE, dest: 'empty' },
+  { path: AVATAR, dest: 'image' },
+  { path: AVATAR, dest: 'empty' },
+  { path: AGENT_AVATAR, dest: 'image' },
   { path: NOT_A_ROUTE, dest: 'image' },
   { path: TAB_ICON, dest: 'image' },
   { path: APP_ICON, dest: 'image' },
@@ -61,6 +69,19 @@ test('a picture requested the way an <img> requests it reaches the attachment ro
 
 test('and so does the same request from fetch()', () => {
   assert.equal(resultFor(PICTURE, 'empty').status, 401)
+})
+
+test('an avatar requested the way the title-bar <img> requests it reaches the avatar route', () => {
+  const result = resultFor(AVATAR, 'image')
+  assert.equal(result.status, 401, 'the route answered, behind its session gate')
+  assert.match(result.contentType, /json/)
+  assert.equal(resultFor(AVATAR, 'empty').status, 401)
+})
+
+test("an agent's avatar requested as an image reaches the agent avatar route", () => {
+  const result = resultFor(AGENT_AVATAR, 'image')
+  assert.equal(result.status, 401, 'the route answered, behind its session gate')
+  assert.match(result.contentType, /json/)
 })
 
 test('control: a path Nitro does not route, asked for as an image, is still diverted as a static asset', () => {

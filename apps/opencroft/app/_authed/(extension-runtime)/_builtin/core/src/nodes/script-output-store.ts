@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { React } = legacy
 
 export interface ScriptResult {

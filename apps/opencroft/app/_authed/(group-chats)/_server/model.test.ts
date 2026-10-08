@@ -4134,9 +4134,7 @@ test('a thread started into an existing folder joins it, and no second folder is
     chatId,
     'active',
     {
-      entries: [
-        { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [first.thread.id] } },
-      ],
+      entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: [first.thread.id] } }],
     },
     version,
   )
@@ -5728,9 +5726,17 @@ test('a member archives a thread: it keeps its folder in the archive, and every 
   assert.equal(inbox.length, 1, 'nothing reached the agent')
   const listed = (await model.listGroupChatsForAgentView('Agent Session')).find((c) => c.ref === chatId)
   assert.deepEqual(
-    listed?.threads.map((t) => [t.archived, t.folder]),
-    [[true, 'Reviews']],
-    'group_chat_list marks it, with its folder in the archive',
+    [listed?.threads, listed?.archivedThreads],
+    [[], 1],
+    'group_chat_list leaves it out of the active list and counts it in the archive',
+  )
+  const archive = (await model.listGroupChatsForAgentView('Agent Session', { archived: true })).find(
+    (c) => c.ref === chatId,
+  )
+  assert.deepEqual(
+    archive?.threads.map((t) => [t.ref, t.archived, t.folder]),
+    [[ref, true, 'Reviews']],
+    'the archive list has it, by the ref an unarchive takes, with its folder in the archive',
   )
   // The history is kept: the row and its session key are untouched.
   const [row] = await db.select().from(groupChatThread).where(eq(groupChatThread.id, thread.id))
@@ -5750,7 +5756,7 @@ test('unarchiving puts the thread into the folder it has in the archive, creatin
   await layoutStore.writeThreadLayout(
     chatId,
     'archive',
-    { entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Later', open: true, threadIds: [thread.id] } }] },
+    { entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Later', threadIds: [thread.id] } }] },
     archived.version,
   )
 
@@ -5786,6 +5792,55 @@ test('archiving twice changes nothing the second time, and a non-member is refus
     await captureRefusal(() => model.setThreadArchived(reqAs(outsider), 'no-such-thread', false)),
   )
   assert.ok(await archivedAtOf(thread.id), 'still archived')
+})
+
+test('group_chat_list lists active threads by default, and the archive on request: newest archived first, cut at the limit', async () => {
+  seedMockConnection([], 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('archive-list@example.test', 'archive list')
+  const start = async (message: string) =>
+    (await model.startThread(reqAs(owner), chatId, 'agent-session', message)).thread
+  const live = await start('live')
+  const older = await start('older')
+  const newer = await start('newer')
+  await model.setThreadArchived(reqAs(owner), older.id, true)
+  await model.setThreadArchived(reqAs(owner), newer.id, true)
+  // Fixed stamps, so the order under test does not rest on two archives landing in different milliseconds.
+  const stamp = (threadId: string, archivedAt: string) =>
+    db
+      .update(groupChatThread)
+      .set({ archivedAt: new Date(archivedAt) })
+      .where(eq(groupChatThread.id, threadId))
+  await stamp(older.id, '2026-01-01T00:00:00Z')
+  await stamp(newer.id, '2026-01-02T00:00:00Z')
+  const view = async (options?: Parameters<typeof model.listGroupChatsForAgentView>[1]) => {
+    const chat = (await model.listGroupChatsForAgentView('Agent Session', options)).find((c) => c.ref === chatId)
+    return [chat?.threads.map((t) => t.ref), chat?.archivedThreads]
+  }
+  const refOf = (thread: { sessionKey: string }) => model.threadRefFromSessionKey(thread.sessionKey)
+
+  assert.deepEqual(await view(), [[refOf(live)], 2], 'active only, with the archive counted')
+  assert.deepEqual(await view({ archived: true }), [[refOf(newer), refOf(older)], 2], 'the archive, newest first')
+  assert.deepEqual(
+    await view({ archived: true, archivedLimit: 1 }),
+    [[refOf(newer)], 2],
+    'cut at the limit, and the count shows it was cut',
+  )
+
+  const { handlers } = await import('@/app/_authed/(mcp)/_server/chat-tools')
+  const caller = { agent: 'Agent Session' } as ToolCallerContext
+  const viaTool = async (args: Record<string, unknown>) => {
+    const result = (await handlers.group_chat_list(args, caller)) as { content: { text: string }[] }
+    const chats = JSON.parse(result.content[0]?.text ?? 'null') as Awaited<
+      ReturnType<typeof model.listGroupChatsForAgentView>
+    >
+    return chats.find((c) => c.ref === chatId)?.threads.map((t) => t.ref)
+  }
+  assert.deepEqual(await viaTool({}), [refOf(live)], 'the tool lists active threads by default')
+  assert.deepEqual(await viaTool({ archived: true, limit: 1 }), [refOf(newer)], 'and passes archived and limit on')
+  await assert.rejects(handlers.group_chat_list({ archived: true, limit: 0 }, caller), {
+    code: -32602,
+    message: 'Invalid param: limit must be a positive whole number',
+  })
 })
 
 test('an agent archives only a thread it owns, the same rule as deleting one', async () => {

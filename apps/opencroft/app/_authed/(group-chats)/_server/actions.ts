@@ -57,6 +57,7 @@ import type {
   GroupChatListEntry,
   GroupChatThreadEntry,
   GroupChatThreadListEntry,
+  GroupChatThreadView,
   MemberRef,
   ThreadTranscriptSearch,
 } from '@/app/_authed/(group-chats)/_server/read-model'
@@ -74,20 +75,20 @@ import type {
   ThreadList,
   VersionedThreadLayout,
 } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
-import type { DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
-import { listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
+import type { DirectoryAgent, DirectoryUser } from '@/app/_authed/(group-chats)/_server/user-directory'
+import { listDirectoryAgents, listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 import { listSystemSenderIds } from '@/app/_server/message-author'
 import { requireSessionServerFn } from '@/app/_server/require-session'
 
-// So no client file ever has a reason to name model.ts directly — the same
-// pattern agents.ts just adopted for agents-impl.ts. These are erased at
+// So no client file ever has a reason to name model.ts directly. These are erased at
 // build time and carry no runtime binding, so re-exporting them here is safe
 // even though model.ts's own runtime tail is not client-safe.
 export type {
   AgentRef,
+  DirectoryAgent,
   DirectoryUser,
   GroupChatDetailView,
   GroupChatListEntry,
@@ -96,6 +97,7 @@ export type {
   GroupChatThreadEntry,
   GroupChatThreadListEntry,
   GroupChatThreadSummary,
+  GroupChatThreadView,
   JoinGroupChatResult,
   MemberPrincipal,
   MemberRef,
@@ -430,11 +432,14 @@ export const getMyGroupChatView = createServerFn({ method: 'GET', strict: { outp
     async ({ data: groupChatId }): Promise<GroupChatDetailView> => getGroupChatDetailView(getRequest(), groupChatId),
   )
 
+// One list at a time: the active list is what a chat opens on, and the
+// archive is read only where it is drawn -- its settings section, or a search
+// widened to it.
 export const listGroupChatThreadsView = createServerFn({ method: 'GET', strict: { output: false } })
-  .inputValidator((groupChatId: string) => groupChatId)
+  .inputValidator((data: { groupChatId: string; list: ThreadList }) => data)
   .handler(
-    async ({ data: groupChatId }): Promise<GroupChatThreadListEntry[]> =>
-      listThreadsInGroupChatView(getRequest(), groupChatId),
+    async ({ data }): Promise<GroupChatThreadListEntry[]> =>
+      listThreadsInGroupChatView(getRequest(), data.groupChatId, data.list),
   )
 
 export const searchGroupChatTranscripts = createServerFn({ method: 'GET', strict: { output: false } })
@@ -490,6 +495,12 @@ export const setGroupChatThreadArchived = createServerFn({ method: 'POST', stric
 // why this is its own function rather than a widened admin read.
 export const listDirectoryUsersForPicker = createServerFn({ method: 'GET', strict: { output: false } }).handler(
   async (): Promise<DirectoryUser[]> => listDirectoryUsers(getRequest()),
+)
+
+// The agents a member picker offers: a name and a face each, nothing of an
+// agent's instructions or space, which the picker never draws.
+export const listDirectoryAgentsForPicker = createServerFn({ method: 'GET', strict: { output: false } }).handler(
+  async (): Promise<DirectoryAgent[]> => listDirectoryAgents(getRequest()),
 )
 
 // ── The embedded surface's reads ─────────────────────────────────────────
@@ -552,7 +563,7 @@ export const joinSpaceGroupChat = createServerFn({ method: 'POST', strict: { out
  */
 export const findGroupChatEmbedThread = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; agentNodeId: string; id: string }) => data)
-  .handler(async ({ data }): Promise<(GroupChatThreadEntry & { draft: string | null }) | null> => {
+  .handler(async ({ data }): Promise<GroupChatThreadView | null> => {
     const threadSlug = slugify(data.id)
     if (!threadSlug) {
       return null
@@ -575,7 +586,7 @@ export const findGroupChatEmbedThread = createServerFn({ method: 'GET', strict: 
  * reaches the browser with its code stripped.
  */
 export type GroupChatThreadInChat =
-  | { state: 'ok'; thread: GroupChatThreadEntry & { draft: string | null } }
+  | { state: 'ok'; thread: GroupChatThreadView }
   | { state: 'gone' }
   | { state: 'refused' }
 

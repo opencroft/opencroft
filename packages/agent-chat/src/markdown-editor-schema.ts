@@ -1,4 +1,5 @@
 import { type AnyExtension, getSchema } from '@tiptap/core'
+import { CodeBlock } from '@tiptap/extension-code-block'
 import { OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import type { Schema } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
@@ -43,6 +44,12 @@ const MarkdownOrderedList = OrderedList.extend({
 })
 
 /**
+ * A fenced code block. Marked as `CodeBlock` marks its own, so a code block
+ * takes the same size and no-wrap rule being edited as it does rendered.
+ */
+export const MarkdownCodeBlock = CodeBlock.configure({ HTMLAttributes: { 'data-code-block': '' } })
+
+/**
  * The schema's extensions. `withViews` replaces nodes of the same name: the
  * editor passes the ones it draws with node views, which extend the nodes here
  * and so keep their schema and markdown.
@@ -59,15 +66,15 @@ export function markdownSchemaExtensions(withViews: AnyExtension[] = []): AnyExt
       orderedList: false,
       // Markdown has no underline, and the page renderer draws no `<u>`.
       underline: false,
-      // Marked as `CodeBlock` marks its own, so a code block takes the same
-      // box, size and no-wrap rule being edited as it does rendered.
-      codeBlock: { HTMLAttributes: { 'data-code-block': '' } },
+      // Its own entry below, so the editor can draw it with a view.
+      codeBlock: false,
       // Editing aids rather than content: the editor adds its own.
       undoRedo: false,
       dropcursor: false,
       gapcursor: false,
       trailingNode: false,
     }),
+    MarkdownCodeBlock,
     MarkdownParagraph,
     MarkdownHardBreak,
     // Not opened on click: inside an editor a click is how you put the caret

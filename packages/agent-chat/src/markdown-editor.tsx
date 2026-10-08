@@ -11,6 +11,7 @@ import { Flex } from 'ui/components/ui/layout/flex'
 
 import { prepareLanguage, resolveLanguage, tokenize } from './components/code-highlight'
 import { directiveBlockViews } from './markdown-editor-blocks'
+import { CodeBlockNode } from './markdown-editor-code-block'
 import { IconNode } from './markdown-editor-icon'
 import { MarkdownEditorReferences } from './markdown-editor-references'
 import { markdownConverter, markdownSchemaExtensions } from './markdown-editor-schema'
@@ -307,7 +308,7 @@ export function markdownEditorExtensions({
 }): AnyExtension[] {
   return [
     // The document: schema and markdown, with the nodes the editor draws.
-    ...markdownSchemaExtensions([...directiveBlockViews, IconNode, MarkdownTableNode]),
+    ...markdownSchemaExtensions([...directiveBlockViews, IconNode, MarkdownTableNode, CodeBlockNode]),
     // A shared document's history is its binding's. So is its content: the
     // trailing empty paragraph an editor keeps for the caret would be added to
     // the shared document by every editor that opened it.

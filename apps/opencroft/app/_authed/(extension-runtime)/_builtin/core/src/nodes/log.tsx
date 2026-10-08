@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { Button, InputHandle, NodeFrame, React, icons, inspectorIntent, useReactFlow } = legacy
 
 const { useCallback, useEffect, useRef } = React

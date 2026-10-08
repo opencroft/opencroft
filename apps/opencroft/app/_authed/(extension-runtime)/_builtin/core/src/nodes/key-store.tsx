@@ -1,5 +1,22 @@
 import { legacy } from '@opencroft/client'
-const { Badge, Button, ControlledInput, Flex, NodeFrame, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, icons, invoke, toast } = legacy
+
+const {
+  Badge,
+  Button,
+  ControlledInput,
+  Flex,
+  NodeFrame,
+  React,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Separator,
+  icons,
+  invoke,
+  toast,
+} = legacy
 
 const { useCallback, useEffect, useRef, useState } = React
 

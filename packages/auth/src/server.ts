@@ -693,7 +693,18 @@ export async function updateOwnProfile(request: Request, name: string): Promise<
 // Measured in characters rather than bytes: base64 is one character per byte
 // to within a rounding error, and the point is a ceiling, not an audit.
 const MAX_AVATAR_CHARS = 64 * 1024
-const AVATAR_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
+const AVATAR_DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/
+
+/**
+ * Split an image data URL of a type an avatar may be, or null for anything
+ * else. The one statement of which images are accepted: whatever later serves
+ * a stored avatar reads it through this, so it can never refuse a picture the
+ * upload let in.
+ */
+export function parseAvatarDataUrl(value: string): { contentType: string; base64: string } | null {
+  const match = AVATAR_DATA_URL.exec(value)
+  return match ? { contentType: match[1], base64: match[2] } : null
+}
 
 /**
  * Set or clear the signed-in person's own avatar. `null` clears it.
@@ -704,7 +715,7 @@ const AVATAR_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2
  */
 export async function updateOwnAvatar(request: Request, image: string | null): Promise<void> {
   if (image !== null) {
-    if (!AVATAR_DATA_URL.test(image)) {
+    if (!parseAvatarDataUrl(image)) {
       throw new Error('An avatar must be a PNG, JPEG or WebP image.')
     }
     if (image.length > MAX_AVATAR_CHARS) {

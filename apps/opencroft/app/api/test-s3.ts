@@ -1,9 +1,9 @@
 import { DeleteObjectCommand, ListObjectsCommand, S3Client } from '@aws-sdk/client-s3'
 import { createFileRoute } from '@tanstack/react-router'
 
-import { requireSession } from '@/app/_server/require-session'
 import type { S3Config } from '@/app/_authed/(filemanager)/_lib/types'
 import { getConnections } from '@/app/_authed/(filemanager)/_server/connection-actions'
+import { requireSession } from '@/app/_server/require-session'
 
 export const Route = createFileRoute('/api/test-s3')({
   server: {

@@ -97,11 +97,12 @@ export function markdownBlocks(markdown: string): MarkdownBlocks {
  * marked; a block left over is drawn alone.
  *
  * A pair is narrowed to what changed where its two versions are the same kind
- * of block: two code blocks that differ only in their code are one line diff of
- * it (`code`), and two lists, or two paragraphs with line breaks, are diffed
- * item by item or line by line (`parts`), each part a block's worth of markdown
- * drawn on its own. A list item whose own text is unchanged and whose nested
- * list changed is drawn once, with that list's parts under it (`nested`). Only
+ * of block: two code blocks are one line diff of their code, with each
+ * version's fence info string, its language and meta (`code`), and two lists, or two
+ * paragraphs with line breaks, are diffed item by item or line by line
+ * (`parts`, `of` items or lines), each part a block's worth of markdown drawn
+ * on its own. A list item whose own text is unchanged and whose nested list
+ * changed is drawn once, with that list's parts under it (`nested`). Only
  * top-level blocks are narrowed: a list inside a quote or a callout changes as
  * a whole.
  */
@@ -110,8 +111,8 @@ export type MarkdownDiffItem =
   | { kind: 'fold'; blocks: string[] }
   | { kind: 'removed' | 'added'; block: string }
   | { kind: 'pair'; removed: string; added: string }
-  | { kind: 'code'; removed: string; added: string }
-  | { kind: 'parts'; parts: MarkdownDiffItem[] }
+  | { kind: 'code'; removed: string; added: string; fence: { removed: string; added: string } }
+  | { kind: 'parts'; of: 'items' | 'lines'; parts: MarkdownDiffItem[] }
   | { kind: 'nested'; head: string; parts: MarkdownDiffItem[] }
 
 /** A block's markdown with the link definitions it is drawn with. */
@@ -247,24 +248,65 @@ const itemKey = (item: ListItem) => blockKey({ checked: item.checked, children: 
  * A loose list draws each item's text as a paragraph, with a paragraph's
  * spacing; a tight one draws it bare. A list is loose when it is spread -- a
  * blank line between two items -- or any item is, by the rule the markdown's
- * HTML is built with. An item drawn alone is tight, so an item of a loose list
- * cannot be drawn as it is in its list.
+ * HTML is built with.
  */
 const isLoose = (list: List) =>
   Boolean(list.spread) || list.children.some((item) => item.spread ?? item.children.length > 1)
 
+// A link label `markdown` does not use, for a definition that resolves nothing of it.
+function unusedLabel(markdown: string): string {
+  const text = markdown.toLowerCase()
+  let label = 'loose-list-item'
+  for (let n = 2; text.includes(label); n++) {
+    label = `loose-list-item-${n}`
+  }
+  return label
+}
+
 /*
- * Whether `source` drawn on its own is a list of exactly `items`, as loose or
- * tight as `list`, the list they are drawn from.
+ * The column an item's content starts at: past its marker and the one to four
+ * spaces after it, or one space where there are more or none. A task item's
+ * text starts later, after its checkbox, but its content does not.
  */
-function drawsAsItems(source: string, items: readonly ListItem[], list: List, version: MarkdownBlocks): boolean {
-  const [drawn, ...rest] = drawnAlone(source, version)
-  return (
-    rest.length === 0 &&
-    drawn?.type === 'list' &&
-    isLoose(drawn) === isLoose(list) &&
-    blockKey(drawn.children.map(itemKey)) === blockKey(items.map(itemKey))
-  )
+function contentColumn(markdown: string, item: ListItem): number | undefined {
+  const start = item.position?.start
+  const marker = start?.offset === undefined ? null : /^(?:[-*+]|\d{1,9}[.)])( *)/.exec(markdown.slice(start.offset))
+  if (!start || !marker) {
+    return undefined
+  }
+  const spaces = marker[1].length
+  return start.column + marker[0].length - spaces + (spaces >= 1 && spaces <= 4 ? spaces : 1)
+}
+
+/*
+ * `source`, the markdown of the run `items` of `list`, as it draws them on its
+ * own as `list` does: null where it does not.
+ *
+ * A run of a loose list's items without a blank line in it -- a single item
+ * always -- would draw tight on its own. It is drawn with a link definition
+ * that resolves nothing written after a blank line in its last item: a
+ * definition draws nothing, and the blank line makes the item, and so its
+ * list, loose.
+ */
+function itemsSource(source: string, items: readonly ListItem[], list: List, version: MarkdownBlocks): string | null {
+  const loose = isLoose(list)
+  const first = items[0]
+  const content = contentColumn(version.markdown, items[items.length - 1])
+  const margin = first.position?.start.column
+  const label = loose ? unusedLabel(version.markdown) : undefined
+  const written =
+    label !== undefined && content !== undefined && margin !== undefined
+      ? `${source}\n\n${' '.repeat(content - margin)}[${label}]: #`
+      : source
+  const [drawn, ...rest] = drawnAlone(written, version)
+  if (rest.length > 0 || drawn?.type !== 'list' || isLoose(drawn) !== loose) {
+    return null
+  }
+  const drawnItems = drawn.children.map((item) => ({
+    ...item,
+    children: item.children.filter((child) => child.type !== 'definition' || child.label !== label),
+  }))
+  return blockKey(drawnItems.map(itemKey)) === blockKey(items.map(itemKey)) ? written : null
 }
 
 /*
@@ -276,7 +318,7 @@ const listItems = (list: List, version: MarkdownBlocks): Parts<ListItem> => ({
   parts: list.children,
   drawn: (run) => {
     const source = sourceOf(version.markdown, run[0], run[run.length - 1])
-    return source !== null && drawsAsItems(source, run, list, version) ? source : null
+    return source === null ? null : itemsSource(source, run, list, version)
   },
 })
 
@@ -314,11 +356,12 @@ function nestedChange(
     return null
   }
   const source = sourceOf(after.markdown, added, head[head.length - 1])
-  if (source === null || !drawsAsItems(source, [{ ...added, children: head }], list, after)) {
+  const drawnHead = source === null ? null : itemsSource(source, [{ ...added, children: head }], list, after)
+  if (drawnHead === null) {
     return null
   }
   const parts = listParts(before, earlierList, after, laterList)
-  return parts ? { kind: 'nested', head: source, parts } : null
+  return parts ? { kind: 'nested', head: drawnHead, parts } : null
 }
 
 // A paragraph's lines: its inline content split at its hard breaks.
@@ -361,17 +404,25 @@ const paragraphLines = (paragraph: Paragraph, version: MarkdownBlocks): Parts<In
 // Fence languages the page draws as a picture rather than as their code.
 const PICTURE_LANGUAGES = new Set(['mermaid'])
 
+// A fence's info string: its language, then its meta.
+const fenceInfo = (code: Code) => [code.lang, code.meta].filter(Boolean).join(' ')
+
 /*
- * Two versions of a code block as the line diff of their code, where the code
- * is what changed and is what the page shows. A fence that changed only its
- * language or meta has no changed line to show, and a picture is shown as its
- * two pictures; both stay a pair.
+ * Two versions of a code block as the line diff of their code, with each
+ * version's fence info string -- the language its lines are coloured in and
+ * labelled with, or the label's change when the two differ. A picture on
+ * either side is shown as the page shows it, so the two stay a pair.
  */
 function codeChange(removed: Code, added: Code): MarkdownDiffItem | null {
-  const sameFence = removed.lang === added.lang && removed.meta === added.meta
-  return sameFence && !PICTURE_LANGUAGES.has(added.lang ?? '')
-    ? { kind: 'code', removed: removed.value, added: added.value }
-    : null
+  if (PICTURE_LANGUAGES.has(removed.lang ?? '') || PICTURE_LANGUAGES.has(added.lang ?? '')) {
+    return null
+  }
+  return {
+    kind: 'code',
+    removed: removed.value,
+    added: added.value,
+    fence: { removed: fenceInfo(removed), added: fenceInfo(added) },
+  }
 }
 
 /*
@@ -386,10 +437,10 @@ function changedBlock(before: MarkdownBlocks, earlier: number, after: MarkdownBl
     narrowed = codeChange(removed, added)
   } else if (removed.type === 'list' && added.type === 'list') {
     const parts = listParts(before, removed, after, added)
-    narrowed = parts && { kind: 'parts', parts }
+    narrowed = parts && { kind: 'parts', of: 'items', parts }
   } else if (removed.type === 'paragraph' && added.type === 'paragraph' && (hasBreak(removed) || hasBreak(added))) {
     const parts = partsDiff(paragraphLines(removed, before), paragraphLines(added, after), blockKey)
-    narrowed = parts && { kind: 'parts', parts }
+    narrowed = parts && { kind: 'parts', of: 'lines', parts }
   }
   return narrowed ?? { kind: 'pair', removed: before.blocks[earlier], added: after.blocks[later] }
 }

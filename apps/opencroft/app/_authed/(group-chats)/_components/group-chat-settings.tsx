@@ -10,9 +10,10 @@
 // This owns the requests, the pending and error state, and the candidate
 // derivation for Members and Permissions -- app-side because they are facts
 // about this group chat rather than shape decisions the kit dialog should
-// know. Archive reuses the tree wholesale; the only state of its own is the
-// archive layout, fetched lazily once the dialog opens (the same lazy-on-open
-// pattern the members and senders lists below already use).
+// know. Archive reuses the tree wholesale; what it draws -- the archived
+// threads and the archive's layout -- is read when that section is opened,
+// the same lazy-on-show pattern the members and senders lists below use for
+// the dialog as a whole.
 
 import { EllipsisVertical } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -26,12 +27,14 @@ import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { memberActionRefusal } from '@/app/_authed/(group-chats)/_lib/member-action-refusal'
-import type { ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
+import { useThreadRowStates } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import { EMPTY_THREAD_LAYOUT } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
+import { useArchivedThreads } from '@/app/_authed/(group-chats)/_lib/use-archived-threads'
 import { useThreadLayout } from '@/app/_authed/(group-chats)/_lib/use-thread-layout'
 import type {
+  DirectoryAgent,
   DirectoryUser,
-  GroupChatThreadEntry,
+  GroupChatThreadListEntry,
   GroupChatWriteResult,
   MemberRef,
 } from '@/app/_authed/(group-chats)/_server/actions'
@@ -43,22 +46,17 @@ import {
   removeGroupChatMember,
   setGroupChatThreadArchived,
 } from '@/app/_authed/(group-chats)/_server/actions'
-import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
 
 interface Props {
   groupChatId: string
   members: MemberRef[]
   /** Every account, from the narrow directory read. */
   directory: DirectoryUser[]
-  /** Every agent node in the graph. */
-  agents: AgentNodeRef[]
-  /** This chat's archived threads -- the screen already split them out of the
-   *  full thread list it loaded, so nothing here re-fetches them. */
-  archivedThreads: GroupChatThreadEntry[]
-  /** The same live row-state map the active list reads, so an archived
-   *  thread's row (its session can still be mid-turn) never disagrees with the
-   *  one the active list would have shown it. */
-  stateById: ThreadRowStateById
+  /** Every agent of every space, from the same narrow directory read. */
+  agents: DirectoryAgent[]
+  /** Replaced whenever the host reloads the chat; the Archive section reads
+   *  the archive again when it changes. */
+  revision: unknown
   /** Opening an archived row leaves the dialog and goes to its thread. */
   onOpenThread: (threadId: string) => void
 }
@@ -69,15 +67,7 @@ function toPrincipal(principal: { kind: 'user' | 'agent'; id: string }) {
     : ({ kind: 'agent', agentNodeId: principal.id } as const)
 }
 
-export function GroupChatSettings({
-  groupChatId,
-  members,
-  directory,
-  agents,
-  archivedThreads,
-  stateById,
-  onOpenThread,
-}: Props) {
+export function GroupChatSettings({ groupChatId, members, directory, agents, revision, onOpenThread }: Props) {
   const refresh = useGroupChatRefresh()
 
   // Both principal kinds in one list, which is what the picker takes: the
@@ -86,7 +76,7 @@ export function GroupChatSettings({
   const candidates = useMemo<MemberCandidate[]>(
     () => [
       ...directory.map((u) => ({ kind: 'user' as const, id: u.id, name: u.name, avatarUrl: u.avatarUrl })),
-      ...agents.map((a) => ({ kind: 'agent' as const, id: a.nodeId, name: a.name, avatarUrl: a.avatar ?? null })),
+      ...agents.map((a) => ({ kind: 'agent' as const, id: a.id, name: a.name, avatarUrl: a.avatarUrl })),
     ],
     [directory, agents],
   )
@@ -157,51 +147,6 @@ export function GroupChatSettings({
     } finally {
       setPending(false)
     }
-  }
-
-  // The archive's own layout, fetched only once the dialog is open -- while
-  // it loads, the tree draws as unarranged (every thread loose), which is
-  // exactly how an actually-unarranged archive looks, so there is no separate
-  // loading state to build.
-  const [archiveLayout, setArchiveLayout] = useState(EMPTY_THREAD_LAYOUT)
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    let cancelled = false
-    getGroupChatThreadLayout({ data: { groupChatId, list: 'archive' } })
-      .then((loaded) => {
-        if (!cancelled) {
-          setArchiveLayout(loaded)
-        }
-      })
-      .catch(() => {
-        // Left at EMPTY_THREAD_LAYOUT: the archive draws every thread loose,
-        // same fallback the active list's own load-failure would leave it in.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open, groupChatId])
-  const { layout: archiveTree, persist: persistArchive } = useThreadLayout(groupChatId, 'archive', archiveLayout)
-
-  // Unarchiving from here has nowhere to show a refusal in place -- unlike the
-  // thread screen's own notice -- so it reports the same way Stop process
-  // does elsewhere in this dialog's tree: a toast, since nobody's finger is
-  // still on the row waiting for an answer.
-  const unarchiveThread = (threadId: string) => {
-    setGroupChatThreadArchived({ data: { threadId, archived: false } })
-      .then((result) => {
-        if (!result.ok) {
-          toast(groupChatAccessMessageForCode(result.code))
-          return
-        }
-        return refresh()
-      })
-      .catch((err) => {
-        console.error('Failed to unarchive thread', threadId, err)
-        toast('That thread could not be unarchived.')
-      })
   }
 
   return (
@@ -293,23 +238,104 @@ export function GroupChatSettings({
           )
         }
         archive={
-          archivedThreads.length > 0 ? (
-            <GroupChatThreadTree
-              threads={archivedThreads}
-              stateById={stateById}
-              layout={archiveTree}
-              onChange={persistArchive}
-              onSelect={(threadId) => {
-                onOpenThread(threadId)
-                setOpen(false)
-              }}
-              onUnarchive={unarchiveThread}
-            />
-          ) : (
-            <p className='text-sm text-muted-foreground'>No threads are archived.</p>
-          )
+          <GroupChatArchiveSection
+            groupChatId={groupChatId}
+            revision={revision}
+            onOpenThread={(threadId) => {
+              onOpenThread(threadId)
+              setOpen(false)
+            }}
+          />
         }
       />
     </>
   )
 }
+
+/**
+ * The Archive section's content. The dialog mounts only the section on show,
+ * so the archive and its layout are read when this section is opened, not
+ * when the chat loads or the dialog opens on another section.
+ */
+function GroupChatArchiveSection({
+  groupChatId,
+  revision,
+  onOpenThread,
+}: {
+  groupChatId: string
+  revision: unknown
+  onOpenThread: (threadId: string) => void
+}) {
+  const refresh = useGroupChatRefresh()
+  const archive = useArchivedThreads(groupChatId, true, revision)
+  const archivedThreads = archive.state === 'loaded' ? archive.threads : NO_THREADS
+  // The same live row state the active list reads, so an archived thread's
+  // row (its session can still be mid-turn) never disagrees with the one the
+  // active list would have shown it.
+  const stateById = useThreadRowStates(archivedThreads)
+
+  // While the archive's own layout loads, the tree draws as unarranged (every
+  // thread loose), which is exactly how an actually-unarranged archive looks,
+  // so there is no separate loading state to build.
+  const [archiveLayout, setArchiveLayout] = useState(EMPTY_THREAD_LAYOUT)
+  useEffect(() => {
+    let cancelled = false
+    getGroupChatThreadLayout({ data: { groupChatId, list: 'archive' } })
+      .then((loaded) => {
+        if (!cancelled) {
+          setArchiveLayout(loaded)
+        }
+      })
+      .catch(() => {
+        // Left at EMPTY_THREAD_LAYOUT: the archive draws every thread loose,
+        // same fallback the active list's own load-failure would leave it in.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [groupChatId])
+  const { layout, persist, folderOpen, setFolderOpen } = useThreadLayout(groupChatId, 'archive', archiveLayout)
+
+  // Unarchiving from here has nowhere to show a refusal in place -- unlike the
+  // thread screen's own notice -- so it reports the same way Stop process
+  // does elsewhere in this dialog's tree: a toast, since nobody's finger is
+  // still on the row waiting for an answer.
+  const unarchiveThread = (threadId: string) => {
+    setGroupChatThreadArchived({ data: { threadId, archived: false } })
+      .then((result) => {
+        if (!result.ok) {
+          toast(groupChatAccessMessageForCode(result.code))
+          return
+        }
+        return refresh()
+      })
+      .catch((err) => {
+        console.error('Failed to unarchive thread', threadId, err)
+        toast('That thread could not be unarchived.')
+      })
+  }
+
+  if (archive.state === 'loading') {
+    return <p className='text-sm text-muted-foreground'>Loading archived threads…</p>
+  }
+  if (archive.state === 'failed') {
+    return <p className='text-sm text-muted-foreground'>The archive could not be loaded.</p>
+  }
+  if (archivedThreads.length === 0) {
+    return <p className='text-sm text-muted-foreground'>No threads are archived.</p>
+  }
+  return (
+    <GroupChatThreadTree
+      threads={archivedThreads}
+      stateById={stateById}
+      layout={layout}
+      onChange={persist}
+      folderOpen={folderOpen}
+      onFolderOpenChange={setFolderOpen}
+      onSelect={onOpenThread}
+      onUnarchive={unarchiveThread}
+    />
+  )
+}
+
+const NO_THREADS: GroupChatThreadListEntry[] = []

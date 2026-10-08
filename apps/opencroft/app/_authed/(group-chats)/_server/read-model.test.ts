@@ -27,9 +27,15 @@ process.env.NODE_ENV = 'development'
 const { db, groupChatMember, groupChatThread, space, transcriptMessage } = await import('@opencroft/db')
 const model = await import('./model')
 const view = await import('./read-model')
+const { queueStore } = await import('@/app/_authed/(agent)/_server/queue-store')
 const { ensureAuth } = await import('@opencroft/auth/server')
+const { readStoredAgentAvatar } = await import('@/app/_server/agent-avatar')
+const { avatarResponse } = await import('@/app/_server/user-avatar')
 
-// Two real agent nodes, seeded before anything reads the space registry.
+// A stored picture, as an agent node holds one: a data URL.
+const AGENT_C_AVATAR = `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString('base64')}`
+
+// Three real agent nodes, seeded before anything reads the space registry.
 await db.insert(space).values({
   slug: 'test-space',
   name: 'Test Space',
@@ -37,6 +43,7 @@ await db.insert(space).values({
     nodes: [
       { id: 'agent-a', type: 'builtin.core.agent', data: { name: 'Agent A', avatar: 'https://example.test/a.png' } },
       { id: 'agent-b', type: 'builtin.core.agent', data: { name: 'Agent B' } },
+      { id: 'agent-c', type: 'builtin.core.agent', data: { name: 'Agent C', avatar: AGENT_C_AVATAR } },
     ],
     edges: [],
   }),
@@ -93,6 +100,72 @@ test('the list resolves member names and avatars, and counts threads', async () 
   assert.equal(person.name, 'Owner Person', 'the user id must be resolved to the account name')
 })
 
+test('a thread list read returns one list, and the chat counts its archive', async () => {
+  const owner = await makeUser('view-lists@example.test', 'Lists Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'lists')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const thread = async (name: string, archivedAt: Date | null) => {
+    const [row] = await db
+      .insert(groupChatThread)
+      .values({
+        groupChatId: chat.id,
+        agentNodeId: 'agent-a',
+        sessionKey: `group-chat:${chat.id}:agent-a:${name}`,
+        createdByUserId: owner.id,
+        archivedAt,
+      })
+      .returning()
+    assert.ok(row)
+    return row.id
+  }
+  const empty = await view.getGroupChatDetailView(reqAs(owner), chat.id)
+  assert.equal(empty.archivedThreadCount, 0, 'a chat with no archive counts zero')
+
+  const active = [await thread('active-1', null), await thread('active-2', null)]
+  const archived = [
+    await thread('archived-1', new Date()),
+    await thread('archived-2', new Date()),
+    await thread('archived-3', new Date()),
+  ]
+
+  const activeList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
+  assert.deepEqual(activeList.map((t) => t.id).sort(), [...active].sort())
+  assert.ok(activeList.every((t) => !t.archived))
+  const archiveList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'archive')
+  assert.deepEqual(archiveList.map((t) => t.id).sort(), [...archived].sort())
+  assert.ok(archiveList.every((t) => t.archived))
+
+  const detail = await view.getGroupChatDetailView(reqAs(owner), chat.id)
+  assert.equal(detail.archivedThreadCount, 3)
+})
+
+test('an agent picture stored as a data URL reaches the page as a versioned address, served from it', async () => {
+  const owner = await makeUser('view-avatar@example.test', 'Avatar Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'avatars')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-c' })
+  await db.insert(groupChatThread).values({
+    groupChatId: chat.id,
+    agentNodeId: 'agent-c',
+    sessionKey: `group-chat:${chat.id}:agent-c:avatar-fixture`,
+    createdByUserId: owner.id,
+  })
+  const address = /^\/api\/avatars\/agents\/agent-c\?v=[0-9a-f]{16}$/
+
+  const [row] = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
+  assert.match(row?.agent.avatarUrl ?? '', address)
+  const member = (await view.getGroupChatDetailView(reqAs(owner), chat.id)).members.find((m) => m.id === 'agent-c')
+  assert.equal(member?.avatarUrl, row?.agent.avatarUrl, 'every place naming the agent hands out the same address')
+
+  const response = avatarResponse(
+    new Request(new URL(row?.agent.avatarUrl ?? '', 'http://localhost')),
+    await readStoredAgentAvatar('agent-c'),
+  )
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('Content-Type'), 'image/png')
+  assert.equal(response.headers.get('Cache-Control'), 'private, max-age=31536000, immutable')
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]))
+})
+
 test('a thread carries its agent resolved, not a bare node id', async () => {
   const owner = await makeUser('view-threads@example.test', 'Thread Owner')
   const chat = await model.createGroupChat(reqAs(owner), 'threads')
@@ -104,7 +177,7 @@ test('a thread carries its agent resolved, not a bare node id', async () => {
     createdByUserId: owner.id,
   })
 
-  const threads = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  const threads = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
   assert.equal(threads.length, 1)
   assert.equal(threads[0].agent.nodeId, 'agent-b')
   assert.equal(threads[0].agent.name, 'Agent B')
@@ -134,7 +207,7 @@ test('hasDraft reflects an unsent draft on both the list and the single-thread v
     .returning()
   assert.ok(thread)
 
-  const beforeList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  const beforeList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
   assert.equal(beforeList[0]?.hasDraft, false, 'no draft yet')
   const beforeSingle = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
   assert.ok(beforeSingle)
@@ -143,7 +216,7 @@ test('hasDraft reflects an unsent draft on both the list and the single-thread v
 
   await model.setThreadDraft(reqAs(owner), thread.id, 'unsent text')
 
-  const afterList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  const afterList = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
   assert.equal(afterList[0]?.hasDraft, true, 'the list must reflect the saved draft')
   const afterSingle = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
   assert.ok(afterSingle)
@@ -155,6 +228,46 @@ test('hasDraft reflects an unsent draft on both the list and the single-thread v
   const cleared = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
   assert.ok(cleared)
   assert.equal(cleared.hasDraft, false, 'an empty string clears the draft, the same as the 1:1 chat')
+})
+
+// What the thread's screen draws under its loader before the session answers:
+// the messages still waiting under the thread's session key, in the queue's
+// own order, and none that have left it.
+test('the single-thread view carries the messages waiting for its agent, in order, without removed ones', async () => {
+  const owner = await makeUser('view-queue@example.test', 'Queue Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'queues')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const sessionKey = `group-chat:${chat.id}:agent-a:queue-fixture`
+  const [thread] = await db
+    .insert(groupChatThread)
+    .values({ groupChatId: chat.id, agentNodeId: 'agent-a', sessionKey, createdByUserId: owner.id })
+    .returning()
+  assert.ok(thread)
+
+  const empty = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
+  assert.deepEqual(empty?.queue, { items: [] }, 'nothing waiting')
+
+  const sentAt = '2026-10-08T12:00:00.000Z'
+  const entry = (id: string, text: string) => ({
+    id,
+    kind: 'message' as const,
+    sender: 'nobody-holds-this',
+    sentAt,
+    text,
+  })
+  await queueStore.append(sessionKey, entry(`${sessionKey}:1`, 'first'), 'end')
+  await queueStore.append(sessionKey, entry(`${sessionKey}:2`, 'second'), 'end')
+  await queueStore.append(sessionKey, entry(`${sessionKey}:3`, 'withdrawn'), 'end')
+  await queueStore.append(sessionKey, entry(`${sessionKey}:0`, 'jumped the line'), 'front')
+  await queueStore.remove(sessionKey, [`${sessionKey}:3`])
+  // Another thread's queue is not this one's.
+  await queueStore.append('group-chat:elsewhere', entry('elsewhere:1', 'not here'), 'end')
+
+  const single = await view.findThreadViewInGroupChat(reqAs(owner), chat.id, thread.id)
+  assert.deepEqual(
+    single?.queue.items.map((item) => item.text),
+    ['jumped the line', 'first', 'second'],
+  )
 })
 
 // The flag the thread list renders a removed agent's thread from. It is the
@@ -170,13 +283,13 @@ test('a thread reports whether its agent is still a member, before and after rem
     createdByUserId: owner.id,
   })
 
-  const before = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  const before = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
   assert.equal(before.length, 1)
   assert.equal(before[0].agentIsMember, true, 'an ordinary thread reports its agent as a member')
 
   await model.removeMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
 
-  const after = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  const after = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
   assert.equal(after.length, 1, 'the thread is kept, so it can still be read')
   assert.equal(after[0].agentIsMember, false, 'and it now reports the agent as no longer a member')
 
@@ -207,7 +320,7 @@ test('a thread whose agent no longer exists still renders, with a placeholder', 
     createdByUserId: owner.id,
   })
 
-  const threads = await view.listThreadsInGroupChatView(reqAs(owner), chat.id)
+  const threads = await view.listThreadsInGroupChatView(reqAs(owner), chat.id, 'active')
   assert.equal(threads.length, 1, 'a thread must not disappear because its agent was deleted')
   assert.equal(threads[0].agent.name, 'Unknown agent')
   assert.equal(threads[0].agent.nodeId, 'agent-deleted', 'the id is kept so the row is still identifiable')
@@ -246,7 +359,7 @@ test('the view layer refuses a non-member exactly as the model does', async () =
   )
 
   await assert.rejects(
-    () => view.listThreadsInGroupChatView(reqAs(outsider), chat.id),
+    () => view.listThreadsInGroupChatView(reqAs(outsider), chat.id, 'active'),
     (error: unknown) => {
       assert.ok(error instanceof model.GroupChatAccessError)
       return true

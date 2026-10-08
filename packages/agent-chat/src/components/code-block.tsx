@@ -1,8 +1,53 @@
 import { Check, Copy } from 'lucide-react'
-import { type PointerEvent, useEffect, useState } from 'react'
+import { type ComponentProps, type PointerEvent, type ReactNode, useEffect, useState } from 'react'
 import { cn } from 'cn'
 
-import { CODE_SCROLL_CLASS, highlight, resolveLanguage } from './code-highlight'
+import { CODE_PRE_CLASS, fenceLanguage, highlight, resolveLanguage } from './code-highlight'
+import { keepDragInScrollBox } from './scroll-box-drag'
+
+export interface CodeFrameProps extends ComponentProps<'div'> {
+  /**
+   * What heads the code: its language, or a change of it. A frame given
+   * nothing has no header, so a block that names no language shows none.
+   */
+  label?: ReactNode
+}
+
+/**
+ * The box every code block is set in -- a rendered block, one being edited, a
+ * code diff -- with the label over the code, so the three read as one thing.
+ * The code goes inside as a bare `pre` (`CODE_PRE_CLASS`): the frame draws the
+ * border, tint and rounding, and takes the prose's code-block spacing and
+ * radius where there is prose around it.
+ *
+ * The label is a strip of its own above the code rather than a tag laid over
+ * it, so it never covers a character and stays put while a long line scrolls.
+ * It is left out of a selection and out of editing: what is selected, typed
+ * or copied in a block is its code.
+ */
+export function CodeFrame({ label, className, children, ...props }: CodeFrameProps) {
+  return (
+    <div
+      data-code-frame=''
+      className={cn(
+        'my-[var(--prose-pre-space,0.5em)] overflow-hidden rounded-[var(--prose-pre-radius,0.4rem)] border border-border bg-muted/40',
+        className,
+      )}
+      {...props}
+    >
+      {label ? (
+        <div
+          data-code-label=''
+          contentEditable={false}
+          className='flex h-6 select-none items-center gap-1.5 border-border border-b pr-2 pl-4 font-mono text-[11px] text-muted-foreground leading-none'
+        >
+          {label}
+        </div>
+      ) : null}
+      {children}
+    </div>
+  )
+}
 
 export interface CodeBlockProps {
   /** The code, exactly as it was written. */
@@ -25,97 +70,12 @@ export interface CodeBlockProps {
 const COPIED_FOR_MS = 1500
 
 /**
- * Keep a mouse drag that started in the code on the code's own lines.
- *
- * A drag past the block's edge scrolls the code, but the browser takes the
- * selection's end from whatever element is under the pointer. Beside a block
- * that is often not part of it -- a timeline rail, a scrollbar, a page's
- * margin -- and then the selection jumps out of the block, or stops while the
- * code keeps scrolling under it. Two things keep it on the line:
- *
- * - While the pointer is level with the lines the code captures it, so the
- *   pointer's moves land on the code and the browser scrolls the code, not
- *   whatever scrolls around it.
- * - While the pointer is beside the lines, every frame puts the selection's
- *   end back on the character at the edge the pointer left by. The browser's
- *   autoscroll moves it each frame from a fresh look at what is under the
- *   pointer, which capture does not change, so a pointer held still beside the
- *   block would otherwise leave the selection on the neighbour.
- *
- * Above or below the block the capture is let go and the frames do nothing, so
- * a selection runs on into the text around it as it does anywhere else. Touch
- * is left alone: it selects with handles, not a drag.
+ * Keep a mouse drag that started in the code on the code's own lines. The
+ * `pre` is looked up at the press, because highlighting replaces it when it
+ * lands; a press on the copy control is outside it and left alone.
  */
 function keepDragOnTheLines(event: PointerEvent<HTMLElement>) {
-  const code = event.currentTarget.querySelector('pre')
-  if (event.pointerType !== 'mouse' || event.button !== 0 || !code?.contains(event.target as Node)) {
-    return
-  }
-  const pointer = event.pointerId
-  let { clientX: x, clientY: y } = event
-  let frame = 0
-  const follow = (move: { pointerId: number; clientX: number; clientY: number }) => {
-    if (move.pointerId !== pointer) {
-      return
-    }
-    x = move.clientX
-    y = move.clientY
-    // Highlighting replaces the `pre` when it lands, and a pointer cannot be
-    // captured by an element that has left the document.
-    if (!code.isConnected) {
-      release()
-      return
-    }
-    const { top, bottom } = code.getBoundingClientRect()
-    const level = y >= top && y <= bottom
-    if (level === code.hasPointerCapture(pointer)) {
-      return
-    }
-    if (level) {
-      code.setPointerCapture(pointer)
-    } else {
-      code.releasePointerCapture(pointer)
-    }
-  }
-  const holdTheEnd = () => {
-    frame = requestAnimationFrame(holdTheEnd)
-    if (!code.isConnected) {
-      release()
-      return
-    }
-    const { top, bottom, left, right } = code.getBoundingClientRect()
-    if (y < top || y > bottom || (x >= left && x <= right)) {
-      return
-    }
-    const caret = caretAt(Math.min(Math.max(x, left + 1), right - 1), y)
-    const selection = window.getSelection()
-    // Off the code's text -- under the copy control on the first line -- the
-    // browser's own answer stands.
-    if (caret && code.contains(caret.node) && selection?.rangeCount) {
-      selection.extend(caret.node, caret.offset)
-    }
-  }
-  const release = () => {
-    cancelAnimationFrame(frame)
-    window.removeEventListener('pointermove', follow, true)
-    window.removeEventListener('pointerup', release, true)
-    window.removeEventListener('pointercancel', release, true)
-  }
-  window.addEventListener('pointermove', follow, true)
-  window.addEventListener('pointerup', release, true)
-  window.addEventListener('pointercancel', release, true)
-  frame = requestAnimationFrame(holdTheEnd)
-  follow(event)
-}
-
-/** The text position at a point in the viewport, from whichever API the browser has. */
-function caretAt(x: number, y: number): { node: Node; offset: number } | null {
-  if (typeof document.caretPositionFromPoint === 'function') {
-    const position = document.caretPositionFromPoint(x, y)
-    return position && { node: position.offsetNode, offset: position.offset }
-  }
-  const range = document.caretRangeFromPoint?.(x, y)
-  return range ? { node: range.startContainer, offset: range.startOffset } : null
+  keepDragInScrollBox(event, event.currentTarget.querySelector('pre'))
 }
 
 /**
@@ -168,15 +128,22 @@ export function CodeBlock({ code, language, copyable = true, className }: CodeBl
       .catch(() => {})
   }
 
+  const label = fenceLanguage(language)
+
   return (
-    <div className={cn('group relative', className)} onPointerDown={keepDragOnTheLines}>
+    <CodeFrame label={label} className={cn('group relative', className)} onPointerDown={keepDragOnTheLines}>
       {copyable ? (
         <button
           type='button'
           onClick={onCopy}
           title={copied ? 'Copied' : 'Copy'}
           aria-label={copied ? 'Copied' : 'Copy code'}
-          className='absolute top-1.5 right-1.5 z-10 rounded border bg-background/80 p-1 text-muted-foreground opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground'
+          // Under a label the control sits in the label's strip, centred on
+          // it; without one, on the first line of the code.
+          className={cn(
+            'absolute right-1.5 z-10 rounded border bg-background/80 p-1 text-muted-foreground opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground',
+            label ? 'top-px' : 'top-1.5',
+          )}
         >
           {copied ? <Check className='h-3 w-3' /> : <Copy className='h-3 w-3' />}
         </button>
@@ -185,10 +152,10 @@ export function CodeBlock({ code, language, copyable = true, className }: CodeBl
         // biome-ignore lint: the markup is shiki's own and the code inside it is escaped by shiki, not passed through
         <div dangerouslySetInnerHTML={{ __html: html }} />
       ) : (
-        <pre data-code-block='' className={CODE_SCROLL_CLASS}>
+        <pre data-code-block='' className={CODE_PRE_CLASS}>
           <code>{code}</code>
         </pre>
       )}
-    </div>
+    </CodeFrame>
   )
 }

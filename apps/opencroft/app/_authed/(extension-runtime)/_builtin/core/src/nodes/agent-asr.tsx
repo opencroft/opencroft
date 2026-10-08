@@ -1,6 +1,6 @@
+import { legacy } from '@opencroft/client'
 import type { ChangeEvent } from 'react'
 
-import { legacy } from '@opencroft/client'
 const { Input, Label, ScrollArea } = legacy
 
 import type { AgentData } from './agent'

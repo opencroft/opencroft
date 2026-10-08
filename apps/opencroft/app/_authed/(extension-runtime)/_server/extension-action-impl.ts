@@ -10,7 +10,7 @@ import {
   loadAllManifests,
 } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { folderOf } from '@/app/_authed/(extension-runtime)/_server/paths'
-import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
+import type { ExtensionClientInfo, ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
 // Plain (non-server-fn) implementation, callable directly from other server-side
 // code that's already running server-side (e.g. the exec-context dispatcher) without
@@ -54,7 +54,7 @@ export async function getActionAccess(extensionId: string, actionName: string): 
   return mod.actionAccess?.[actionName] ?? 'signed-in'
 }
 
-// Plain (non-server-fn) implementation of listExtensionManifests, for callers that
+// Every installed extension's full manifest, for server-side callers that
 // don't run inside a TanStack Start request lifecycle — e.g. host.ts's getTerminalContext,
 // called from an extension's Nitro HTTP route handler, which never establishes that
 // context (see this module's own doc comment above for why the plain/server-fn split
@@ -102,6 +102,14 @@ export async function listExtensionManifestsImpl({
       }
     }),
   )
+}
+
+/** The extensions that ship a client bundle, as the browser imports them. */
+export async function listExtensionClientsImpl(): Promise<ExtensionClientInfo[]> {
+  const manifests = await listExtensionManifestsImpl({ rebuildStaleClients: true })
+  return manifests
+    .filter((manifest) => manifest.hasClient)
+    .map(({ id, folder, clientVersion, clientIcons }) => ({ id, folder, clientVersion, clientIcons }))
 }
 
 /**

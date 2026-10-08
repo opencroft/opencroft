@@ -25,6 +25,11 @@ export interface ArchivableThread {
   sessionKey: string
 }
 
+/** The rows of `list`, as a condition on the thread table -- `threadListOf` asked of a query. */
+export function inThreadList(list: ThreadList) {
+  return list === 'archive' ? isNotNull(groupChatThread.archivedAt) : isNull(groupChatThread.archivedAt)
+}
+
 /** The list a thread is drawn in, from its row. */
 export function threadListOf(thread: { archivedAt: Date | null }): ThreadList {
   return thread.archivedAt ? 'archive' : 'active'

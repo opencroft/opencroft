@@ -1,6 +1,6 @@
+import { legacy } from '@opencroft/client'
 import type { ChangeEvent } from 'react'
 
-import { legacy } from '@opencroft/client'
 const { InputHandle, NodeFrame, OutputHandle, getStream, icons } = legacy
 type Stream<T> = legacy.Stream<T>
 type TextChunk = legacy.TextChunk

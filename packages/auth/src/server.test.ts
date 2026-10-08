@@ -428,10 +428,21 @@ test('disabling and re-enabling sign-in access does not erase when the account w
   const created = await createUserAsAdmin(adminRequest(), { ...account, role: 'user' })
 
   const beforeSignIn = await getUserAsAdmin(adminRequest(), created.id)
-  assert.equal(beforeSignIn?.lastSeenAt, null, 'precondition: an account that has never signed in has no last-seen date')
+  assert.equal(
+    beforeSignIn?.lastSeenAt,
+    null,
+    'precondition: an account that has never signed in has no last-seen date',
+  )
 
-  const signIn = await ensureAuth().api.signInEmail({ body: { email: account.email, password: account.password }, asResponse: true })
-  assert.equal(signIn.status, 200, 'precondition: the created account must be able to sign in for this test to mean anything')
+  const signIn = await ensureAuth().api.signInEmail({
+    body: { email: account.email, password: account.password },
+    asResponse: true,
+  })
+  assert.equal(
+    signIn.status,
+    200,
+    'precondition: the created account must be able to sign in for this test to mean anything',
+  )
 
   const afterSignIn = await getUserAsAdmin(adminRequest(), created.id)
   assert.ok(afterSignIn?.lastSeenAt, 'signing in must record a last-seen date')
@@ -440,7 +451,11 @@ test('disabling and re-enabling sign-in access does not erase when the account w
   await setUserDisabledAsAdmin(adminRequest(), created.id, true)
   const disabled = await getUserAsAdmin(adminRequest(), created.id)
   assert.equal(disabled?.disabled, true, 'precondition: the account must actually be disabled')
-  assert.deepEqual(disabled?.lastSeenAt, seenAt, 'disabling sign-in access must not erase when the account was last seen')
+  assert.deepEqual(
+    disabled?.lastSeenAt,
+    seenAt,
+    'disabling sign-in access must not erase when the account was last seen',
+  )
 
   await setUserDisabledAsAdmin(adminRequest(), created.id, false)
   const reenabled = await getUserAsAdmin(adminRequest(), created.id)

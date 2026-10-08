@@ -1,5 +1,20 @@
 import { legacy } from '@opencroft/client'
-const { Button, Input, Label, NodeFrame, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, icons, invoke, toast } = legacy
+
+const {
+  Button,
+  Input,
+  Label,
+  NodeFrame,
+  React,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  icons,
+  invoke,
+  toast,
+} = legacy
 
 const { useCallback, useEffect, useState } = React
 
@@ -327,12 +342,7 @@ export function SecretsStoreInspector({
               <SelectItem value='symbols'>With symbols</SelectItem>
             </SelectContent>
           </Select>
-          <Button
-            size='sm'
-            className='h-7 text-xs'
-            onClick={handleGenerate}
-            disabled={!genName.trim() || generating}
-          >
+          <Button size='sm' className='h-7 text-xs' onClick={handleGenerate} disabled={!genName.trim() || generating}>
             <icons.Dices className='h-3 w-3' />
           </Button>
         </div>

@@ -209,6 +209,8 @@ export default defineExtension({
           label: 'Terminal',
           icon: 'TerminalSquare',
           fullHeight: true,
+          // Its shell ends when the inspector closes, not when another tab is picked.
+          keepMounted: true,
           component: TerminalRouterTerminalTab as unknown as never,
         },
       ],

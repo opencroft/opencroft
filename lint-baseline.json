@@ -30,23 +30,11 @@
     "an added entry: it means either deletions, or a narrower config."
   ],
   "biome": "2.4.16",
-  "filesScanned": 1223,
-  "total": 309,
+  "filesScanned": 1255,
+  "total": 233,
   "entries": {
-    "apps/opencroft/app/_authed/(agent)/_server/queue-store.test.ts": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(agent)/_shared/agent-node-shape.ts": {
       "lint/complexity/useLiteralKeys": 7
-    },
-    "apps/opencroft/app/_authed/(agent)/api/acp.mcp.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(agent)/api/acp.skills.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(approvals)/_components/mcp-request-list.tsx": {
-      "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(apps)/_server/runtime.ts": {
       "lint/suspicious/noAssignInExpressions": 1
@@ -80,9 +68,6 @@
     "apps/opencroft/app/_authed/(docker)/_server/context-actions.ts": {
       "lint/style/useNodejsImportProtocol": 1
     },
-    "apps/opencroft/app/_authed/(extension-editor)/_components/code-panel.tsx": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(extension-editor)/_components/preview-panel.tsx": {
       "lint/correctness/useExhaustiveDependencies": 1
     },
@@ -95,105 +80,35 @@
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/server/openai.ts": {
       "lint/complexity/useLiteralKeys": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/server/script.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/server/ssh-setup.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-asr.tsx": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-instruction.tsx": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-mcp.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1,
       "lint/correctness/noUnusedVariables": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-skills.tsx": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-speech.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-tool.tsx": {
       "lint/correctness/noUnusedFunctionParameters": 1,
       "lint/correctness/noUnusedVariables": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/api-route.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1,
       "lint/correctness/noUnusedVariables": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/event.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/key-store.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1,
       "lint/a11y/noStaticElementInteractions": 1,
       "lint/a11y/useKeyWithClickEvents": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/key-value-editor.tsx": {
-      "assist/source/organizeImports": 1,
       "lint/suspicious/noArrayIndexKey": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/localhost.tsx": {
-      "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/log.tsx": {
-      "assist/source/organizeImports": 1,
       "lint/suspicious/noArrayIndexKey": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/openai-assistant.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/openai-client.tsx": {
-      "assist/source/organizeImports": 1,
       "lint/a11y/noStaticElementInteractions": 1,
       "lint/a11y/useKeyWithClickEvents": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/prompt.tsx": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/script-output-store.ts": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/script.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1,
       "lint/correctness/noUnusedVariables": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/secrets-store.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/section.tsx": {
-      "assist/source/organizeImports": 1,
       "lint/a11y/useButtonType": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/send-message.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/server.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/text-generation.tsx": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/nodes/wsl.tsx": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/_builtin/core/src/shared.tsx": {
-      "assist/source/organizeImports": 1,
-      "format": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_client/registry.ts": {
       "lint/suspicious/noExplicitAny": 3
@@ -211,23 +126,14 @@
       "lint/complexity/useLiteralKeys": 3,
       "lint/complexity/useOptionalChain": 1
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_server/node-actions.ts": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/registry.ts": {
       "lint/complexity/useLiteralKeys": 1
     },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/send-message-helpers.ts": {
       "lint/complexity/useLiteralKeys": 4
     },
-    "apps/opencroft/app/_authed/(extension-runtime)/_server/stream-downstream-context.test.ts": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(extension-runtime)/_server/stream.ts": {
       "lint/complexity/useLiteralKeys": 4
-    },
-    "apps/opencroft/app/_authed/(extension-runtime)/api/ext/action.ts": {
-      "assist/source/organizeImports": 1
     },
     "apps/opencroft/app/_authed/(filemanager)/_components/file-browser.tsx": {
       "lint/a11y/noStaticElementInteractions": 2,
@@ -256,10 +162,6 @@
       "lint/style/useNodejsImportProtocol": 2,
       "lint/style/useTemplate": 5
     },
-    "apps/opencroft/app/_authed/(filemanager)/api/files.upload.ts": {
-      "assist/source/organizeImports": 1,
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/bubble-hint-node.tsx": {
       "lint/a11y/noSvgWithoutTitle": 1,
       "lint/correctness/noUnusedVariables": 1
@@ -281,7 +183,6 @@
       "lint/correctness/useExhaustiveDependencies": 3
     },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/application/index.tsx": {
-      "format": 1,
       "lint/correctness/useExhaustiveDependencies": 1,
       "lint/suspicious/noArrayIndexKey": 4
     },
@@ -292,7 +193,6 @@
       "lint/style/useTemplate": 1
     },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/index.tsx": {
-      "format": 1,
       "lint/a11y/noStaticElementInteractions": 1,
       "lint/a11y/useKeyWithClickEvents": 1,
       "lint/correctness/useExhaustiveDependencies": 3,
@@ -302,19 +202,13 @@
       "lint/correctness/useParseIntRadix": 2
     },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/localhost/index.tsx": {
-      "format": 1,
       "lint/correctness/useExhaustiveDependencies": 1
     },
-    "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/script/index.tsx": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/secrets-store/index.tsx": {
-      "format": 1,
       "lint/correctness/useExhaustiveDependencies": 1,
       "lint/suspicious/noArrayIndexKey": 2
     },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/section/index.tsx": {
-      "format": 1,
       "lint/a11y/useButtonType": 1
     },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/server/actions.ts": {
@@ -322,7 +216,6 @@
       "lint/style/useTemplate": 1
     },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/server/index.tsx": {
-      "format": 1,
       "lint/correctness/useExhaustiveDependencies": 6,
       "lint/correctness/useParseIntRadix": 1
     },
@@ -330,23 +223,11 @@
       "lint/a11y/noSvgWithoutTitle": 1,
       "lint/suspicious/noArrayIndexKey": 1
     },
-    "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/pinned-node.tsx": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/wsl/actions.ts": {
       "lint/complexity/useLiteralKeys": 4
     },
-    "apps/opencroft/app/_authed/(legacy-app-dashboard)/_legacy/nodes/wsl/index.tsx": {
-      "format": 1
-    },
     "apps/opencroft/app/_authed/(mcp)/_server/audit.ts": {
       "lint/style/useTemplate": 1
-    },
-    "apps/opencroft/app/_authed/(mcp)/_server/sleep-mode.test.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(mcp)/_server/sleep-mode.ts": {
-      "format": 1
     },
     "apps/opencroft/app/_authed/(server)/_server/remote.ts": {
       "lint/complexity/useLiteralKeys": 6,
@@ -368,12 +249,6 @@
     "apps/opencroft/app/_authed/(space)/_server/store.ts": {
       "lint/style/noNonNullAssertion": 2
     },
-    "apps/opencroft/app/_authed/(space)/api/spaces.$slug.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/_authed/(space)/api/spaces.ts": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/app/_authed/(ssh)/_server/ssh-config.ts": {
       "lint/style/noNonNullAssertion": 3
     },
@@ -386,12 +261,6 @@
     "apps/opencroft/app/api/route.$.ts": {
       "lint/style/useTemplate": 1
     },
-    "apps/opencroft/app/api/test-s3.ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/app/api/yolo.ts": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/components/card.tsx": {
       "lint/a11y/noStaticElementInteractions": 1,
       "lint/a11y/useKeyWithClickEvents": 1
@@ -401,10 +270,6 @@
     },
     "apps/opencroft/components/hooks/use-timer.ts": {
       "lint/correctness/useExhaustiveDependencies": 1
-    },
-    "apps/opencroft/components/hooks/use-url-state.ts": {
-      "lint/suspicious/noGlobalIsNan": 1,
-      "lint/suspicious/useIterableCallbackReturn": 1
     },
     "apps/opencroft/components/hooks/use-video-loop.ts": {
       "lint/correctness/useExhaustiveDependencies": 2
@@ -419,29 +284,14 @@
       "lint/a11y/noStaticElementInteractions": 1,
       "lint/a11y/useKeyWithClickEvents": 1
     },
-    "apps/opencroft/components/ui/layout/url-menu-layout.tsx": {
-      "lint/a11y/useButtonType": 1
-    },
     "apps/opencroft/components/ui/media/video-loop.tsx": {
       "lint/suspicious/noArrayIndexKey": 1
     },
     "apps/opencroft/hooks/utils/use-local-storage.ts": {
       "lint/correctness/useExhaustiveDependencies": 1
     },
-    "apps/opencroft/scripts/collect-extension-deps.mjs": {
-      "format": 1
-    },
-    "apps/opencroft/server/routes/api/ext/[extensionId]/[file].ts": {
-      "assist/source/organizeImports": 1
-    },
-    "apps/opencroft/server/routes/api/ext/[extensionId]/assets/[...path].ts": {
-      "assist/source/organizeImports": 1
-    },
     "apps/opencroft/server/routes/api/ext/[extensionId]/http/[...path].ts": {
       "lint/suspicious/noImplicitAnyLet": 1
-    },
-    "apps/opencroft/server/scheduler/event-scheduler.test.ts": {
-      "format": 1
     },
     "apps/opencroft/server/scheduler/event-scheduler.ts": {
       "lint/suspicious/noAssignInExpressions": 2
@@ -451,12 +301,6 @@
     },
     "apps/opencroft/server/shutdown.ts": {
       "lint/suspicious/noAssignInExpressions": 1
-    },
-    "apps/opencroft/vite.config.ts": {
-      "format": 1
-    },
-    "packages/agent-chat/src/components/author-runs.test.ts": {
-      "format": 1
     },
     "packages/agent-chat/src/components/chat-turn-avatar.test.tsx": {
       "lint/style/noNonNullAssertion": 3
@@ -470,20 +314,8 @@
     "packages/agent-chat/src/tool-block.tsx": {
       "lint/correctness/useExhaustiveDependencies": 1
     },
-    "packages/agent-chat/tsconfig.json": {
-      "format": 1
-    },
-    "packages/agent-client/src/presence.test.ts": {
-      "format": 1
-    },
-    "packages/auth/src/server.test.ts": {
-      "format": 1
-    },
     "packages/db/src/index.ts": {
       "lint/suspicious/noAssignInExpressions": 2
-    },
-    "packages/server/src/index.ts": {
-      "assist/source/organizeImports": 1
     },
     "packages/terminal/src/server/shell.ts": {
       "lint/style/noNonNullAssertion": 1
@@ -497,10 +329,6 @@
     },
     "packages/terminal/src/server/ssh.ts": {
       "lint/style/noNonNullAssertion": 6
-    },
-    "scripts/run-typecheck.mjs": {
-      "assist/source/organizeImports": 1,
-      "format": 1
     }
   }
 }

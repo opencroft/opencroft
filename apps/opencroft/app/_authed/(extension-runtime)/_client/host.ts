@@ -13,13 +13,14 @@ import {
 } from '@xyflow/react'
 import { CodeBlock } from 'agent-chat/components/code-block'
 import { CodeBlockEditor } from 'agent-chat/components/code-block-editor'
+import { codeColours } from 'agent-chat/components/code-highlight'
 import { Markdown, markdownDirectiveBlocks } from 'agent-chat/components/markdown'
 import { MermaidDiagram } from 'agent-chat/components/mermaid-diagram'
 import type * as icons from 'lucide-react'
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
-import { MarkdownDiffView } from 'ui/components/ui/editing/markdown-diff-view'
+import { MarkdownDiffView, type MarkdownDiffViewProps } from 'ui/components/ui/editing/markdown-diff-view'
 import { ControlledInput } from 'ui/components/ui/input/controlled-input'
 import * as uiKit from 'ui/ext'
 import { useIsMobile } from 'ui/hooks/use-mobile'
@@ -102,6 +103,13 @@ export interface InspectorTab<D = Record<string, unknown>> {
   icon?: string
   /** When true, the tab content fills the inspector body (for terminals, logs, etc.) instead of being wrapped in a scroll area. */
   fullHeight?: boolean
+  /**
+   * When true, the tab stays mounted while the inspector shows this node: leaving it for another
+   * tab and coming back finds it as it was. It unmounts when the inspector closes or moves to
+   * another node. For a tab holding something that has to end when the inspector closes and only
+   * then, such as a shell.
+   */
+  keepMounted?: boolean
   /** Tab content component */
   component: React.ComponentType<ExtensionInspectorProps<D>>
 }
@@ -461,6 +469,14 @@ function GraphCanvas(props: { instanceId: string }) {
   )
 }
 
+// The diff view coloured by the page's one highlighter, so a changed code
+// block in a diff is coloured as `CodeBlock` colours the block on the page --
+// each version in its own fence's language -- without every extension that
+// shows a diff having to bring a highlighter of its own.
+function HostMarkdownDiffView(props: MarkdownDiffViewProps) {
+  return React.createElement(MarkdownDiffView, { highlightCode: codeColours, ...props })
+}
+
 export const extensionUiApi = {
   // Every component from the `ui` package (Badge, Button, Select, Dialog,
   // SearchableDropdown, Popover, Command, Combobox, …) — see `ui/ext`.
@@ -502,7 +518,7 @@ export const extensionUiApi = {
   // What changed between two versions of a markdown document, on the
   // document as it renders, each block drawn by the caller's own renderer.
   // Shared so a document's changes look the same wherever they are shown.
-  MarkdownDiffView,
+  MarkdownDiffView: HostMarkdownDiffView,
   // What `Markdown` already renders a `mermaid` fence with, exposed on its own
   // for a surface holding diagram source that never was markdown. Shared
   // because mermaid is a megabyte-class dependency fetched on first use, and

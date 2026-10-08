@@ -7,7 +7,10 @@ import { Badge } from 'ui/badge'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import {
   ButtonPin,

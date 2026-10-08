@@ -66,7 +66,10 @@
     --prose-code-radius: 0.2rem;
 
     --prose-pre-radius: 0.4rem;
-    --prose-pre-padding: 0.6em 0.75em;
+    /* A code diff's inner padding (`DiffView`): its rows' 0.25rem above and
+       below, the sign column's 1rem before the code and 0.5rem after it, so a
+       block's code starts where a diff's code does. */
+    --prose-pre-padding: 0.25rem 0.5rem 0.25rem 1rem;
     --prose-pre-space: 0.5em;
     --prose-pre-white-space: pre-wrap;
     --prose-pre-overflow-wrap: anywhere;
@@ -124,12 +127,16 @@
     --prose-code-radius: 0.25rem;
 
     --prose-pre-radius: var(--radius);
-    --prose-pre-padding: 1em;
+    --prose-pre-padding: 0.25rem 0.5rem 0.25rem 1rem;
     --prose-pre-space: 1em;
     --prose-pre-white-space: pre;
     --prose-pre-overflow-wrap: normal;
     --prose-pre-code-size: 0.875em;
-    --prose-pre-code-line-height: 1.6;
+    /* 2 at 0.875em is the pitch a docs code block has always shown: 1.75 of
+       the block's 0.85em, which its line box used to impose over the code's
+       own line height. Now the code's own line height decides, and a code
+       diff takes the same. */
+    --prose-pre-code-line-height: 2;
 
     --prose-rule-space: 2em;
     --prose-image-space: 1em;
@@ -264,8 +271,10 @@
     color: var(--foreground);
   }
 
+  /* A code block is set as a code diff is: the same light tint of `--muted`
+     (`bg-muted/40`) and the same inner padding. */
   :is(.prose-chat, .prose-docs) pre {
-    background: var(--muted);
+    background: color-mix(in oklab, var(--muted) 40%, transparent);
     border: 1px solid var(--border);
     border-radius: var(--prose-pre-radius);
     padding: var(--prose-pre-padding);
@@ -276,7 +285,11 @@
     font-size: 0.85em;
   }
 
+  /* The code is a block of its own, so its lines are set at its own size and
+     line height. Inline, they sat in the `pre`'s line boxes, whose line height
+     at the `pre`'s larger size decided the pitch instead. */
   :is(.prose-chat, .prose-docs) pre code {
+    display: block;
     background: transparent;
     padding: 0;
     border-radius: 0;
@@ -298,21 +311,18 @@
 
   /*
    * Code blocks marked `data-code-block` -- `CodeBlock`'s own, and the editor's.
+   * Their box is the `CodeFrame` around them, which carries it on its own
+   * classes, and so does the `pre`'s lack of one.
    *
-   * The box is for a code block with no prose around it -- an install snippet,
-   * a settings panel -- and weighs nothing (`:where`), so inside prose the
-   * scale's `pre` above decides it. What stands everywhere is that code does
-   * not wrap: prose may wrap a quoted `pre`, but a wrapped line of code loses
-   * the indentation the reader is following, so it scrolls sideways instead.
-   * `CodeBlock` also carries that on its own classes, for a host without this
-   * stylesheet; the rule below is what gives the editor's code block the same.
+   * The padding and size are for a code block with no prose around it -- an
+   * install snippet, a settings panel -- and weigh nothing (`:where`), so
+   * inside prose the scale's `pre` above decides them. What stands everywhere
+   * is that code does not wrap: prose may wrap a quoted `pre`, but a wrapped
+   * line of code loses the indentation the reader is following, so it scrolls
+   * sideways instead.
    */
   :where(pre[data-code-block]) {
-    background: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
-    padding: 0.6em 0.75em;
-    margin: 0.5em 0;
+    padding: 0.25rem 0.5rem 0.25rem 1rem;
     font-size: 0.85em;
   }
 

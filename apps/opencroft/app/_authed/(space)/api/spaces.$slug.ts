@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { requireSession } from '@/app/_server/require-session'
 import { deleteSpace, loadSpaceGraph, renameSpace } from '@/app/_authed/(space)/_server/actions'
+import { requireSession } from '@/app/_server/require-session'
 
 export const Route = createFileRoute('/_authed/(space)/api/spaces/$slug')({
   server: {

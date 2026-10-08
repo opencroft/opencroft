@@ -12,6 +12,7 @@ import { Separator } from 'ui/separator'
 
 import { McpRequestList } from '@/app/_authed/(approvals)/_components/mcp-request-list'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
+import { InspectorTabBody } from '@/app/_authed/(dashboard)/_canvas/inspector-tab-body'
 import { NodeCommentTab } from '@/app/_authed/(dashboard)/_canvas/node-comment-tab'
 import { InstallMissingExtension, missingTypeLabel } from '@/app/_authed/(extension-runtime)/_client/missing-extension'
 import {
@@ -113,34 +114,12 @@ export function NodeInspector({
   // A copy in state was what reopened the terminal on every reselection: the
   // button's request outlived the user's later pick of Details.
   const activeEntry = tabs.find((t) => t.id === intent.tab) ?? tabs[0]
-  const ActiveComponent = activeEntry.component
-  const fillHeight = activeEntry.fullHeight
 
   const inspectorProps = {
     nodeId: node.id,
     data: node.data,
     updateData: (patch: Record<string, unknown>) => updateNodeData(node.id, patch),
   }
-
-  const body = fillHeight ? (
-    <Flex expanded className='w-full min-h-0'>
-      {ActiveComponent ? (
-        <ActiveComponent {...inspectorProps} />
-      ) : (
-        <p className='text-xs text-muted-foreground italic p-2'>This extension has no editable properties.</p>
-      )}
-    </Flex>
-  ) : (
-    <ScrollArea className='flex-1 min-h-0'>
-      <div className='py-2 px-4'>
-        {ActiveComponent ? (
-          <ActiveComponent {...inspectorProps} />
-        ) : (
-          <p className='text-xs text-muted-foreground italic'>This extension has no editable properties.</p>
-        )}
-      </div>
-    </ScrollArea>
-  )
 
   const ExpandIcon = expanded ? Minimize2 : Maximize2
 
@@ -188,7 +167,7 @@ export function NodeInspector({
         activeId={activeEntry.id}
         onSelect={(id) => inspectorIntent.setTab(node.id, id)}
       />
-      {body}
+      <InspectorTabBody nodeId={node.id} tabs={tabs} active={activeEntry} inspectorProps={inspectorProps} />
     </Flex>
   )
 }

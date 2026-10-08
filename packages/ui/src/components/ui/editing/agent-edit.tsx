@@ -4,6 +4,8 @@ import { cn } from 'cn'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import type { PaletteHue } from 'ui/components/ui/input/color-palette'
 
+import { CollaboratorTag, tetherTagElement, useTagAnchorName } from './collaborator-caret'
+
 /*
  * An agent's change to a text, as the people reading it see it arrive. An
  * agent does not type, so it is not drawn as a caret racing through letters:
@@ -149,13 +151,13 @@ export function agentEditOldElement(
 // The agent's name, steady above where the change is: no caret, no blinking.
 // In a line the anchor is a line tall and sits at the top of the text, so the
 // label is above the line rather than over the first word; between blocks it
-// takes no height, so the blocks do not move.
+// takes no height, so the blocks do not move. The label is a collaborator's
+// name tag, tethered to its anchor the same way and for the same reason: so
+// that a box the text scrolls in -- a table's frame, the editor -- neither
+// cuts it off nor scrolls further for it.
 const LABEL_ANCHOR = 'pointer-events-none relative inline-block h-[1lh] w-0 align-top'
 const LABEL_BLOCK_ANCHOR = 'pointer-events-none relative block h-0'
-const LABEL =
-  'absolute bottom-full left-0 mb-0.5 select-none whitespace-nowrap rounded-sm bg-current px-1 py-px text-[0.7rem] font-medium leading-tight'
-const LABEL_TEXT = 'text-white'
-const LABEL_STYLE = 'animation: agent-edit-label 200ms ease-out both'
+const LABEL_ANIMATION = 'agent-edit-label 200ms ease-out both'
 
 function labelColour(hue: PaletteHue): string {
   return `text-${hue}-500`
@@ -169,14 +171,7 @@ export function agentEditLabelElement(
 ): HTMLElement {
   const anchor = document.createElement(blocks ? 'div' : 'span')
   anchor.className = cn(blocks ? LABEL_BLOCK_ANCHOR : LABEL_ANCHOR, labelColour(hue))
-  const label = document.createElement('span')
-  label.className = LABEL
-  label.setAttribute('style', LABEL_STYLE)
-  const text = document.createElement('span')
-  text.className = LABEL_TEXT
-  text.textContent = name
-  label.append(text)
-  anchor.append(label)
+  tetherTagElement(anchor, name).style.animation = LABEL_ANIMATION
   return anchor
 }
 
@@ -251,15 +246,15 @@ export function AgentEdit({
     return () => timers.forEach(clearTimeout)
   }, [plan, loop, round])
 
+  const anchor = useTagAnchorName()
+
   const swept = replaces && oldShown && plan.oldGone > 0
   return (
     <p className={cn('pt-6', className)} key={round}>
       {before}
       {playing && (
-        <span className={cn(LABEL_ANCHOR, labelColour(hue))}>
-          <span className={LABEL} style={styleObject(LABEL_STYLE)}>
-            <span className={LABEL_TEXT}>{name}</span>
-          </span>
+        <span className={cn(LABEL_ANCHOR, labelColour(hue))} style={{ anchorName: anchor }}>
+          <CollaboratorTag name={name} anchor={anchor} style={{ animation: LABEL_ANIMATION }} />
         </span>
       )}
       {swept ? (

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { CODE_SCROLL_CLASS, highlight, resolveLanguage } from './code-highlight'
+import { CODE_PRE_CLASS, codeColours, fenceLanguage, highlight, resolveLanguage } from './code-highlight'
 
 // What a fence resolves to decides whether a block is coloured at all, and the
 // inputs are whatever an agent happened to type above the code. These are the
@@ -84,7 +84,23 @@ test('an alias never resolves to a grammar that is not loadable', () => {
 // rely on the colours, which is why the colours hang on shiki's own class and
 // not on the mark.
 
-test('a highlighted block marks itself as owning its box', async () => {
+test('the language a fence names is its first word, as written', () => {
+  assert.equal(fenceLanguage('yaml'), 'yaml')
+  assert.equal(fenceLanguage('TS'), 'TS')
+  assert.equal(fenceLanguage('  ts {1,3}'), 'ts')
+  assert.equal(fenceLanguage('bash title="install"'), 'bash')
+  assert.equal(fenceLanguage('python:main.py'), 'python')
+  // A language no grammar covers is still the language the block names.
+  assert.equal(fenceLanguage('hcl'), 'hcl')
+})
+
+test('a fence with no language names none', () => {
+  assert.equal(fenceLanguage(undefined), null)
+  assert.equal(fenceLanguage(''), null)
+  assert.equal(fenceLanguage('   '), null)
+})
+
+test('a highlighted block marks itself as a code block', async () => {
   const html = await highlight('const answer = 42\n', 'typescript')
   assert.ok(html, 'typescript should highlight')
   assert.match(html, /data-code-block/)
@@ -93,15 +109,15 @@ test('a highlighted block marks itself as owning its box', async () => {
   assert.match(html, /--shiki-dark:/)
 })
 
-test('a highlighted block scrolls sideways on its own classes', async () => {
+test('a highlighted block scrolls sideways and draws no box, on its own classes', async () => {
   const html = await highlight('const answer = 42\n', 'typescript')
   assert.ok(html, 'typescript should highlight')
   const pre = html.match(/<pre [^>]*class="([^"]*)"/)
   assert.ok(pre, 'the block should be a classed pre')
   assert.deepEqual(
-    CODE_SCROLL_CLASS.split(' ').filter((name) => !pre[1].split(' ').includes(name)),
+    CODE_PRE_CLASS.split(' ').filter((name) => !pre[1].split(' ').includes(name)),
     [],
-    'every scroll class should be on the pre',
+    'every code-block class should be on the pre',
   )
 })
 
@@ -117,4 +133,19 @@ test('a plain highlight keeps the colours and drops the box', async () => {
   // because a stylesheet rule would not travel into the design kit copy.
   assert.match(html, /margin:0;padding:0/)
   assert.match(html, /font:inherit/)
+})
+
+test('a fence info string colours its code in runs over the code, both themes in each', async () => {
+  const code = 'const a = 1\nlet b = 2'
+  const runs = await codeColours(code, 'ts title="a.ts"')
+  assert.ok(runs?.length, 'a ts fence should colour its code')
+  // Runs are offsets into the code, and each stays on its own line.
+  const keywords = runs.filter((run) => ['const', 'let'].includes(code.slice(run.start, run.end)))
+  assert.equal(keywords.length, 2)
+  for (const run of runs) {
+    assert.doesNotMatch(code.slice(run.start, run.end), /\n/)
+    assert.match(run.style, /--shiki-light:[^;]+;--shiki-dark:/)
+  }
+  assert.equal(await codeColours(code, 'no-such-language'), null)
+  assert.equal(await codeColours(code, ''), null)
 })

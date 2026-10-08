@@ -1,6 +1,6 @@
+import { legacy } from '@opencroft/client'
 import type { ChangeEvent } from 'react'
 
-import { legacy } from '@opencroft/client'
 const { Button, Input, Label, icons } = legacy
 
 // A name/value pair as stored in node data — request headers, environment

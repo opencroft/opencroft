@@ -26,7 +26,7 @@ interface AppShellProps extends Props {
   chrome?: boolean
 }
 
-// Everything below the bar is offset by its height. The bar grows a second row
+// The fixed-position sidebars below the bar are offset by its height. The bar grows a second row
 // when a page sends it a toolbar, so the height is measured rather than fixed.
 function useMeasuredHeight() {
   const ref = useRef<HTMLDivElement>(null)
@@ -49,7 +49,7 @@ function Shell({ spaces, children }: Props) {
 
   return (
     <SidebarProvider
-      className='flex-col'
+      className='h-dvh flex-col'
       style={{ '--sidebar-width': '24rem', '--title-bar-height': `${barHeight}px` } as CSSProperties}
     >
       <CloseSheetOnNavigate />
@@ -67,7 +67,10 @@ function Shell({ spaces, children }: Props) {
             <SidebarContent ref={setNode} />
           </Sidebar>
         )}
-        <main className='flex h-[calc(100dvh-var(--title-bar-height))] w-full min-w-0 flex-col'>{children}</main>
+        {/* Sized by the column, not by the measured bar height: that height
+            is only known after hydration, and a server-rendered page sized
+            from it is a full viewport plus the bar until then. */}
+        <main className='flex w-full min-w-0 flex-col'>{children}</main>
         <RightSidebar />
       </div>
     </SidebarProvider>

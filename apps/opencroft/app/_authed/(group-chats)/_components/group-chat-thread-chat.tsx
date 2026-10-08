@@ -39,7 +39,7 @@ import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selec
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
-import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
+import type { GroupChatThreadView } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   attachGroupChatThreadSession,
   clearGroupChatThread,
@@ -78,11 +78,13 @@ export interface ThreadHeaderControls {
  *  read the header controls. */
 export interface ThreadChatParts extends ThreadHeaderControls {
   conversation: ReactNode
-  composer: ReactNode
+  /** Undefined until the conversation has first opened: the frame then draws
+   *  no composer area at all, not an empty one. */
+  composer?: ReactNode
 }
 
 interface GroupChatThreadChatProps {
-  thread: GroupChatThreadEntry & { draft: string | null }
+  thread: GroupChatThreadView
   /** Extra content at the start of the composer's action row — the embedded
    *  surface puts its agent picker here, mirroring where the start-thread
    *  composer keeps its own. Must be identity-stable when nothing changed. */
@@ -358,9 +360,17 @@ export function GroupChatThreadChat({
     [acp.session.messages, acp.session.historyHeader?.index, acp.stopBackgroundTask, thread.sessionKey],
   )
 
+  // Until the conversation has opened, the queue is the one the thread was read
+  // with: the session's stream only carries it once the open answers, and on a
+  // cold load the loader stands for a long while before that. A preview, so it
+  // offers no remove or deliver -- there is no session yet to do either in.
+  const previewingQueue = !acp.opened
   const unread = useMemo(
-    () => buildUnread(acp.queue, acp.queueAuthors, thread.sessionKey),
-    [acp.queue, acp.queueAuthors, thread.sessionKey],
+    () =>
+      previewingQueue
+        ? buildUnread(thread.queue.items, thread.queue.authors, thread.sessionKey)
+        : buildUnread(acp.queue, acp.queueAuthors, thread.sessionKey),
+    [previewingQueue, thread.queue, acp.queue, acp.queueAuthors, thread.sessionKey],
   )
   // Memoized for the same reason as `unread`: it feeds the memoized command
   // bar, and a fresh object every render would rebuild it every render.
@@ -578,7 +588,13 @@ export function GroupChatThreadChat({
   // refused server-side regardless, but leaving the composer up would invite
   // a person to type into a box that can never deliver, and clear only after
   // the refusal comes back.
-  const composer = archived ? (
+  // Until the conversation has opened there is no composer at all, so the
+  // loader stands alone: a bar under it reads as an empty panel. Undefined
+  // rather than a composer that renders nothing, so every frame drops its
+  // wrapper too. `opened`, not `loading`: a Clear or a Try again opens the same
+  // conversation again, and unmounting the composer for that would remount it
+  // from the draft the page loaded with, dropping what was typed since.
+  const composer = !acp.opened ? undefined : archived ? (
     <ArchivedThreadNotice onUnarchive={() => void unarchive()} pending={unarchiving} error={unarchiveError} />
   ) : (
     <AgentCommandBarHost
@@ -617,8 +633,8 @@ export function GroupChatThreadChat({
         renderTool={renderToolCall}
         renderers={CHAT_RENDERERS}
         unread={unread}
-        onRemoveUnread={acp.removeQueued}
-        onDeliverUnread={acp.deliverQueue}
+        onRemoveUnread={previewingQueue ? undefined : acp.removeQueued}
+        onDeliverUnread={previewingQueue ? undefined : acp.deliverQueue}
         composerRef={composerRef}
         reveal={reveal}
         footerExtra={
@@ -654,9 +670,11 @@ export function GroupChatThreadChat({
         <Flex expanded justify='end'>
           {conversation}
         </Flex>
-        <StickySection side='bottom' fade>
-          <CommandBarFrame>{composer}</CommandBarFrame>
-        </StickySection>
+        {composer ? (
+          <StickySection side='bottom' fade>
+            <CommandBarFrame>{composer}</CommandBarFrame>
+          </StickySection>
+        ) : null}
       </ScrollArea>
     </div>
   )

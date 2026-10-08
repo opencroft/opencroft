@@ -1,10 +1,21 @@
-import type { ChangeEvent } from 'react'
-
 import { legacy } from '@opencroft/client'
+import type { ChangeEvent } from 'react'
 
 import { storedType } from './stored-type'
 
-const { Input, Label, NodeFrame, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, extensionId, icons, useGraphNodes } = legacy
+const {
+  Input,
+  Label,
+  NodeFrame,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  extensionId,
+  icons,
+  useGraphNodes,
+} = legacy
 
 export interface OpenAIAssistantData {
   name: string
@@ -85,7 +96,6 @@ export function OpenAIAssistantInspector({
           onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ temperature: Number(e.target.value) })}
         />
       </div>
-
     </div>
   )
 }
@@ -114,7 +124,10 @@ export function AssistantSelector({ value, onChange }: { value: string; onChange
   return (
     <Select
       value={value || '__none'}
-      items={[{ value: '__none', label: 'No assistant' }, ...list.map((a) => ({ value: a.id, label: a.data.name || a.id }))]}
+      items={[
+        { value: '__none', label: 'No assistant' },
+        ...list.map((a) => ({ value: a.id, label: a.data.name || a.id })),
+      ]}
       onValueChange={(v) => {
         if (v !== null) {
           onChange(v === '__none' ? '' : v)

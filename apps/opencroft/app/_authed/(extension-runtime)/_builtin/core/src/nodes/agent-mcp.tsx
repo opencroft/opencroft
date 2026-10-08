@@ -1,5 +1,20 @@
 import { legacy } from '@opencroft/client'
-const { Badge, Button, Input, Label, React, ScrollArea, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, icons, toast } = legacy
+
+const {
+  Badge,
+  Button,
+  Input,
+  Label,
+  React,
+  ScrollArea,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  icons,
+  toast,
+} = legacy
 
 import { type KeyValue, KeyValueEditor } from './key-value-editor'
 

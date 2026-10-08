@@ -265,6 +265,13 @@ export interface AcpSession {
   // Try to open the session again now, starting the backoff over. What a
   // reader presses after acting on `openError`.
   retryOpen: () => void
+  // Whether this conversation (agent and tab) has finished opening at least
+  // once here: its history arrived, or the open found nothing held. Unlike
+  // `session.loading` it stays true while the same conversation opens again in
+  // place -- a Clear, a Try again -- and is false from the first render of a
+  // different one. What a host keys on to leave out what it draws only once a
+  // conversation is there, without taking it away again on a Clear.
+  opened: boolean
 }
 
 type ToolPart = Extract<ChatPart, { type: 'tool-call' }>
@@ -784,6 +791,12 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
  */
 export type ForkTransport = (args: { sessionId: string; eventIndex: number; draft: string }) => Promise<unknown>
 
+// A conversation is an agent and a tab; a Clear starts a new session in the
+// same one.
+function conversationKey(agentNodeId: string, tabKey: string): string {
+  return `${agentNodeId}\n${tabKey}`
+}
+
 export function useAcpSession(
   source: LocalSource,
   botName = 'assistant',
@@ -878,6 +891,15 @@ export function useAcpSession(
   // a reconnect, and what the reader is looking at stays on screen until the
   // fresh history replaces it, rather than going blank for the round trip.
   const openedRef = useRef<string | null>(null)
+  // The conversation that has finished opening at least once, for `opened`. Not
+  // the generation: a Clear opens the same conversation again. Compared with the
+  // current one as it renders, so a switch reads as not opened from its first
+  // render, before the open effect has run for it.
+  const [settledConversation, setSettledConversation] = useState<string | null>(null)
+  // The conversation the current session id was opened for, taken by the
+  // stream effect as it starts, so a history that ends just after a switch is
+  // credited to the conversation it belongs to and not the one now open.
+  const sessionConversationRef = useRef<string | null>(null)
   // Outgoing prompts are serialized through this chain. The server assigns
   // queue/turn order by request arrival, so two concurrent promptLocal calls
   // could otherwise arrive reordered on the network and invert the messages.
@@ -980,10 +1002,12 @@ export function useAcpSession(
           }
           setOffline(true)
           setLoading(false)
+          setSettledConversation(conversationKey(agentNodeId, tabKey))
           return
         }
         wakeRef.current = false
         setOffline(false)
+        sessionConversationRef.current = conversationKey(agentNodeId, tabKey)
         setSessionId(result.sessionId)
         // The new seed is the database's account as of THIS open, which
         // already holds every turn the live increments counted since the
@@ -1051,6 +1075,7 @@ export function useAcpSession(
     if (!sessionId) {
       return
     }
+    const streamedConversation = sessionConversationRef.current
     const eventSource = new EventSource(`/api/acp/stream?sessionId=${encodeURIComponent(sessionId)}`)
     // subscribe replays a bounded tail of the session's history on every
     // (re)connect — including native EventSource auto-reconnects and a fork's
@@ -1094,6 +1119,7 @@ export function useAcpSession(
         baseIndexRef.current = event.startIndex - (event.snapshotPrefix ?? 0)
         setEvents(historyBufferRef.current)
         setLoading(false)
+        setSettledConversation(streamedConversation)
         // The replayed history is a bounded tail (see acp.stream.ts), not
         // necessarily the whole session — hand the cursor to the pagination
         // hook so a scroll-triggered loadMoreHistory() picks up from here.
@@ -1662,6 +1688,7 @@ export function useAcpSession(
       stopBackgroundTask,
       openError,
       retryOpen,
+      opened: settledConversation === conversationKey(agentNodeId, tabKey),
     }),
     [
       session,
@@ -1687,6 +1714,9 @@ export function useAcpSession(
       stopBackgroundTask,
       openError,
       retryOpen,
+      settledConversation,
+      agentNodeId,
+      tabKey,
     ],
   )
 }

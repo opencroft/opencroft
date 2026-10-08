@@ -1,7 +1,8 @@
-import type { ComponentProps, ReactNode } from 'react'
+import type { ComponentProps, PointerEvent, ReactNode } from 'react'
 import { cn } from 'cn'
 
 import { MarkdownTableEditor } from './markdown-table-editor'
+import { keepDragInScrollBox } from './scroll-box-drag'
 
 export type MarkdownTableAlign = 'left' | 'center' | 'right'
 
@@ -78,10 +79,16 @@ const LOOK = cn(
   '[&_th]:[white-space:var(--prose-table-white-space,normal)]',
 )
 
+/** Keep a mouse drag that started in the table on its rows while it scrolls the frame. */
+function keepDragOnTheRows(event: PointerEvent<HTMLElement>) {
+  keepDragInScrollBox(event, event.currentTarget)
+}
+
 /**
  * A markdown table: one framed box with a muted header row and hairlines
  * between rows and columns. A table wider than its column scrolls inside the
- * frame.
+ * frame, and a mouse drag past either side of a table built from `children`
+ * scrolls it and keeps selecting the row it is on.
  *
  * Given `editing` it is the same table made editable, for an editor: a strip
  * above the columns and one beside the rows. The rows and columns of the
@@ -98,5 +105,10 @@ export function MarkdownTable({ table, editing, children, ...props }: MarkdownTa
       </MarkdownTableEditor>
     )
   }
-  return <div className={cn('my-2', FRAME, LOOK)}>{content}</div>
+  // An editor's table is left to the editor, which owns its selection.
+  return (
+    <div className={cn('my-2', FRAME, LOOK)} onPointerDown={table == null ? keepDragOnTheRows : undefined}>
+      {content}
+    </div>
+  )
 }

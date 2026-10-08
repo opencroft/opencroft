@@ -2,7 +2,7 @@ import os from 'node:os'
 
 import * as pty from '@lydell/node-pty'
 
-import type { AttachPayload, ClientMessage, ConnectPayload, LocalPayload, WslPayload } from '../types'
+import type { AttachPayload, ClientMessage, ConnectPayload, LocalPayload, OpeningFields, WslPayload } from '../types'
 import { shellQuote } from './exec-util'
 import { sessionManager } from './manager'
 import type { SessionHandle, SocketPeer } from './session-manager'
@@ -115,8 +115,11 @@ function sendConnectedOrReconcile(peer: SocketPeer, sessionId: string, reattache
 }
 
 /** Decide connect/local/wsl outcome before spawning. Returns false once the caller must stop. */
-function beginSession(peer: SocketPeer, sessionKey: string | undefined, cols: number, rows: number): boolean {
-  const decision = manager.prepareConnect(peer, sessionKey, cols, rows)
+function beginSession(
+  peer: SocketPeer,
+  { sessionKey, shared, cols, rows }: Pick<OpeningFields, 'sessionKey' | 'shared' | 'cols' | 'rows'>,
+): boolean {
+  const decision = manager.prepareConnect(peer, sessionKey, cols, rows, shared)
   if (decision.kind === 'reattached') {
     sendConnectedOrReconcile(peer, decision.session.id, true)
     return false
@@ -130,8 +133,8 @@ function beginSession(peer: SocketPeer, sessionKey: string | undefined, cols: nu
 }
 
 async function handleConnect(peer: SocketPeer, payload: ConnectPayload) {
-  const { cols, rows, command, cwd, sessionKey, ...creds } = payload
-  if (!beginSession(peer, sessionKey, cols, rows)) {
+  const { cols, rows, command, cwd, sessionKey, shared, ...creds } = payload
+  if (!beginSession(peer, { sessionKey, shared, cols, rows })) {
     return
   }
   // Prefer the user's login shell, but if `$SHELL` is unset/missing on the remote (minimal
@@ -141,7 +144,7 @@ async function handleConnect(peer: SocketPeer, payload: ConnectPayload) {
 
   try {
     const sh = await sshShell(creds, cols, rows, effectiveCommand)
-    const managed = manager.create(peer, sshHandle(sh), { sessionKey })
+    const managed = manager.create(peer, sshHandle(sh), { sessionKey, shared })
     sendConnectedOrReconcile(peer, managed.id, false)
   } catch (err) {
     send(peer, 'error', { message: `SSH ${creds.host}: ${(err as Error).message}` })
@@ -165,10 +168,9 @@ function spawnPty(
   cols: number,
   rows: number,
   label: string,
-  cwd: string | undefined,
-  sessionKey: string | undefined,
+  { cwd, sessionKey, shared }: Pick<OpeningFields, 'cwd' | 'sessionKey' | 'shared'>,
 ) {
-  if (!beginSession(peer, sessionKey, cols, rows)) {
+  if (!beginSession(peer, { sessionKey, shared, cols, rows })) {
     return
   }
 
@@ -182,7 +184,7 @@ function spawnPty(
       env: localPtyEnv(),
     })
 
-    const managed = manager.create(peer, ptyHandle(proc), { sessionKey })
+    const managed = manager.create(peer, ptyHandle(proc), { sessionKey, shared })
     sendConnectedOrReconcile(peer, managed.id, false)
   } catch (err) {
     const msg = (err as Error).message
@@ -194,7 +196,7 @@ function spawnPty(
 function handleLocal(peer: SocketPeer, payload: LocalPayload) {
   const defaultShell = os.platform() === 'win32' ? 'cmd.exe' : 'bash'
   const exe = payload.command || payload.shell || defaultShell
-  spawnPty(peer, exe, payload.args || [], payload.cols, payload.rows, 'local', payload.cwd, payload.sessionKey)
+  spawnPty(peer, exe, payload.args || [], payload.cols, payload.rows, 'local', payload)
 }
 
 function handleWsl(peer: SocketPeer, payload: WslPayload) {
@@ -208,7 +210,11 @@ function handleWsl(peer: SocketPeer, payload: WslPayload) {
   if (payload.command) {
     args.push('--exec', payload.command, ...(payload.args || []))
   }
-  spawnPty(peer, 'wsl.exe', args, payload.cols, payload.rows, 'wsl', undefined, payload.sessionKey)
+  // The distro's own cwd went into `args` as `--cd`; the host side has none to give.
+  spawnPty(peer, 'wsl.exe', args, payload.cols, payload.rows, 'wsl', {
+    sessionKey: payload.sessionKey,
+    shared: payload.shared,
+  })
 }
 
 function handleAttach(peer: SocketPeer, payload: AttachPayload) {
@@ -255,7 +261,24 @@ function handleMessage(peer: SocketPeer, raw: string) {
     case 'disconnect':
       manager.handleDisconnect(peer)
       break
+    case 'restart':
+      if (typeof msg.payload?.token === 'string') {
+        manager.restartShared(peer, msg.payload.token)
+      }
+      break
   }
+}
+
+/** What a shared shell's viewers are told when what it belongs to is gone. */
+export const SHARED_SESSION_GONE_REASON = 'Terminal closed'
+
+/**
+ * End the shared shell opened under `sessionKey`, for the code that owns what the key names, when
+ * that thing is gone. Its viewers are told so. Anything else under the key is left alone: a shell
+ * per tab ends with its tab, and a job by its own rules.
+ */
+export function endSharedSession(sessionKey: string): boolean {
+  return manager.endShared(sessionKey, SHARED_SESSION_GONE_REASON)
 }
 
 /**

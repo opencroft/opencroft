@@ -27,7 +27,7 @@ function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
     <AvatarPrimitive.Image
       data-slot="avatar-image"
       className={cn(
-        "aspect-square size-full rounded-full object-cover",
+        "absolute inset-0 aspect-square size-full rounded-full object-cover data-error:hidden",
         className
       )}
       {...props}

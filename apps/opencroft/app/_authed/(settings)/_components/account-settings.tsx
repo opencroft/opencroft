@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from '@tanstack/react-router'
 import { type ChangeEvent, useEffect, useRef, useState } from 'react'
 import { AccountAvatar } from 'ui/auth/account-avatar'
 import { AccountPasswordForm } from 'ui/auth/account-password-form'
@@ -50,6 +51,9 @@ export default function AccountSettings() {
 // straight from `account` -- it only mounts once `account` is loaded, so
 // there is no loading-then-syncing step to get wrong.
 function AccountSettingsForm({ account }: { account: OwnAccount }) {
+  // The title bar draws the signed-in person from the route's context, which
+  // is resolved per navigation; invalidating re-resolves it after a change here.
+  const router = useRouter()
   const [image, setImage] = useState(account.image)
   const [avatarPending, setAvatarPending] = useState(false)
   const [avatarError, setAvatarError] = useState<string>()
@@ -88,6 +92,7 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
       const dataUrl = await fileToAvatarDataUrl(file)
       await updateAvatar({ data: dataUrl })
       setImage(dataUrl)
+      void router.invalidate()
     } catch (error) {
       setAvatarError(error instanceof Error ? error.message : 'The picture could not be saved.')
     } finally {
@@ -101,6 +106,7 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
     try {
       await updateAvatar({ data: null })
       setImage(null)
+      void router.invalidate()
     } catch (error) {
       setAvatarError(error instanceof Error ? error.message : 'The picture could not be removed.')
     } finally {
@@ -119,6 +125,7 @@ function AccountSettingsForm({ account }: { account: OwnAccount }) {
     setSavingProfile(true)
     try {
       await updateProfile({ data: name.trim() })
+      void router.invalidate()
       // Only when it actually differs. Saving the same handle back would be a
       // no-op in the store, but asking at all is a pointless round trip on
       // every name change.

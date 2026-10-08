@@ -1,0 +1,14 @@
+{
+  // Read only by the test runner (scripts/run-tests.mjs, via TSX_TSCONFIG_PATH)
+  // -- never by typecheck or the build, which resolve tsconfig.json as normal.
+  //
+  // This package's own tsconfig asks for the automatic runtime, but claims only
+  // `src`. tsx loads exactly one tsconfig per process and asks it about every
+  // file it transforms, so an agent-chat component a ui component renders is
+  // handed to esbuild with no tsconfig at all, and esbuild's default JSX is the
+  // classic React.createElement transform, which throws "React is not defined"
+  // in a file with no binding named React. The agent-chat workspace's own
+  // tsconfig.test.json is the same file the other way round.
+  "extends": "./tsconfig.json",
+  "include": ["src", "../agent-chat/src/**/*.ts", "../agent-chat/src/**/*.tsx"]
+}

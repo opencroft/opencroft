@@ -139,5 +139,7 @@ export function resetSleepModeCache(): void {
 // A restart into a held queue is the feature working, but it must never be
 // silent: this line is the boot-time half of the audit page's banner.
 if (isSleepMode()) {
-  console.warn(`[sleep-mode] This instance is ASLEEP: agent deliveries are held. Remove ${SLEEP_MARKER_PATH} or use the MCP audit settings page to wake it.`)
+  console.warn(
+    `[sleep-mode] This instance is ASLEEP: agent deliveries are held. Remove ${SLEEP_MARKER_PATH} or use the MCP audit settings page to wake it.`,
+  )
 }

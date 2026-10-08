@@ -17,7 +17,7 @@ import {
 } from '@/app/_authed/(settings)/_components/extension-settings'
 import UnknownTypesSettings from '@/app/_authed/(settings)/_components/unknown-types-settings'
 import UsersSettings from '@/app/_authed/(settings)/_components/users-settings'
-import { useUrlState } from '@/components/hooks/use-url-state'
+import { useSettingsLocation } from '@/app/_authed/(settings)/_lib/settings-location'
 
 // A section that swaps the panel beside the menu, staying on /settings.
 // The frame is the kit's SettingsShell; what stays here is which sections
@@ -43,9 +43,10 @@ const BUILTIN_PAGES: BuiltinPage[] = [
 ]
 
 function SettingsContent() {
-  const [section, setSection] = useUrlState<string>('section', '')
+  const { section, openSection } = useSettingsLocation()
   const value = section || BUILTIN_PAGES[0].id
-  const onClosed = useCallback(() => setSection(''), [setSection])
+  // The small-screen Back above a section: back to the menu, as its own step.
+  const onClosed = useCallback(() => openSection(''), [openSection])
   const settings = useExtensionSettings()
 
   // The SAME fact /_authed's beforeLoad just redirected on, handed down as
@@ -63,11 +64,11 @@ function SettingsContent() {
     <SettingsShell
       sections={builtinPages}
       value={value}
-      onValueChange={setSection}
+      onValueChange={openSection}
       isOpened={!!section}
       onClosed={onClosed}
       menuExtra={
-        <ExtensionSettingsMenu entries={extensionMenuEntries(settings)} activeId={value} onSelect={setSection} />
+        <ExtensionSettingsMenu entries={extensionMenuEntries(settings)} activeId={value} onSelect={openSection} />
       }
     >
       {ActiveComponent && <ActiveComponent />}

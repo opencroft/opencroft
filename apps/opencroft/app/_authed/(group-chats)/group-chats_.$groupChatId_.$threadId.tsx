@@ -15,7 +15,7 @@ import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/gro
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { parseRevealPosition } from '@/app/_authed/(group-chats)/_lib/reveal-position'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
-import type { GroupChatDetailView, GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/actions'
+import type { GroupChatDetailView, GroupChatThreadView } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   findGroupChatThreadInChat,
   getMyGroupChatView,
@@ -39,7 +39,7 @@ type ThreadPageData =
   | { found: 'refused' }
   | {
       found: 'ok'
-      thread: GroupChatThreadEntry & { draft: string | null }
+      thread: GroupChatThreadView
       chat: GroupChatDetailView
       artifacts: ThreadArtifact[]
     }
@@ -171,7 +171,7 @@ function ThreadConversation({
   onThreadForked,
 }: {
   artifacts: ThreadArtifact[]
-  thread: GroupChatThreadEntry & { draft: string | null }
+  thread: GroupChatThreadView
   chat: GroupChatDetailView
   revealPosition?: number
   onBack: () => void

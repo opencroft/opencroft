@@ -2,17 +2,13 @@
 
 import { preloadIcons } from 'ui/media/named-icon'
 
-import {
-  type ExtensionDeclaration,
-  installClientHost,
-  type LoadedExtensionDeclaration,
-} from '@/app/_authed/(extension-runtime)/_client/host'
+import type { ExtensionDeclaration, LoadedExtensionDeclaration } from '@/app/_authed/(extension-runtime)/_client/host'
 import { loadedDeclaration } from '@/app/_authed/(extension-runtime)/_client/loaded-declaration'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { declaredIconNames } from '@/app/_authed/(extension-runtime)/_declared-icons'
 import { extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
-import { listExtensionManifests } from '@/app/_authed/(extension-runtime)/_server/actions'
-import type { ExtensionManifest, ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
+import { listExtensionClients } from '@/app/_authed/(extension-runtime)/_server/actions'
+import type { ExtensionClientInfo } from '@/app/_authed/(extension-runtime)/_types'
 
 interface LoadedModule {
   default?: ExtensionDeclaration
@@ -30,6 +26,24 @@ function bundleVersion(clientVersion?: number): number {
 
 function bundleUrl(extensionId: string, file: string, version: number): string {
   return `${extensionUrlBase(extensionId)}/${file}?v=${version}`
+}
+
+// The host API the bundles bind to reaches most of the app's client code, so it
+// is fetched when extensions are loaded rather than with the pages that only
+// might load them. Every page imports this module for the shell's extension
+// surfaces; a static import here would make all of the host part of every
+// page's first load. A failed fetch is not kept, so the next load asks again.
+let hostInstalled: Promise<void> | null = null
+
+function installHost(): Promise<void> {
+  hostInstalled ??= import('@/app/_authed/(extension-runtime)/_client/host').then(
+    ({ installClientHost }) => installClientHost(),
+    (err: unknown) => {
+      hostInstalled = null
+      throw err
+    },
+  )
+  return hostInstalled
 }
 
 async function importBundle(url: string): Promise<LoadedModule> {
@@ -69,7 +83,7 @@ function injectStyles(extensionId: string, version: number): void {
   document.head.insertBefore(link, hostStyles)
 }
 
-type LoadableManifest = ExtensionManifest & { folder: string; clientIcons?: string[] }
+type LoadableExtension = Pick<ExtensionClientInfo, 'id' | 'folder'> & Partial<Pick<ExtensionClientInfo, 'clientIcons'>>
 
 // Fetches and validates a bundle WITHOUT registering it, so several can be in
 // flight at once while registration order stays under the caller's control.
@@ -78,13 +92,13 @@ type LoadableManifest = ExtensionManifest & { folder: string; clientIcons?: stri
 // are loaded before it is handed back, so that nothing it renders, and nothing
 // the host renders for it, draws an icon that is still on its way.
 async function importExtension(
-  manifest: LoadableManifest,
+  manifest: LoadableExtension,
   clientVersion?: number,
 ): Promise<LoadedExtensionDeclaration | null> {
-  installClientHost()
   const version = bundleVersion(clientVersion)
   injectStyles(manifest.id, version)
   try {
+    await installHost()
     const [mod] = await Promise.all([
       importBundle(bundleUrl(manifest.id, 'client.js', version)),
       preloadIcons(manifest.clientIcons ?? []),
@@ -104,7 +118,7 @@ async function importExtension(
 }
 
 export async function loadExtension(
-  manifest: LoadableManifest,
+  manifest: LoadableExtension,
   clientVersion?: number,
 ): Promise<LoadedExtensionDeclaration | null> {
   const decl = await importExtension(manifest, clientVersion)
@@ -115,15 +129,15 @@ export async function loadExtension(
 }
 
 export async function loadAllExtensions(): Promise<LoadedExtensionDeclaration[]> {
-  const manifests: ExtensionManifestInfo[] = await listExtensionManifests()
-  const withClient = manifests.filter((manifest) => manifest.hasClient)
+  // Started beside the listing rather than after it: every bundle waits for the
+  // host. A failure here is reported by each import that awaits it.
+  installHost().catch(() => {})
+  const clients = await listExtensionClients()
   // Imported concurrently: the previous serial loop paid one round trip per
   // extension, back to back. `injectStyles` still runs in manifest order —
   // each call happens synchronously before its first await — so the cascade
   // order of the extension stylesheets is unaffected.
-  const declarations = await Promise.all(
-    withClient.map((manifest) => importExtension(manifest, manifest.clientVersion)),
-  )
+  const declarations = await Promise.all(clients.map((client) => importExtension(client, client.clientVersion)))
   const loaded = declarations.filter((decl): decl is LoadedExtensionDeclaration => decl !== null)
   for (const decl of loaded) {
     extensionRegistry.register(decl)

@@ -80,7 +80,9 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
         if (!cancelled) {
           setChatId(view.chat.id)
         }
-        const list = await listGroupChatThreadsView({ data: view.chat.id })
+        // Archived threads are the chat's archive, not its thread list; they
+        // are reached from the chat's settings, as on the chat's own screen.
+        const list = await listGroupChatThreadsView({ data: { groupChatId: view.chat.id, list: 'active' } })
         if (!cancelled) {
           setThreads(list)
         }
@@ -114,12 +116,8 @@ export function ChatSelector({ space, selection, onChange, size, className }: Ch
   //
   // The cap saved nothing either way: the server applies no limit of its own,
   // so every thread is already loaded and in memory by the time this runs.
-  // Archived threads are the chat's archive, not its thread list; they are
-  // reached from the chat's settings, as on the chat's own screen.
   const shown = useMemo(() => {
-    const all = (threads ?? [])
-      .filter((t) => !t.archived)
-      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
+    const all = [...(threads ?? [])].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
     const q = query.trim().toLowerCase()
     if (!q) {
       return all

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { requireSession } from '@/app/_server/require-session'
 import { readSkills, type SkillConfig, writeSkills } from '@/app/_authed/(agent)/_server/skill-store'
+import { requireSession } from '@/app/_server/require-session'
 
 // Global skill list, shared by all local agents and stored in the settings DB
 // (not on disk). The agent client resolves the catalog per turn, so saved skills

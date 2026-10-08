@@ -158,6 +158,13 @@ export interface ExtensionManifestInfo extends ExtensionManifest {
   clientIcons: string[]
 }
 
+/**
+ * What the browser needs to import one extension's client bundle, and nothing
+ * more: it is fetched on every signed-in page. Descriptions and schemas stay
+ * with the full manifest, read where they are shown.
+ */
+export type ExtensionClientInfo = Pick<ExtensionManifestInfo, 'id' | 'folder' | 'clientVersion' | 'clientIcons'>
+
 export interface ExtensionRecord {
   manifest: ExtensionManifest
   sourceDir: string

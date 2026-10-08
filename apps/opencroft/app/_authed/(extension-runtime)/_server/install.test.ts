@@ -24,10 +24,16 @@ import {
   checkForUpdates,
   folderForUrl,
   installExtension,
+  installFromRegistry,
   sweepInstallDebris,
   uninstallExtension,
   updateExtension,
 } from '@/app/_authed/(extension-runtime)/_server/install'
+import {
+  clearRegistryCache,
+  getRegistrySources,
+  type RegistryExtension,
+} from '@/app/_authed/(extension-runtime)/_server/registry'
 
 const execFileAsync = promisify(execFile)
 
@@ -109,6 +115,40 @@ async function commitAs(dir: string, version: string): Promise<string> {
   await git(dir, 'commit', '-q', '-m', `release ${version}`)
   await git(dir, 'tag', `v${version}`)
   return git(dir, 'rev-parse', 'HEAD')
+}
+
+/** Commit `version` on `branch`, which must exist, without a tag, and go back to `main`; returns the full sha. */
+async function commitOnBranch(dir: string, branch: string, version: string): Promise<string> {
+  await git(dir, 'checkout', '-q', branch)
+  await writeFiles(dir, { 'extension.json': manifestOf(version) })
+  await git(dir, 'add', '-A')
+  await git(dir, 'commit', '-q', '-m', `${branch} ${version}`)
+  const sha = await git(dir, 'rev-parse', 'HEAD')
+  await git(dir, 'checkout', '-q', 'main')
+  return sha
+}
+
+/**
+ * Every configured registry answers with `extensions`, from its cache, so no
+ * registry is fetched. The cache is emptied afterwards.
+ */
+async function withRegistry(extensions: RegistryExtension[], run: () => Promise<void>): Promise<void> {
+  const saved = process.env.EXTENSION_REGISTRIES
+  delete process.env.EXTENSION_REGISTRIES
+  try {
+    const cache = new Map()
+    for (const source of await getRegistrySources()) {
+      const registry = { source, manifest: { extensions }, fetchedAt: Date.now() }
+      cache.set(source.url, { registry, expiresAt: Date.now() + 60 * 60 * 1000 })
+    }
+    globalThis.__REGISTRY_CACHE__ = cache
+    await run()
+  } finally {
+    clearRegistryCache()
+    if (saved !== undefined) {
+      process.env.EXTENSION_REGISTRIES = saved
+    }
+  }
 }
 
 async function entriesOf(dir: string): Promise<string[]> {
@@ -329,6 +369,96 @@ gitTest('an install following a branch is offered its new commits, not the newes
     assert.equal(updated.ref, 'main', 'an update with no ref stays on the branch')
     assert.equal(updated.commit, tip)
     assert.equal((await checkForUpdates(folder)).hasUpdate, false)
+  })
+})
+
+// ── from a registry ──────────────────────────────────────────────────
+
+/** A source tagged v1.0.0 on `main`, with a `stage` branch one untagged commit ahead of the tag. */
+async function makeBranchedSource(sources: string): Promise<{ dir: string; url: string; stageTip: string }> {
+  const source = await makeSource(sources, 'widgets')
+  await git(source.dir, 'branch', 'stage')
+  const stageTip = await commitOnBranch(source.dir, 'stage', '1.1.0')
+  return { ...source, stageTip }
+}
+
+function entry(id: string, url: string, branch?: unknown): RegistryExtension {
+  return { id, name: 'Widgets', repository: url, ...(branch === undefined ? {} : { branch }) } as RegistryExtension
+}
+
+gitTest('a registry entry with a branch installs from that branch, and an update follows it', async () => {
+  const folder = `acme.widgets-${suffix}`
+  await withScratch([folder], async ({ sources, extensionsRoot }) => {
+    const source = await makeBranchedSource(sources)
+    await withRegistry([entry(folder, source.url, 'stage')], async () => {
+      const installed = await installFromRegistry(folder)
+
+      const manifest = JSON.parse(await fs.readFile(path.join(extensionsRoot, folder, 'extension.json'), 'utf-8'))
+      assert.equal(manifest.version, '1.1.0', 'the branch, not the v1.0.0 tag')
+      assert.equal(installed.ref, 'stage', 'the install records the branch it follows')
+      assert.equal(installed.commit, source.stageTip)
+
+      const newTip = await commitOnBranch(source.dir, 'stage', '1.2.0')
+      const updated = await updateExtension(folder)
+
+      assert.equal(updated.ref, 'stage')
+      assert.equal(updated.commit, newTip, 'an update moves to the branch tip')
+    })
+  })
+})
+
+gitTest('a registry entry with a branch installs a development checkout on that branch', async () => {
+  const id = `acme.widgets-${suffix}`
+  const folder = `local.widgets-${suffix}`
+  await withScratch([folder], async ({ sources, extensionsRoot }) => {
+    const source = await makeBranchedSource(sources)
+    await withRegistry([entry(id, source.url, 'stage')], async () => {
+      const installed = await installFromRegistry(id, { asLocal: true })
+
+      const dir = path.join(extensionsRoot, folder)
+      assert.equal(installed.folder, folder)
+      assert.equal(await git(dir, 'rev-parse', '--abbrev-ref', 'HEAD'), 'stage', 'checked out on the branch')
+      assert.equal(await git(dir, 'rev-parse', 'HEAD'), source.stageTip)
+      assert.equal(installed.ref, 'stage')
+    })
+  })
+})
+
+gitTest('a registry entry without a branch installs the latest version tag', async () => {
+  const folder = `acme.widgets-${suffix}`
+  await withScratch([folder], async ({ sources }) => {
+    const source = await makeBranchedSource(sources)
+    await withRegistry([entry(folder, source.url)], async () => {
+      const installed = await installFromRegistry(folder)
+
+      assert.equal(installed.ref, 'v1.0.0')
+      assert.equal(installed.commit, await git(source.dir, 'rev-parse', 'v1.0.0'))
+    })
+  })
+})
+
+gitTest('an explicit ref wins over the branch a registry entry names', async () => {
+  const folder = `acme.widgets-${suffix}`
+  await withScratch([folder], async ({ sources }) => {
+    const source = await makeBranchedSource(sources)
+    await withRegistry([entry(folder, source.url, 'stage')], async () => {
+      const installed = await installFromRegistry(folder, { ref: 'v1.0.0' })
+
+      assert.equal(installed.ref, 'v1.0.0')
+    })
+  })
+})
+
+test('a registry entry whose branch is not a non-empty string is refused, and nothing is installed', async () => {
+  const folder = `acme.widgets-${suffix}`
+  await withScratch([folder], async ({ extensionsRoot }) => {
+    for (const branch of ['', '  ', 7]) {
+      await withRegistry([entry(folder, 'file:///nonexistent/widgets', branch)], async () => {
+        await assert.rejects(installFromRegistry(folder), /invalid branch/)
+      })
+    }
+    assert.equal(await exists(extensionsRoot), false)
+    assert.equal(await getExtensionRow(folder), null)
   })
 })
 

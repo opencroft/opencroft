@@ -1,24 +1,13 @@
-// The plain (non-`createServerFn`) implementation behind `listAgentNodes`,
-// in its own module rather than alongside the server-fn export in agents.ts.
+// Every agent node of every space, read from the space graphs. Plain server
+// functions, never a `createServerFn`, so server-side callers (group chats'
+// `addMember`, validating an agent principal) call them without nesting one
+// server fn inside another's handler.
 //
-// THAT SEPARATION IS LOAD-BEARING FOR THE CLIENT BUILD, not tidiness.
-// agents.ts is imported by browser components (the group-chat route and members
-// dialog, the embedded agent chat). It survives there only because its sole export is
-// a `createServerFn`: the client build replaces the handler with an RPC stub,
-// which leaves agents.ts's top-level imports unused and lets them — the
-// spaces registry, and `@opencroft/db`'s native driver tail behind it — drop
-// out of the browser bundle.
-//
-// A plain exported function in that file has no stub, so its live export
-// binding keeps that whole import tail alive in the client build and ships
-// native `.node` bindings to the browser, which fails `vite build` outright.
-// That has broken a build before; the pattern below is the
-// fix this file copies: impl in its own module, a thin server-fn-only wrapper
-// beside it. Nothing reachable from client code may import THIS module.
-//
-// Server-side callers that must avoid nesting one `createServerFn` inside
-// another's handler (group chats' `addMember`, validating an agent principal)
-// therefore import from here.
+// SERVER-ONLY. Nothing reachable from client code may import this module: its
+// live exports would keep the spaces registry, and `@opencroft/db`'s native
+// driver tail behind it, in the client build, which fails `vite build`
+// outright. A browser reaches agents through a server fn that wraps these,
+// such as the group-chat member picker's directory read.
 
 import {
   agentInstructionName,

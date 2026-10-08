@@ -50,7 +50,11 @@ test('computeDueRuleIds returns every rule due in the same window', () => {
   const windowStart = new Date('2026-07-23T03:59:50.000Z').getTime()
   const now = new Date('2026-07-23T04:00:00.000Z').getTime()
   const due = computeDueRuleIds(
-    [rule({ id: 'a', cron: '*/30 * * * *' }), rule({ id: 'b', cron: '0 * * * *' }), rule({ id: 'c', cron: '15 * * * *' })],
+    [
+      rule({ id: 'a', cron: '*/30 * * * *' }),
+      rule({ id: 'b', cron: '0 * * * *' }),
+      rule({ id: 'c', cron: '15 * * * *' }),
+    ],
     windowStart,
     now,
   )

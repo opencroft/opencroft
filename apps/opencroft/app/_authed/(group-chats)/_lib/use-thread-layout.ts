@@ -4,12 +4,15 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import type { ChatListNode } from 'ui/chat/chat-list'
 
+import { useFolderOpenCache } from '@/app/_authed/(group-chats)/_lib/folder-open-cache'
 import { nodesToLayout } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
 import type { ThreadLayout, ThreadList, VersionedThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
 import { saveGroupChatThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
 
 /**
  * One group chat's thread arrangement: what to draw, and how a change is saved.
+ * The arrangement is shared by the chat's members; which folders are open is
+ * the signed-in person's own (`folderOpen`).
  *
  * The state is here rather than inside the list because the same arrangement is
  * drawn in two places at once -- the chat's own screen and the sidebar. Two
@@ -99,5 +102,7 @@ export function useThreadLayout(groupChatId: string, list: ThreadList, loaded: V
     void flush(tree)
   }
 
-  return { layout: shown, persist }
+  const { folderOpen, setFolderOpen } = useFolderOpenCache(groupChatId, list)
+
+  return { layout: shown, persist, folderOpen, setFolderOpen }
 }

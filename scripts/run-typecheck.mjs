@@ -20,8 +20,9 @@
 // drop entries that no longer reproduce, so the baseline (and the ratchet)
 // tightens downward too, not just up. Without --prune, a stale entry is
 // still reported, just not treated as a failure.
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+
 import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 
 const args = process.argv.slice(2)
 const prune = args.includes('--prune')
@@ -61,7 +62,11 @@ const foreign = entries.filter((entry) => !entry.isOwned).map((entry) => entry.s
 
 const baselinePath = '.typecheck-baseline'
 const baseline = existsSync(baselinePath)
-  ? new Set(readFileSync(baselinePath, 'utf8').split('\n').filter((line) => line.length > 0))
+  ? new Set(
+      readFileSync(baselinePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.length > 0),
+    )
   : new Set()
 
 const ownedSet = new Set(owned)

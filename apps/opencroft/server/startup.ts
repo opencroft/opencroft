@@ -22,6 +22,7 @@ import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
 import { startIdleSessionReaper } from '@/server/scheduler/idle-session-reaper'
 import { startUsageRollupScheduler } from '@/server/scheduler/usage-rollup-scheduler'
+import { endSharedShellsWithTheirNodes } from '@/server/shared-terminal-shells'
 import { registerShutdownHandlers, registerShutdownStep } from '@/server/shutdown'
 import { maintainThreadKeys } from '@/server/thread-key-maintenance'
 
@@ -51,6 +52,7 @@ async function start(): Promise<void> {
   // its document, and the collaboration server must know what a graph
   // document is first. Open documents are stored before the database closes.
   registerGraphDocType()
+  endSharedShellsWithTheirNodes()
   // Markdown documents too, before an extension registers where its own are
   // stored.
   registerMarkdownDocType()

@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { Button, NodeFrame, OutputHandle, React, Textarea, dispatch, getStream, icons, toast } = legacy
 type Stream<T> = legacy.Stream<T>
 type TextChunk = legacy.TextChunk

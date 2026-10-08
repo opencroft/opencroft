@@ -10,7 +10,7 @@ import {
   getActionAccess,
   invokeExtensionActionImpl,
   listDeclaredIconNamesImpl,
-  listExtensionManifestsImpl,
+  listExtensionClientsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import { describeGraphRefsImpl, type GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
 import { ensureExtensionBuilt } from '@/app/_authed/(extension-runtime)/_server/loader'
@@ -21,7 +21,7 @@ import {
   type TerminalSourceInfo,
   type TerminalSourceTarget,
 } from '@/app/_authed/(extension-runtime)/_server/terminal-sources'
-import type { ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
+import type { ExtensionClientInfo } from '@/app/_authed/(extension-runtime)/_types'
 import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
@@ -42,14 +42,10 @@ export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { 
     return invokeExtensionActionImpl(data)
   })
 
-export const listExtensionManifests = createServerFn({ strict: { output: false } }).handler(
-  async (): Promise<ExtensionManifestInfo[]> => {
-    await requireSessionServerFn()
-    // The browser caches each client bundle immutably under the version handed
-    // out here, so a stale one is rebuilt before its version is read.
-    return listExtensionManifestsImpl({ rebuildStaleClients: true })
-  },
-)
+export const listExtensionClients = createServerFn().handler(async (): Promise<ExtensionClientInfo[]> => {
+  await requireSessionServerFn()
+  return listExtensionClientsImpl()
+})
 
 export const listDeclaredIconNames = createServerFn().handler(async (): Promise<string[]> => {
   await requireSessionServerFn()

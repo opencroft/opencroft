@@ -302,7 +302,7 @@ test('a second connection to a running job takes over the watch, and never ends 
     assert.equal(decision.kind, 'reattached', 'the newcomer watches rather than being turned away')
     assert.equal(decision.kind === 'reattached' ? decision.session.id : null, job.id)
     assert.equal(handle.killed(), false, 'and nothing was ended to hand the watch over')
-    assert.equal(job.attachedPeer, newcomer, 'the watch moved')
+    assert.deepEqual([...job.viewers], [newcomer], 'the watch moved')
   } finally {
     manager.dispose()
   }
@@ -323,7 +323,7 @@ test('an explicit attach reaches a live job under the same rule, not around it',
 
     assert.equal(result.ok, true, 'the newcomer is admitted')
     assert.equal(handle.killed(), false, 'without touching the command')
-    assert.equal(job.attachedPeer, newcomer, 'and it is the newcomer watching now')
+    assert.deepEqual([...job.viewers], [newcomer], 'and it is the newcomer watching now')
   } finally {
     manager.dispose()
   }
@@ -343,7 +343,7 @@ test('a watcher disconnecting from a job detaches it, and does not end the deplo
 
     assert.ok(manager.get(job.id), 'the deploy is still there')
     assert.equal(handle.killed(), false, 'and still running')
-    assert.equal(job.attachedPeer, null, 'nobody is watching it')
+    assert.equal(job.viewers.size, 0, 'nobody is watching it')
     const back = manager.attach(peer(), { sessionKey: 'job:bye', cols: 80, rows: 24 })
     assert.equal(back.ok, true, 'which is what detaching rather than killing is for')
   } finally {

@@ -1,7 +1,34 @@
 import { legacy } from '@opencroft/client'
-const { Badge, Button, CodeEditor, Input, InputHandle, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Textarea, dispatch, extensionId, getStream, icons, inspectorIntent, toast, useGraphNodes, useNodeContext, useReactFlow } = legacy
+
+const {
+  Badge,
+  Button,
+  CodeEditor,
+  Input,
+  InputHandle,
+  Label,
+  NodeFrame,
+  OutputHandle,
+  React,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+  dispatch,
+  extensionId,
+  getStream,
+  icons,
+  inspectorIntent,
+  toast,
+  useGraphNodes,
+  useNodeContext,
+  useReactFlow,
+} = legacy
 type Stream<T> = legacy.Stream<T>
 type TextChunk = legacy.TextChunk
+
 import { type ScriptResult, setScriptResult, useScriptResult } from './script-output-store'
 import { storedType } from './stored-type'
 

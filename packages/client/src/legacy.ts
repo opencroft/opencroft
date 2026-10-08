@@ -51,6 +51,11 @@ export interface InspectorTab<D = Record<string, unknown>> {
   label: string
   icon?: string
   fullHeight?: boolean
+  /**
+   * Stay mounted while the inspector shows this node, so leaving the tab and coming back finds it
+   * as it was. It unmounts when the inspector closes or moves to another node.
+   */
+  keepMounted?: boolean
   component: ComponentType<ExtensionInspectorProps<D>>
 }
 

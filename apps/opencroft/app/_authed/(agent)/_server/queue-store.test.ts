@@ -169,7 +169,11 @@ test('a removed entry is kept as a marked row until the sweep, which only ever t
 
   // The forget is a marked row, not an absence — the row is what a late
   // append conflicts with.
-  const markedRow = async () => await db.select().from(agentQueueEntry).where(eq(agentQueueEntry.id, entryId(key, 'a')))
+  const markedRow = async () =>
+    await db
+      .select()
+      .from(agentQueueEntry)
+      .where(eq(agentQueueEntry.id, entryId(key, 'a')))
   const [marked] = await markedRow()
   assert.ok(marked?.removedAt, 'removing marks the row rather than deleting it')
 
@@ -190,12 +194,20 @@ test('marking an entry removed drops its content and leaves the waiting entries 
   // the sweep, would hold every delivered message at full size for a day.
   const key = nextKey()
   const picture = { id: 'att-1', name: 'shot.png', mimeType: 'image/png', message: 0 }
-  await queueStore.append(key, { ...message(key, 'a', 'delivered', '2026-01-01T00:00:00.000Z'), attachments: [picture] }, 'end')
+  await queueStore.append(
+    key,
+    { ...message(key, 'a', 'delivered', '2026-01-01T00:00:00.000Z'), attachments: [picture] },
+    'end',
+  )
   await queueStore.append(key, message(key, 'b', 'waiting', '2026-01-01T00:01:00.000Z'), 'end')
   await queueStore.remove(key, [entryId(key, 'a')])
 
   const [marked] = await db
-    .select({ text: agentQueueEntry.text, attachments: agentQueueEntry.attachments, removedAt: agentQueueEntry.removedAt })
+    .select({
+      text: agentQueueEntry.text,
+      attachments: agentQueueEntry.attachments,
+      removedAt: agentQueueEntry.removedAt,
+    })
     .from(agentQueueEntry)
     .where(eq(agentQueueEntry.id, entryId(key, 'a')))
   assert.ok(marked?.removedAt)

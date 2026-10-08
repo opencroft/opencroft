@@ -1,5 +1,28 @@
 import { legacy } from '@opencroft/client'
-const { Badge, Button, Input, Label, NodeFrame, OutputHandle, React, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Terminal, extensionId, icons, inspectorIntent, invoke, toast, useGraphNodes, useReactFlow } = legacy
+
+const {
+  Badge,
+  Button,
+  Input,
+  Label,
+  NodeFrame,
+  OutputHandle,
+  React,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Separator,
+  Terminal,
+  extensionId,
+  icons,
+  inspectorIntent,
+  invoke,
+  toast,
+  useGraphNodes,
+  useReactFlow,
+} = legacy
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
 import { storedType } from './stored-type'

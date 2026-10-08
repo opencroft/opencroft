@@ -1,4 +1,5 @@
 import { legacy } from '@opencroft/client'
+
 const { NodeFrame, OutputHandle, React, Schedules, icons } = legacy
 type KitRunHistoryEntry = legacy.RunHistoryEntry
 type KitScheduleRule = legacy.ScheduleRule
@@ -127,12 +128,12 @@ export function EventNode({ data, selected }: { id: string; data: EventData; sel
   return (
     <NodeFrame
       icon={icons.AlarmClock}
-      title="Event"
+      title='Event'
       subtitle={ruleCount === 0 ? 'No schedules' : `${ruleCount} schedule${ruleCount === 1 ? '' : 's'}`}
       selected={selected ?? false}
-      output={<OutputHandle type="execution-context" id="exec-out" />}
+      output={<OutputHandle type='execution-context' id='exec-out' />}
       extra={
-        <div className="flex items-center justify-end gap-1.5 text-[10px] text-muted-foreground">
+        <div className='flex items-center justify-end gap-1.5 text-[10px] text-muted-foreground'>
           {lastStatus ? <span className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT[lastStatus]}`} /> : null}
           {next !== undefined ? <span>{formatRelative(next, now)}</span> : null}
         </div>
@@ -183,7 +184,7 @@ export function EventInspector({ data, updateData }: InspectorProps) {
     <Schedules
       rules={rules}
       history={toKitHistory(data.runHistory)}
-      timezone="UTC"
+      timezone='UTC'
       upcoming={serverUpcoming(data.schedules)}
       onRulesChange={(next) => updateData({ schedules: next as EventScheduleRule[] })}
     />

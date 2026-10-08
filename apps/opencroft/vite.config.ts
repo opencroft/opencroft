@@ -11,7 +11,8 @@ import { ssrWatchdog } from './vite-ssr-watchdog'
 // ever appends the raw string as a single allowedHosts entry (no comma-splitting),
 // so a multi-host value silently fails to match any real Host header. Parse it
 // ourselves so both the dev server and `vite preview` accept every listed host.
-const additionalAllowedHosts = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS?.split(',')
+const additionalAllowedHosts = process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+  ?.split(',')
   .map((host) => host.trim())
   .filter(Boolean)
 

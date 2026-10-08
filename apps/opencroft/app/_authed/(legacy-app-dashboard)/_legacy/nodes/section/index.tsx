@@ -5,7 +5,10 @@ import { Boxes, Globe } from 'lucide-react'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import { useSettingsDraft } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/use-settings-draft'
 import { InvisibleResizer } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/invisible-resizer'
 

@@ -210,3 +210,35 @@ test('removing a space removes the documents of its graphs', async () => {
   }
   assert.equal(await loadCollabDoc(graphDocName(graphId)), null)
 })
+
+// Listeners are registered for the whole run, and other tests remove nodes too: each test checks
+// for its own ids among what was announced.
+function collectRemovedNodes(): string[] {
+  const removed: string[] = []
+  getSpacesRegistry().onNodesRemoved((nodeIds) => removed.push(...nodeIds))
+  return removed
+}
+
+test('a node deleted from a live graph is announced as removed, and one kept is not', async () => {
+  const gone = `gone-${crypto.randomUUID()}`
+  const kept = `kept-${crypto.randomUUID()}`
+  const { address } = await liveSpace({ nodes: [node(gone), node(kept)], edges: [] })
+  const removed = collectRemovedNodes()
+
+  await mutateLiveGraph(address, ORIGIN, (graph) => {
+    graph.nodes = graph.nodes.filter((n) => (n as { id: string }).id !== gone)
+  })
+
+  assert.ok(removed.includes(gone))
+  assert.ok(!removed.includes(kept))
+})
+
+test('removing a space announces the nodes of its graphs as removed', async () => {
+  const inside = `inside-${crypto.randomUUID()}`
+  const { address } = await liveSpace({ nodes: [node(inside)], edges: [] })
+  const removed = collectRemovedNodes()
+
+  await getSpacesRegistry().remove(address)
+
+  assert.ok(removed.includes(inside))
+})

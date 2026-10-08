@@ -49,6 +49,7 @@ export interface ResolvedNode {
     label: string
     icon?: string
     fullHeight?: boolean
+    keepMounted?: boolean
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     component: ComponentType<any>
   }>

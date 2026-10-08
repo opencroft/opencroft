@@ -11,7 +11,10 @@ import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 import { Separator } from 'ui/separator'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
 import {
   copyKeyToWsl,
   createKey,
@@ -22,7 +25,11 @@ import {
   readPublicKey,
   removeKeyFromWsl,
 } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
+import {
+  NodeCard,
+  NodeCardContent,
+  NodeCardHeader,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 
 export type KeyStoreData = {
   keyNames: string[]

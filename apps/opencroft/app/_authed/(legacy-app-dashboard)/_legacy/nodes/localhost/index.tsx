@@ -4,8 +4,14 @@ import { type Node, type NodeProps, useReactFlow } from '@xyflow/react'
 import { Cpu, FolderOpen, HardDrive, MemoryStick, Monitor, TerminalSquare } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
-import { getLocalhostStats, type LocalhostStats } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/localhost/actions'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import {
+  getLocalhostStats,
+  type LocalhostStats,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/localhost/actions'
 import {
   ButtonPin,
   HANDLE_EXECUTION,

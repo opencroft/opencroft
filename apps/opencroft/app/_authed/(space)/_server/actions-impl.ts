@@ -26,6 +26,7 @@
 // Nothing in this file may be re-exported from actions.ts as a plain
 // function — that would reinstate reason 1.
 
+import { parseAvatarDataUrl } from '@opencroft/auth/server'
 import { isSpaceIconPreset } from '@opencroft/db/space-icon-presets'
 
 import type { LiveGraphSession } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
@@ -174,12 +175,11 @@ export async function setSpacePinnedImpl(data: { slug: string; pinned: boolean }
   return toSummary(runtime)
 }
 
-// An uploaded icon has the same contract as an account avatar (packages/auth
-// updateOwnAvatar): a small, self-contained image data URL. The client
-// re-encodes to a small square before sending; this cap is the server's own
-// say, not a copy of the client's.
+// An uploaded icon has the same contract as an account avatar: a small,
+// self-contained image data URL of a type `parseAvatarDataUrl` accepts. The
+// client re-encodes to a small square before sending; this cap is the server's
+// own say, not a copy of the client's.
 const MAX_ICON_CHARS = 64 * 1024
-const ICON_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/
 
 /** Throws unless the value is a known preset or an image a space may store. */
 export function assertSpaceIcon(icon: unknown): asserts icon is string {
@@ -192,7 +192,7 @@ export function assertSpaceIcon(icon: unknown): asserts icon is string {
     }
     return
   }
-  if (!ICON_DATA_URL.test(icon)) {
+  if (!parseAvatarDataUrl(icon)) {
     throw new Error('A space icon must be a preset or a PNG, JPEG or WebP image.')
   }
   if (icon.length > MAX_ICON_CHARS) {

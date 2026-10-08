@@ -101,6 +101,16 @@ export function parseGraph(data: string): GraphData {
   }
 }
 
+export function nodeIdsOf(graph: GraphData): string[] {
+  return graph.nodes.map((node) => (node as { id?: unknown }).id).filter((id): id is string => typeof id === 'string')
+}
+
+/** The ids of the nodes in `before` that `after` no longer has. */
+export function removedNodeIds(before: GraphData, after: GraphData): string[] {
+  const kept = new Set(nodeIdsOf(after))
+  return nodeIdsOf(before).filter((id) => !kept.has(id))
+}
+
 class SpacesRegistry {
   private spaces = new Map<string, SpaceRuntime>()
   private bySlug = new Map<string, string>()
@@ -113,16 +123,37 @@ class SpacesRegistry {
   private loaded = false
   private loadPromise: Promise<void> | null = null
   private graphRemovedListeners: Array<(graphIds: string[]) => void> = []
+  private nodeRemovedListeners: Array<(nodeIds: string[]) => void> = []
 
   /** Called with the ids of graphs once their rows are gone, by graph or by space removal. */
   onGraphsRemoved(listener: (graphIds: string[]) => void): void {
     this.graphRemovedListeners.push(listener)
   }
 
-  private graphsRemoved(graphIds: string[]): void {
+  /**
+   * Called with the ids of nodes that left a graph: deleted from it, or gone with their graph or
+   * space. For what lives outside the graph on a node's behalf and has to end with it.
+   */
+  onNodesRemoved(listener: (nodeIds: string[]) => void): void {
+    this.nodeRemovedListeners.push(listener)
+  }
+
+  /** For the graph's writers: these nodes are no longer in it. */
+  nodesRemoved(nodeIds: string[]): void {
+    if (nodeIds.length === 0) {
+      return
+    }
+    for (const listener of this.nodeRemovedListeners) {
+      listener(nodeIds)
+    }
+  }
+
+  private graphsRemoved(graphs: GraphRuntime[]): void {
+    const graphIds = graphs.map((graph) => graph.id)
     for (const listener of this.graphRemovedListeners) {
       listener(graphIds)
     }
+    this.nodesRemoved(graphs.flatMap((graph) => nodeIdsOf(graph.graph)))
   }
 
   async ensureLoaded(): Promise<void> {
@@ -503,7 +534,7 @@ class SpacesRegistry {
     await db.delete(spaceGraph).where(eq(spaceGraph.id, graph.id))
     owner?.graphs.delete(graph.slug)
     this.graphsByInstance.delete(instanceId)
-    this.graphsRemoved([graph.id])
+    this.graphsRemoved([graph])
   }
 
   /**
@@ -783,7 +814,7 @@ class SpacesRegistry {
     for (const graph of runtime?.graphs.values() ?? []) {
       this.graphsByInstance.delete(graph.instanceId)
     }
-    this.graphsRemoved([...(runtime?.graphs.values() ?? [])].map((graph) => graph.id))
+    this.graphsRemoved([...(runtime?.graphs.values() ?? [])])
     for (const [aliasSlug, aliasId] of this.aliasBySlug) {
       if (aliasId === id) {
         this.aliasBySlug.delete(aliasSlug)

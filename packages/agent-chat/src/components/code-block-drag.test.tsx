@@ -1,7 +1,7 @@
 // A mouse drag that starts in a code block holds the pointer on the code while
-// the pointer is level with the block's lines, lets it go above and below, and
-// while the pointer is beside the lines puts the selection's end back on the
-// line every frame.
+// the pointer is beside the block's lines, lets it go back over them and above
+// and below them, and while the pointer is beside the lines puts the
+// selection's end back on the line every frame.
 //
 // Mounted, because what is under test is the sequence: the press decides
 // whether the drag is the block's at all, the moves capture and release, and
@@ -68,6 +68,8 @@ async function mount(): Promise<Code> {
   const calls: string[] = []
   let captured = false
   pre.getBoundingClientRect = () => ({ top: TOP, bottom: BOTTOM, left: LEFT, right: RIGHT }) as DOMRect
+  Object.defineProperty(pre, 'clientLeft', { value: 0 })
+  Object.defineProperty(pre, 'clientWidth', { value: RIGHT - LEFT })
   pre.hasPointerCapture = () => captured
   pre.setPointerCapture = () => {
     captured = true
@@ -111,33 +113,37 @@ function pointer(target: EventTarget, type: string, init: PointerEventInit) {
 
 const MOUSE = { pointerType: 'mouse', button: 0 } as const
 
-test('a mouse press on the code holds the pointer from the first moment', async () => {
+test('a mouse press on the code leaves the pointer free until it goes past a side', async () => {
   const { pre, calls } = await mount()
-  pointer(pre, 'pointerdown', { ...MOUSE, clientY: 120 })
+  pointer(pre, 'pointerdown', { ...MOUSE, clientX: 100, clientY: 120 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: 200, clientY: 150 })
+  assert.deepEqual(calls, [])
+  pointer(window, 'pointermove', { ...MOUSE, clientX: RIGHT + 10, clientY: 150 })
   assert.deepEqual(calls, ['set'])
   pointer(window, 'pointerup', MOUSE)
 })
 
-test('the pointer is let go above and below the lines, and held again level with them', async () => {
+test('the pointer is let go back over the lines, above and below them, and held again beside them', async () => {
   const { pre, calls } = await mount()
-  pointer(pre, 'pointerdown', { ...MOUSE, clientY: 120 })
-  pointer(window, 'pointermove', { ...MOUSE, clientY: 150 })
-  pointer(window, 'pointermove', { ...MOUSE, clientY: BOTTOM + 30 })
-  pointer(window, 'pointermove', { ...MOUSE, clientY: BOTTOM + 60 })
-  pointer(window, 'pointermove', { ...MOUSE, clientY: 130 })
-  pointer(window, 'pointermove', { ...MOUSE, clientY: TOP - 10 })
-  assert.deepEqual(calls, ['set', 'release', 'set', 'release'])
+  pointer(pre, 'pointerdown', { ...MOUSE, clientX: 100, clientY: 120 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: LEFT - 10, clientY: 150 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: 100, clientY: 150 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: RIGHT + 10, clientY: 130 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: RIGHT + 10, clientY: BOTTOM + 30 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: RIGHT + 10, clientY: 130 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: RIGHT + 10, clientY: TOP - 10 })
+  assert.deepEqual(calls, ['set', 'release', 'set', 'release', 'set', 'release'])
   pointer(window, 'pointerup', MOUSE)
 })
 
 test('nothing is listening once the press is over', async () => {
   for (const end of ['pointerup', 'pointercancel']) {
     const { pre, calls } = await mount()
-    pointer(pre, 'pointerdown', { ...MOUSE, clientY: 120 })
+    pointer(pre, 'pointerdown', { ...MOUSE, clientX: 100, clientY: 120 })
     pointer(window, end, MOUSE)
-    pointer(window, 'pointermove', { ...MOUSE, clientY: BOTTOM + 30 })
-    pointer(window, 'pointermove', { ...MOUSE, clientY: 120 })
-    assert.deepEqual(calls, ['set'], `after ${end}`)
+    pointer(window, 'pointermove', { ...MOUSE, clientX: LEFT - 10, clientY: 120 })
+    pointer(window, 'pointermove', { ...MOUSE, clientX: LEFT - 10, clientY: BOTTOM + 30 })
+    assert.deepEqual(calls, [], `after ${end}`)
     await act(async () => root?.unmount())
     root = null
   }
@@ -145,13 +151,15 @@ test('nothing is listening once the press is over', async () => {
 
 test('a touch, a right button and a press on the copy control leave the pointer alone', async () => {
   const { pre, calls } = await mount()
-  pointer(pre, 'pointerdown', { pointerType: 'touch', button: 0, clientY: 120 })
-  pointer(window, 'pointermove', { pointerType: 'touch', clientY: BOTTOM + 30 })
+  pointer(pre, 'pointerdown', { pointerType: 'touch', button: 0, clientX: 100, clientY: 120 })
+  pointer(window, 'pointermove', { pointerType: 'touch', clientX: LEFT - 10, clientY: 120 })
   pointer(window, 'pointerup', { pointerType: 'touch' })
-  pointer(pre, 'pointerdown', { pointerType: 'mouse', button: 2, clientY: 120 })
+  pointer(pre, 'pointerdown', { pointerType: 'mouse', button: 2, clientX: 100, clientY: 120 })
+  pointer(window, 'pointermove', { pointerType: 'mouse', clientX: LEFT - 10, clientY: 120 })
   pointer(window, 'pointerup', MOUSE)
   const copy = container.querySelector('button') as HTMLButtonElement
-  pointer(copy, 'pointerdown', { ...MOUSE, clientY: 120 })
+  pointer(copy, 'pointerdown', { ...MOUSE, clientX: 100, clientY: 120 })
+  pointer(window, 'pointermove', { ...MOUSE, clientX: LEFT - 10, clientY: 120 })
   pointer(window, 'pointerup', MOUSE)
   assert.deepEqual(calls, [])
 })
@@ -199,10 +207,10 @@ test('another pointer moving does not move the drag', async () => {
   const { pre, calls, ends } = await mount()
   pointer(pre, 'pointerdown', { ...MOUSE, clientX: 100, clientY: 120 })
   window.dispatchEvent(
-    new window.PointerEvent('pointermove', { pointerId: 2, ...MOUSE, clientX: LEFT - 10, clientY: BOTTOM + 30 }),
+    new window.PointerEvent('pointermove', { pointerId: 2, ...MOUSE, clientX: LEFT - 10, clientY: 120 }),
   )
   await frames()
-  assert.deepEqual(calls, ['set'])
+  assert.deepEqual(calls, [])
   assert.deepEqual(ends, [])
   pointer(window, 'pointerup', MOUSE)
 })

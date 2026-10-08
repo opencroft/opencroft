@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { changedSpans, type DiffLine, diffStats, foldUnchanged, type LineSpan, lineDiff, wordDiff } from './diff-view'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+
+import {
+  changedSpans,
+  type DiffLine,
+  DiffView,
+  diffStats,
+  foldUnchanged,
+  type LineSpan,
+  lineDiff,
+  linePieces,
+  wordDiff,
+} from './diff-view'
 
 // Both sides a diff was taken between, read back out of it.
 function sides(diff: DiffLine[]): { original: string[]; value: string[] } {
@@ -147,11 +160,24 @@ test('an insertion marks only the added line; the removed line has nothing to ma
   assert.deepEqual(marked(words?.added), ['extra, '])
 })
 
-test('a rewritten line is marked whole, not in part', () => {
+test('the words a pair shares stay unmarked, however few they are', () => {
+  assert.deepEqual(marked(wordDiff('Pick from the lower branches', 'Pick from any branch')?.removed), ['the lower branches'])
+  assert.deepEqual(marked(wordDiff('Pick from the lower branches', 'Pick from any branch')?.added), ['any branch'])
   assert.deepEqual(wordDiff('const x = 1', 'let y = 2'), {
-    removed: [{ text: 'const x = 1', changed: true }],
-    added: [{ text: 'let y = 2', changed: true }],
+    removed: [
+      { text: 'const x', changed: true },
+      { text: ' = ', changed: false },
+      { text: '1', changed: true },
+    ],
+    added: [
+      { text: 'let y', changed: true },
+      { text: ' = ', changed: false },
+      { text: '2', changed: true },
+    ],
   })
+})
+
+test('a line that shares no word with its pair is marked whole', () => {
   assert.deepEqual(wordDiff('return total', 'throw new Error(message)'), {
     removed: [{ text: 'return total', changed: true }],
     added: [{ text: 'throw new Error(message)', changed: true }],
@@ -163,8 +189,8 @@ test('a rewritten line is marked whole, not in part', () => {
 })
 
 test('a pair past the word-edit cap is a rewrite, however much it shares', () => {
-  // Sixty changed words, each beside a longer word both lines keep: well over
-  // half of the visible text is shared, but the edits exceed the cap.
+  // Sixty changed words, each beside a longer word both lines keep: most of
+  // the visible text is shared, but the edits exceed the cap.
   const removed = Array.from({ length: 30 }, (_, index) => `key${index} v${index}`).join(' ')
   const added = removed.replaceAll(' v', ' w')
   assert.deepEqual(wordDiff(removed, added), {
@@ -177,10 +203,17 @@ test('an empty line paired with a rewrite has nothing to mark', () => {
   assert.deepEqual(wordDiff('', 'brand new'), { removed: [], added: [{ text: 'brand new', changed: true }] })
 })
 
-test('lines past the length cap are not compared', () => {
+test('lines past the length cap are not compared, and a pair of them is marked whole', () => {
   const long = `${'word '.repeat(100)}end`
   assert.equal(wordDiff(long, long.replace('end', 'stop')), null)
   assert.notEqual(wordDiff('word end', 'word stop'), null, 'the same edit on a short line is marked')
+  const diff = lineDiff(`keep\n${long}\nkeep`, `keep\n${long.replace('end', 'stop')}\nkeep`)
+  const spans = changedSpans(diff)
+  const changed = diff.filter((entry) => entry.kind !== 'same')
+  assert.deepEqual(
+    changed.map((entry) => spans.get(entry)),
+    changed.map((entry) => [{ text: entry.text, changed: true }]),
+  )
 })
 
 test('changed lines pair in order within their run; a line left over stays whole', () => {
@@ -199,4 +232,73 @@ test('changed lines pair in order within their run; a line left over stays whole
 test('a run of only added or only removed lines has nothing to pair', () => {
   assert.equal(changedSpans(lineDiff('a\nc', 'a\nb\nc')).size, 0)
   assert.equal(changedSpans(lineDiff('a\nb\nc', 'a\nc')).size, 0)
+})
+
+test('a line in pieces keeps each word mark and each colour', () => {
+  const spans = [
+    { text: 'let a = ', changed: false },
+    { text: '1', changed: true },
+  ]
+  const colours = [
+    { start: 0, end: 3, style: '--shiki-light:keyword' },
+    { start: 8, end: 9, style: '--shiki-light:number' },
+  ]
+  assert.deepEqual(linePieces('let a = 1', spans, colours), [
+    { text: 'let', changed: false, style: '--shiki-light:keyword' },
+    { text: ' a = ', changed: false, style: undefined },
+    { text: '1', changed: true, style: '--shiki-light:number' },
+  ])
+  assert.deepEqual(linePieces('plain', spans.slice(0, 0), []), [{ text: 'plain', changed: false, style: undefined }])
+})
+
+test('a long line of many tokens keeps each piece its own mark and colour', () => {
+  // Words coloured in turn and every third marked, between plain commas.
+  const words = Array.from({ length: 3_000 }, (_, index) => `w${index}`)
+  const text = words.join(',')
+  const spans: LineSpan[] = []
+  const colours: { start: number; end: number; style: string }[] = []
+  const expected: { text: string; changed: boolean; style: string | undefined }[] = []
+  let at = 0
+  for (const [index, word] of words.entries()) {
+    if (index > 0) {
+      spans.push({ text: ',', changed: false })
+      expected.push({ text: ',', changed: false, style: undefined })
+      at += 1
+    }
+    const style = `--shiki-light:c${index % 2}`
+    spans.push({ text: word, changed: index % 3 === 0 })
+    colours.push({ start: at, end: at + word.length, style })
+    expected.push({ text: word, changed: index % 3 === 0, style })
+    at += word.length
+  }
+  // Piece by piece, so a failure names its piece instead of diffing the line.
+  const pieces = linePieces(text, spans, colours)
+  assert.equal(pieces.length, expected.length)
+  for (const [index, piece] of expected.entries()) {
+    assert.deepEqual(pieces[index], piece, `piece ${index}`)
+  }
+})
+
+test('a coloured line draws its colours as tokens the host stylesheet themes', () => {
+  const diff = lineDiff('let a = 1', 'let a = 2')
+  const colours = new Map(diff.map((line) => [line, [{ start: 0, end: 3, style: '--shiki-light:#cf222e;--shiki-dark:#569cd6' }]]))
+  const markup = renderToStaticMarkup(createElement(DiffView, { diff, variant: 'code', colours }))
+  assert.match(markup, /<span class="shiki-token" style="--shiki-light:#cf222e;--shiki-dark:#569cd6">let<\/span>/)
+})
+
+test('word marks are square-cornered tints of the line colour', () => {
+  const markup = renderToStaticMarkup(createElement(DiffView, { diff: lineDiff('a = 1', 'a = 2') }))
+  assert.match(markup, /class="bg-destructive\/30">1</)
+  assert.match(markup, /class="bg-success\/30">2</)
+  assert.doesNotMatch(markup, /rounded/)
+})
+
+test('equal code says so in a tool call, and is shown as its lines in a code diff', () => {
+  const diff = lineDiff('one\ntwo\nthree\nfour\nfive', 'one\ntwo\nthree\nfour\nfive')
+  assert.match(renderToStaticMarkup(createElement(DiffView, { diff })), /No changes/)
+  const code = renderToStaticMarkup(createElement(DiffView, { diff, variant: 'code' }))
+  assert.doesNotMatch(code, /No changes|unchanged lines/)
+  for (const line of ['one', 'two', 'three', 'four', 'five']) {
+    assert.match(code, new RegExp(`>${line}</span>`))
+  }
 })

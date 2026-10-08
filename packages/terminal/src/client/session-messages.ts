@@ -9,9 +9,29 @@ import type { ClientMessage, TerminalConfig } from '../types'
  * fall back to opening a session, because a key naming a job that has gone must not become a fresh
  * shell under that key.
  */
-export type TerminalSource =
-  | { kind: 'connect'; connection: TerminalConfig; command?: string; sessionKey?: string }
-  | { kind: 'attach'; sessionKey: string }
+export type TerminalSource = ConnectSource | { kind: 'attach'; sessionKey: string }
+
+interface ConnectSource {
+  kind: 'connect'
+  connection: TerminalConfig
+  command?: string
+  sessionKey?: string
+  /** One shell under the key for every viewer, rather than one per browser tab. */
+  shared?: boolean
+}
+
+/**
+ * The source as one browser tab opens it: a connect source's key is narrowed to the tab, so the
+ * same terminal open in two tabs runs two shells and neither tab can take over the other's. A
+ * shared source keeps its key, since every viewer is meant to reach the same shell, and so does an
+ * attach source, since it names a session server code started under exactly that key.
+ */
+export function tabScopedSource(source: TerminalSource, tabId: string): TerminalSource {
+  if (source.kind !== 'connect' || source.sessionKey === undefined || source.shared) {
+    return source
+  }
+  return { ...source, sessionKey: `${source.sessionKey}@tab:${tabId}` }
+}
 
 /** What this mount already knows about its session, from an earlier `connected` on it. */
 export interface ReattachState {
@@ -20,19 +40,17 @@ export interface ReattachState {
   sessionId: string | null
 }
 
-export function connectMessage(
-  connection: TerminalConfig,
-  command: string | undefined,
-  cols: number,
-  rows: number,
-  sessionKey: string | undefined,
-): ClientMessage {
+function connectMessage(source: ConnectSource, cols: number, rows: number): ClientMessage {
+  const { connection, command, sessionKey, shared } = source
   const extra: Record<string, unknown> = {}
   if (command) {
     extra.command = command
   }
   if (sessionKey) {
     extra.sessionKey = sessionKey
+    if (shared) {
+      extra.shared = true
+    }
   }
   if (connection.type === 'ssh') {
     return { type: 'connect', payload: { ...connection.config, ...extra, cols, rows } }
@@ -51,7 +69,7 @@ export function openingMessage(
   rows: number,
 ): ClientMessage {
   if (source.kind === 'connect' && !(state.attemptingReattach && (state.sessionId || source.sessionKey))) {
-    return connectMessage(source.connection, source.command, cols, rows, source.sessionKey)
+    return connectMessage(source, cols, rows)
   }
   return {
     type: 'attach',
@@ -67,5 +85,5 @@ export function sessionGoneMessage(source: TerminalSource, cols: number, rows: n
   if (source.kind === 'attach') {
     return null
   }
-  return connectMessage(source.connection, source.command, cols, rows, source.sessionKey)
+  return connectMessage(source, cols, rows)
 }

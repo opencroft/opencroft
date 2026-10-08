@@ -7,8 +7,15 @@ import { Button } from 'ui/button'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 
-import type { NodeSettingsProps, NodeTypeDefinition } from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
+import type {
+  NodeSettingsProps,
+  NodeTypeDefinition,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/app-dashboard/registry'
+import {
+  NodeCard,
+  NodeCardContent,
+  NodeCardHeader,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 import { deleteSecret, getSecrets, setSecret } from '@/app/_authed/(secrets-store)/_server/actions'
 
 export type SecretsStoreData = {

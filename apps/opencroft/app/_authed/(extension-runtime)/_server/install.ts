@@ -230,7 +230,9 @@ export function uninstallExtension(folder: string): Promise<void> {
 /**
  * Install the extension a registry lists under `extensionId`: into the folder
  * of that id, or with `asLocal` as a development checkout in `local.<extension>`,
- * which then stands in for it.
+ * which then stands in for it. It is installed at `ref` when given, else on the
+ * branch the entry names, else at the latest version tag. An install on a
+ * branch records it, so an update follows that branch.
  */
 export async function installFromRegistry(
   extensionId: string,
@@ -250,7 +252,7 @@ export async function installFromRegistry(
     url: listed.repository,
     registryName: listed.registryName,
     auth: listed.auth,
-    ref: options.ref,
+    ref: options.ref ?? listed.branch,
     asLocal,
   })
 }

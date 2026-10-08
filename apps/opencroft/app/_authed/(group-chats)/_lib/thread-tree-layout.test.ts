@@ -24,6 +24,7 @@ function thread(id: string, over: Partial<GroupChatThreadEntry> = {}): GroupChat
 }
 
 const NO_STATUS: ThreadRowStateById = new Map()
+const NOTHING_TOGGLED = {}
 const HALF_FULL = { usedTokens: 100_000, contextLimit: 200_000 }
 
 /** The ids a rendered tree contains, folders written as `name[a,b]`. */
@@ -36,20 +37,50 @@ function shape(nodes: ChatListNode[]): string[] {
 const EMPTY: ThreadLayout = { entries: [] }
 
 test('an unarranged chat lists every thread loose, in the order the server gave them', () => {
-  const nodes = layoutToNodes(EMPTY, [thread('t1'), thread('t2'), thread('t3')], NO_STATUS)
+  const nodes = layoutToNodes(EMPTY, [thread('t1'), thread('t2'), thread('t3')], NO_STATUS, NOTHING_TOGGLED)
   assert.deepEqual(shape(nodes), ['t1', 't2', 't3'])
 })
 
 test('a saved arrangement is honoured, folders and all', () => {
   const layout: ThreadLayout = {
     entries: [
-      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', open: false, threadIds: ['t3', 't1'] } },
+      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', threadIds: ['t3', 't1'] } },
       { kind: 'thread', threadId: 't2' },
     ],
   }
-  const nodes = layoutToNodes(layout, [thread('t1'), thread('t2'), thread('t3')], NO_STATUS)
+  const nodes = layoutToNodes(layout, [thread('t1'), thread('t2'), thread('t3')], NO_STATUS, NOTHING_TOGGLED)
   assert.deepEqual(shape(nodes), ['Reviews[t3,t1]', 't2'])
-  assert.equal(nodes[0].type === 'folder' && nodes[0].folder.open, false)
+})
+
+test('a folder is open or closed as the reader left it, and one they never toggled carries no state', () => {
+  const layout: ThreadLayout = {
+    entries: [
+      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', threadIds: [] } },
+      { kind: 'folder', folder: { id: 'f2', name: 'Ops', threadIds: [] } },
+      { kind: 'folder', folder: { id: 'f3', name: 'Later', threadIds: [] } },
+    ],
+  }
+  const nodes = layoutToNodes(layout, [], NO_STATUS, { f1: false, f2: true })
+  assert.deepEqual(
+    nodes.map((n) => (n.type === 'folder' ? [n.folder.id, n.folder.open] : null)),
+    [
+      ['f1', false],
+      ['f2', true],
+      ['f3', undefined],
+    ],
+  )
+})
+
+// A stored row can still say a folder is closed. The row is shared, so
+// following it would close that folder for every member.
+test('an open state left in a stored layout is ignored', () => {
+  const stored: ThreadLayout = JSON.parse(
+    JSON.stringify({
+      entries: [{ kind: 'folder', folder: { id: 'f1', name: 'Reviews', open: false, threadIds: [] } }],
+    }),
+  )
+  const [folder] = layoutToNodes(stored, [], NO_STATUS, NOTHING_TOGGLED)
+  assert.equal(folder.type === 'folder' && folder.folder.open, undefined)
 })
 
 test('a layout entry whose thread is gone is dropped, loose and inside a folder alike', () => {
@@ -60,7 +91,7 @@ test('a layout entry whose thread is gone is dropped, loose and inside a folder 
       { kind: 'thread', threadId: 't2' },
     ],
   }
-  const nodes = layoutToNodes(layout, [thread('t1'), thread('t2')], NO_STATUS)
+  const nodes = layoutToNodes(layout, [thread('t1'), thread('t2')], NO_STATUS, NOTHING_TOGGLED)
   assert.deepEqual(shape(nodes), ['Reviews[t1]', 't2'])
 })
 
@@ -71,7 +102,7 @@ test('a thread the layout has never seen joins the loose list at the end', () =>
       { kind: 'thread', threadId: 't1' },
     ],
   }
-  const nodes = layoutToNodes(layout, [thread('t1'), thread('t2'), thread('new')], NO_STATUS)
+  const nodes = layoutToNodes(layout, [thread('t1'), thread('t2'), thread('new')], NO_STATUS, NOTHING_TOGGLED)
   assert.deepEqual(shape(nodes), ['Reviews[t2]', 't1', 'new'])
 })
 
@@ -81,7 +112,7 @@ test('a folder left empty by deletions is kept', () => {
   const layout: ThreadLayout = {
     entries: [{ kind: 'folder', folder: { id: 'f1', name: 'Reviews', threadIds: ['gone'] } }],
   }
-  const nodes = layoutToNodes(layout, [thread('t1')], NO_STATUS)
+  const nodes = layoutToNodes(layout, [thread('t1')], NO_STATUS, NOTHING_TOGGLED)
   assert.deepEqual(shape(nodes), ['Reviews[]', 't1'])
 })
 
@@ -115,6 +146,7 @@ test('the tree is stored as a skeleton, with no titles, avatars, status, reading
     EMPTY,
     [thread('t1', { hasDraft: true }), thread('t2')],
     new Map([['t1', { status: 'waiting' as const, context: HALF_FULL }]]),
+    NOTHING_TOGGLED,
   )
   const saved = nodesToLayout(nodes)
   assert.deepEqual(saved, {
@@ -127,13 +159,15 @@ test('the tree is stored as a skeleton, with no titles, avatars, status, reading
   assert.ok(!JSON.stringify(saved).includes('waiting'))
 })
 
-test('a folder round-trips through the tree and back to a layout', () => {
+// The reader's open state is drawn but never written back: the stored layout
+// is shared by every member of the chat.
+test('a folder round-trips through the tree and back to a layout, without the reader’s open state', () => {
   const layout: ThreadLayout = {
     entries: [
-      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', open: false, threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', threadIds: ['t2'] } },
       { kind: 'thread', threadId: 't1' },
     ],
   }
-  const back = nodesToLayout(layoutToNodes(layout, [thread('t1'), thread('t2')], NO_STATUS))
+  const back = nodesToLayout(layoutToNodes(layout, [thread('t1'), thread('t2')], NO_STATUS, { f1: false }))
   assert.deepEqual(back, layout)
 })

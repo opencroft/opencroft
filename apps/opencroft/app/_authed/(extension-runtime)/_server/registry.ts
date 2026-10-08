@@ -13,6 +13,11 @@ export interface RegistryExtension {
   name: string
   description?: string
   repository: string
+  /**
+   * The branch of `repository` an install from this entry follows, instead of
+   * the latest version tag. An update then moves it to that branch's newest commit.
+   */
+  branch?: string
   author?: string
   homepage?: string
   tags?: string[]
@@ -375,16 +380,30 @@ function sourceInstallAuth(source: RegistrySource): InstallAuth | undefined {
 /**
  * The first registry entry with this extension id, with the registry it came
  * from and that registry's credentials, which the extension's repository
- * reuses. Ids may repeat across registries; the first registry wins.
+ * reuses. Ids may repeat across registries; the first registry wins. An entry
+ * whose `branch` is not a non-empty string is refused rather than installed at
+ * a tag it did not ask for.
  */
 export async function findRegistryExtension(
   extensionId: string,
-): Promise<{ repository: string; registryName: string; auth?: InstallAuth } | null> {
+): Promise<{ repository: string; branch?: string; registryName: string; auth?: InstallAuth } | null> {
   const registries = await fetchAllRegistries()
   for (const reg of registries) {
     for (const ext of reg.manifest.extensions) {
-      if (ext.id === extensionId) {
-        return { repository: ext.repository, registryName: reg.source.name, auth: sourceInstallAuth(reg.source) }
+      if (ext.id !== extensionId) {
+        continue
+      }
+      const branch: unknown = ext.branch
+      if (branch !== undefined && (typeof branch !== 'string' || !branch.trim())) {
+        throw new Error(
+          `Registry ${reg.source.name} lists ${extensionId} with an invalid branch: ${JSON.stringify(branch)}`,
+        )
+      }
+      return {
+        repository: ext.repository,
+        ...(branch ? { branch: branch.trim() } : {}),
+        registryName: reg.source.name,
+        auth: sourceInstallAuth(reg.source),
       }
     }
   }

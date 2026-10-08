@@ -3,7 +3,11 @@
 import type { LucideIcon } from 'lucide-react'
 import type { StatusVariant } from 'ui/utils/status-indicator'
 
-import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
+import {
+  NodeCard,
+  NodeCardContent,
+  NodeCardHeader,
+} from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/shared/node-card'
 
 interface PinnedNodeProps {
   selected?: boolean

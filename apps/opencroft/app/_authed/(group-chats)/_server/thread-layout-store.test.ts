@@ -39,10 +39,10 @@ test('a layout round-trips, and the version moves', async () => {
   assert.notEqual(after.version, before.version)
 })
 
-test('folders round-trip with their order, names and open state', async () => {
+test('folders round-trip with their order and names', async () => {
   const withFolder: ThreadLayout = {
     entries: [
-      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', open: false, threadIds: ['t2', 't1'] } },
+      { kind: 'folder', folder: { id: 'f1', name: 'Reviews', threadIds: ['t2', 't1'] } },
       { kind: 'thread', threadId: 't3' },
     ],
   }
@@ -105,8 +105,8 @@ test("a chat's archive layout is separate from its active one, with its own vers
 
 const ARRANGED: ThreadLayout = {
   entries: [
-    { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
-    { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+    { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: ['t1'] } },
+    { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2'] } },
     { kind: 'thread', threadId: 't3' },
   ],
 }
@@ -114,8 +114,8 @@ const ARRANGED: ThreadLayout = {
 test('a thread is filed at the end of the folder with exactly that name', () => {
   assert.deepEqual(withThreadInFolder(ARRANGED, 't3', 'Reviews'), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1', 't3'] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: ['t1', 't3'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2'] } },
     ],
   })
 })
@@ -123,25 +123,58 @@ test('a thread is filed at the end of the folder with exactly that name', () => 
 test('a thread the layout has never seen is filed the same way', () => {
   assert.deepEqual(withThreadInFolder(ARRANGED, 'new', 'Ops'), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2', 'new'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: ['t1'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2', 'new'] } },
       { kind: 'thread', threadId: 't3' },
     ],
   })
 })
 
-test('with no folder of that name, one is made open after the last folder, with an id nobody holds', () => {
-  assert.deepEqual(withThreadInFolder(ARRANGED, 't3', 'Later'), {
+/** The layout with each folder id replaced by `<new>` where it is not one of `known`. */
+function maskNewFolderIds(layout: ThreadLayout | null, known: string[]): ThreadLayout | null {
+  if (!layout) {
+    return null
+  }
+  return {
+    entries: layout.entries.map((entry) =>
+      entry.kind === 'folder' && !known.includes(entry.folder.id)
+        ? { kind: 'folder', folder: { ...entry.folder, id: '<new>' } }
+        : entry,
+    ),
+  }
+}
+
+/** The id of the folder named `name`. */
+function folderIdOf(layout: ThreadLayout | null, name: string): string | undefined {
+  const entry = layout?.entries.find((e) => e.kind === 'folder' && e.folder.name === name)
+  return entry?.kind === 'folder' ? entry.folder.id : undefined
+}
+
+test('with no folder of that name, one is made after the last folder, with an id nobody holds', () => {
+  assert.deepEqual(maskNewFolderIds(withThreadInFolder(ARRANGED, 't3', 'Later'), ['folder-1', 'folder-2']), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
-      { kind: 'folder', folder: { id: 'folder-3', name: 'Later', open: true, threadIds: ['t3'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: ['t1'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: '<new>', name: 'Later', threadIds: ['t3'] } },
     ],
   })
   // Into an unarranged chat: the folder becomes its first entry.
-  assert.deepEqual(withThreadInFolder({ entries: [] }, 't1', 'Later'), {
-    entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Later', open: true, threadIds: ['t1'] } }],
+  assert.deepEqual(maskNewFolderIds(withThreadInFolder({ entries: [] }, 't1', 'Later'), []), {
+    entries: [{ kind: 'folder', folder: { id: '<new>', name: 'Later', threadIds: ['t1'] } }],
   })
+})
+
+// Each reader remembers per folder id whether they left it open. A new folder
+// that took a deleted one's id would open or close as that one was left.
+test('a new folder never takes the id of one that was deleted', () => {
+  const first = withThreadInFolder({ entries: [] }, 't1', 'Later')
+  const firstId = folderIdOf(first, 'Later')
+  assert.ok(firstId)
+  // The folder is deleted: its thread goes loose and the folder is gone.
+  const afterDelete: ThreadLayout = { entries: [{ kind: 'thread', threadId: 't1' }] }
+  const secondId = folderIdOf(withThreadInFolder(afterDelete, 't1', 'Later'), 'Later')
+  assert.ok(secondId)
+  assert.notEqual(secondId, firstId)
 })
 
 test('the name match is exact: a different case is a different folder', () => {
@@ -155,8 +188,8 @@ test('the name match is exact: a different case is a different folder', () => {
 test('moving between folders takes the thread out of the old one, which stays even when empty', () => {
   assert.deepEqual(withThreadInFolder(ARRANGED, 't1', 'Ops'), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2', 't1'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2', 't1'] } },
       { kind: 'thread', threadId: 't3' },
     ],
   })
@@ -167,14 +200,14 @@ test('with two folders of one name, only the first takes the thread', () => {
   const twins: ThreadLayout = {
     entries: [
       { kind: 'thread', threadId: 't0' },
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Ops', open: true, threadIds: [] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Ops', threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: [] } },
     ],
   }
   assert.deepEqual(withThreadInFolder(twins, 't0', 'Ops'), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Ops', open: true, threadIds: ['t0'] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Ops', threadIds: ['t0'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: [] } },
     ],
   })
 })
@@ -198,15 +231,15 @@ test('each filed thread reports its folder name; a top-level thread reports none
 test('a thread is taken out of its folder or the top level; a folder it leaves stays', () => {
   assert.deepEqual(withoutThread(ARRANGED, 't1'), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2'] } },
       { kind: 'thread', threadId: 't3' },
     ],
   })
   assert.deepEqual(withoutThread(ARRANGED, 't3'), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1'] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: ['t1'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2'] } },
     ],
   })
   assert.equal(withoutThread(ARRANGED, 'absent'), null, 'a thread that is not there needs no write')
@@ -216,8 +249,8 @@ test('a thread placed with a folder name is filed as by name; with none it goes 
   assert.deepEqual(withThreadPlaced(ARRANGED, 't9', 'Ops'), withThreadInFolder(ARRANGED, 't9', 'Ops'))
   assert.deepEqual(withThreadPlaced(ARRANGED, 't1', null), {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: [] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: [] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2'] } },
       { kind: 'thread', threadId: 't3' },
       { kind: 'thread', threadId: 't1' },
     ],
@@ -244,7 +277,7 @@ test('the thread list draws a placed thread in its folder and would write the sa
       archived: false,
     }),
   )
-  const nodes = layoutToNodes(placed, threads, new Map())
+  const nodes = layoutToNodes(placed, threads, new Map(), {})
   const later = nodes.find((n) => n.type === 'folder' && n.folder.name === 'Later')
   assert.deepEqual(later?.type === 'folder' && later.folder.items.map((i) => i.id), ['new'])
   assert.deepEqual(nodesToLayout(nodes), placed)
@@ -254,8 +287,8 @@ test('the thread list draws a placed thread in its folder and would write the sa
 
 test('a change lands on a chat nobody has arranged yet', async () => {
   await updateThreadLayout('chat-op-fresh', 'active', (current) => withThreadInFolder(current, 'new', 'Inbox'))
-  assert.deepEqual((await readThreadLayout('chat-op-fresh', 'active')).layout, {
-    entries: [{ kind: 'folder', folder: { id: 'folder-1', name: 'Inbox', open: true, threadIds: ['new'] } }],
+  assert.deepEqual(maskNewFolderIds((await readThreadLayout('chat-op-fresh', 'active')).layout, []), {
+    entries: [{ kind: 'folder', folder: { id: '<new>', name: 'Inbox', threadIds: ['new'] } }],
   })
 })
 
@@ -295,8 +328,8 @@ test('a drag that lands mid-write is kept, and the change is re-applied on top o
   assert.equal(runs, 2, 'the lost race is re-applied once, against a fresh read')
   assert.deepEqual((await readThreadLayout(chat, 'active')).layout, {
     entries: [
-      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', open: false, threadIds: ['t1', 't3'] } },
-      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', open: true, threadIds: ['t2', 'new'] } },
+      { kind: 'folder', folder: { id: 'folder-1', name: 'Reviews', threadIds: ['t1', 't3'] } },
+      { kind: 'folder', folder: { id: 'folder-2', name: 'Ops', threadIds: ['t2', 'new'] } },
     ],
   })
 })

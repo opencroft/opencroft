@@ -87,10 +87,11 @@ import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { GroupChatRefreshProvider } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import type {
+  DirectoryAgent,
   DirectoryUser,
   GroupChatDetailView,
   GroupChatEmbedView,
-  GroupChatThreadEntry,
+  GroupChatThreadView,
 } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   addGroupChatMember,
@@ -101,12 +102,11 @@ import {
   getGroupChatThreadLayout,
   getMyGroupChatView,
   joinSpaceGroupChat,
+  listDirectoryAgentsForPicker,
   listDirectoryUsersForPicker,
   listGroupChatThreadsView,
   listMyGroupChatPins,
 } from '@/app/_authed/(group-chats)/_server/actions'
-import type { AgentNodeRef } from '@/app/_authed/(space)/_server/agents'
-import { listAgentNodes } from '@/app/_authed/(space)/_server/agents'
 import { useSSEEvents } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
@@ -342,25 +342,10 @@ function useOnGraphChange(onChange: () => void): void {
   }, [graphVersion, onChange])
 }
 
-/**
- * A stand-in the exact height of the command bar (its `min-h-8` textarea plus
- * the `h-7` action row and the gap between them), inside the same frame and
- * inset the real composer arrives in. Loading states render it so the footer's
- * space is spent from the first frame — without it the loader centres on the
- * full panel and JUMPS UP when the composer appears beneath it, which the
- * group-chat screen (whose route loads everything before rendering) never
- * shows.
- */
-function ComposerSkeleton() {
-  return (
-    <div className='shrink-0 p-2'>
-      <CommandBarFrame>
-        <div aria-hidden className='h-16 w-full' />
-      </CommandBarFrame>
-    </div>
-  )
-}
-
+// The loader alone, centred on the whole panel. No stand-in for the composer
+// under it: an empty frame there read as a broken panel, and an opening thread
+// draws no composer under its own loader either (see GroupChatThreadChat), so
+// this loading state and the thread's that follows it look alike.
 function CenteredSpinner({ className }: { className?: string }) {
   return (
     <div className={cn('flex h-full min-h-0 flex-col', className)}>
@@ -370,7 +355,6 @@ function CenteredSpinner({ className }: { className?: string }) {
             in sequence read as a glitch. */}
         <LogoLoader size={40} className='text-foreground' />
       </div>
-      <ComposerSkeleton />
     </div>
   )
 }
@@ -444,7 +428,7 @@ function EmbeddedThread({
 
   // The picked agent's thread for this id: undefined = still resolving,
   // null = the first send will create it.
-  const [thread, setThread] = useState<(GroupChatThreadEntry & { draft: string | null }) | null | undefined>(undefined)
+  const [thread, setThread] = useState<GroupChatThreadView | null | undefined>(undefined)
   const [threadError, setThreadError] = useState<string>()
   // The selected thread is not in this chat any more -- it was deleted.
   const [threadGone, setThreadGone] = useState(false)
@@ -689,9 +673,9 @@ function EmbeddedChatHome({
   const load = useCallback(async () => {
     const [fresh, threads, directory, agents, pins, layout] = await Promise.all([
       getMyGroupChatView({ data: chat.id }),
-      listGroupChatThreadsView({ data: chat.id }),
+      listGroupChatThreadsView({ data: { groupChatId: chat.id, list: 'active' } }),
       listDirectoryUsersForPicker(),
-      listAgentNodes(),
+      listDirectoryAgentsForPicker(),
       listMyGroupChatPins({ data: chat.id }),
       getGroupChatThreadLayout({ data: { groupChatId: chat.id, list: 'active' } }),
     ])
@@ -875,18 +859,18 @@ function CreateChatDialog({
   onCreated: () => void
 }) {
   const [directory, setDirectory] = useState<DirectoryUser[]>()
-  const [agents, setAgents] = useState<AgentNodeRef[]>()
+  const [agents, setAgents] = useState<DirectoryAgent[]>()
   const [picked, setPicked] = useState<Array<{ kind: 'user' | 'agent'; id: string }>>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string>()
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([listDirectoryUsersForPicker(), listAgentNodes()])
-      .then(([users, nodes]) => {
+    Promise.all([listDirectoryUsersForPicker(), listDirectoryAgentsForPicker()])
+      .then(([users, directoryAgents]) => {
         if (!cancelled) {
           setDirectory(users)
-          setAgents(nodes)
+          setAgents(directoryAgents)
         }
       })
       .catch((e) => {
@@ -902,12 +886,7 @@ function CreateChatDialog({
   const candidates = useMemo<MemberCandidate[]>(
     () => [
       ...(directory ?? []).map((u) => ({ kind: 'user' as const, id: u.id, name: u.name, avatarUrl: u.avatarUrl })),
-      ...(agents ?? []).map((a) => ({
-        kind: 'agent' as const,
-        id: a.nodeId,
-        name: a.name,
-        avatarUrl: a.avatar ?? null,
-      })),
+      ...(agents ?? []).map((a) => ({ kind: 'agent' as const, id: a.id, name: a.name, avatarUrl: a.avatarUrl })),
     ],
     [directory, agents],
   )

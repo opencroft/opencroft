@@ -5,7 +5,8 @@ import type { Terminal as Xterm } from '@xterm/xterm'
 import * as React from 'react'
 
 import type { TerminalConfig } from '../types'
-import { openingMessage, sessionGoneMessage, type TerminalSource } from './session-messages'
+import { openingMessage, sessionGoneMessage, type TerminalSource, tabScopedSource } from './session-messages'
+import { browserTabId } from './tab-identity'
 import { terminalTheme } from './theme'
 
 export type TerminalStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -20,14 +21,23 @@ interface ConnectSourceProps {
   command?: string
   /**
    * Opaque key identifying this logical session across reconnects (e.g. a terminal node id).
-   * When set, the server keeps the shell alive across a socket drop (page refresh, network
-   * blip) and this component auto-reconnects and re-attaches instead of spawning a fresh shell.
+   * Each browser tab runs its own shell under the key. When set, the server keeps that shell
+   * alive across a socket drop (page reload, closed tab, network blip) until its idle timeout,
+   * and this component auto-reconnects and re-attaches instead of spawning a fresh shell.
+   * Unmounting the component while the page stays ends the shell.
    * Omit to keep the legacy behavior: the shell dies with the socket.
    */
   sessionKey?: string
   /**
+   * With `sessionKey`: one shell for everyone who opens the key, in any tab and of any user. Every
+   * viewer sees it live and can type, a newcomer joins it, and unmounting only stops watching. Key
+   * it by the id of the node it belongs to: the server ends it when that node leaves its graph.
+   */
+  shared?: boolean
+  /**
    * Bump this (e.g. `Date.now()`) to force-kill the current session and spawn a brand new one —
-   * for a "restart session" affordance. No-op on the initial render.
+   * for a "restart session" affordance. No-op on the initial render. With `shared`, each value
+   * restarts the shell once, however many viewers deliver it and however late.
    */
   restartToken?: string | number
   attachKey?: never
@@ -46,6 +56,7 @@ interface AttachSourceProps {
   connection?: never
   command?: never
   sessionKey?: never
+  shared?: never
   restartToken?: never
 }
 
@@ -84,22 +95,13 @@ function sourceOf(props: TerminalProps): TerminalSource {
   if (props.attachKey !== undefined) {
     return { kind: 'attach', sessionKey: props.attachKey }
   }
-  return { kind: 'connect', connection: props.connection, command: props.command, sessionKey: props.sessionKey }
+  const { connection, command, sessionKey, shared } = props
+  return { kind: 'connect', connection, command, sessionKey, shared }
 }
 
 /** Embeddable xterm terminal. Connects over the `/api/ws/terminal` WebSocket. */
 export function Terminal(props: TerminalProps) {
-  const {
-    command,
-    readOnly,
-    fontSize = 12,
-    sessionKey,
-    restartToken,
-    logView,
-    onStatusChange,
-    onSessionGone,
-    attachKey,
-  } = props
+  const { command, readOnly, fontSize = 12, restartToken, logView, onStatusChange, onSessionGone, attachKey } = props
   const attachOnly = attachKey !== undefined
   const containerRef = React.useRef<HTMLDivElement>(null)
   const termRef = React.useRef<Xterm | null>(null)
@@ -107,12 +109,12 @@ export function Terminal(props: TerminalProps) {
   const [status, setStatus] = React.useState<TerminalStatus>('connecting')
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null)
   const [reconnectTick, setReconnectTick] = React.useState(0)
+  const statusRef = React.useRef(status)
+  statusRef.current = status
   const sourceRef = React.useRef<TerminalSource>(sourceOf(props))
   sourceRef.current = sourceOf(props)
   const readOnlyRef = React.useRef(readOnly)
   readOnlyRef.current = readOnly
-  const sessionKeyRef = React.useRef(attachKey ?? sessionKey)
-  sessionKeyRef.current = attachKey ?? sessionKey
   const logViewRef = React.useRef(logView)
   logViewRef.current = logView
   const statusCallbackRef = React.useRef(onStatusChange)
@@ -133,13 +135,30 @@ export function Terminal(props: TerminalProps) {
   // "Restart session": kill the live session outright (regardless of sessionKey) and spawn a
   // fresh one. A plain `reconnect()` alone would just re-attach to the same (possibly hung)
   // session when a sessionKey is set, so this explicitly disconnects first. No-op on mount.
+  //
+  // A shared shell is the server's to restart, and the token goes with the request: every viewer
+  // delivers the same press, and the server applies it once. Its viewers, this one included, are
+  // then told to rejoin. The server only takes it from a socket watching the shell, so it waits
+  // for one. A tab whose shell has ended has nothing to restart, and just opens the key again.
   const prevRestartTokenRef = React.useRef(restartToken)
+  const pendingRestartRef = React.useRef<string | null>(null)
+  const flushRestartRef = React.useRef<(() => void) | null>(null)
   React.useEffect(() => {
     if (restartToken === undefined || prevRestartTokenRef.current === restartToken) {
       prevRestartTokenRef.current = restartToken
       return
     }
     prevRestartTokenRef.current = restartToken
+    const source = sourceRef.current
+    if (source.kind === 'connect' && source.shared) {
+      if (statusRef.current === 'disconnected' || statusRef.current === 'error') {
+        reconnect()
+        return
+      }
+      pendingRestartRef.current = String(restartToken)
+      flushRestartRef.current?.()
+      return
+    }
     try {
       wsRef.current?.send(JSON.stringify({ type: 'disconnect' }))
     } catch {
@@ -147,6 +166,26 @@ export function Terminal(props: TerminalProps) {
     }
     reconnect()
   }, [restartToken, reconnect])
+
+  // Unmounting while the page stays is the user closing the terminal, and its shell ends with it.
+  // A reload or a closed tab unmounts nothing: the socket just drops, and the server keeps the
+  // shell for the tab to come back to. A layout cleanup runs before the cleanup of the socket
+  // effect below, so the socket is still there to say it on. A shared shell is not this viewer's
+  // to end: leaving only stops watching it.
+  React.useLayoutEffect(
+    () => () => {
+      const source = sourceRef.current
+      if (source.kind === 'connect' && source.shared) {
+        return
+      }
+      try {
+        wsRef.current?.send(JSON.stringify({ type: 'disconnect' }))
+      } catch {
+        /* not open yet: nothing was started to end */
+      }
+    },
+    [],
+  )
 
   // Terminal lifecycle is intentionally keyed on reconnectTick + command + attachKey + fontSize only.
   React.useEffect(() => {
@@ -165,6 +204,9 @@ export function Terminal(props: TerminalProps) {
     // falling back to spawning fresh — set on the first successful connect of this mount.
     let sessionId: string | null = null
     let attemptingReattach = false
+    // Whether the current socket has been told `connected` and nothing has ended it since: the only
+    // state in which the server takes a restart from it.
+    let watching = false
 
     const clearReconnectTimer = () => {
       if (reconnectTimer) {
@@ -172,6 +214,19 @@ export function Terminal(props: TerminalProps) {
         reconnectTimer = null
       }
     }
+
+    const tabSource = () => tabScopedSource(sourceRef.current, browserTabId())
+
+    const flushRestart = () => {
+      const token = pendingRestartRef.current
+      const ws = wsRef.current
+      if (token === null || !watching || ws?.readyState !== WebSocket.OPEN) {
+        return
+      }
+      pendingRestartRef.current = null
+      ws.send(JSON.stringify({ type: 'restart', payload: { token } }))
+    }
+    flushRestartRef.current = flushRestart
 
     const sendInput = (data: string) => {
       if (readOnlyRef.current) {
@@ -249,13 +304,12 @@ export function Terminal(props: TerminalProps) {
         const openSocket = () => {
           const ws = createWebSocket('/api/ws/terminal')
           wsRef.current = ws
+          watching = false
 
           ws.onopen = () => {
             reconnectAttempt = 0
             ws.send(
-              JSON.stringify(
-                openingMessage(sourceRef.current, { attemptingReattach, sessionId }, term.cols, term.rows),
-              ),
+              JSON.stringify(openingMessage(tabSource(), { attemptingReattach, sessionId }, term.cols, term.rows)),
             )
           }
           ws.onmessage = (e) => {
@@ -269,7 +323,9 @@ export function Terminal(props: TerminalProps) {
                 sessionId = msg.payload.sessionId
                 attemptingReattach = true
                 terminated = false
+                watching = true
                 setStatus('connected')
+                flushRestart()
                 return
               }
               if (msg.type === 'session-gone') {
@@ -278,7 +334,7 @@ export function Terminal(props: TerminalProps) {
                 // source has nothing to fall back to, and stops.
                 sessionId = null
                 attemptingReattach = false
-                const next = sessionGoneMessage(sourceRef.current, term.cols, term.rows)
+                const next = sessionGoneMessage(tabSource(), term.cols, term.rows)
                 if (!next) {
                   terminated = true
                   setStatus('disconnected')
@@ -297,10 +353,21 @@ export function Terminal(props: TerminalProps) {
                 return
               }
               if (msg.type === 'disconnected') {
-                // The shell process/channel itself ended — not just the socket. Don't auto-retry;
-                // that would silently spawn a brand new shell after e.g. the user typed `exit`.
                 sessionId = null
                 attemptingReattach = false
+                watching = false
+                // The shared shell was restarted, by any of its viewers: join the one that replaces it.
+                if (msg.payload.rejoin) {
+                  term.write(`\r\n\x1b[33m[${msg.payload.reason}]\x1b[0m\r\n`)
+                  ws.send(
+                    JSON.stringify(
+                      openingMessage(tabSource(), { attemptingReattach, sessionId }, term.cols, term.rows),
+                    ),
+                  )
+                  return
+                }
+                // The shell process/channel itself ended — not just the socket. Don't auto-retry;
+                // that would silently spawn a brand new shell after e.g. the user typed `exit`.
                 terminated = true
                 setStatus('disconnected')
                 // A log view has reached the end of what it was showing. That is the expected
@@ -318,6 +385,7 @@ export function Terminal(props: TerminalProps) {
             /* onclose follows and drives reconnect/backoff; nothing extra to do here */
           }
           ws.onclose = () => {
+            watching = false
             if (disposed || terminated) {
               return
             }
@@ -350,19 +418,11 @@ export function Terminal(props: TerminalProps) {
 
     return () => {
       disposed = true
+      flushRestartRef.current = null
       clearReconnectTimer()
       observer?.disconnect()
       if (contextMenuHandler) {
         el.removeEventListener('contextmenu', contextMenuHandler)
-      }
-      // A sessionKey means the shell should survive this unmount (node re-render/page nav) —
-      // only legacy (unkeyed) sessions are torn down on unmount, matching prior behavior.
-      if (!sessionKeyRef.current) {
-        try {
-          wsRef.current?.send(JSON.stringify({ type: 'disconnect' }))
-        } catch {
-          /* ignore */
-        }
       }
       wsRef.current?.close()
       wsRef.current = null

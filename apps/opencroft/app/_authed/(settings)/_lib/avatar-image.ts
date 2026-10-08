@@ -14,9 +14,11 @@
 // time and never had that problem. So the file is re-encoded to a small
 // square before it is ever sent.
 //
-// Real storage is the right answer once avatars are large, numerous, or want
-// caching and CDN delivery. None of that is true yet, and doing it now would
-// be a backend, a migration and a serving path for a 48-pixel circle.
+// Pages do not carry the data URL itself: `app/_server/user-avatar.ts` serves
+// the stored picture from a versioned address the browser caches. Real storage
+// is the right answer once avatars are large or numerous, or want CDN
+// delivery. None of that is true yet, and doing it now would be a backend and
+// a migration for a 48-pixel circle.
 
 /**
  * The stored square, in pixels.

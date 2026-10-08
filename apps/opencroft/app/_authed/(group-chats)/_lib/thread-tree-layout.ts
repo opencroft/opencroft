@@ -1,5 +1,6 @@
 import type { ChatListLeaf, ChatListNode } from 'ui/chat/chat-list'
 
+import type { FolderOpenById } from '@/app/_authed/(group-chats)/_lib/folder-open-cache'
 import type { ThreadRowState, ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/read-model'
 import type {
@@ -60,11 +61,15 @@ export function threadLeaf(thread: GroupChatThreadEntry, state: ThreadRowState |
  * order. Together those mean an unarranged chat and an arranged one take the
  * same path: an empty layout renders every thread loose, so nothing has to
  * write a layout before a list can be shown.
+ *
+ * A folder is open or closed as the reader left it (`folderOpen`); one they
+ * never toggled carries no `open`, and the list draws it at its default.
  */
 export function layoutToNodes(
   layout: ThreadLayout,
   threads: GroupChatThreadEntry[],
   stateById: ThreadRowStateById,
+  folderOpen: FolderOpenById,
 ): ChatListNode[] {
   const byId = new Map(threads.map((t) => [t.id, t]))
   const placed = new Set<string>()
@@ -93,7 +98,7 @@ export function layoutToNodes(
     const items = entry.folder.threadIds.map(leafFor).filter((leaf) => leaf !== null)
     nodes.push({
       type: 'folder',
-      folder: { id: entry.folder.id, name: entry.folder.name, open: entry.folder.open, items },
+      folder: { id: entry.folder.id, name: entry.folder.name, open: folderOpen[entry.folder.id], items },
     })
   }
 
@@ -111,7 +116,8 @@ export function layoutToNodes(
  * This is the half that makes the store's "nothing here can go stale" claim
  * true: titles, avatars, status and draft flags are all dropped on the way in,
  * so a rename or a departed agent cannot leave a wrong copy behind in a
- * settings row.
+ * settings row. Whether a folder is open is dropped too: that is the reader's
+ * own, and a shared row carrying it would close a folder for everyone.
  */
 export function nodesToLayout(nodes: ChatListNode[]): ThreadLayout {
   return {
@@ -124,7 +130,6 @@ export function nodesToLayout(nodes: ChatListNode[]): ThreadLayout {
               folder: {
                 id: node.folder.id,
                 name: node.folder.name,
-                open: node.folder.open,
                 threadIds: node.folder.items.map((item) => item.id),
               },
             },
