@@ -443,6 +443,18 @@ test('a code block draws in the code block frame, labelled with its language out
   assert.deepEqual(changes, [])
 })
 
+test('a transaction that leaves the markdown as it was reports no change', async () => {
+  // A highlighter's grammar arriving is such a transaction: it changes nothing,
+  // yet the trailing paragraph after a final code block is added on it.
+  const changes = await mount('```yaml\nclosing: 19:00\n```')
+  const editor = mountedEditor()
+  await act(async () => {
+    editor.view.dispatch(editor.state.tr.setMeta('unrelated', true))
+  })
+  assert.equal(editor.state.doc.lastChild?.type.name, 'paragraph', 'the trailing paragraph was added')
+  assert.deepEqual(changes, [])
+})
+
 test('a code block’s label follows its language as the language changes', async () => {
   await mount('```yaml\nclosing: 19:00\n```')
   const editor = mountedEditor()

@@ -356,6 +356,16 @@ export function MarkdownEditor({
     onChangeRef.current = onChange
   }, [onChange])
 
+  // The markdown the caller already has: the `value` it passed, or what was last
+  // reported to it. A transaction can change the document without changing its
+  // markdown -- the trailing paragraph kept after a final code block or table
+  // is added on the first transaction of any kind, a highlighter's included --
+  // and reporting that would tell the caller an untouched document was edited.
+  const knownMarkdownRef = useRef(value)
+  useEffect(() => {
+    knownMarkdownRef.current = value
+  }, [value])
+
   const [slashMenu] = useState(createSlashMenuStore)
 
   const editor = useEditor({
@@ -365,7 +375,14 @@ export function MarkdownEditor({
     extensions: markdownEditorExtensions({ placeholder, slashMenu, collaboration }),
     content: value === undefined ? undefined : markdownContent(value),
     editable,
-    onUpdate: ({ editor }) => onChangeRef.current?.(readMarkdown(editor)),
+    onUpdate: ({ editor }) => {
+      const markdown = readMarkdown(editor)
+      if (markdown === knownMarkdownRef.current) {
+        return
+      }
+      knownMarkdownRef.current = markdown
+      onChangeRef.current?.(markdown)
+    },
     editorProps: {
       attributes: {
         class: cn(CONTENT_CLASS, contentClassName ?? DEFAULT_CONTENT_CLASS),
