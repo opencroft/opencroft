@@ -14,8 +14,9 @@
     "dev:ext": "npx tsx scripts/watch-extensions.ts",
     "generate:legacy-declarations": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx scripts/generate-legacy-declarations.ts",
     "monitor": "npx tsx scripts/monitor-server.ts",
-    "build": "npm run check:server-fn-shape && vite build && npm run check:client-bundle",
+    "build": "npm run check:server-fn-shape && vite build && npm run check:client-bundle && npm run check:server-assets",
     "check:client-bundle": "node scripts/check-client-bundle.mjs",
+    "check:server-assets": "node scripts/check-server-assets.mjs",
     "check:server-fn-shape": "node scripts/check-server-fn-colocation.mjs",
     "start": "vite preview"
   },

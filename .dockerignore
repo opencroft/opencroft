@@ -1,6 +1,8 @@
 **/node_modules
 .git
-.gitignore
+# .gitignore stays in the build context: Tailwind's source scan reads it to skip
+# build output, and without it the server build scans the client build's
+# .output and links a stylesheet the client build never wrote.
 .vscode
 .idea
 **/.env*.local

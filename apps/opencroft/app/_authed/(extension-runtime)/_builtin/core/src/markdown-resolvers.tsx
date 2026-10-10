@@ -4,7 +4,7 @@ import type { MarkdownReference, MarkdownReferenceMenuItem, MarkdownResolver } f
 import { AccountCard } from '@opencroft/client/ui'
 import { toast } from 'sonner'
 
-import { MENTION_PATTERN, mentionedUsername } from '@/app/_shared/username'
+import { MENTION_PATTERN, mentionedUsername } from '../../../../../_shared/username'
 import { sameOriginLinkPattern, TERMINAL_TARGET_PATTERN } from './markdown-patterns'
 
 // Graph references in text, drawn as what they point at.

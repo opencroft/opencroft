@@ -263,6 +263,19 @@ async function pickEntry(dir: string, candidates: string[]): Promise<string | nu
   return null
 }
 
+/**
+ * The tsconfig an extension compiles with: its own `tsconfig.json`, or none.
+ * Left to discover one, esbuild also takes a `tsconfig.json` from any folder
+ * above the extension, so a build would depend on where the folder sits: a
+ * builtin's sources sit under the app's tsconfig (and its `@/` paths) in a
+ * source checkout, but under none in the production image, which ships
+ * `app/` without it. Pinned here, every checkout builds what the image builds.
+ */
+async function tsconfigOptions(src: string): Promise<Pick<esbuild.BuildOptions, 'tsconfig' | 'tsconfigRaw'>> {
+  const own = await pickEntry(src, ['tsconfig.json'])
+  return own ? { tsconfig: own } : { tsconfigRaw: {} }
+}
+
 const SOURCE_MAP_MARKER = '//# sourceMappingURL='
 
 // Distinguishes concurrent rewrites within one process; the pid distinguishes
@@ -452,6 +465,7 @@ async function compileServerSide(location: BuildLocation, manifest: ExtensionMan
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
+      ...(await tsconfigOptions(src)),
       nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
     })
     await fs.rename(outfile, finalOutfile).catch(() => {})
@@ -524,6 +538,7 @@ async function compileClientSide(location: BuildLocation, manifest: ExtensionMan
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
+      ...(await tsconfigOptions(src)),
       nodePaths: [path.join(src, 'node_modules'), ...PROJECT_NODE_MODULES],
     })
     // The link has to name what the map will be published as, not what it's
