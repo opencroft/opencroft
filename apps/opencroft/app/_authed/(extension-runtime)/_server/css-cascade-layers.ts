@@ -14,9 +14,9 @@
  *     which is what put a full-page editor in its narrow layout with an
  *     unreachable primary action;
  *   - extension sheet last — its plain `.hidden` beats a host variant such as
- *     `sm:flex-row`, reaching the extension through shared `@ext/ui`
- *     components, which is the failure the current load order was chosen to
- *     prevent (see `_client/loader.ts`).
+ *     `sm:flex-row`, reaching the extension through shared kit components
+ *     (`@opencroft/client/ui`), which is the failure the load order in
+ *     `_client/loader.ts` prevents.
  *
  * So the split is by rank, not by sheet: variant-carrying extension utilities
  * are emitted into their own layer ordered after `utilities`, and plain ones

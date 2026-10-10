@@ -1,12 +1,10 @@
+import type { ActionAccess } from '@opencroft/server/actions'
+
 import { declaredTypesOf, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
 import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
-import {
-  type ActionAccess,
-  getExtensionModule,
-  loadAllManifests,
-} from '@/app/_authed/(extension-runtime)/_server/loader'
+import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
 import type {
   ConnectedSource,
@@ -166,7 +164,7 @@ export function buildCtx(
   declared: ReadonlySet<string> = new Set(),
 ): NodeActionCtx {
   const data = node.data ?? {}
-  const resolved = (data['__resolvedContexts'] as Record<string, ResolvedHandle> | undefined) ?? {}
+  const resolved = (data.__resolvedContexts as Record<string, ResolvedHandle> | undefined) ?? {}
   const allNodes = nodesAsLike(graph)
   const allEdges = edgesAsLike(graph)
 
@@ -223,8 +221,8 @@ export function buildCtx(
         }
         const px = n.position?.x ?? 0
         const py = n.position?.y ?? 0
-        const w = (n.style?.['width'] as number | undefined) ?? 200
-        const h = (n.style?.['height'] as number | undefined) ?? 160
+        const w = (n.style?.width as number | undefined) ?? 200
+        const h = (n.style?.height as number | undefined) ?? 160
         return sx >= px && sy >= py && sx < px + w && sy < py + h
       })
       .map((n) => ({
@@ -332,7 +330,7 @@ export type NodeActionListing = NodeActionDescriptor & Pick<NodeAction, 'executi
 // its return value is dropped — while this plain function returns it normally.
 export async function listNodeActionsImpl(nodeId: string): Promise<NodeActionListing[]> {
   const found = await findNodeWithGraph(nodeId)
-  if (!found || !found.node.type) {
+  if (!found?.node.type) {
     return []
   }
   const manifests = await loadAllManifests()

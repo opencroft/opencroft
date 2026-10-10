@@ -94,6 +94,37 @@ test('a host that resolves no callers at all still gets a caller object, never u
 
 const skillBody = async (name: string) => `body of ${name}`
 
+test('an image block a tool returns reaches the MCP client unchanged', async () => {
+  // What lets an agent behind this server SEE a picture a tool fetched: the
+  // block has to arrive as an image, with its bytes and type intact, not be
+  // flattened to text on the way.
+  const result = {
+    content: [
+      { type: 'text', text: 'shot.png: PNG, 1×1' },
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      },
+    ],
+  }
+  const tools: LocalTool[] = [
+    { name: 'view', description: 'returns a picture', inputSchema: {}, handler: async () => result },
+  ]
+  const handle = createMcpServer({ name: `image-result-${crypto.randomUUID()}`, tools, skills: [] })
+  try {
+    const response = await fetch(await handle.ensureUrl(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'view', arguments: {} } }),
+    })
+    const body = (await response.json()) as { result?: { content?: unknown } }
+    assert.deepEqual(body.result?.content, result.content)
+  } finally {
+    await handle.close()
+  }
+})
+
 test('a lone skill comes back as its body, with no heading added', async () => {
   assert.equal(await loadSkills(['alpha'], skillBody, undefined), 'body of alpha')
 })

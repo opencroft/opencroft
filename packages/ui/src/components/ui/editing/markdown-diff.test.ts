@@ -178,8 +178,14 @@ test('a code block whose language or meta changed is the line diff of its code, 
 
 test('a code block that became a diagram, or stopped being one, is a pair', () => {
   const pair = (before: string, after: string) => [{ kind: 'pair', removed: before, added: after }]
-  assert.deepEqual(diff('```text\nA --> B\n```', '```mermaid\nA --> B\n```'), pair('```text\nA --> B\n```', '```mermaid\nA --> B\n```'))
-  assert.deepEqual(diff('```mermaid\nA --> B\n```', '```text\nA --> B\n```'), pair('```mermaid\nA --> B\n```', '```text\nA --> B\n```'))
+  assert.deepEqual(
+    diff('```text\nA --> B\n```', '```mermaid\nA --> B\n```'),
+    pair('```text\nA --> B\n```', '```mermaid\nA --> B\n```'),
+  )
+  assert.deepEqual(
+    diff('```mermaid\nA --> B\n```', '```text\nA --> B\n```'),
+    pair('```mermaid\nA --> B\n```', '```text\nA --> B\n```'),
+  )
 })
 
 test('a changed diagram is a pair, drawn as its two pictures rather than its source', () => {
@@ -247,7 +253,9 @@ test('a change in a nested list draws the item above it once, with the nested ch
 
 test('a list that changed only in how it holds its items is one pair', () => {
   // Loose items draw as paragraphs; no single item differs.
-  assert.deepEqual(diff('- one\n- two', '- one\n\n- two'), [{ kind: 'pair', removed: '- one\n- two', added: '- one\n\n- two' }])
+  assert.deepEqual(diff('- one\n- two', '- one\n\n- two'), [
+    { kind: 'pair', removed: '- one\n- two', added: '- one\n\n- two' },
+  ])
 })
 
 // What a run of a loose list's items is drawn with: a definition after a blank

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { Box } from 'lucide-react'
 import * as lucide from 'lucide-react'
+import { Box } from 'lucide-react'
 import { dynamicIconImports } from 'lucide-react/dynamic.mjs'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'

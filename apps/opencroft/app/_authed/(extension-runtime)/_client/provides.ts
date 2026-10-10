@@ -16,9 +16,21 @@ class ProviderRegistry {
   private byExtension = new Map<string, ProvidesMap>()
   private listeners = new Set<() => void>()
   private byPoint = new Map<string, unknown[]>()
+  private rank = new Map<string, number>()
 
   register(extensionId: string, provides: ProvidesMap): void {
     this.byExtension.set(extensionId, provides)
+    this.recompute()
+  }
+
+  /**
+   * The order extensions' entries are listed in. Extensions load as the points
+   * they provide are used, in no fixed order, so the order is the server's
+   * listing rather than the order they happened to arrive in. An extension
+   * the listing does not name follows, in the order it registered.
+   */
+  setOrder(extensionIds: string[]): void {
+    this.rank = new Map(extensionIds.map((id, index) => [id, index]))
     this.recompute()
   }
 
@@ -38,7 +50,9 @@ class ProviderRegistry {
 
   private recompute(): void {
     const next = new Map<string, unknown[]>()
-    for (const provides of this.byExtension.values()) {
+    const rankOf = (extensionId: string) => this.rank.get(extensionId) ?? Number.MAX_SAFE_INTEGER
+    const ordered = [...this.byExtension].sort(([a], [b]) => rankOf(a) - rankOf(b))
+    for (const [, provides] of ordered) {
       for (const [point, items] of Object.entries(provides)) {
         const list = next.get(point) ?? []
         list.push(...items)
@@ -54,27 +68,23 @@ class ProviderRegistry {
 
 export const providerRegistry = new ProviderRegistry()
 
-// ── One-time extension load, shared across every consumer ────────────────────
+// ── Loading a point's providers, once per point, shared by every consumer ─────
 
-type LoadState = 'idle' | 'loading' | 'loaded'
-
-let state: LoadState = 'idle'
-let loadPromise: Promise<unknown> | null = null
+const startedPoints = new Set<string>()
+const loadedPoints = new Set<string>()
 const stateListeners = new Set<() => void>()
 
-function setState(next: LoadState): void {
-  state = next
-  for (const listener of stateListeners) {
-    listener()
-  }
-}
-
-function ensureLoaded(loadExtensions: () => Promise<unknown>): void {
-  if (loadPromise) {
+function ensureLoaded(point: string, loadProviders: (point: string) => Promise<unknown>): void {
+  if (startedPoints.has(point)) {
     return
   }
-  setState('loading')
-  loadPromise = Promise.resolve(loadExtensions()).finally(() => setState('loaded'))
+  startedPoints.add(point)
+  Promise.resolve(loadProviders(point)).finally(() => {
+    loadedPoints.add(point)
+    for (const listener of stateListeners) {
+      listener()
+    }
+  })
 }
 
 function subscribeState(listener: () => void): () => void {
@@ -84,24 +94,25 @@ function subscribeState(listener: () => void): () => void {
   }
 }
 
-function getState(): LoadState {
-  return state
-}
-
 /**
- * Returns the items provided to `point` and whether the one-time extension load
- * finished. The load runs once per session; reloads flow through the registry
- * subscription (the host clears and re-registers on reload).
+ * Returns the items provided to `point`, and whether the extensions that
+ * provide it have loaded. `loadProviders(point)` loads them, once per point per
+ * session, when the first consumer of the point mounts; reloads flow through
+ * the registry subscription (the host clears and re-registers on reload).
  */
-export function useProvided<T>(point: string, loadExtensions: () => Promise<unknown>): { items: T[]; loaded: boolean } {
+export function useProvided<T>(
+  point: string,
+  loadProviders: (point: string) => Promise<unknown>,
+): { items: T[]; loaded: boolean } {
   const items = useSyncExternalStore(
     providerRegistry.subscribe,
     () => providerRegistry.get<T>(point),
     () => providerRegistry.get<T>(point),
   )
-  const loadState = useSyncExternalStore(subscribeState, getState, getState)
+  const isLoaded = () => loadedPoints.has(point)
+  const loaded = useSyncExternalStore(subscribeState, isLoaded, isLoaded)
   useEffect(() => {
-    ensureLoaded(loadExtensions)
-  }, [loadExtensions])
-  return { items, loaded: loadState === 'loaded' }
+    ensureLoaded(point, loadProviders)
+  }, [point, loadProviders])
+  return { items, loaded }
 }

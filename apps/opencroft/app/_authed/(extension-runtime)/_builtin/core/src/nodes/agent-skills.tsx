@@ -1,8 +1,7 @@
-import { legacy } from '@opencroft/client'
-
-const { Button, Input, Label, React, ScrollArea, Textarea, icons, toast } = legacy
-
-const { useCallback, useEffect, useState } = React
+import { Button, Input, Label, ScrollArea, Textarea } from '@opencroft/client/ui'
+import { Plus, Trash2 } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 interface SkillConfig {
   name: string
@@ -76,7 +75,7 @@ export function AgentSkillsTab() {
           />
         ))}
         <Button variant='outline' size='sm' onClick={add}>
-          <icons.Plus className='size-3 mr-1' />
+          <Plus className='size-3 mr-1' />
           Add skill
         </Button>
         <Button size='sm' onClick={save} disabled={saving || hasConflict}>
@@ -105,10 +104,10 @@ function SkillRowEditor({
           value={config.name}
           placeholder='name'
           className='h-7 text-xs font-mono'
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ name: e.target.value })}
         />
         <Button variant='ghost' size='sm' className='size-7 p-0' onClick={onRemove}>
-          <icons.Trash2 className='size-3' />
+          <Trash2 className='size-3' />
         </Button>
       </div>
       {duplicate ? <span className='text-[10px] text-destructive'>Duplicate name</span> : null}
@@ -118,7 +117,7 @@ function SkillRowEditor({
           value={config.description}
           placeholder='When to use this skill…'
           className='h-7 text-xs'
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ description: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ description: e.target.value })}
         />
       </div>
       <div className='flex flex-col gap-1'>
@@ -128,7 +127,7 @@ function SkillRowEditor({
           rows={6}
           placeholder='Markdown instructions loaded when the agent invokes this skill…'
           className='text-xs font-mono'
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onChange({ body: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onChange({ body: e.target.value })}
         />
       </div>
     </div>

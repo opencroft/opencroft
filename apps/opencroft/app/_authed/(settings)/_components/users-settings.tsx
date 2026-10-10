@@ -90,7 +90,7 @@ function UsersListView({ onAdd, onEdit }: { onAdd: () => void; onEdit: (userId: 
           id: user.id,
           name: user.name,
           email: user.email,
-          avatar: user.image,
+          avatar: user.avatarUrl,
           role: roleLabel(user.role),
           joinedAt: formatDate(user.createdAt) ?? '',
           lastSeenAt: formatDate(user.lastSeenAt),
@@ -330,7 +330,7 @@ function EditUserForm({
       <AdminUserEdit
         name={user.name}
         email={user.email}
-        avatar={user.image}
+        avatar={user.avatarUrl}
         form={
           <AdminUserForm
             mode='edit'

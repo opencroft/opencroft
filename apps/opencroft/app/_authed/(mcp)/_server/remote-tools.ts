@@ -423,7 +423,7 @@ export async function resolveTerminalContext(
     fail(-32602, `Extension ${manifest.id} has no exposeOutput`)
   }
 
-  const ctx = mod.exposeOutput(ep.handle, node.data ?? {}, bare)
+  const ctx = mod.exposeOutput(ep.handle, node.data ?? {}, bare, ep.nodeId)
   if (ctx === undefined || ctx === null) {
     fail(-32602, `No context value for ${target}`)
   }

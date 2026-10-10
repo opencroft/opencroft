@@ -83,6 +83,13 @@ function useMonacoRuntime(): boolean {
   return ready
 }
 
+// Monaco's own default face differs per OS (Consolas, Menlo, Droid Sans Mono);
+// the page's code face is the `--font-mono` theme variable. Called only while
+// an editor renders, which is after `ready` and so never on the server.
+function monoFontFamily(): string {
+  return getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace'
+}
+
 // Whatever this is, it reaches Monaco verbatim, and Monaco registers around
 // forty languages and accepts every one of them at run time. So this union was
 // never the set that works — it was a ceiling on the set you were allowed to
@@ -297,6 +304,7 @@ function PlainEditor({
         tabSize: 2,
         contextmenu: false,
         fontSize: 12,
+        fontFamily: monoFontFamily(),
         // Containers here are sized by the surrounding layout (inspector tabs,
         // resizable panels) and change without a React render, so Monaco has to
         // observe its box rather than be told about it.
@@ -564,6 +572,7 @@ function DiffView({
             folding: false,
             contextmenu: false,
             fontSize: 12,
+            fontFamily: monoFontFamily(),
             // The container's width is set by the surrounding layout and changes
             // without a React render (sidebar, rotation), so Monaco has to
             // observe it rather than be told.

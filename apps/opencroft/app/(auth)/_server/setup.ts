@@ -10,13 +10,23 @@
 import { countUsers, createFirstAdmin, SetupError, type SetupFailure } from '@opencroft/auth/server'
 import { createServerFn } from '@tanstack/react-start'
 
+import { instanceKeysStatus } from '@/server/instance-keys'
+
 /**
  * Whether the instance still has no accounts. This is the only thing that makes
  * the setup screen reachable, and it is answered server-side so the browser
  * cannot talk itself into showing it.
+ *
+ * While it has none, also the key file's warning when a key comes from it: the
+ * person setting up is about to become the administrator, and this screen is
+ * the one place they are sure to see it before the instance holds anything.
+ * The warning names the file, never a key.
  */
 export const getSetupStatus = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<{ needsSetup: boolean }> => ({ needsSetup: (await countUsers()) === 0 }),
+  async (): Promise<{ needsSetup: boolean; keyFileNotice: string | null }> => {
+    const needsSetup = (await countUsers()) === 0
+    return { needsSetup, keyFileNotice: needsSetup ? instanceKeysStatus().notice : null }
+  },
 )
 
 /**

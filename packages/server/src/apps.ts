@@ -1,11 +1,37 @@
-import type { HostAgentGroupChatsApi, HostGroupChatsApi, HostPersonGroupChatsApi, HostUser } from './host'
-
 /**
- * Server-side App lifecycle contracts. An extension that provides Apps (see
- * `AppEntry` in `@opencroft/core`) may export `apps` from its server module —
- * a map of each App's bare type to its hooks — to react to instances of its Apps being added
- * to, removed from, loaded and unloaded by the host.
+ * `@opencroft/server/apps` — an App's server half. An extension that provides
+ * Apps (see `AppEntry` in `@opencroft/core`) may export `apps` from its server
+ * module — a map of each App's bare type to its hooks — to react to instances
+ * of its Apps being added to, removed from, loaded and unloaded by the host,
+ * and to serve their actions. `apps` here lists the instances.
  */
+import type { HostAgentGroupChatsApi, HostGroupChatsApi, HostPersonGroupChatsApi } from './chat'
+import type { HostUser } from './people'
+
+/** One added App instance, as reported to the providing extension. */
+export interface HostAppInstance {
+  instanceId: string
+  /** The App this is an instance of, by the bare type this extension declared it under — its key in `apps`. */
+  type: string
+  /** @deprecated Read `type`, which holds the same bare value. */
+  appSlug: string
+  spaceSlug: string
+  /** The instance's display name — the host's field, required at add time. */
+  name: string
+  /** The instance's slug — unique in its space; `<spaceSlug>.<slug>` is its address. */
+  slug: string
+  params: Record<string, string>
+  /** Absolute path of the instance's private data directory. */
+  dataDir: string
+}
+
+export interface HostAppsApi {
+  /** The calling extension's added App instances, oldest first; optionally one App's only, named by its bare type. */
+  listInstances(type?: string): Promise<HostAppInstance[]>
+}
+
+/** The calling extension's own added App instances. */
+export declare const apps: HostAppsApi
 
 /** One added instance of an App, as handed to every lifecycle hook. */
 export interface AppInstanceContext {

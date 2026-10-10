@@ -51,7 +51,7 @@ interface GraphNode {
 
 async function handleRequest(request: Request, params: { _splat?: string }) {
   const pathSegments = (params._splat ?? '').split('/').filter(Boolean)
-  const requestPath = '/' + pathSegments.join('/')
+  const requestPath = `/${pathSegments.join('/')}`
   const method = request.method
 
   // Load all spaces and find api-route nodes

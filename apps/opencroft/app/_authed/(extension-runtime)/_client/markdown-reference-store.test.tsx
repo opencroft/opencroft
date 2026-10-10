@@ -220,6 +220,27 @@ test('the installed source carries each usable pattern; a broken one is left out
   assert.equal(logged.length, 2)
 })
 
+test('the editor draws no icon before an identifier that carries its mark in the text', () => {
+  const preview = () => ({ icon: 'AtSign' })
+  store().sync([
+    recording({ preview }).resolver,
+    { ...recording({ preview }).resolver, id: 'test.handle', pattern: /@[a-z]+/, markedInText: true },
+  ])
+  const decorate = (kind: string, id: string) => getMarkdownReferences()?.decorate?.({ kind, id, trailing: false })
+  assert.notEqual(decorate('test.ticket', 'T-1')?.icon, undefined)
+  assert.equal(decorate('test.handle', '@someone')?.icon, undefined)
+})
+
+test('until an answer comes, and when none does, the chip shows the preview', async () => {
+  const s = store()
+  s.sync([recording({ preview: (id) => ({ label: id.slice(2) }) }).resolver])
+  assert.equal(s.shown('test.ticket', 'T-404', s.get('test.ticket', 'T-404')).label, '404')
+  s.request('test.ticket', 'T-404')
+  await settled()
+  assert.equal(s.get('test.ticket', 'T-404')?.status, 'unknown')
+  assert.equal(s.shown('test.ticket', 'T-404', s.get('test.ticket', 'T-404')).label, '404')
+})
+
 test('a watched pattern replaces the source when it arrives, and no resolvers means none installed', () => {
   let set: (pattern: string | null) => void = () => {}
   const s = store()

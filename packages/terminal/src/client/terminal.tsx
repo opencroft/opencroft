@@ -91,6 +91,20 @@ function createWebSocket(path: string): WebSocket {
   return new WebSocket(`${protocol}//${window.location.host}${path}`)
 }
 
+// The page's code face: the `--font-mono` theme variable, read where the terminal sits, so it
+// draws in the same face as code everywhere else on the page.
+function monoFontFamily(el: HTMLElement): string {
+  return getComputedStyle(el).getPropertyValue('--font-mono').trim() || 'monospace'
+}
+
+// xterm measures its cell and rasterises each glyph once, from whatever face is ready at that
+// moment, and does not redo it when a web font arrives later. So the face is loaded before the
+// terminal opens. Each script is a separate font file (unicode-range), hence a Latin and a
+// Cyrillic sample. A face that fails to load or does not exist only leaves the fallback in use.
+function loadFont(fontSize: number, fontFamily: string): Promise<unknown> {
+  return document.fonts.load(`${fontSize}px ${fontFamily}`, 'Aa Яя').catch(() => undefined)
+}
+
 function sourceOf(props: TerminalProps): TerminalSource {
   if (props.attachKey !== undefined) {
     return { kind: 'attach', sessionKey: props.attachKey }
@@ -188,6 +202,7 @@ export function Terminal(props: TerminalProps) {
   )
 
   // Terminal lifecycle is intentionally keyed on reconnectTick + command + attachKey + fontSize only.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the three keys the body does not read are re-run triggers: a change to any of them tears the terminal down and builds it again
   React.useEffect(() => {
     const el = containerRef.current
     if (!el) {
@@ -237,7 +252,13 @@ export function Terminal(props: TerminalProps) {
       }
     }
 
-    Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit'), import('@xterm/xterm/css/xterm.css')])
+    const fontFamily = monoFontFamily(el)
+    Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+      import('@xterm/xterm/css/xterm.css'),
+      loadFont(fontSize, fontFamily),
+    ])
       .then(([xtermMod, fitMod]) => {
         if (disposed || !el.isConnected) {
           return
@@ -247,7 +268,7 @@ export function Terminal(props: TerminalProps) {
           cursorStyle: 'bar',
           cursorInactiveStyle: 'none',
           fontSize,
-          fontFamily: 'Consolas, Menlo, Monaco, Courier New, monospace',
+          fontFamily,
           scrollback: 10000,
           allowProposedApi: true,
           rightClickSelectsWord: false,

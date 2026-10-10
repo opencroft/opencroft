@@ -1,5 +1,6 @@
-// The root `npm test`, and what check-baseline.mjs runs: every workspace's own
-// `test` script, all at once, from the directory it is started in.
+// The root `npm test`: every workspace's own `test` script, all at once, from
+// the directory it is started in. Exits non-zero when any workspace's tests
+// fail.
 //
 // `npm run test --workspaces` runs them one after another, and most of that
 // time is spent waiting rather than computing -- a workspace whose files sleep,
@@ -15,13 +16,11 @@
 // at once.
 //
 // Each workspace's output is held until it finishes and then printed whole, in
-// the order npm lists the workspaces, so the report reads as it did when they
-// ran in turn. check-baseline parses that report: it pairs each `> <pkg> test`
-// banner with the `Found N test files.` line and the TAP totals after it, and
-// output from two workspaces interleaved line by line would break that
-// pairing. Within a workspace, stdout and stderr are each kept in order but
-// printed separately, as they were when npm's output was captured through a
-// pipe.
+// the order npm lists the workspaces, so the report reads as if they ran in
+// turn: each `> <pkg> test` banner followed by that workspace's own report and
+// totals, never another's lines interleaved with them. Within a workspace,
+// stdout and stderr are each kept in order but printed separately, as npm's
+// output captured through a pipe would show them.
 
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -71,8 +70,7 @@ for (const result of results) {
 slotServer.close()
 // Not process.exit(): writes to a pipe finish asynchronously, and exiting
 // drops whatever has not drained yet. The report is megabytes, so a caller
-// reading it through a pipe -- check-baseline does -- got the first part and
-// a clean exit status.
+// reading it through a pipe would get the first part and a clean exit status.
 process.exitCode = failed ? 1 : 0
 
 // The workspaces npm would run for `npm run test --workspaces --if-present`:

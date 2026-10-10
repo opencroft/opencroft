@@ -1,5 +1,4 @@
-import type { TerminalContext } from '@opencroft/server'
-import host from '@opencroft/server'
+import { type TerminalContext, terminal } from '@opencroft/server/terminal'
 
 export interface ScriptRunParams {
   script: string
@@ -29,7 +28,7 @@ const LANG_FLAG: Record<string, string> = {
 export async function runScript(params: ScriptRunParams): Promise<ScriptResult> {
   const { script, language, context, env } = params
   try {
-    const stdout = await host.terminal.run(context, [LANG_CMD[language], LANG_FLAG[language], script], env)
+    const stdout = await terminal.run(context, [LANG_CMD[language], LANG_FLAG[language], script], env)
     return { stdout, stderr: '', exitCode: 0 }
   } catch (err) {
     const msg = (err as Error).message || String(err)
@@ -114,14 +113,14 @@ function splitStdout(stdout: string): SplitOutput {
 function runHandlerScript(params: HandlerRunParams): Promise<string> {
   const { script, language, context, event, env } = params
   if (language === 'bash') {
-    return host.terminal.run(context, ['bash', '-c', script], { ...env, OPENCROFT_EVENT: JSON.stringify(event) })
+    return terminal.run(context, ['bash', '-c', script], { ...env, OPENCROFT_EVENT: JSON.stringify(event) })
   }
   const eventB64 = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64')
   if (language === 'python') {
-    return host.terminal.run(context, ['python', '-c', script + pythonHandlerBootstrap(eventB64)], env)
+    return terminal.run(context, ['python', '-c', script + pythonHandlerBootstrap(eventB64)], env)
   }
   if (language === 'node') {
-    return host.terminal.run(context, ['node', '-e', script + nodeHandlerBootstrap(eventB64)], env)
+    return terminal.run(context, ['node', '-e', script + nodeHandlerBootstrap(eventB64)], env)
   }
   throw new Error(`Unsupported language: ${language}`)
 }

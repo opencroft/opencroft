@@ -4,12 +4,6 @@
 // its own in caller.test.ts; what has to be proved HERE is the route's
 // decision: that each kind of caller ends in a 401 before any method runs, and
 // that the one that does not is served as the agent its token names.
-//
-// Better Auth needs a secret before it will verify a session at all; in
-// development mode it supplies its own, which is enough to answer "no session".
-// Set in the module body, after the hoisted imports have run, which is early
-// enough only because the auth instance reads it at first use, not at import.
-process.env.NODE_ENV = 'development'
 
 import '@opencroft/db/test-env'
 

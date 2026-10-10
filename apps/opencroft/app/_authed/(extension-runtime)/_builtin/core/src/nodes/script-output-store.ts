@@ -1,6 +1,4 @@
-import { legacy } from '@opencroft/client'
-
-const { React } = legacy
+import { useSyncExternalStore } from 'react'
 
 export interface ScriptResult {
   stdout: string
@@ -34,7 +32,7 @@ function subscribe(cb: () => void): () => void {
 }
 
 export function useScriptResult(nodeId: string): ScriptResult | null {
-  return React.useSyncExternalStore(
+  return useSyncExternalStore(
     subscribe,
     () => store.get(nodeId) ?? null,
     () => null,

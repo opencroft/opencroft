@@ -1,4 +1,4 @@
-import type { ExecutionMode } from '@opencroft/client'
+import type { ExecutionMode } from '@opencroft/core'
 
 // What an agent-tool node stores: written by its inspector, read by the host's
 // tool registry when it lists and dispatches the tool (tools.ts in (mcp)).

@@ -130,7 +130,10 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
             <div
               ref={contentRef}
               className={cn(
-                'max-h-48 overflow-hidden pointer-events-none',
+                // Positioned as well as clipped, so absolutely positioned
+                // content inside is clipped too instead of extending the
+                // transcript's scroll height past the clamp.
+                'relative max-h-48 overflow-hidden pointer-events-none',
                 overflowing && 'shadow-[inset_0_-12px_8px_-8px_rgba(0,0,0,0.35)]',
               )}
             >

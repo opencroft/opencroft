@@ -42,6 +42,7 @@ export const BubbleHint = memo(function BubbleHint({ hintId, message, screenX, s
           aria-label='Dismiss hint'
         >
           <svg
+            aria-hidden='true'
             width='12'
             height='12'
             viewBox='0 0 24 24'

@@ -1,6 +1,6 @@
 // Write a connector-agnostic JSON backup of the current database.
 //   node scripts/backup.ts [out.json]   (omit to write to stdout)
-// Honors the usual DATABASE_URL / PGLITE_PATH / DB_MIGRATIONS_DIR env.
+// Honors the usual OPENCROFT_DATABASE_URL / OPENCROFT_PGLITE_PATH / OPENCROFT_DB_MIGRATIONS_DIR env.
 
 import fs from 'node:fs'
 

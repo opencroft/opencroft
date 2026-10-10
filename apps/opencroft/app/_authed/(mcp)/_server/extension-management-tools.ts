@@ -30,6 +30,7 @@ import {
   updateExtension,
 } from '@/app/_authed/(extension-runtime)/_server/install'
 import { searchRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
+import { compileErrorLocation } from '@/app/_authed/(extension-runtime)/_types'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import {
   claimFolderForWrite,
@@ -73,7 +74,7 @@ export const definitions = [
   {
     name: 'create_extension',
     description:
-      'Create a new local extension in the folder "local.<name>". At minimum `files` must include extension.json and src/client.tsx. The manifest needs no `id`: the extension runs under its folder name. Client source must use `export default defineExtension({ manifest: { name }, nodes: [...] })`, taking `defineExtension` and the rest of the client surface from the `legacy` namespace of "@opencroft/client" — that spelling is the one carrying type declarations.',
+      'Create a new local extension in the folder "local.<name>". At minimum `files` must include extension.json and src/client.tsx. The manifest needs no `id`: the extension runs under its folder name. Client source must use `export default defineExtension({ manifest: { name }, nodes: [...] })`, taking `defineExtension` from "@opencroft/client/extension" and the rest of the client surface from the other modules of "@opencroft/client" (canvas, ui, actions, …; server code from the modules of "@opencroft/server"). "@ext/host", "@ext/ui" and the `legacy` namespaces are deprecated, and a build warns about each use. The authoring guide is docs/authoring-extensions.md in the OpenCroft core repository; each API member is documented in its declaration.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -378,15 +379,13 @@ export const handlers: Record<string, ToolHandler> = {
       if (result.errors.length > 0) {
         parts.push(`\nErrors (${result.errors.length}):`)
         for (const e of result.errors) {
-          const loc = e.line ? `${e.file}:${e.line}:${e.column}` : e.file
-          parts.push(`  ${loc}: ${e.message}`)
+          parts.push(`  ${compileErrorLocation(e)}: ${e.message}`)
         }
       }
       if (result.warnings.length > 0) {
         parts.push(`\nWarnings (${result.warnings.length}):`)
         for (const w of result.warnings) {
-          const loc = w.line ? `${w.file}:${w.line}:${w.column}` : w.file
-          parts.push(`  ${loc}: ${w.message}`)
+          parts.push(`  ${compileErrorLocation(w)}: ${w.message}`)
         }
       }
       if (result.success) {

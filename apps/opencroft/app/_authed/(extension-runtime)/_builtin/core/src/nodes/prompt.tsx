@@ -1,10 +1,10 @@
-import { legacy } from '@opencroft/client'
-
-const { Button, NodeFrame, OutputHandle, React, Textarea, dispatch, getStream, icons, toast } = legacy
-type Stream<T> = legacy.Stream<T>
-type TextChunk = legacy.TextChunk
-
-const { useCallback, useState } = React
+import { dispatch } from '@opencroft/client/actions'
+import { NodeFrame, OutputHandle } from '@opencroft/client/canvas'
+import { getStream, type Stream, type TextChunk } from '@opencroft/client/streams'
+import { Button, Textarea } from '@opencroft/client/ui'
+import { MessageCircle, Send } from 'lucide-react'
+import { type ChangeEvent, type KeyboardEvent, useCallback, useState } from 'react'
+import { toast } from 'sonner'
 
 export interface PromptData {
   text: string
@@ -28,7 +28,7 @@ export function PromptNode({ id, data, selected }: { id: string; data: PromptDat
 
   return (
     <NodeFrame
-      icon={icons.MessageCircle}
+      icon={MessageCircle}
       title='Prompt'
       selected={selected ?? false}
       output={<OutputHandle type='text-stream' id='text-out' />}
@@ -37,8 +37,8 @@ export function PromptNode({ id, data, selected }: { id: string; data: PromptDat
           <Textarea
             placeholder='Type a prompt…'
             value={input}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
-            onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)}
+            onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 send()
@@ -47,7 +47,7 @@ export function PromptNode({ id, data, selected }: { id: string; data: PromptDat
             className='flex-1 resize-none min-h-0 border-0 bg-transparent focus-visible:ring-0 shadow-none'
           />
           <Button variant='ghost' size='icon-lg' onClick={send} disabled={!input.trim()} title='Send'>
-            <icons.Send className='h-4 w-4' />
+            <Send className='h-4 w-4' />
           </Button>
         </div>
       }

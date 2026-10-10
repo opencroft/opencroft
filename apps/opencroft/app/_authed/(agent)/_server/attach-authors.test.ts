@@ -15,7 +15,7 @@ import test, { beforeEach } from 'node:test'
 import { buildDelivery } from 'agent-client/queue-tags'
 import type { ChatEvent } from 'agent-client/types'
 
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -27,8 +27,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
-process.env.NODE_ENV = 'development'
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { db, user, username: usernames } = await import('@opencroft/db')
 const { sql } = await import('drizzle-orm')

@@ -6,9 +6,10 @@
 // version of the bug this file exists to prevent).
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { promises as fs } from 'node:fs'
+import { once } from 'node:events'
+import { existsSync, promises as fs, readdirSync, readFileSync } from 'node:fs'
 import http from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { type AddressInfo, createServer, type Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -61,62 +62,96 @@ test('a successful command is unaffected', async () => {
 // the LIVE ARGV of `git` and of the `git-remote-https` helper it spawns, for
 // as long as either runs -- readable via `ps`/`pgrep -fa`/`/proc/<pid>/cmdline`
 // by anything on the host, success or failure, with no error involved at all
-// (a silent leak). Verified here by observing a live process's
-// own argv while it runs, the same interface `ps` reads from -- a code
-// reading cannot establish absence from a process table. A non-routable
-// address (10.255.255.1) keeps the connection attempt in flight long enough
-// to sample it, with no network and no real credential.
-const NON_ROUTABLE = '10.255.255.1'
+// (a silent leak). Verified here by reading the live processes' argv while
+// git runs, from /proc, where `ps` reads it -- a code reading cannot establish
+// absence from a process table.
+const PROCESS_TABLE = existsSync('/proc/self/cmdline')
+  ? false
+  : 'reads the live process table from /proc, which this system does not have'
 
-async function argvContainsAfterDelay(
-  cmd: string,
-  args: string[],
-  env: NodeJS.ProcessEnv | undefined,
-  needle: string,
-): Promise<boolean> {
-  const child = spawn(cmd, args, { env, stdio: 'ignore' })
+/**
+ * The argv of every live process, read from /proc. A process that ends between
+ * listing and reading is skipped.
+ */
+function liveArgvs(): string[] {
+  const argvs: string[] = []
+  for (const pid of readdirSync('/proc').filter((entry) => /^\d+$/.test(entry))) {
+    try {
+      argvs.push(readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' '))
+    } catch {
+      // Gone already.
+    }
+  }
+  return argvs
+}
+
+/**
+ * Runs `git clone` against a local listener that accepts the connection and
+ * never answers, and reads the whole process table while git's https helper
+ * is connected to it. The connection arriving is the moment the helper is
+ * known to be running, and it stays mid-handshake until the listener lets go,
+ * so nothing here waits a guessed time. No network and no real credential.
+ *
+ * `argvs` is every live process; `helpers` is the https helpers naming this
+ * listener, and there must be one, or the read proves nothing.
+ */
+async function liveGitArgv(
+  remote: (url: string) => Promise<{ url: string; env?: NodeJS.ProcessEnv }>,
+): Promise<{ argvs: string[]; helpers: string[] }> {
+  const sockets = new Set<Socket>()
+  const server = createServer((socket) => sockets.add(socket))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = `127.0.0.1:${(server.address() as AddressInfo).port}`
+  const dest = await fs.mkdtemp(path.join(os.tmpdir(), 'git-exec-argv-'))
+  const { url, env } = await remote(`https://${address}/org/repo.git`)
+  const child = spawn('git', ['clone', '--depth', '1', url, path.join(dest, 'clone')], {
+    env: { ...(env ?? process.env), GIT_TERMINAL_PROMPT: '0', NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' },
+    stdio: 'ignore',
+  })
   try {
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    const { stdout } = await execPs()
-    return stdout.includes(needle)
+    await Promise.race([
+      once(server, 'connection'),
+      once(child, 'exit').then(() => assert.fail('git exited before it connected to the listener')),
+    ])
+    const argvs = liveArgvs()
+    const helpers = argvs.filter((argv) => argv.includes('remote-https') && argv.includes(address))
+    assert.ok(helpers.length > 0, 'the https helper must be among the processes read, or this proves nothing')
+    return { argvs, helpers }
   } finally {
     child.kill('SIGKILL')
-  }
-
-  async function execPs(): Promise<{ stdout: string }> {
-    const { promisify } = await import('node:util')
-    const { execFile } = await import('node:child_process')
-    const run = promisify(execFile)
-    return run('ps', ['-eo', 'args'])
+    for (const socket of sockets) {
+      socket.destroy()
+    }
+    await new Promise((resolve) => server.close(resolve))
+    await fs.rm(dest, { recursive: true, force: true })
   }
 }
 
-test('the old pattern (credential spliced into the URL) leaks into the live git-remote-https argv', async () => {
+test('a credential spliced into the URL leaks into the live git-remote-https argv', {
+  skip: PROCESS_TABLE,
+}, async () => {
   const fake = 'synthetic-fake-secret-should-leak-here'
-  const url = `https://fakeuser:${fake}@${NON_ROUTABLE}/org/repo.git`
-  const leaked = await argvContainsAfterDelay(
-    'git',
-    ['clone', '--depth', '1', url, path.join(os.tmpdir(), `old-pattern-${Date.now()}`)],
-    undefined,
-    fake,
+  const { helpers } = await liveGitArgv(async (url) => ({ url: url.replace('https://', `https://fakeuser:${fake}@`) }))
+  assert.ok(
+    helpers.some((argv) => argv.includes(fake)),
+    'sanity check: the vulnerable pattern must actually reproduce, or this test proves nothing',
   )
-  assert.ok(leaked, 'sanity check: the vulnerable pattern must actually reproduce, or this test proves nothing')
 })
 
-test('withGitAuth keeps the credential out of the live git-remote-https argv', async () => {
+test('withGitAuth keeps the credential out of the live git-remote-https argv', { skip: PROCESS_TABLE }, async () => {
   const fake = 'synthetic-fake-secret-must-not-leak-here'
-  const { url, env, cleanup } = await withGitAuth(`https://${NON_ROUTABLE}/org/repo.git`, {
-    username: 'fakeuser',
-    token: fake,
-  })
+  let cleanup = async () => {}
   try {
-    const leaked = await argvContainsAfterDelay(
-      'git',
-      ['clone', '--depth', '1', url, path.join(os.tmpdir(), `new-pattern-${Date.now()}`)],
-      env,
-      fake,
+    const { argvs } = await liveGitArgv(async (url) => {
+      const auth = await withGitAuth(url, { username: 'fakeuser', token: fake })
+      cleanup = auth.cleanup
+      return auth
+    })
+    assert.deepEqual(
+      argvs.filter((argv) => argv.includes(fake)),
+      [],
+      'credential must not appear in the argv of any live process',
     )
-    assert.ok(!leaked, 'credential must not appear in the live process argv')
   } finally {
     await cleanup()
   }

@@ -1,10 +1,11 @@
 'use client'
 
-import { type ComponentType, useState } from 'react'
+import type { ProvidedPoints, RightSidebarPanel } from '@opencroft/client/extension'
+import { useState } from 'react'
 import { Sidebar, SidebarContent, SidebarStateProvider } from 'ui/components/ui/layout/app-sidebar'
 import { PanelTabStrip } from 'ui/layouts/panel-tab-strip'
 
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 
@@ -16,15 +17,7 @@ import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
  *
  *     provides: { 'right-sidebar-panels': [{ id, label, icon, component }] }
  */
-export const RIGHT_SIDEBAR_PANELS = 'right-sidebar-panels'
-
-export interface RightSidebarPanel {
-  id: string
-  label: string
-  /** Lucide icon name; falls back to a placeholder when absent or unknown. */
-  icon?: string
-  component: ComponentType
-}
+export const RIGHT_SIDEBAR_PANELS = 'right-sidebar-panels' satisfies keyof ProvidedPoints
 
 // Its own key, and no keyboard shortcut. The sidebar that owns the row keeps
 // the shared chord, and two sidebars writing one key would each overwrite what
@@ -45,7 +38,7 @@ const STORAGE_KEY = 'right_sidebar_state'
  * that reserves space for a sidebar reads it from there.
  */
 export function RightSidebar() {
-  const { items } = useProvided<RightSidebarPanel>(RIGHT_SIDEBAR_PANELS, loadAllExtensions)
+  const { items } = useProvided<RightSidebarPanel>(RIGHT_SIDEBAR_PANELS, loadExtensionsProviding)
   const [activeId, setActiveId] = useState<string | null>(null)
 
   if (items.length === 0) {

@@ -10,14 +10,12 @@ import {
 import type { Parent, Root } from 'mdast'
 import type { Components, ExtraProps, UrlTransform } from 'react-markdown'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
-import remarkDirective from 'remark-directive'
-import remarkGfm from 'remark-gfm'
 import { cn } from 'cn'
 
 import { CodeBlock } from './code-block'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
 import { DATA_IMAGE_MAX_BYTES, isDataImage, readDataImage } from './markdown-data-image'
-import { DIRECTIVE_ELEMENTS, remarkDirectiveBlocks } from './markdown-directives'
+import { DIRECTIVE_ELEMENTS } from './markdown-directives'
 import { MarkdownIcon } from './markdown-icon'
 import {
   getMarkdownReferences,
@@ -26,6 +24,7 @@ import {
   subscribeMarkdownReferences,
 } from './markdown-references'
 import { MarkdownSpoiler } from './markdown-spoiler'
+import { markdownDirectiveSyntax, markdownSyntax } from './markdown-syntax'
 import { MarkdownTable } from './markdown-table'
 import { MarkdownTabs } from './markdown-tabs'
 import { MermaidDiagram } from './mermaid-diagram'
@@ -235,6 +234,10 @@ function remarkBreakTags() {
   return (tree: Root) => replaceBreakTags(tree)
 }
 
+// What runs once the syntax has decided which parts of a text are prose: the
+// references found in that prose, then the line breaks written as tags.
+const referencePlugins = [remarkInlineReferences, remarkBreakTags]
+
 /**
  * The documentation blocks and tables, and the references the installed source
  * recognises (see `./markdown-references`), as the two halves `react-markdown`
@@ -245,10 +248,11 @@ function remarkBreakTags() {
  * reason of its own -- a page that stamps source positions onto what it
  * renders, say -- and still has to show the blocks exactly as this component
  * does. Add the plugins after your own and spread the components into yours.
- * `Markdown` itself is built from this, so the two cannot drift apart.
+ * `Markdown` itself is built from the same lists, so the two cannot drift
+ * apart.
  */
 export const markdownDirectiveBlocks = {
-  remarkPlugins: [remarkDirective, remarkDirectiveBlocks, remarkInlineReferences, remarkBreakTags],
+  remarkPlugins: [...markdownDirectiveSyntax, ...referencePlugins],
   // `Components` only knows HTML's element names; the blocks' own names are
   // keys beside them.
   components: {
@@ -269,7 +273,7 @@ const markdownComponents: Components = {
   ...markdownDirectiveBlocks.components,
 }
 
-const remarkPlugins = [remarkGfm, ...markdownDirectiveBlocks.remarkPlugins]
+const remarkPlugins = [...markdownSyntax, ...referencePlugins]
 
 // What survives in an inline rendering: the spans a sentence can carry. A
 // block construct is unwrapped to its text rather than dropped, so nothing the

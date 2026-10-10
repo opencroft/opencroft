@@ -3,7 +3,7 @@
 // packages/auth/RECOVERY.md for when this applies and how to use it.
 //
 // Run from the host, inside the running app's own environment (the same
-// DATABASE_URL / PGLITE_PATH it uses), so this writes to the actual
+// OPENCROFT_DATABASE_URL / OPENCROFT_PGLITE_PATH it uses), so this writes to the actual
 // instance's database rather than a different one:
 //
 //   npx tsx packages/auth/scripts/recover-admin-password.ts <email> <new-password>

@@ -12,10 +12,6 @@
   @apply [scrollbar-width:none] [&::-webkit-scrollbar]:hidden;
 }
 
-@theme inline {
-  --font-mono: 'Consolas', 'Menlo', 'Monaco', 'Courier New', monospace;
-}
-
 @keyframes dot-bounce {
   0%,
   80%,

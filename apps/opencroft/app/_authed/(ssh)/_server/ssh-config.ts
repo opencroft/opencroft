@@ -23,7 +23,8 @@ function serverEntry(server: Server): SshConfigEntry | null {
 
 export async function setServer(server: Server): Promise<void> {
   const entry = serverEntry(server)
-  if (!entry) {
+  const keyPath = getSshFeature(server)?.keyPath
+  if (!entry || !keyPath) {
     return
   }
 
@@ -32,9 +33,8 @@ export async function setServer(server: Server): Promise<void> {
 
   // WSL config: copy key and use WSL-relative path
   if (os.platform() === 'win32') {
-    const ssh = getSshFeature(server)!
-    const name = sshKeys.name(ssh.keyPath!)
-    await sshKeys.copyToWsl(ssh.keyPath!, name)
+    const name = sshKeys.name(keyPath)
+    await sshKeys.copyToWsl(keyPath, name)
     await sshConfig.wsl.set({
       ...entry,
       properties: { ...entry.properties, IdentityFile: `~/.ssh/keys/${name}` },

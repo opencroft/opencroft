@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
+import { useCallback, useEffect, useState, useTransition } from 'react'
 import { ApiTokenCreateForm } from 'ui/auth/api-token-create-form'
 import { type ApiToken, ApiTokenList } from 'ui/auth/api-token-list'
 import { ApiTokenReveal } from 'ui/auth/api-token-reveal'
@@ -66,17 +66,17 @@ export default function TokenSettings() {
   const [copied, setCopied] = useState(false)
   const [pending, startTransition] = useTransition()
 
-  const reload = () => {
+  const reload = useCallback(() => {
     setLoading(true)
     startTransition(async () => {
       setTokens(await listMyTokens())
       setLoading(false)
     })
-  }
+  }, [])
 
   useEffect(() => {
     reload()
-  }, [])
+  }, [reload])
 
   const onCreate = () => {
     const trimmed = name.trim()

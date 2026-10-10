@@ -237,28 +237,38 @@ function ended(pid: number): boolean {
   }
 }
 
-// Flaky, disabled for now; re-enable with the real fix.
-test.skip('a detached command outlives the launch, and its exit status and output come back', async () => {
+test('a detached command outlives the launch, and its exit status and output come back', async () => {
   const runner = new BackgroundTaskRunner(localTransport())
   const taskId = randomUUID()
-  const started = Date.now()
-  const launched = await runner.launch({
-    taskId,
-    target: TARGET,
-    mode: 'command',
-    command: `sleep 2; echo hi; printf '%s' "$${SECRET_NAME}" | sha256sum; exit 3`,
-    secrets: [SECRET_NAME],
-  })
-  // The launch came back while the command was still sleeping.
-  assert.ok(Date.now() - started < 1500, `launch took ${Date.now() - started}ms`)
-  assert.equal(launched.dir, path.join(scratch, 'opencroft-tasks', taskId))
-  assert.equal(launched.logPath, `${launched.dir}/log`)
-  const task = { taskId, dir: launched.dir }
-  assert.deepEqual(await probeOne(runner, task), { status: 'running' })
+  // The command waits for the test to let it go, so "the launch came back
+  // before the command ended" is a fact of the run rather than a reading of
+  // the clock. The gate opens on every way out of the test, so a failed
+  // assertion does not leave the loop polling a gate that `after` deletes; and
+  // the loop gives up after 30 s by itself, for a runner killed outright.
+  const gate = path.join(scratch, `gate-${taskId}`)
+  let launched: Awaited<ReturnType<BackgroundTaskRunner['launch']>>
+  try {
+    launched = await runner.launch({
+      taskId,
+      target: TARGET,
+      mode: 'command',
+      command: `n=0; while [ ! -e '${gate}' ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n + 1)); done; echo hi; printf '%s' "$${SECRET_NAME}" | sha256sum; exit 3`,
+      secrets: [SECRET_NAME],
+    })
+    assert.equal(launched.dir, path.join(scratch, 'opencroft-tasks', taskId))
+    assert.equal(launched.logPath, `${launched.dir}/log`)
+    assert.deepEqual(
+      await probeOne(runner, { taskId, dir: launched.dir }),
+      { status: 'running' },
+      'the launch came back, the command runs on',
+    )
+  } finally {
+    writeFileSync(gate, '')
+  }
 
+  const task = { taskId, dir: launched.dir }
   const digest = createHash('sha256').update(SECRET_VALUE).digest('hex')
   assert.deepEqual(await finished(runner, task), { status: 'exited', exitCode: 3, tail: `hi\n${digest}  -\n` })
-  assert.ok(Date.now() - started >= 2000)
 
   // The value reached the process through its environment and nowhere else:
   // not one file the task left behind holds it.

@@ -20,10 +20,10 @@ import { join } from 'node:path'
 import test, { after } from 'node:test'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-bundle-routes-test-'))
-const ENV_KEYS = ['OPENCROFT_DATA_DIR', 'DB_MIGRATIONS_DIR', 'DATABASE_URL', 'NODE_ENV'] as const
+const ENV_KEYS = ['OPENCROFT_DATA_DIR', 'OPENCROFT_DB_MIGRATIONS_DIR', 'OPENCROFT_DATABASE_URL'] as const
 const savedEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]))
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -35,10 +35,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
-// No BETTER_AUTH_SECRET in a test process — Better Auth needs a secret
-// configured before it will sign or verify a session at all.
-process.env.NODE_ENV = 'development'
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { ensureAuth } = await import('@opencroft/auth/server')
 const { scanExtensionFolders } = await import('./extension-folders')

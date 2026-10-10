@@ -7,7 +7,10 @@ import { readableJson } from './op-block'
 // strings holding the characters the layout itself reacts to.
 const VALUES: unknown[] = [
   { tasks: [{ key: 'T-1', labels: ['a', 'b'], childCount: 3, done: false, assignee: null }], total: 1 },
-  [{ ref: 'x', threads: [] }, { ref: 'y', threads: [{ title: 'z', contextUsage: { usedTokens: 5 } }] }],
+  [
+    { ref: 'x', threads: [] },
+    { ref: 'y', threads: [{ title: 'z', contextUsage: { usedTokens: 5 } }] },
+  ],
   { empty: {}, none: [], nested: { deeper: { list: [[], {}, [1, [2, []]]] } } },
   { text: 'braces { and } brackets [ and ], a comma, a colon: here' },
   { quoted: 'she said "hi"', backslash: 'C:\\path\\', newline: 'two\nlines', tab: 'a\tb' },

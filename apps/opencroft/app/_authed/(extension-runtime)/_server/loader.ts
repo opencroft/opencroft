@@ -3,6 +3,13 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import type * as opencroft from '@opencroft/server'
+import type {
+  ActionAccessMap,
+  ExposeOutput,
+  ExtensionActions,
+  NodeActionAccessMap,
+  NodeActions,
+} from '@opencroft/server/actions'
 
 import {
   buildExtension,
@@ -14,34 +21,31 @@ import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
 import { readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
 import { CLIENT_ICONS_FILE, extDir, extDistFile } from '@/app/_authed/(extension-runtime)/_server/paths'
 import { sourceMtime, statMaybe } from '@/app/_authed/(extension-runtime)/_server/source-mtime'
-import type { ExposeOutputFn, ExtensionManifest, ExtensionRoute } from '@/app/_authed/(extension-runtime)/_types'
+import { compileErrorLocation, type ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
 
-export type NodeActionHandler = (ctx: unknown) => Promise<unknown>
+/** What an extension's server module may export, each declared in `@opencroft/server`. */
+interface ServerModuleExports {
+  actions?: ExtensionActions
+  /** Per-action authorization policy declared by the extension alongside `actions`; an action it does not list is 'signed-in'. */
+  actionAccess?: ActionAccessMap
+  exposeOutput?: ExposeOutput
+  /** Keyed by the extension's own bare node type, then action id. */
+  nodeActions?: NodeActions
+  /** Per-node-action authorization policy, keyed like `nodeActions`, declared alongside it; an action it does not list is 'signed-in'. */
+  nodeActionAccess?: NodeActionAccessMap
+  routes?: opencroft.ExtensionRoutes
+  tools?: Record<string, opencroft.ExtensionToolHandler>
+  /** Per-App server lifecycle hooks, keyed by the App's bare type. */
+  apps?: opencroft.AppsExport
+  load?: opencroft.Load
+  unload?: opencroft.Unload
+}
 
-type ExtensionLifecycle = (context: opencroft.ExtensionContext) => void | Promise<void>
-
-export type ExtensionToolHandlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>
-
-export type ActionAccess = 'signed-in' | 'admin'
-
-interface CachedModule {
+interface CachedModule extends ServerModuleExports {
   updatedAt: number
   manifest: ExtensionManifest
-  actions: Record<string, (...args: unknown[]) => Promise<unknown>>
-  /** Per-action authorization policy declared by the extension alongside `actions`; an action it does not list is 'signed-in'. */
-  actionAccess?: Record<string, ActionAccess>
-  exposeOutput?: ExposeOutputFn
-  /** Keyed by the extension's own bare node type, then action id. */
-  nodeActions?: Record<string, Record<string, NodeActionHandler>>
-  /** Per-node-action authorization policy, keyed like `nodeActions`, declared alongside it; an action it does not list is 'signed-in'. */
-  nodeActionAccess?: Record<string, Record<string, ActionAccess>>
-  routes?: Record<string, ExtensionRoute>
-  tools?: ExtensionToolHandlers
-  /** Per-App server lifecycle hooks, keyed by the App's bare type — see `AppsExport` in `@opencroft/server`. */
-  apps?: opencroft.AppsExport
-  load?: ExtensionLifecycle
-  unload?: ExtensionLifecycle
+  actions: ExtensionActions
   context: opencroft.ExtensionContext
   registeredTypes: opencroft.Type[]
   registeredNodes: opencroft.Node[]
@@ -139,7 +143,7 @@ async function ensureBuilt(extensionId: string, manifest: ExtensionManifest): Pr
 
   const result = await buildExtension(extensionId, manifest)
   if (!result.success) {
-    const summary = result.errors.map((e) => `${e.file}:${e.line ?? '?'}  ${e.message}`).join('\n')
+    const summary = result.errors.map((e) => `${compileErrorLocation(e)}  ${e.message}`).join('\n')
     toastStore.broadcast({
       type: 'toast',
       toastType: 'error',
@@ -173,29 +177,9 @@ const unbuildable = new Map<string, Unbuildable>()
 // long before it is attempted once more.
 const FAILED_BUILD_RETRY_MS = 5 * 60 * 1000
 
-interface ExtensionServerModule {
-  actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
-  actionAccess?: Record<string, ActionAccess>
-  exposeOutput?: ExposeOutputFn
-  nodeActions?: Record<string, Record<string, NodeActionHandler>>
-  nodeActionAccess?: Record<string, Record<string, ActionAccess>>
-  routes?: Record<string, ExtensionRoute>
-  tools?: ExtensionToolHandlers
-  apps?: opencroft.AppsExport
-  load?: ExtensionLifecycle
-  unload?: ExtensionLifecycle
-  default?: {
-    actions?: Record<string, (...args: unknown[]) => Promise<unknown>>
-    actionAccess?: Record<string, ActionAccess>
-    exposeOutput?: ExposeOutputFn
-    nodeActions?: Record<string, Record<string, NodeActionHandler>>
-    nodeActionAccess?: Record<string, Record<string, ActionAccess>>
-    routes?: Record<string, ExtensionRoute>
-    tools?: ExtensionToolHandlers
-    apps?: opencroft.AppsExport
-    load?: ExtensionLifecycle
-    unload?: ExtensionLifecycle
-  }
+/** A server bundle's exports: each name the loader reads, as named exports or as members of the default export. */
+interface ExtensionServerModule extends ServerModuleExports {
+  default?: ServerModuleExports
 }
 
 async function evalServerBundle(extensionId: string, manifest: ExtensionManifest): Promise<CachedModule> {

@@ -191,16 +191,24 @@ function sshSpawn(alias: string, command: string, stdio: 'pipe-all' | 'pipe-stdi
   })
 }
 
+// sshSpawn always requests the pipes its callers read, but spawn's type cannot say so.
+function pipeOf<T>(pipe: T | null, name: string): T {
+  if (pipe === null) {
+    throw new Error(`ssh was spawned without a ${name} pipe`)
+  }
+  return pipe
+}
+
 function nativeExec(alias: string, command: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = sshSpawn(alias, command, 'pipe-all')
 
     let stdout = ''
     let stderr = ''
-    proc.stdout!.on('data', (d: Buffer) => {
+    pipeOf(proc.stdout, 'stdout').on('data', (d: Buffer) => {
       stdout += d.toString()
     })
-    proc.stderr!.on('data', (d: Buffer) => {
+    pipeOf(proc.stderr, 'stderr').on('data', (d: Buffer) => {
       stderr += d.toString()
     })
     proc.on('close', (code) => {
@@ -449,7 +457,7 @@ export async function upload(target: SshTarget, remotePath: string, stream: Read
       const proc = sshSpawn(target, `cat > '${remotePath}'`, 'pipe-stdin')
 
       let stderr = ''
-      proc.stderr!.on('data', (d: Buffer) => {
+      pipeOf(proc.stderr, 'stderr').on('data', (d: Buffer) => {
         stderr += d.toString()
       })
       proc.on('close', (code) => {
@@ -461,7 +469,7 @@ export async function upload(target: SshTarget, remotePath: string, stream: Read
       })
       proc.on('error', reject)
 
-      stream.pipe(proc.stdin!)
+      stream.pipe(pipeOf(proc.stdin, 'stdin'))
     })
   }
 
@@ -486,10 +494,10 @@ export async function download(target: SshTarget, remotePath: string): Promise<B
 
       const chunks: Buffer[] = []
       let stderr = ''
-      proc.stdout!.on('data', (d: Buffer) => {
+      pipeOf(proc.stdout, 'stdout').on('data', (d: Buffer) => {
         chunks.push(d)
       })
-      proc.stderr!.on('data', (d: Buffer) => {
+      pipeOf(proc.stderr, 'stderr').on('data', (d: Buffer) => {
         stderr += d.toString()
       })
       proc.on('close', (code) => {

@@ -8,6 +8,7 @@ import {
   Controls,
   type Edge,
   type Node,
+  type NodeTypes,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
@@ -40,6 +41,8 @@ interface MenuState {
   flow: { x: number; y: number }
 }
 
+const isSectionType = (type: string | undefined): boolean => type === 'section' || type === 'domain'
+
 function useDebouncedSave(delay: number) {
   const timer = useRef<NodeJS.Timeout>(undefined)
   const save = useCallback(
@@ -69,14 +72,12 @@ export function FlowEditor() {
   const colorMode = resolvedTheme === 'dark' ? 'dark' : 'light'
   const allDefinitions = useMemo(() => [...nodeDefinitions, ...customDefinitions], [customDefinitions])
 
-  const nodeTypes = useMemo(
-    () =>
-      ({
-        ...buildNodeTypes(allDefinitions),
-        window: WindowNodeComponent,
-        comment: CommentNode,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      }) as any,
+  const nodeTypes = useMemo<NodeTypes>(
+    () => ({
+      ...buildNodeTypes(allDefinitions),
+      window: WindowNodeComponent,
+      comment: CommentNode,
+    }),
     [allDefinitions],
   )
   const debouncedSave = useDebouncedSave(500)
@@ -148,8 +149,6 @@ export function FlowEditor() {
     }
     return (connection.sourceHandle ?? null) === (connection.targetHandle ?? null)
   }, [])
-
-  const isSectionType = (type: string | undefined): boolean => type === 'section' || type === 'domain'
 
   const sectionDrag = useRef<{ x: number; y: number; childIds: Set<string> } | null>(null)
 

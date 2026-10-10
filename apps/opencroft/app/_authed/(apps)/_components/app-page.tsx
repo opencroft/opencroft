@@ -7,7 +7,7 @@ import { LogoLoader } from 'ui/logo-loader'
 
 import { AppRouterProvider } from '@/app/_authed/(apps)/_components/app-router'
 import type { SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { InstallMissingExtension, missingTypeLabel } from '@/app/_authed/(extension-runtime)/_client/missing-extension'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 
@@ -27,7 +27,7 @@ import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 // overflows it and never sees this scrollbar; one that wants a wide element
 // to scroll on its own puts the scroll on that element.
 export function AppPage({ spaceSlug, instance }: { spaceSlug: string; instance: SpaceAppInstance }) {
-  const { items, loaded } = useProvided<AppDefinition>('apps', loadAllExtensions)
+  const { items, loaded } = useProvided<AppDefinition>('apps', loadExtensionsProviding)
   const definition = items.find((entry) => entry.type === instance.type)
   const Body = definition?.component
   if (!instance.provided) {

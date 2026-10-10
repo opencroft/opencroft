@@ -1,10 +1,11 @@
-import { legacy } from '@opencroft/client'
-
-const { Input, Label, NodeFrame, OutputHandle, React, Terminal, icons, inspectorIntent, invoke, useReactFlow } = legacy
+import { invoke } from '@opencroft/client/actions'
+import { inspectorIntent, NodeFrame, OutputHandle, useReactFlow } from '@opencroft/client/canvas'
+import { Terminal } from '@opencroft/client/terminal'
+import { Input, Label } from '@opencroft/client/ui'
+import { Cpu, HardDrive, MemoryStick, SquareTerminal, TerminalSquare } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
-
-const { useCallback, useEffect, useState } = React
 
 interface WslStats {
   os: string
@@ -42,7 +43,7 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
 
   return (
     <NodeFrame
-      icon={icons.SquareTerminal}
+      icon={SquareTerminal}
       title={data.distro || 'WSL'}
       subtitle={stats?.os}
       status={stats ? 'success' : data.distro ? 'neutral' : 'warning'}
@@ -53,9 +54,9 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
           stats ? (
             <StatsList
               items={[
-                { icon: icons.Cpu, value: stats.cpu },
-                { icon: icons.MemoryStick, value: stats.memory },
-                { icon: icons.HardDrive, value: stats.storage },
+                { icon: Cpu, value: stats.cpu },
+                { icon: MemoryStick, value: stats.memory },
+                { icon: HardDrive, value: stats.storage },
               ]}
             />
           ) : (
@@ -66,7 +67,7 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
         }
         output={
           <OutputHandle type='terminal-context' id='terminal'>
-            <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
+            <PinButton icon={TerminalSquare} label='Terminal' onClick={openTerminal} />
           </OutputHandle>
         }
       />

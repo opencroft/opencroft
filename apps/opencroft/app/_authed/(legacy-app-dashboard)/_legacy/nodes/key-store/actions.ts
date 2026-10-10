@@ -29,7 +29,7 @@ async function isPrivateKey(filePath: string): Promise<boolean> {
 
 async function isKeyInWsl(name: string): Promise<boolean> {
   try {
-    await exec('test -f ~/.ssh/keys/' + name)
+    await exec(`test -f ~/.ssh/keys/${name}`)
     return true
   } catch {
     return false

@@ -2,7 +2,7 @@ import { db, secret } from '@opencroft/db'
 import type { HostSecretsApi, SecretRecord } from '@opencroft/server'
 import { and, asc, desc, eq } from 'drizzle-orm'
 
-import { decrypt, encrypt } from '@/server/crypto'
+import { canDecrypt, decrypt, encrypt } from '@/server/crypto'
 
 type Row = typeof secret.$inferSelect
 
@@ -14,6 +14,8 @@ function toRecord(row: Row): SecretRecord {
 interface SecretsService extends HostSecretsApi {
   deleteStore(storeId: string): Promise<void>
   listStores(): Promise<{ storeId: string; keys: string[] }[]>
+  /** How many stored secrets the instance's OPENCROFT_SECRETS_KEY cannot decrypt, such as ones restored from another instance. */
+  countUndecryptable(): Promise<number>
 }
 
 export const secrets: SecretsService = {
@@ -68,5 +70,9 @@ export const secrets: SecretsService = {
       map.set(row.storeId, keys)
     }
     return Array.from(map.entries()).map(([storeId, keys]) => ({ storeId, keys }))
+  },
+  async countUndecryptable() {
+    const rows = await db.query.secret.findMany({ columns: { value: true } })
+    return rows.filter((row) => !canDecrypt(row.value)).length
   },
 }

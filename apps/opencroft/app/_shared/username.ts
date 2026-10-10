@@ -47,7 +47,32 @@ export const SYSTEM_USERNAME_PREFIX = 'system.'
 // Lowercase letters, digits and dots. Uppercase is not accepted at all rather
 // than folded, which is why uniqueness elsewhere is a plain comparison and
 // never a case-insensitive one.
-const USERNAME_PATTERN = /^[a-z0-9.]+$/
+const USERNAME_ALPHABET = /^[a-z0-9.]+$/
+
+// A username in full: the alphabet, starting and ending with a letter or
+// digit. A dot at either edge would be indistinguishable from the punctuation
+// around a mention -- "thanks @ada." -- so a handle cannot hold one, and the
+// mention below can then name every handle there is.
+const USERNAME = '[a-z0-9](?:[a-z0-9.]*[a-z0-9])?'
+const USERNAME_PATTERN = new RegExp(`^${USERNAME}$`)
+
+/**
+ * A mention in text: `@` and a username, the account's handle and never its
+ * display name. The handle ends with a letter or digit, so the full stop of
+ * "thanks @ada." is not part of it. Nothing word-like or `@` comes right
+ * before (an e-mail address is not a mention), and the handle is followed by
+ * neither more of a word nor a path (`@scope/package` is not one).
+ *
+ * Capitals are not folded: no username holds one, so `@Ada` mentions nobody.
+ * Written for folding into the markdown resolvers' one expression, so it uses
+ * no flags.
+ */
+export const MENTION_PATTERN = new RegExp(`(?<![\\w@.])@${USERNAME}(?![\\w/]|\\.\\w)`)
+
+/** The username a mention names: the mention without its `@`. */
+export function mentionedUsername(mention: string): string {
+  return mention.slice(1)
+}
 
 /** Why a username was refused, so every surface can say the same thing. */
 export type UsernameRefusal =
@@ -57,6 +82,8 @@ export type UsernameRefusal =
   | 'reserved-prefix'
   /** An agent username with nothing after the prefix identifies no agent. */
   | 'prefix-only'
+  /** A dot at either end, which a mention could not tell from punctuation. */
+  | 'edge-dot'
 
 export interface UsernameCheck {
   ok: boolean
@@ -87,7 +114,7 @@ export function checkUsername(value: string, kind: 'user' | 'agent'): UsernameCh
   if (value.length === 0) {
     return { ok: false, refusal: 'empty' }
   }
-  if (!USERNAME_PATTERN.test(value)) {
+  if (!USERNAME_ALPHABET.test(value)) {
     return { ok: false, refusal: 'bad-characters' }
   }
   if (kind === 'user' && (isAgentUsername(value) || isSystemUsername(value))) {
@@ -95,6 +122,9 @@ export function checkUsername(value: string, kind: 'user' | 'agent'): UsernameCh
   }
   if (kind === 'agent' && value === AGENT_USERNAME_PREFIX) {
     return { ok: false, refusal: 'prefix-only' }
+  }
+  if (!USERNAME_PATTERN.test(value)) {
+    return { ok: false, refusal: 'edge-dot' }
   }
   return { ok: true }
 }
@@ -115,6 +145,8 @@ export function usernameRefusalMessage(refusal: UsernameRefusal): string {
       return `Usernames beginning with "${AGENT_USERNAME_PREFIX}" identify agents and cannot be taken.`
     case 'prefix-only':
       return `"${AGENT_USERNAME_PREFIX}" needs a name after it.`
+    case 'edge-dot':
+      return 'A username cannot begin or end with a dot.'
   }
 }
 

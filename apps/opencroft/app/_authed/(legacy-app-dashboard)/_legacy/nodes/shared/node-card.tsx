@@ -50,11 +50,12 @@ function TravelingDot({
 
   return (
     <div ref={ref} className={cn('absolute inset-0 pointer-events-none overflow-visible', className)}>
-      <svg width={size.w} height={size.h} className='overflow-visible'>
+      <svg aria-hidden='true' width={size.w} height={size.h} className='overflow-visible'>
         {Array.from({ length: dots }, (_, i) => {
           const delay = -(i * (4 / dots))
           return (
             <rect
+              // biome-ignore lint/suspicious/noArrayIndexKey: the dots are a fixed-length list of identical decorations that is never reordered
               key={i}
               x='0.5'
               y='0.5'

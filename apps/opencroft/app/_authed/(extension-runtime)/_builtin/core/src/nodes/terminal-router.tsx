@@ -1,6 +1,15 @@
-import { legacy, TerminalList, TerminalRef, TerminalSelector } from '@opencroft/client'
-
-const {
+import { invoke } from '@opencroft/client/actions'
+import {
+  type ExtensionHandle,
+  inspectorIntent,
+  NodeFrame,
+  OutputHandle,
+  useInspectorIntent,
+  useReactFlow,
+  useUpdateNodeInternals,
+} from '@opencroft/client/canvas'
+import { Terminal, type TerminalConfig, TerminalList, TerminalRef, TerminalSelector } from '@opencroft/client/terminal'
+import {
   Button,
   Empty,
   EmptyDescription,
@@ -9,30 +18,20 @@ const {
   FieldGroup,
   FieldLabel,
   Input,
-  inspectorIntent,
-  NodeFrame,
-  OutputHandle,
-  React,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Terminal,
-  icons,
-  invoke,
-  toast,
-  useInspectorIntent,
-  useReactFlow,
-  useUpdateNodeInternals,
-} = legacy
+} from '@opencroft/client/ui'
+import { Split } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 import { connectionFromContext } from './terminal'
 import { routeHandleId, routeOutput, type TerminalRoute, type TerminalRouterData } from './terminal-router-shared'
 
-const { useCallback, useEffect, useState } = React
-
-export const TERMINAL_ROUTER_HANDLES = [
+export const TERMINAL_ROUTER_HANDLES: ExtensionHandle[] = [
   { id: 'route-', handleType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
 ]
 
@@ -64,13 +63,14 @@ export function TerminalRouterNode({
 
   // Outputs come and go with the route list; React Flow has to re-measure the
   // node to know where the new handles are.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handleKey is only a re-run trigger, the effect does not read it
   useEffect(() => {
     updateNodeInternals(id)
   }, [id, handleKey, updateNodeInternals])
 
   return (
     <NodeFrame
-      icon={icons.Split}
+      icon={Split}
       title={data.name || 'Terminal Router'}
       subtitle={routes.length > 0 ? `${routes.length} terminals` : 'no terminals'}
       selected={selected ?? false}
@@ -139,7 +139,7 @@ export function TerminalRouterInspector({
         <Input
           id='terminal-router-name'
           value={data.name ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='Terminal Router'
         />
       </Field>
@@ -199,7 +199,7 @@ export function TerminalRouterTerminalTab({ nodeId, data }: { nodeId: string; da
         {connection ? (
           <Terminal
             key={route.id}
-            connection={connection as unknown as import('@opencroft/terminal/client').TerminalConfig}
+            connection={connection as unknown as TerminalConfig}
             sessionKey={`${nodeId}:${route.id}`}
           />
         ) : null}

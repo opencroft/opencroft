@@ -1,35 +1,34 @@
-import { legacy } from '@opencroft/client'
-
-const {
-  Badge,
+import { invoke } from '@opencroft/client/actions'
+import { inspectorIntent, NodeFrame, OutputHandle, useGraphNodes, useReactFlow } from '@opencroft/client/canvas'
+import { extensionId } from '@opencroft/client/extension'
+import { Terminal } from '@opencroft/client/terminal'
+import {
   Button,
   Input,
   Label,
-  NodeFrame,
-  OutputHandle,
-  React,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
   Separator,
-  Terminal,
-  extensionId,
-  icons,
-  inspectorIntent,
-  invoke,
-  toast,
-  useGraphNodes,
-  useReactFlow,
-} = legacy
+} from '@opencroft/client/ui'
+import {
+  Cpu,
+  HardDrive,
+  Loader2,
+  MemoryStick,
+  Monitor,
+  Server,
+  ShieldAlert,
+  ShieldCheck,
+  TerminalSquare,
+} from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
 import { storedType } from './stored-type'
-
-void Badge
-
-const { useCallback, useEffect, useState } = React
 
 export interface ServerData {
   name: string
@@ -47,7 +46,7 @@ interface ServerStats {
   storage: string
 }
 
-function serverConfigFrom(data: ServerData) {
+function serverConfigFrom(data: Pick<ServerData, 'address' | 'port' | 'username' | 'password' | 'keyPath'>) {
   return {
     address: data.address,
     port: data.port ?? 22,
@@ -60,21 +59,25 @@ function serverConfigFrom(data: ServerData) {
 function useServerStats(data: ServerData) {
   const [stats, setStats] = useState<ServerStats | null>(null)
   const [loading, setLoading] = useState(false)
+  const { address, port, username, password, keyPath } = data
   const refresh = useCallback(async () => {
-    if (!data.address) {
+    if (!address) {
       setStats(null)
       return
     }
     setLoading(true)
     try {
-      const out = await invoke<ServerStats>('server.getStats', serverConfigFrom(data))
+      const out = await invoke<ServerStats>(
+        'server.getStats',
+        serverConfigFrom({ address, port, username, password, keyPath }),
+      )
       setStats(out)
     } catch {
       setStats(null)
     } finally {
       setLoading(false)
     }
-  }, [data.address, data.port, data.username, data.password, data.keyPath])
+  }, [address, port, username, password, keyPath])
   return { stats, loading, refresh }
 }
 
@@ -105,7 +108,7 @@ function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v:
   if (!keys) {
     return (
       <div className='flex items-center h-7 px-2 text-xs text-muted-foreground'>
-        <icons.Loader2 className='h-3 w-3 animate-spin mr-1.5' />
+        <Loader2 className='h-3 w-3 animate-spin mr-1.5' />
         Loading keys…
       </div>
     )
@@ -169,7 +172,7 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
   const subtitle = `${data.username || 'root'}@${data.address || '?'}:${data.port || 22}`
   return (
     <NodeFrame
-      icon={icons.Server}
+      icon={Server}
       title={title}
       subtitle={subtitle}
       status={!data.address ? 'neutral' : stats ? 'success' : !loaded ? 'neutral' : 'error'}
@@ -181,10 +184,10 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
           stats ? (
             <StatsList
               items={[
-                { icon: icons.Monitor, value: stats.os },
-                { icon: icons.Cpu, value: stats.cpu },
-                { icon: icons.MemoryStick, value: stats.memory },
-                { icon: icons.HardDrive, value: stats.storage },
+                { icon: Monitor, value: stats.os },
+                { icon: Cpu, value: stats.cpu },
+                { icon: MemoryStick, value: stats.memory },
+                { icon: HardDrive, value: stats.storage },
               ]}
             />
           ) : (
@@ -193,7 +196,7 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
         }
         output={
           <OutputHandle type='terminal-context' id='terminal'>
-            <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
+            <PinButton icon={TerminalSquare} label='Terminal' onClick={openTerminal} />
           </OutputHandle>
         }
       />
@@ -254,13 +257,13 @@ function HostKeySection({ data }: { data: ServerData }) {
       <Label>Host key</Label>
       {status?.trusted ? (
         <div className='flex items-center gap-1.5 text-xs text-muted-foreground'>
-          <icons.ShieldCheck className='h-3.5 w-3.5 text-green-500 shrink-0' />
+          <ShieldCheck className='h-3.5 w-3.5 text-green-500 shrink-0' />
           <span className='font-mono break-all'>{status.fingerprint ? status.fingerprint : 'Trusted'}</span>
         </div>
       ) : (
         <div className='flex flex-col gap-1.5 rounded border border-amber-500/40 bg-amber-500/5 p-2'>
           <div className='flex items-start gap-1.5 text-xs'>
-            <icons.ShieldAlert className='h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5' />
+            <ShieldAlert className='h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5' />
             <span>
               Host key not pinned — Docker/SSH transports will fail host-key verification until you accept it.
             </span>

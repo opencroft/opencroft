@@ -2,6 +2,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSy
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { RENAMED_ENV } from '@opencroft/instance'
+
 import { templateDatadir, templateDump } from './test-template'
 
 const PREFIX = 'opencroft-test-pglite-'
@@ -98,10 +100,11 @@ function removeWhenThisProcessEnds(dir: string): void {
  * Two narrowings guard it — the path in use, and directories only — and they interact. The whole
  * enumeration, so the next reader does not re-derive three safe cases to find the fourth:
  *
- *   caller-supplied PGLITE_PATH is a socket    skipped twice: by `inUse` and by the directory
+ *   caller-supplied datadir is a socket        skipped twice: by `inUse` and by the directory
  *                                             filter. Over-covered, not under.
- *   lock held by THIS process                  the holder's PGLITE_PATH is that datadir, so `inUse`
- *                                             skips it; its lock is skipped as a non-directory.
+ *   lock held by THIS process                  the holder's OPENCROFT_PGLITE_PATH is that datadir,
+ *                                             so `inUse` skips it; its lock is skipped as a
+ *                                             non-directory.
  *   lock held by ANOTHER process               NOT CLOSED, and known. Reachable only if that run
  *                                             has been going longer than STALE_MS: its datadir is
  *                                             collected and its socket is left holding a path whose
@@ -115,11 +118,11 @@ function sweepStaleDatadirs(): void {
   const root = tmpdir()
   const cutoff = Date.now() - STALE_MS
   // The datadir this process is actually using, whoever chose it. Age alone does not protect it:
-  // the one path a person supplies BY HAND is re-pointing PGLITE_PATH at a previous run's leftover
+  // the one path a person supplies BY HAND is re-pointing OPENCROFT_PGLITE_PATH at a previous run's leftover
   // to look inside it, and that directory carries this prefix, sits in this directory, and is older
   // than the cutoff by the time they get to it -- so it is indistinguishable from litter by every
   // other signal here, and it is the one thing in tmpdir somebody deliberately kept.
-  const inUse = process.env.PGLITE_PATH ? resolve(process.env.PGLITE_PATH) : undefined
+  const inUse = process.env.OPENCROFT_PGLITE_PATH ? resolve(process.env.OPENCROFT_PGLITE_PATH) : undefined
   let entries: string[]
   try {
     entries = readdirSync(root)
@@ -202,26 +205,30 @@ function seedFromTemplate(dir: string): void {
 
 /**
  * Make `@opencroft/db`'s shared `db` an in-memory database (test-memory-db.ts) for a suite that
- * left its database to this file -- that is, one whose PGLITE_PATH is still `defaultDir` when it
- * first imports the package.
+ * left its database to this file -- that is, one whose OPENCROFT_PGLITE_PATH is still
+ * `defaultDir` when it first imports the package.
  *
  * The package keeps its handle on `globalThis.__opencroftDb` and opens one only when nothing is
  * there (see index.ts), so the in-memory one is supplied there and the app's own open path is not
  * touched. It is decided at that first import, not here: a suite imports this file first and
- * may set PGLITE_PATH afterwards, and a suite that does wants a real datadir -- the lock and crash
- * recovery exist only there -- so it gets one, opened by openDb as before. So does any suite
- * that calls openDb itself. Imported lazily for the same reason: connect.ts reads
- * DB_MIGRATIONS_DIR when it loads, and suites set that after importing this file.
+ * may set OPENCROFT_PGLITE_PATH afterwards, and a suite that does wants a real datadir -- the lock
+ * and crash recovery exist only there -- so it gets one, opened by openDb as usual. So does any
+ * suite that calls openDb itself. Imported lazily for the same reason: connect.ts reads
+ * OPENCROFT_DB_MIGRATIONS_DIR when it loads, and suites set that after importing this file.
  *
- * The datadir made above is kept, seeded and set as PGLITE_PATH all the same, so nothing that
- * reads PGLITE_PATH or calls openDb sees a difference.
+ * The datadir made above is kept, seeded and set as OPENCROFT_PGLITE_PATH all the same, so
+ * nothing that reads OPENCROFT_PGLITE_PATH or calls openDb sees a difference.
  */
 function openSharedDatabaseInMemory(defaultDir: string): void {
   let handle: Promise<unknown> | undefined
   Object.defineProperty(globalThis, '__opencroftDb', {
     configurable: true,
     get() {
-      if (handle === undefined && process.env.PGLITE_PATH === defaultDir && !process.env.DATABASE_URL) {
+      if (
+        handle === undefined &&
+        process.env.OPENCROFT_PGLITE_PATH === defaultDir &&
+        !process.env.OPENCROFT_DATABASE_URL
+      ) {
         handle = import('./test-memory-db').then(({ openMemoryDb }) => openMemoryDb(templateDump()))
       }
       return handle
@@ -234,22 +241,28 @@ function openSharedDatabaseInMemory(defaultDir: string): void {
 
 // Importing this file IS the guard, and it must be a test file's first
 // import: openDb() picks node-postgres over PGlite purely on whether
-// DATABASE_URL is set, with no way to tell "the real app started" from "a
-// test forgot to isolate itself" apart -- so the only safe rule is that no
-// test process ever gets to see a real DATABASE_URL, and always has a
+// OPENCROFT_DATABASE_URL is set, with no way to tell "the real app started"
+// from "a test forgot to isolate itself" apart -- so the only safe rule is
+// that no test process ever gets to see a real database URL, and always has a
 // PGlite datadir of its own to fall back on. A test that wants a specific
-// datadir (most do, for per-suite isolation) just overwrites PGLITE_PATH
-// afterward; this only fills in what would otherwise be left unset.
-if (process.env.DATABASE_URL) {
-  delete process.env.DATABASE_URL
+// datadir (most do, for per-suite isolation) just overwrites
+// OPENCROFT_PGLITE_PATH afterward; this only fills in what would otherwise be
+// left unset.
+//
+// The database variables' former names are dropped too: openDb still honours
+// them, so an ambient one would decide the database behind every check below,
+// all of which read the current names.
+delete process.env.OPENCROFT_DATABASE_URL
+for (const current of ['OPENCROFT_DATABASE_URL', 'OPENCROFT_PGLITE_PATH', 'OPENCROFT_DB_MIGRATIONS_DIR'] as const) {
+  delete process.env[RENAMED_ENV[current]]
 }
-if (!process.env.PGLITE_PATH) {
+if (!process.env.OPENCROFT_PGLITE_PATH) {
   // Created eagerly rather than named and left to PGlite, because mkdtemp is what makes the name
   // unique atomically. Most of these are then never opened at all -- a suite that sets its own
-  // PGLITE_PATH afterward leaves this one empty -- but an empty directory still has to be removed
-  // by whoever made it, which is the whole of the leak this file used to be.
+  // OPENCROFT_PGLITE_PATH afterward leaves this one empty -- but an empty directory still has to
+  // be removed by whoever made it, or it is left behind in the temp directory.
   const dir = mkdtempSync(join(tmpdir(), PREFIX))
-  process.env.PGLITE_PATH = dir
+  process.env.OPENCROFT_PGLITE_PATH = dir
   removeWhenThisProcessEnds(dir)
   seedFromTemplate(dir)
   openSharedDatabaseInMemory(dir)

@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
   }
   const { extensionId, path: splat } = params
   const routeKey = (splat ?? '').split('/').filter(Boolean).join('/')
-  let mod
+  let mod: Awaited<ReturnType<typeof getExtensionModule>>
   try {
     mod = await getExtensionModule(extensionId)
   } catch (err) {

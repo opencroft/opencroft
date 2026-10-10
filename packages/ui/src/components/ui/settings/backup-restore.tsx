@@ -1,8 +1,9 @@
 'use client'
 
-import { Download, Plus, RefreshCw, RotateCcw, Trash2, Upload } from 'lucide-react'
+import { Download, KeyRound, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { Alert, AlertDescription, AlertTitle } from 'ui/components/ui/alert'
 import { Button } from 'ui/components/ui/button'
 import { Progress } from 'ui/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/components/ui/select'
@@ -37,8 +38,30 @@ export interface BackupStorageStats {
   diskFreeBytes: number
 }
 
+// Where an instance key comes from: its environment variable, or the key file
+// in the data volume. null: neither has one, which the host reports when it
+// could not prepare the key.
+export type BackupKeySource = 'env' | 'file' | null
+
+export interface BackupInstanceKeys {
+  secretsKey: BackupKeySource
+  authSecret: BackupKeySource
+  // The key file's path, shown beside a key that comes from it.
+  keyFile: string
+  // The warning shown while the key file is in use. The host writes it, since
+  // the same words go to its log.
+  notice?: string
+  // Stored secrets the instance's OPENCROFT_SECRETS_KEY does not decrypt, such as ones
+  // restored from another instance.
+  undecryptableSecrets: number
+}
+
 export interface BackupRestoreProps {
   backups: BackupFileInfo[]
+  // The instance keys a backup leaves out, and where they come from. Left
+  // out (undefined) for a reader who may not see them, and while loading:
+  // the section is then not drawn.
+  instanceKeys?: BackupInstanceKeys
   // null while first loading: the storage card says so.
   stats: BackupStorageStats | null
   // null while first loading: the schedule editor says so.
@@ -126,6 +149,71 @@ function predictRetentionUsage(schedule: BackupSchedule, backups: BackupFileInfo
   )
   const recentSize = backups[0]?.sizeBytes ?? 0
   return { predictedCount, predictedBytes: predictedCount * recentSize }
+}
+
+function KeySourceLabel({ source, keyFile }: { source: BackupKeySource; keyFile: string }) {
+  if (source === 'env') {
+    return <span>Environment variable</span>
+  }
+  if (source === 'file') {
+    return (
+      <span>
+        Key file <span className='font-mono text-xs break-all'>{keyFile}</span>
+      </span>
+    )
+  }
+  return <span className='text-destructive'>Not set</span>
+}
+
+// The keys stored secrets and sessions depend on. A backup carries neither,
+// so restoring it on another instance works only with the same two values:
+// this card says so, and where this instance's values live.
+function InstanceKeysCard({ keys }: { keys: BackupInstanceKeys }) {
+  return (
+    <div className='rounded-lg border p-4 space-y-3'>
+      <div>
+        <div className='text-sm font-medium flex items-center gap-2'>
+          <KeyRound className='size-4 text-muted-foreground' /> Instance keys
+        </div>
+        <div className='text-xs text-muted-foreground'>
+          Backups do not include them. Restoring a backup on another instance needs the same
+          OPENCROFT_SECRETS_KEY and OPENCROFT_AUTH_SECRET as the instance it came from.
+        </div>
+      </div>
+      <dl className='grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm'>
+        <dt className='font-mono text-xs leading-5'>OPENCROFT_SECRETS_KEY</dt>
+        <dd className='text-muted-foreground'>
+          <KeySourceLabel source={keys.secretsKey} keyFile={keys.keyFile} />
+        </dd>
+        <dt className='font-mono text-xs leading-5'>OPENCROFT_AUTH_SECRET</dt>
+        <dd className='text-muted-foreground'>
+          <KeySourceLabel source={keys.authSecret} keyFile={keys.keyFile} />
+        </dd>
+      </dl>
+      {keys.notice && (
+        <Alert>
+          <TriangleAlert />
+          <AlertTitle>Keys are stored in the data volume</AlertTitle>
+          {/* The notice carries the key file's path, one unbreakable word that would otherwise set the
+              alert's minimum width and push it past a phone-width card. */}
+          <AlertDescription className='[overflow-wrap:anywhere]'>{keys.notice}</AlertDescription>
+        </Alert>
+      )}
+      {keys.undecryptableSecrets > 0 && (
+        <Alert variant='destructive'>
+          <TriangleAlert />
+          <AlertTitle>
+            {keys.undecryptableSecrets} stored secret(s) cannot be decrypted
+          </AlertTitle>
+          <AlertDescription>
+            This instance's OPENCROFT_SECRETS_KEY does not decrypt them: they were encrypted under another key, for
+            example on the instance a restored backup came from. Set OPENCROFT_SECRETS_KEY to that key and restart, or
+            store them again.
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
+  )
 }
 
 function StorageCard({ stats }: { stats: BackupStorageStats | null }) {
@@ -290,12 +378,15 @@ function ScheduleCard({
 //     every table. Alone in a destructive section of its own, reached
 //     deliberately, never read as the same gesture as a restore.
 //   - The backups themselves: rows that download, restore and delete.
+//   - What a backup leaves out: the instance keys, where this instance's
+//     come from, and the stored secrets they no longer decrypt.
 //
 // Presentation only: backups, stats and the schedule arrive as props, every
 // act leaves as a callback, and the file picker, the confirmations and the
 // toasts stay with the host.
 export function BackupRestore({
   backups,
+  instanceKeys,
   stats,
   schedule,
   onScheduleChange,
@@ -335,6 +426,8 @@ export function BackupRestore({
           </Button>
         </div>
       </div>
+
+      {instanceKeys && <InstanceKeysCard keys={instanceKeys} />}
 
       <StorageCard stats={stats} />
 

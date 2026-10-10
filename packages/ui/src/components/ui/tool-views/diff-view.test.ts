@@ -34,9 +34,7 @@ function texts(seed: number, count: number): string[] {
     state = (state * 1103515245 + 12345) % 2147483648
     return state
   }
-  return Array.from({ length: count }, () =>
-    Array.from({ length: next() % 12 }, () => 'abcd'[next() % 4]).join('\n'),
-  )
+  return Array.from({ length: count }, () => Array.from({ length: next() % 12 }, () => 'abcd'[next() % 4]).join('\n'))
 }
 
 test('a diff holds both texts, line for line and in order', () => {
@@ -93,18 +91,7 @@ test('long unchanged runs fold, keeping three lines of context beside each chang
   after[15] = 'changed'
   const rows = foldUnchanged(lineDiff(before.join('\n'), after.join('\n')))
   const shape = rows.map((row) => (row.kind === 'fold' ? `fold ${row.lines.length}` : row.line.kind))
-  assert.deepEqual(shape, [
-    'fold 12',
-    'same',
-    'same',
-    'same',
-    'removed',
-    'added',
-    'same',
-    'same',
-    'same',
-    'fold 11',
-  ])
+  assert.deepEqual(shape, ['fold 12', 'same', 'same', 'same', 'removed', 'added', 'same', 'same', 'same', 'fold 11'])
   const unfolded = rows.flatMap((row) => (row.kind === 'fold' ? row.lines : [row.line]))
   assert.equal(unfolded.length, 31, 'folding hides lines, it does not drop them')
 })
@@ -161,7 +148,9 @@ test('an insertion marks only the added line; the removed line has nothing to ma
 })
 
 test('the words a pair shares stay unmarked, however few they are', () => {
-  assert.deepEqual(marked(wordDiff('Pick from the lower branches', 'Pick from any branch')?.removed), ['the lower branches'])
+  assert.deepEqual(marked(wordDiff('Pick from the lower branches', 'Pick from any branch')?.removed), [
+    'the lower branches',
+  ])
   assert.deepEqual(marked(wordDiff('Pick from the lower branches', 'Pick from any branch')?.added), ['any branch'])
   assert.deepEqual(wordDiff('const x = 1', 'let y = 2'), {
     removed: [
@@ -281,7 +270,9 @@ test('a long line of many tokens keeps each piece its own mark and colour', () =
 
 test('a coloured line draws its colours as tokens the host stylesheet themes', () => {
   const diff = lineDiff('let a = 1', 'let a = 2')
-  const colours = new Map(diff.map((line) => [line, [{ start: 0, end: 3, style: '--shiki-light:#cf222e;--shiki-dark:#569cd6' }]]))
+  const colours = new Map(
+    diff.map((line) => [line, [{ start: 0, end: 3, style: '--shiki-light:#cf222e;--shiki-dark:#569cd6' }]]),
+  )
   const markup = renderToStaticMarkup(createElement(DiffView, { diff, variant: 'code', colours }))
   assert.match(markup, /<span class="shiki-token" style="--shiki-light:#cf222e;--shiki-dark:#569cd6">let<\/span>/)
 })

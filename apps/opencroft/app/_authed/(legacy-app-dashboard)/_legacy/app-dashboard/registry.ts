@@ -16,9 +16,9 @@ export interface NodeTypeDefinition<T extends Record<string, unknown> = Record<s
   icon: LucideIcon
   group: string
   defaultData: () => T
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: a registry of node types whose data shapes differ; function components are contravariant in props, so no single concrete data type accepts them all
   component: ComponentType<NodeProps<any>>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // biome-ignore lint/suspicious/noExplicitAny: same heterogeneous registry as `component`; each definition's settings take its own data type
   settings: ComponentType<NodeSettingsProps<any>>
 }
 
@@ -30,8 +30,7 @@ export type InferNodeUnion<Defs extends readonly NodeTypeDefinition[]> = InferNo
 export function buildNodeTypes(defs: readonly NodeTypeDefinition[]): NodeTypes {
   const types: NodeTypes = {}
   for (const def of defs) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    types[def.type] = def.component as any
+    types[def.type] = def.component as NodeTypes[string]
   }
   return types
 }

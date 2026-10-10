@@ -21,7 +21,7 @@ import type { AgentSelection } from 'agent-client/types'
 
 import { slug } from '@/app/_authed/(server)/_server/types'
 
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -33,8 +33,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
-process.env.NODE_ENV = 'development'
+delete process.env.OPENCROFT_DATABASE_URL
 
 // These suites are about routing and delivery, not about who a message is
 // from, so they pass a sender that is already established -- the same thing
@@ -132,9 +131,9 @@ function seedAgentSessionConnection(connection: AgentConnection, agentName = 'Ag
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')

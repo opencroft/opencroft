@@ -1,6 +1,7 @@
+import type { ActionAccess } from '@opencroft/server/actions'
+
 import { declaredIconNames } from '@/app/_authed/(extension-runtime)/_declared-icons'
 import {
-  type ActionAccess,
   activateLifecycleExtensions,
   clientBundleVersion,
   clientIconNames,
@@ -10,6 +11,7 @@ import {
   loadAllManifests,
 } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { folderOf } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { bundleDeclares } from '@/app/_authed/(extension-runtime)/_server/provided-points'
 import type { ExtensionClientInfo, ExtensionManifestInfo } from '@/app/_authed/(extension-runtime)/_types'
 
 // Plain (non-server-fn) implementation, callable directly from other server-side
@@ -106,10 +108,21 @@ export async function listExtensionManifestsImpl({
 
 /** The extensions that ship a client bundle, as the browser imports them. */
 export async function listExtensionClientsImpl(): Promise<ExtensionClientInfo[]> {
+  // The browser caches each bundle immutably under the version listed here,
+  // so a stale bundle is rebuilt first: listed at its old version, a browser
+  // holding that build would never ask for the new one.
   const manifests = await listExtensionManifestsImpl({ rebuildStaleClients: true })
-  return manifests
-    .filter((manifest) => manifest.hasClient)
-    .map(({ id, folder, clientVersion, clientIcons }) => ({ id, folder, clientVersion, clientIcons }))
+  return Promise.all(
+    manifests
+      .filter((manifest) => manifest.hasClient)
+      .map(async ({ id, folder, clientVersion, clientIcons }) => ({
+        id,
+        folder,
+        clientVersion,
+        clientIcons,
+        ...(await bundleDeclares(id)),
+      })),
+  )
 }
 
 /**

@@ -6,6 +6,8 @@ import {
   checkUsername,
   isAgentUsername,
   isSystemUsername,
+  MENTION_PATTERN,
+  mentionedUsername,
   usernameFromDisplayName,
   usernameRefusalMessage,
 } from './username'
@@ -80,10 +82,25 @@ test('the prefix alone identifies no agent', () => {
   assert.deepEqual(checkUsername(AGENT_USERNAME_PREFIX, 'agent'), { ok: false, refusal: 'prefix-only' })
 })
 
+test('a dot at either end is refused, because a mention could not reach it', () => {
+  // "@ada." in a sentence is `@ada` and a full stop. A person holding "ada."
+  // could never be mentioned, and writing their handle would reach whoever
+  // holds "ada" instead.
+  for (const value of ['ada.', '.ada', '.', '..', 'agent.alice.']) {
+    assert.deepEqual(checkUsername(value, 'agent'), { ok: false, refusal: 'edge-dot' }, `${value} should be refused`)
+  }
+  assert.equal(checkUsername('a..b', 'user').ok, true, 'a dot inside a handle is still fine')
+})
+
+test('the prefix alone is refused for what it is, not for its trailing dot', () => {
+  assert.deepEqual(checkUsername(AGENT_USERNAME_PREFIX, 'user'), { ok: false, refusal: 'reserved-prefix' })
+  assert.deepEqual(checkUsername(AGENT_USERNAME_PREFIX, 'agent'), { ok: false, refusal: 'prefix-only' })
+})
+
 test('every refusal has something to say', () => {
   // Guards a refusal added to the union without a message, which would
   // otherwise surface to a person as undefined.
-  for (const refusal of ['empty', 'bad-characters', 'reserved-prefix', 'prefix-only'] as const) {
+  for (const refusal of ['empty', 'bad-characters', 'reserved-prefix', 'prefix-only', 'edge-dot'] as const) {
     assert.ok(usernameRefusalMessage(refusal).length > 0, `${refusal} needs a message`)
   }
 })
@@ -128,4 +145,56 @@ test('whatever derivation produces is itself a valid username, or empty', () => 
       assert.equal(checkUsername(derived, 'user').ok, true, `${name} derived ${derived}, which is not valid`)
     }
   }
+})
+
+// ---------------------------------------------------------------------------
+// Mentions: `@` and a username, found in text with no flags, the way the
+// markdown resolvers fold it into their one expression.
+// ---------------------------------------------------------------------------
+
+const mentions = (text: string) => [...text.matchAll(new RegExp(MENTION_PATTERN.source, 'g'))].map((m) => m[0])
+
+test('a mention is @ and a username, ending at a letter or digit', () => {
+  assert.deepEqual(mentions('@ada and @agent.bot.qa, please'), ['@ada', '@agent.bot.qa'])
+  assert.deepEqual(mentions('thanks @ada. And (@bob2)! @x'), ['@ada', '@bob2', '@x'])
+  assert.equal(mentionedUsername('@agent.bot.qa'), 'agent.bot.qa')
+})
+
+test('a display name, an e-mail address or a package path is not a mention', () => {
+  assert.deepEqual(mentions('@Bot (QA) and @Ada'), [])
+  assert.deepEqual(mentions('mail ada@example.com or a.b@c.d'), [])
+  assert.deepEqual(mentions('import @scope/pkg and @@ada'), [])
+})
+
+test('a handle running into more of a word is not cut short to a shorter one', () => {
+  assert.deepEqual(mentions('@agent.botX and @ada_b and @ada.Lovelace'), [])
+})
+
+// Every string of up to four characters over the alphabet's edge cases: both
+// ends of the letters and of the digits, and the dot.
+function* candidates(length: number, prefix = ''): Generator<string> {
+  if (prefix.length > 0) {
+    yield prefix
+  }
+  if (prefix.length < length) {
+    for (const char of ['a', 'z', '0', '9', '.']) {
+      yield* candidates(length, prefix + char)
+    }
+  }
+}
+
+test('every handle a username may be is mentioned whole, wherever it sits in a sentence', () => {
+  // The two halves of the grammar have to agree: a handle the checker accepts
+  // that a mention cuts short would reach a different account.
+  let accepted = 0
+  for (const handle of candidates(4)) {
+    if (!checkUsername(handle, 'agent').ok) {
+      continue
+    }
+    accepted += 1
+    for (const text of [`@${handle}`, `hi @${handle}.`, `(@${handle}), `, `@${handle}: done`, `@${handle}!`]) {
+      assert.deepEqual(mentions(text), [`@${handle}`], `${text} should mention ${handle}`)
+    }
+  }
+  assert.ok(accepted > 100, 'the generated set has to reach the checker')
 })

@@ -179,6 +179,25 @@ function usageState(pct: number, warnAtPercent: number, dangerAtPercent: number)
   return pct >= dangerAtPercent ? 'danger' : pct >= warnAtPercent ? 'warning' : 'default'
 }
 
+type UsageState = ReturnType<typeof usageState>
+
+type RateLimit = NonNullable<ContextRingProps['rateLimits']>[number]
+
+// The whole percentage a limit window draws, or null when the harness
+// reported no utilization for it.
+function limitPercent(limit: RateLimit): number | null {
+  return limit.utilization !== undefined ? Math.max(0, Math.min(100, Math.round(limit.utilization))) : null
+}
+
+// A limit bar's state: `rejected` is danger at any figure; otherwise the
+// ring's rule over the drawn percentage. See RateLimitRow for why the
+// harness's other verdicts do not count.
+export function limitState(limit: RateLimit, warnAtPercent: number, dangerAtPercent: number): UsageState {
+  if (limit.status === 'rejected') return 'danger'
+  const pct = limitPercent(limit)
+  return pct === null ? 'default' : usageState(pct, warnAtPercent, dangerAtPercent)
+}
+
 // One limit window: title and reset time on the left, the value on the
 // right, and an inert slider gauge of the utilization beneath — the thumb
 // hidden, no pointer, no focus, so what remains is the slider's filled
@@ -187,14 +206,17 @@ function usageState(pct: number, warnAtPercent: number, dangerAtPercent: number)
 // thumb always carries — a preview pool (or a consumer build) resolving an
 // older slider without data-slot attributes would otherwise show a handle.
 //
-// Colour source, in order: the harness's OWN verdict on the window when it
-// reports one (`rejected` → destructive, `allowed_warning` → warning), and
-// otherwise the ring's warnAtPercent/dangerAtPercent thresholds, through
-// the same state rule and the same rounded percentage the ring uses — so a
-// window the harness merely says "allowed" about still turns amber exactly
-// where the ring would. The text stays uncoloured either way: the bar is
-// the colour channel. An unreported utilization draws no gauge at all
-// rather than an empty one pretending to be a zero.
+// The bar's colour comes from the percentage it draws: the ring's
+// warnAtPercent/dangerAtPercent thresholds, through the same state rule and
+// the same rounded percentage the ring uses, so a limit and the context turn
+// amber at the same figure. The one harness verdict that overrides it is
+// `rejected` (the limit is hit), which is destructive whatever the figure.
+// `allowed_warning` does not colour the bar: Claude Code sends it as a PACE
+// warning (a week 25% used within its first 15%), so it can arrive on a bar
+// that is a quarter full, and amber there reads as nearly spent. The text
+// stays uncoloured either way: the bar is the colour channel. An unreported
+// utilization draws no gauge at all rather than an empty one pretending to
+// be a zero.
 function RateLimitRow({
   limit,
   warnAtPercent,
@@ -204,15 +226,8 @@ function RateLimitRow({
   warnAtPercent: number
   dangerAtPercent: number
 }) {
-  const pct = limit.utilization !== undefined ? Math.max(0, Math.min(100, Math.round(limit.utilization))) : null
-  const state =
-    limit.status === 'rejected'
-      ? 'danger'
-      : limit.status === 'allowed_warning'
-        ? 'warning'
-        : pct === null
-          ? 'default'
-          : usageState(pct, warnAtPercent, dangerAtPercent)
+  const pct = limitPercent(limit)
+  const state = limitState(limit, warnAtPercent, dangerAtPercent)
   const resets = limit.resetsAt
     ? ` resets ${new Date(limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
     : ''
@@ -253,8 +268,6 @@ function RateLimitRow({
     </div>
   )
 }
-
-type UsageState = ReturnType<typeof usageState>
 
 // Everything a reading says, decided once for every surface that draws one.
 function readUsage(usedTokens: number, contextLimit: number, warnAtPercent: number, dangerAtPercent: number) {

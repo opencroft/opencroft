@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { extensionPageId as pageMenuId } from 'ui/settings/extension-settings-menu'
 
 import type { SettingsPageDefinition } from '@/app/_authed/(extension-runtime)/_client/host'
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsWithSettingsPages } from '@/app/_authed/(extension-runtime)/_client/loader'
 import {
   extensionRegistry,
   type ResolvedExtensionSettings,
@@ -51,7 +51,7 @@ export function extensionMenuEntries(settings: ResolvedExtensionSettings[]) {
 export function useExtensionSettings(): ResolvedExtensionSettings[] {
   const [version, setVersion] = useState(0)
   useEffect(() => {
-    loadAllExtensions().then(() => setVersion((v) => v + 1))
+    loadExtensionsWithSettingsPages().then(() => setVersion((v) => v + 1))
   }, [])
   return React.useMemo(() => {
     void version

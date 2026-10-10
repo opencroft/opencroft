@@ -1,24 +1,20 @@
-import { legacy } from '@opencroft/client'
-
-const {
+import { invoke } from '@opencroft/client/actions'
+import { NodeFrame } from '@opencroft/client/canvas'
+import {
   Badge,
   Button,
   ControlledInput,
   Flex,
-  NodeFrame,
-  React,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
   Separator,
-  icons,
-  invoke,
-  toast,
-} = legacy
-
-const { useCallback, useEffect, useRef, useState } = React
+} from '@opencroft/client/ui'
+import { Check, Copy, KeyRound, Plus, Trash2, Upload } from 'lucide-react'
+import { type DragEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 
 interface KeyEntry {
   name: string
@@ -35,7 +31,7 @@ export function KeyStoreNode({ data, selected }: { data: KeyStoreData; selected?
   const names = data.keyNames ?? []
   return (
     <NodeFrame
-      icon={icons.KeyRound}
+      icon={KeyRound}
       title='Key Store'
       subtitle={names.length > 0 ? `${names.length} keys` : 'empty'}
       selected={selected ?? false}
@@ -66,7 +62,7 @@ function KeyItem({
   return (
     <div className='flex flex-col gap-1 rounded border p-2'>
       <div className='flex items-center gap-1.5'>
-        <icons.KeyRound className='h-3 w-3 text-muted-foreground' />
+        <KeyRound className='h-3 w-3 text-muted-foreground' />
         <span className='text-xs font-mono flex-1'>{entry.name}</span>
         <Badge variant='outline' className='text-[9px] h-4'>
           {entry.type}
@@ -76,20 +72,20 @@ function KeyItem({
       <div className='flex gap-1 mt-1'>
         {entry.hasPublicKey ? (
           <Button variant='ghost' size='sm' className='h-5 text-[10px] px-1' onClick={onCopyPublic}>
-            <icons.Copy className='h-2.5 w-2.5 mr-0.5' /> Pub
+            <Copy className='h-2.5 w-2.5 mr-0.5' /> Pub
           </Button>
         ) : null}
         {entry.inWsl ? (
           <Button variant='ghost' size='sm' className='h-5 text-[10px] px-1' onClick={onToggleWsl}>
-            <icons.Check className='h-2.5 w-2.5 mr-0.5' /> WSL
+            <Check className='h-2.5 w-2.5 mr-0.5' /> WSL
           </Button>
         ) : (
           <Button variant='ghost' size='sm' className='h-5 text-[10px] px-1' onClick={onToggleWsl}>
-            <icons.Upload className='h-2.5 w-2.5 mr-0.5' /> To WSL
+            <Upload className='h-2.5 w-2.5 mr-0.5' /> To WSL
           </Button>
         )}
         <Button variant='ghost' size='sm' className='h-5 text-[10px] px-1 ml-auto text-destructive' onClick={onDelete}>
-          <icons.Trash2 className='h-2.5 w-2.5' />
+          <Trash2 className='h-2.5 w-2.5' />
         </Button>
       </div>
     </div>
@@ -111,7 +107,7 @@ function ImportDropZone({ onImport }: { onImport: (name: string, content: string
   )
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    (e: DragEvent) => {
       e.preventDefault()
       setDragging(false)
       if (e.dataTransfer.files.length > 0) {
@@ -126,18 +122,19 @@ function ImportDropZone({ onImport }: { onImport: (name: string, content: string
     (dragging ? 'border-primary bg-primary/5' : 'border-muted-foreground/30 hover:border-muted-foreground/50')
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: file drop is a pointer-only gesture; the button inside is the keyboard route to the same file picker
     <div
-      className={cls}
       onDragOver={(e) => {
         e.preventDefault()
         setDragging(true)
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      onClick={() => inputRef.current?.click()}
     >
-      <icons.Upload className='h-4 w-4 text-muted-foreground' />
-      <p className='text-xs text-muted-foreground'>Drop key files or click to browse</p>
+      <button type='button' className={`${cls} w-full`} onClick={() => inputRef.current?.click()}>
+        <Upload className='h-4 w-4 text-muted-foreground' />
+        <span className='text-xs text-muted-foreground'>Drop key files or click to browse</span>
+      </button>
       <input
         ref={inputRef}
         type='file'
@@ -171,9 +168,12 @@ export function KeyStoreInspector({
     updateData({ keyNames: list.map((k) => k.name) })
   }, [nodeId, updateData])
 
+  // Loads once per opened node, not whenever `load` gets a new identity:
+  // `load` writes into the node's data, and `updateData` is not promised to
+  // stay stable across that write.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `load` is deliberately left out, as explained above; the load runs once per node id
   useEffect(() => {
     load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId])
 
   const handleCreate = useCallback(
@@ -279,7 +279,7 @@ export function KeyStoreInspector({
           </SelectContent>
         </Select>
         <Button size='sm' className='h-7 text-xs' onClick={() => handleCreate(newName)} disabled={!newName.trim()}>
-          <icons.Plus className='h-3 w-3' />
+          <Plus className='h-3 w-3' />
         </Button>
       </Flex>
       <Separator />

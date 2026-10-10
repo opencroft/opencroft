@@ -3,6 +3,7 @@
 import type { MouseEvent, ReactNode, SyntheticEvent } from 'react'
 
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from 'ui/components/ui/context-menu'
+import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
 import { cn } from 'cn'
 
 export type ReferenceChipTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'muted'
@@ -51,6 +52,12 @@ export interface ReferenceChipProps {
   href?: string
   /** What pressing it does, for a target that is not a page. */
   onOpen?: () => void
+  /**
+   * Shown in a popover beside the chip when it is pressed, for a target
+   * better described than opened -- a card about the thing. It takes the
+   * press: the chip is then a button, and `href` and `onOpen` are not used.
+   */
+  popover?: ReactNode
   /** Offered on right-click and long press; no menu when empty. */
   menu?: ReferenceChipMenuItem[]
   className?: string
@@ -107,7 +114,8 @@ const keepToChip = (event: SyntheticEvent) => event.stopPropagation()
 // capped, so a long summary does not make every chip a line of its own.
 //
 // ONE PRESS OPENS. A real link when there is somewhere to go, a button when
-// the host does something else; with neither it is only a label. Anything
+// the host does something else or has a card to show in a popover; with none
+// of them it is only a label. Anything
 // else it offers is in its context menu -- right-click, or a long press on
 // touch -- and there is no menu at all when there is nothing to offer.
 //
@@ -127,6 +135,7 @@ export function ReferenceChip({
   status = 'resolved',
   href,
   onOpen,
+  popover,
   menu,
   className,
 }: ReferenceChipProps) {
@@ -138,7 +147,7 @@ export function ReferenceChip({
     // A state fills the chip's height, so its gap above and below is the
     // chip's vertical padding; its gap on the right is made the same.
     showState && 'pr-px',
-    (href || onOpen) && 'cursor-pointer hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
+    (href || onOpen || popover) && 'cursor-pointer hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring',
     className,
   )
   const content = (
@@ -183,7 +192,9 @@ export function ReferenceChip({
         onOpen()
       }
     : undefined
-  const chip = href ? (
+  const chip = popover ? (
+    <PopoverTrigger className={classes}>{content}</PopoverTrigger>
+  ) : href ? (
     <a href={href} className={classes} onClick={open}>
       {content}
     </a>
@@ -194,10 +205,7 @@ export function ReferenceChip({
   ) : (
     <span className={classes}>{content}</span>
   )
-  if (!menu?.length) {
-    return chip
-  }
-  return (
+  const withMenu = menu?.length ? (
     <ContextMenu>
       <ContextMenuTrigger
         render={chip}
@@ -214,5 +222,19 @@ export function ReferenceChip({
         ))}
       </ContextMenuContent>
     </ContextMenu>
+  ) : (
+    chip
+  )
+  if (!popover) {
+    return withMenu
+  }
+  return (
+    <Popover>
+      {withMenu}
+      {/* As wide as what it shows, up to the popover's own width. */}
+      <PopoverContent align='start' className='w-auto max-w-72'>
+        {popover}
+      </PopoverContent>
+    </Popover>
   )
 }

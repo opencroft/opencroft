@@ -73,16 +73,15 @@ export function FileManagerProvider({
     }
   }, [initialConnection])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `refreshKey` is read by nothing; bumping it is how `refresh` asks for the same directory again
   useEffect(() => {
-    const conn = connRef.current
-    const path = pathRef.current
-    if (!conn) {
+    if (!activeConnection) {
       setFiles([])
       return
     }
     let cancelled = false
     setLoading(true)
-    actions.listFiles({ data: { connection: conn, path } }).then((result) => {
+    actions.listFiles({ data: { connection: activeConnection, path: currentPath } }).then((result) => {
       if (!cancelled) {
         setFiles(result)
         setLoading(false)
@@ -228,7 +227,7 @@ export function FileManagerProvider({
         const dir = item.relativePath
           ? base.endsWith('/')
             ? base + item.relativePath
-            : base + '/' + item.relativePath
+            : `${base}/${item.relativePath}`
           : base
         return uploadOne(item.file, dir, entries[i])
       })
@@ -280,7 +279,7 @@ export function FileManagerProvider({
       return
     }
     const base = pathRef.current
-    const fullPath = base.endsWith('/') ? base + path : base + '/' + path
+    const fullPath = base.endsWith('/') ? base + path : `${base}/${path}`
     await actions.createDirectory({ data: { connection: conn, path: fullPath } })
     setRefreshKey((k) => k + 1)
   }, [])

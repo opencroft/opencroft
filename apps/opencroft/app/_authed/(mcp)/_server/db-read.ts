@@ -371,7 +371,7 @@ export function clampMaxRows(requested: unknown): number {
  * statements, and the plan guard above only ever saw the first. Whether the
  * second reaches the database is the DRIVER's property, not this function's,
  * and it differs by back-end: the embedded path goes through PGlite's extended
- * protocol, which takes one statement per call, while a remote `DATABASE_URL`
+ * protocol, which takes one statement per call, while a remote `OPENCROFT_DATABASE_URL`
  * goes through node-postgres, whose simple protocol accepts several. So on one
  * deployment the escape is closed and on the other it is not, and neither fact
  * belongs to this wrapper.

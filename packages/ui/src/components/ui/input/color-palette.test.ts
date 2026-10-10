@@ -42,9 +42,8 @@ function expand(pattern: string): string[] {
   const body = pattern.slice(open + 1, close)
   const range = /^(\d+)\.\.(\d+)(?:\.\.(\d+))?$/.exec(body)
   const options = range
-    ? Array.from(
-        { length: Math.floor((Number(range[2]) - Number(range[1])) / Number(range[3] ?? 1)) + 1 },
-        (_, i) => String(Number(range[1]) + i * Number(range[3] ?? 1)),
+    ? Array.from({ length: Math.floor((Number(range[2]) - Number(range[1])) / Number(range[3] ?? 1)) + 1 }, (_, i) =>
+        String(Number(range[1]) + i * Number(range[3] ?? 1)),
       )
     : alternatives(body).flatMap(expand)
   const tails = expand(pattern.slice(close + 1))

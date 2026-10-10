@@ -1,7 +1,7 @@
-import { legacy } from '@opencroft/client'
+import { NodeResizer, useReactFlow } from '@opencroft/client/canvas'
+import { Input, Label } from '@opencroft/client/ui'
+import { Boxes } from 'lucide-react'
 import type { ComponentType, CSSProperties } from 'react'
-
-const { Input, Label, NodeResizer, icons, useReactFlow } = legacy
 
 export interface SectionData {
   label: string
@@ -77,7 +77,7 @@ export function SectionNode({ id, data, selected }: { id: string; data: SectionD
       id={id}
       selected={selected}
       color={data.color || 'oklch(0.6 0.15 250)'}
-      icon={icons.Boxes}
+      icon={Boxes}
       label={data.label || 'Section'}
     />
   )
@@ -106,6 +106,7 @@ export function SectionInspector({
         <div className='flex gap-1'>
           {SECTION_COLORS.map((c) => (
             <button
+              type='button'
               key={c}
               className='h-6 w-6 rounded-full border-2'
               style={{

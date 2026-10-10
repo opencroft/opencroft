@@ -17,6 +17,7 @@ import { prepareLiveGraphs, registerGraphDocType } from '@/app/_authed/(space)/_
 import { warnOnUnknownBrandColor } from '@/app/_server/brand-color'
 import { storeAllCollabDocs } from '@/server/collab/collab-server'
 import { registerMarkdownDocType } from '@/server/collab/markdown-docs'
+import { prepareInstanceKeys } from '@/server/instance-keys'
 import { startBackgroundTaskPoller } from '@/server/scheduler/background-task-poller'
 import { startDockerPsPoller } from '@/server/scheduler/docker-ps-poller'
 import { startEventScheduler } from '@/server/scheduler/event-scheduler'
@@ -47,6 +48,15 @@ async function start(): Promise<void> {
   // Before the schedulers, so nothing can start writing into a process that has
   // no way to release the database when it is asked to stop.
   registerShutdownHandlers()
+  // Before anything can sign a session or encrypt a secret: a key first made
+  // on use would skip the check for secrets stored under the legacy key. Not
+  // fatal, so a key file that cannot be read fails sign-in and stored secrets
+  // with its own error rather than every page.
+  try {
+    await prepareInstanceKeys()
+  } catch (err) {
+    console.error('[startup] instance keys could not be prepared', err)
+  }
   registerResolvers()
   // Before the schedulers, which write graphs: a live graph is written through
   // its document, and the collaboration server must know what a graph

@@ -33,17 +33,17 @@ function str(value: unknown): string {
 
 /** An Agent node's display name — also used, slugified, as its session-routing identity. */
 export function agentNodeName(node: AgentGraphNode): string {
-  return str(node.data?.['name']).trim()
+  return str(node.data?.name).trim()
 }
 
 export function agentNodeAvatar(node: AgentGraphNode): string | undefined {
-  const value = node.data?.['avatar']
+  const value = node.data?.avatar
   return typeof value === 'string' ? value : undefined
 }
 
 /** Which Docker container this agent's harness process runs in, if any (several agents can share one). */
 export function agentNodeContainerName(node: AgentGraphNode): string | undefined {
-  const value = node.data?.['containerName']
+  const value = node.data?.containerName
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
@@ -51,20 +51,20 @@ export function agentNodeContainerName(node: AgentGraphNode): string | undefined
 // background work an idle session still owns, so this must be a deliberate
 // per-agent choice, never a global default.
 export function agentAutoUnloadIdleEnabled(node: AgentGraphNode): boolean {
-  return node.data?.['autoUnloadIdle'] === true
+  return node.data?.autoUnloadIdle === true
 }
 
 // Idle threshold in minutes for that opt-in; undefined means "use the
 // reaper's own default" rather than 0 (which would mean "immediately").
 export function agentAutoUnloadIdleMinutes(node: AgentGraphNode): number | undefined {
-  const value = node.data?.['autoUnloadIdleMinutes']
+  const value = node.data?.autoUnloadIdleMinutes
   return typeof value === 'number' && value > 0 ? value : undefined
 }
 
 export function agentInstructionName(node: AgentGraphNode): string {
-  return str(node.data?.['name']).trim()
+  return str(node.data?.name).trim()
 }
 
 export function agentInstructionText(node: AgentGraphNode): string {
-  return str(node.data?.['instruction'])
+  return str(node.data?.instruction)
 }

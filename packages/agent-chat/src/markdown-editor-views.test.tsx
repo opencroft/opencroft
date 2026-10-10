@@ -11,11 +11,13 @@ let container: HTMLElement
 let act: typeof import('react').act
 let createRoot: typeof import('react-dom/client').createRoot
 let MarkdownEditor: typeof import('./markdown-editor').MarkdownEditor
+let prepareLanguage: typeof import('./components/code-highlight').prepareLanguage
 
 before(async () => {
   container = installTestDom()
   ;({ act } = await import('react'))
   ;({ MarkdownEditor } = await import('./markdown-editor'))
+  ;({ prepareLanguage } = await import('./components/code-highlight'))
   ;({ createRoot } = await import('react-dom/client'))
 })
 
@@ -440,6 +442,13 @@ test('a code block draws in the code block frame, labelled with its language out
     }
   })
   assert.deepEqual(texts, ['closing: 19:00', 'plain'])
+  // The grammar arrives on its own time and colours the block with a
+  // transaction of its own. Waited for, so the document is checked after it
+  // every time rather than before or after it by chance.
+  await act(async () => {
+    assert.ok(await prepareLanguage('yaml'), 'the yaml grammar loads')
+  })
+  assert.ok(named.querySelector('.shiki-token'), 'the grammar has coloured the block')
   assert.deepEqual(changes, [])
 })
 

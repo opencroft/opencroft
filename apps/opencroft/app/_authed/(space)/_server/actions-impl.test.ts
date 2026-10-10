@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test from 'node:test'
 
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -26,7 +26,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { createSpaceImpl, deleteSpaceImpl, registry, setSpaceIconImpl } = await import('./actions-impl')
 const { findSpaceIconPreset } = await import('ui/spaces/space-icon')

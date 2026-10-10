@@ -140,7 +140,7 @@ export interface ExtensionManifest {
   clientStubs?: string[]
 }
 
-/** A manifest plus runtime-computed flags, as sent to the client loader. */
+/** A manifest plus what the runtime knows about its build, for the extension pages and server callers. */
 export interface ExtensionManifestInfo extends ExtensionManifest {
   /**
    * The folder under `extensions/` this extension runs from. It differs from
@@ -163,7 +163,22 @@ export interface ExtensionManifestInfo extends ExtensionManifest {
  * more: it is fetched on every signed-in page. Descriptions and schemas stay
  * with the full manifest, read where they are shown.
  */
-export type ExtensionClientInfo = Pick<ExtensionManifestInfo, 'id' | 'folder' | 'clientVersion' | 'clientIcons'>
+export interface ExtensionClientInfo
+  extends Pick<ExtensionManifestInfo, 'id' | 'folder' | 'clientVersion' | 'clientIcons'>,
+    BundleDeclares {}
+
+/**
+ * What a client bundle's declaration shows outside the canvas, read off the
+ * bundle the server serves, so it is imported only where that is shown. Each
+ * is null when it is not known for that bundle, and the bundle is then
+ * imported wherever any of them is shown.
+ */
+export interface BundleDeclares {
+  /** The provider points it registers: the keys of its `provides`. */
+  providedPoints: string[] | null
+  /** Whether it declares settings pages. */
+  hasSettingsPages: boolean | null
+}
 
 export interface ExtensionRecord {
   manifest: ExtensionManifest
@@ -172,83 +187,15 @@ export interface ExtensionRecord {
   updatedAt: number
 }
 
-/** An extension's output resolver. `type` is the node's BARE type, the name the extension declared it under. */
-export type ExposeOutputFn = (handleId: string, nodeData: Record<string, unknown>, type: string) => unknown
-
-export interface ConnectedSource {
-  nodeId: string
-  handleId: string
-  type?: string
-  data: Record<string, unknown>
-}
-
-export interface ResolvedInput<T = unknown> {
-  sourceNodeId: string
-  sourceHandleId: string
-  /** The qualified handle type of the source handle. */
-  handleType: string
-  /** @deprecated Read `handleType`, which holds the same value. */
-  contextType: string
-  value: T
-}
-
-export interface NodeActionCtxNode {
-  id: string
-  type?: string
-  position: { x: number; y: number }
-  data: Record<string, unknown>
-}
-
-/** Streaming primitive — same shape as the client `Stream<T>` so server-side action handlers can be migrated from the browser without changing call sites. */
-export interface Stream<T> {
-  subscribe(fn: (chunk: T) => void): () => void
-  broadcast(chunk: T): void
-}
-
-export interface NodeActionCtx {
-  nodeId: string
-  /** The node's BARE type — the name the extension running the action declared it under. */
-  type: string
-  /** @deprecated Read `type`, which holds the same bare value. */
-  typeId: string
-  data: Record<string, unknown>
-  params: Record<string, unknown>
-  input<T = unknown>(handleId: string): T | undefined
-  inputSource<T = unknown>(handleId: string): ResolvedInput<T> | undefined
-  /** The nodes wired into `handleId`, each with the qualified `type` the graph stores. */
-  connectedSources(handleId: string): ConnectedSource[]
-  /**
-   * The nodes whose area holds this one, each with its stored, qualified
-   * `type`. `type` narrows them: bare for one of the calling extension's own
-   * types, qualified for any extension's.
-   */
-  containingNodes(type?: string): NodeActionCtxNode[]
-  output<T = unknown>(handleId: string): Stream<T>
-  /** Persist a patch to this node's stored data (e.g. assign a key). */
-  updateData(patch: Record<string, unknown>): void
-  /**
-   * The agent that invoked this action, when the surface that dispatched it
-   * had one and could name it. Absent for a graph-driven run, where the
-   * question is not "who asked" but "what fed this" -- that is `inputSource`,
-   * and the two are never the same answer.
-   *
-   * A NAME, not a handle: what the dispatching surface resolved, unmodified.
-   * An action that needs a durable identifier turns it into one where the
-   * identifier is minted, so nothing here has to know what that costs.
-   */
-  callerAgent?: string
-  /**
-   * Aborted when whoever is waiting on this run gives up on it: a background
-   * task cancelled by its caller, or out of time. Absent when nothing can
-   * cancel the run — a button press, a graph-driven dispatch.
-   *
-   * Advisory. An action that never looks at it runs to its end regardless,
-   * which is why a cancel of one is reported as requested, not done; one
-   * that can stop part-way (a long pull, a loop over hosts) checks it
-   * between steps and gives up there.
-   */
-  signal?: AbortSignal
-}
+/** What a node action is handed and what an extension's server module exports, declared in `@opencroft/server`. */
+export type {
+  ConnectedSource,
+  ExposeOutput,
+  NodeActionContext as NodeActionCtx,
+  NodeActionContextNode as NodeActionCtxNode,
+  ResolvedInput,
+  Stream,
+} from '@opencroft/server/actions'
 
 export interface NodeActionDescriptor {
   nodeId: string
@@ -273,6 +220,17 @@ export interface CompileError {
   line?: number
   column?: number
   message: string
+}
+
+/**
+ * Where a build problem is, as `file`, `file:line` or `file:line:column`: as
+ * much as the problem knows. esbuild's messages carry a column; a deprecation
+ * found by scanning the source carries a line only.
+ */
+export function compileErrorLocation(problem: CompileError): string {
+  if (problem.line === undefined) return problem.file
+  if (problem.column === undefined) return `${problem.file}:${problem.line}`
+  return `${problem.file}:${problem.line}:${problem.column}`
 }
 
 export interface BuildResult {

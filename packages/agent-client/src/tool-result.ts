@@ -10,12 +10,21 @@ export type ToolResult = string | Record<string, unknown>
 interface ContentBlock {
   type: string
   text?: string
+  data?: string
+  mimeType?: string
 }
 
 function blockText(block: unknown): string {
   const b = block as ContentBlock
   if (b && b.type === 'text' && typeof b.text === 'string') {
     return b.text
+  }
+  // A string-only host cannot hand a picture to its model, and the block's
+  // base64 as text is megabytes of noise in the model's context. Say what was
+  // there instead.
+  if (b && (b.type === 'image' || b.type === 'audio') && typeof b.data === 'string') {
+    const label = typeof b.mimeType === 'string' ? `${b.type} ${b.mimeType}` : b.type
+    return `[${label}, not shown: this harness passes tool results as text only]`
   }
   return JSON.stringify(block)
 }

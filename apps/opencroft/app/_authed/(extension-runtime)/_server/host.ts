@@ -5,17 +5,24 @@ import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
 import { db, spaceApp } from '@opencroft/db'
+import { dataDir } from '@opencroft/instance'
 import type {
   ExtensionServerHost,
+  GraphEdgeRecord,
+  GraphNodeRecord,
+  HandleInfo,
   HostAgentGroupChatsApi,
   HostAgentsApi,
   HostCompactResult,
+  HostGraphApi,
   HostMcpTokensApi,
+  HostMentionsApi,
   HostPersonGroupChatsApi,
   HostSecretsApi,
   HostThreadUsage,
   HostUser,
   HostUsersApi,
+  ListHandlesFilter,
 } from '@opencroft/server'
 import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
 import {
@@ -29,15 +36,11 @@ import {
   terminalRun,
   terminalRunResult,
 } from '@opencroft/terminal/server'
-import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
-import type { ChatEvent } from 'agent-client/types'
 import { asc } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { queryChatUsageTurnsBySessionKey } from '@/app/_authed/(agent)/_server/chat-usage-store'
-import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
 import { SEND_MESSAGE_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
-import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
 import { declaredTypesOf, namesCoreType, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
 import {
@@ -66,13 +69,13 @@ import { listAgentDirectory, listAgentNodesImpl } from '@/app/_authed/(space)/_s
 import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
+import { mentionsIn } from '@/app/_server/mentions'
 import { type AttributedSender, registerExtensionSystemSender, senderForSend } from '@/app/_server/message-author'
 import { listUserDirectory } from '@/app/_server/user-directory'
 import { newGraphId } from '@/lib/graph-id'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
 import { decrypt, encrypt } from '@/server/crypto'
-import { dataDir } from '@/server/data-dir'
 import { secrets } from '@/server/secrets'
 
 function randomToken(bytes = 32): string {
@@ -93,21 +96,9 @@ function randomString(length: number, charset: string): string {
   return out
 }
 
-export interface GraphNodeRecord {
-  id: string
-  type?: string
-  position: { x: number; y: number }
-  data: Record<string, unknown>
-}
-
-export interface GraphEdgeRecord {
-  id: string
-  source: string
-  target: string
-  sourceHandle?: string
-  targetHandle?: string
-  data?: Record<string, unknown>
-}
+// The graph types are the package's declarations, the ones extensions compile
+// against, so `graphApi` below failing to match them is a compile error here.
+export type { GraphEdgeRecord, GraphNodeRecord, HandleInfo, HostGraphApi, ListHandlesFilter }
 
 export interface GraphSnapshot {
   nodes: GraphNodeRecord[]
@@ -156,35 +147,6 @@ async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => void
   await mutateLiveGraph(r.addressOf(ref), EXTENSION_HOST_ORIGIN, mutate, { resolveContexts: false })
 }
 
-export interface HandleInfo {
-  nodeId: string
-  // listNodes flattens spaces; handle discovery doesn't, because a picker has
-  // to be able to say which space a source came from.
-  spaceSlug: string
-  /** The node's stored, qualified type; `app:<type>` for an App instance's handle. */
-  type: string
-  // node.data.name, falling back to the type — for pickers.
-  nodeName: string
-  // The live id, resolvable by terminal.getContext. For a dynamic handle this
-  // is the expanded runtime id, not the declared prefix.
-  handleId: string
-  // The manifest id — the prefix form for a dynamic handle.
-  declaredId: string
-  /** The qualified handle type. */
-  handleType: string
-  role: 'source' | 'target'
-  label?: string
-  /** For an App's dynamic handle: what the App calls this live id, when it says. */
-  liveLabel?: string
-  dynamic: boolean
-}
-
-export interface ListHandlesFilter {
-  role?: 'source' | 'target'
-  /** Qualified here; an extension's host resolves a bare one to its own first. */
-  handleType?: string
-}
-
 /**
  * A node or App instance with handles matching a filter, before its dynamic
  * handles are expanded. Expanding asks something at runtime -- a docker host
@@ -207,32 +169,6 @@ export interface HandleOwnerScope {
   spaceSlug?: string
   /** One node id or App instance id. */
   ownerId?: string
-}
-
-/**
- * The graph as one extension's host hands it out. Nodes come back with their
- * stored, qualified types; a type an extension passes IN follows the rule for
- * type references — bare for one of its own, qualified for any extension's.
- */
-export interface HostGraphApi {
-  listNodes(): Promise<GraphNodeRecord[]>
-  getNode(nodeId: string): Promise<GraphNodeRecord | null>
-  listNodesByType(type: string): Promise<GraphNodeRecord[]>
-  listEdges(): Promise<GraphEdgeRecord[]>
-  // Every handle declared by a node type, across all spaces, with dynamic
-  // source handles expanded to their live ids. Read-on-demand and uncached:
-  // expansion asks each application node's docker context what is running, so
-  // the result is only true at the moment it is produced.
-  listHandles(filter?: ListHandlesFilter): Promise<HandleInfo[]>
-  updateNode(nodeId: string, patch: Partial<GraphNodeRecord>): Promise<GraphNodeRecord | null>
-  /** On the graph at `address` — a space slug (its default graph) or `<space>.<graph>`. */
-  createNode(
-    address: string,
-    type: string,
-    data: Record<string, unknown>,
-    position: { x: number; y: number },
-  ): Promise<GraphNodeRecord>
-  deleteNode(nodeId: string): Promise<void>
 }
 
 /** `graphApi` for one extension: the type references it passes resolve against its own id. */
@@ -467,192 +403,6 @@ async function findSendMessageNode(
   }
 }
 
-export interface TurnSummary {
-  index: number
-  prompt: string
-  promptLength: number
-  // 'unknown' is a replayed turn: it ended — a later prompt proves it — but a
-  // session/load replay does not say how, so neither does this.
-  status: 'finished' | 'in-progress' | 'interrupted' | 'unknown'
-  finalMessage?: string
-  finalMessageLength?: number
-}
-
-export interface TurnsPage {
-  turns: TurnSummary[]
-  hasMore: boolean
-  nextBeforeIndex: number | null
-  // The session's own status (see deriveSessionStatus). An empty `turns`
-  // array means two different things depending on this: a genuinely empty
-  // (never-prompted) session at idle/queued/working/waiting, vs. an offline session
-  // whose history isn't loaded in memory at all — a caller must be able to
-  // tell them apart without having read this action's description.
-  sessionStatus: SessionStatus
-}
-
-// ~400 chars is enough to identify a turn at a glance without pulling its
-// full text into an agent's context — these actions must stay cheap to call
-// regardless of how long a session's transcript is.
-const TURN_TEXT_MAX_CHARS = 400
-const DEFAULT_TURNS = 10
-// `turns` is caller-controlled — an unbounded value would walk the whole
-// transcript and scale the response with it, defeating the point of keeping
-// each turn's text truncated.
-const MAX_TURNS = 50
-
-// The turn-paging core shared by every surface that lists a session's turns:
-// the send-message node's listTurns action below, and the group-chat
-// group_chat_turns tool (model.ts) — same window, same summaries, same paging,
-// so a turn reads identically wherever it is inspected from. Callers own their
-// authorization (graph reachability there, thread membership here); this
-// function only answers for a session key it is already allowed to see.
-export function turnsPageForSessionKey(
-  sessionKey: string,
-  params: { turns?: number; beforeIndex?: number },
-): TurnsPage {
-  const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
-  const sessionStatus = deriveSessionStatus(sessionKey, sessionActivitySets())
-  const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
-  if (!meta) {
-    // No live process for this session (dead, or never started) — nothing
-    // in memory to page through.
-    return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
-  }
-  const window = agentClient.getEventsWindow(meta.id, { turns, beforeIndex: params.beforeIndex })
-  if (!window) {
-    return { turns: [], hasMore: false, nextBeforeIndex: null, sessionStatus }
-  }
-  // Only the tail window (no beforeIndex) can end on the session's current,
-  // still-running turn — any older page is by definition already over.
-  const tailInProgress = params.beforeIndex === undefined && agentClient.hasActiveTurn(meta.id)
-  const groups = splitIntoTurns(window.events, window.startIndex)
-  return {
-    turns: groups.map((group, i) =>
-      buildTurnSummary(group.index, group.events, tailInProgress && i === groups.length - 1),
-    ),
-    hasMore: window.hasMore,
-    nextBeforeIndex: window.hasMore ? window.startIndex : null,
-    sessionStatus,
-  }
-}
-
-export function truncateText(text: string, max = TURN_TEXT_MAX_CHARS): { text: string; length: number } {
-  const length = text.length
-  return length <= max ? { text, length } : { text: `${text.slice(0, max)}… [truncated]`, length }
-}
-
-export function turnStatus(events: ChatEvent[], inProgress: boolean): TurnSummary['status'] {
-  if (inProgress) {
-    return 'in-progress'
-  }
-  const end = events.find((e) => e.kind === 'turn_end')
-  if (!end || end.kind !== 'turn_end') {
-    // No terminal event at all: the turn errored (settleTurn's failure path
-    // never emits turn_end) or the process died mid-turn — either way, cut
-    // off rather than completed.
-    return 'interrupted'
-  }
-  // 'replayed' = a synthetic boundary loadSession reconstructs between two
-  // replayed turns. It says the turn ended — the prompt that follows proves
-  // that — and nothing about how, because the replay carries no stopReason.
-  // Reporting these as finished would claim an outcome never observed; as
-  // interrupted, it would claim a failure that never happened.
-  if (end.stopReason === 'replayed') {
-    return 'unknown'
-  }
-  // 'cancelled' = force-interrupted (stopProcessLocal/force-send); 'resumed'
-  // = a synthetic marker loadSession emits for the LAST replayed turn, the one
-  // a restart could have cut off mid-flight (see agent-client.ts) — both are
-  // incomplete, not finished.
-  return end.stopReason === 'cancelled' || end.stopReason === 'resumed' ? 'interrupted' : 'finished'
-}
-
-// The prompt that opened a turn, joined back together. A message is a run of
-// 'user' events (one per content delta), and splitIntoTurns puts that whole run
-// at the head of the group — so the prompt is the leading run, not its first
-// event. Reading one event would report a fragment as the whole question.
-function openingPrompt(events: ChatEvent[]): string {
-  let text = ''
-  for (const event of events) {
-    // Snapshots are not part of the message and can interleave with its chunks,
-    // so they neither contribute text nor end the run.
-    if (isSnapshotEvent(event)) {
-      continue
-    }
-    if (event.kind !== 'user') {
-      break
-    }
-    text += event.text
-  }
-  return text
-}
-
-export function buildTurnSummary(index: number, events: ChatEvent[], inProgress: boolean): TurnSummary {
-  const prompt = truncateText(openingPrompt(events))
-  const status = turnStatus(events, inProgress)
-  const summary: TurnSummary = { index, prompt: prompt.text, promptLength: prompt.length, status }
-  // 'unknown' carries its final message too: a replayed turn's reply was
-  // recorded in full and only its ENDING went unobserved. Withholding text that
-  // is right there would make listTurns least useful on exactly the sessions
-  // this status exists for. 'in-progress' and 'interrupted' still omit it —
-  // there the text really is partial.
-  if (status === 'finished' || status === 'unknown') {
-    // `agent_message` is a streaming chunk, not a whole message: one is emitted
-    // per content delta, so a reply arrives as a run of them. Fold the events
-    // back into messages — the same concatenation the chat view renders from —
-    // and take the last assistant message. Reading the last event on its own
-    // would report only that message's trailing fragment.
-    const assistantMessages = foldEvents(events).filter((message) => message.kind === 'assistant')
-    const final = truncateText(assistantMessages.at(-1)?.text ?? '')
-    summary.finalMessage = final.text
-    summary.finalMessageLength = final.length
-  }
-  return summary
-}
-
-// Split a window's flat event array back into per-turn groups, tagging each
-// with its absolute index (window.startIndex + offset) so it can double as
-// the next page's `beforeIndex` cursor. tailByTurns/pageBeforeByTurns cut at
-// 'user' boundaries when any exist, but a session with zero turns (created,
-// never prompted — only 'modes'/'config_options'/etc. snapshot events) has
-// none: tailByTurns then returns that whole snapshot-only log as-is, not
-// starting with 'user'. Those leading events aren't part of any turn — skip
-// them (nothing to attach them to) rather than assume the invariant holds.
-export function splitIntoTurns(events: ChatEvent[], startIndex: number): { index: number; events: ChatEvent[] }[] {
-  const groups: { index: number; events: ChatEvent[] }[] = []
-  // The kind of the last event that was part of the conversation. Snapshots
-  // carry session state and can land anywhere, including between two chunks of
-  // one message, so they belong to whichever turn is open but must not decide
-  // where a turn begins — tracked separately rather than read off the previous
-  // index for exactly that reason.
-  let previousKind: ChatEvent['kind'] | undefined
-  events.forEach((event, offset) => {
-    if (isSnapshotEvent(event)) {
-      if (groups.length > 0) {
-        groups[groups.length - 1].events.push(event)
-      }
-      return
-    }
-    if (event.kind === 'user') {
-      // A prompt arrives as a RUN of 'user' events — one per content delta, the
-      // same way a reply does — so only the FIRST of a run opens a turn. Opening
-      // one per event splits a chunked message into several turns, the leading
-      // ones holding a fragment and no terminal event, which then read as cut
-      // off. A run that starts the window has no predecessor to check and opens
-      // a turn: a window cut cannot tell a continuation from a beginning.
-      if (previousKind === 'user' && groups.length > 0) {
-        groups[groups.length - 1].events.push(event)
-      } else {
-        groups.push({ index: startIndex + offset, events: [event] })
-      }
-    } else if (groups.length > 0) {
-      groups[groups.length - 1].events.push(event)
-    }
-    previousKind = event.kind
-  })
-  return groups
-}
-
 export interface HostSendMessageApi {
   /**
    * `sourceNodeId` is what fed THIS run -- the action context's input source,
@@ -728,7 +478,7 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   }
   const { getExtensionModule } = await import('@/app/_authed/(extension-runtime)/_server/loader')
   const mod = await getExtensionModule(manifest.id)
-  const value = mod.exposeOutput?.(handleId, node.data, bare)
+  const value = mod.exposeOutput?.(handleId, node.data, bare, nodeId)
   if (value === undefined || value === null) {
     throw new Error(`No context value for ${nodeId}/${handleId}`)
   }
@@ -774,8 +524,9 @@ function execFilePromise(cmd: string, args: string[]): Promise<string> {
 export type HostGroupChatsApi = ExtensionServerHost['groupChats']
 export type { HostAgentGroupChatsApi }
 
-// Lazy: the group-chat model imports this module (turnsPageForSessionKey), so a
-// static import here would be a cycle.
+// Lazy: the group-chat model reaches this module through its own imports (the
+// agent client, then the extension loader), so a static import here would be a
+// cycle.
 const groupChatModel = () => import('@/app/_authed/(group-chats)/_server/model')
 
 /**
@@ -1035,6 +786,8 @@ export interface ExtensionHost {
   users: HostUsersApi
   /** The agent directory, three fields per agent — see `listAgentDirectory`. */
   agents: HostAgentsApi
+  /** Who a markdown text mentions — see `@/app/_server/mentions`. */
+  mentions: HostMentionsApi
   /** An agent node's credentials for the MCP endpoint — see the package declaration. */
   mcpTokens: HostMcpTokensApi
   /**
@@ -1166,6 +919,7 @@ export function createHost(extensionId: string): ExtensionHost {
     groupChats: extensionGroupChats(extensionId),
     users: { list: listUserDirectory },
     agents: { list: listAgentDirectory },
+    mentions: { find: mentionsIn },
     mcpTokens: mcpTokensApi,
     events: {
       broadcast: (name, payload) => {

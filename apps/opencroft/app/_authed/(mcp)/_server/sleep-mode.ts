@@ -33,7 +33,7 @@ import path from 'node:path'
  * watched. The in-app toggle is immediate.
  */
 
-// The data volume, matching how packages/db resolves PGLITE_PATH and how the
+// The data volume, matching how packages/db resolves OPENCROFT_PGLITE_PATH and how the
 // MCP auth kill switch resolves its own file.
 const DATA_DIR = process.env.OPENCROFT_DATA_DIR ?? path.join(process.cwd(), 'data')
 export const SLEEP_MARKER_PATH = path.join(DATA_DIR, 'sleep-mode-on')

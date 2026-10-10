@@ -255,11 +255,11 @@ export async function dispatchExecutionContext(params: ExecDispatchParams): Prom
   }
 
   const connectedEdges = found.edges.filter((e) => e.source === sourceNodeId && e.sourceHandle === sourceHandleId)
-  if (connectedEdges.length === 0) {
+  const primaryEdge = pickPrimaryEdge(connectedEdges)
+  if (!primaryEdge) {
     throw new NoExecTargetError(sourceNodeId, sourceHandleId)
   }
 
-  const primaryEdge = pickPrimaryEdge(connectedEdges)!
   const nodesById = new Map(found.nodes.map((n) => [n.id, n]))
 
   const logStream = getStream<{ text: string; final: boolean }>(found.slug, sourceNodeId, 'stdout-out')
@@ -296,6 +296,9 @@ export async function dispatchExecutionContext(params: ExecDispatchParams): Prom
     return { nodeId: edge.target, primary, result: { status: 500, error: message } }
   })
 
-  const primary = targets.find((t) => t.primary)!.result
-  return { primary, targets }
+  const primaryTarget = targets.find((t) => t.primary)
+  if (!primaryTarget) {
+    throw new Error(`No outcome recorded for primary target ${primaryEdge.target}`)
+  }
+  return { primary: primaryTarget.result, targets }
 }

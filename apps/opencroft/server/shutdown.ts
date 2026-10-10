@@ -5,7 +5,11 @@
 // Nothing here is on any request path: this runs once, when the supervisor asks
 // the process to stop.
 
+import { isMainThread, parentPort } from 'node:worker_threads'
+
 import { closeDb } from '@opencroft/db'
+
+import { WORKER_STOP_REQUEST, WORKER_STOPPED } from './worker-stop'
 
 const globalForShutdown = globalThis as unknown as {
   __opencroftShutdownRegistered?: boolean
@@ -20,8 +24,8 @@ const globalForShutdown = globalThis as unknown as {
  * flag, for the same reason: dev-server module reloads must not fork the list.
  */
 export function registerShutdownStep(step: () => Promise<void>): void {
-  const steps = (globalForShutdown.__opencroftShutdownSteps ??= [])
-  steps.push(step)
+  globalForShutdown.__opencroftShutdownSteps ??= []
+  globalForShutdown.__opencroftShutdownSteps.push(step)
 }
 
 // Bounded for the same reason releaseDatabase is: a hung step is a reason to
@@ -84,8 +88,16 @@ async function releaseDatabase(): Promise<void> {
   }
 }
 
+async function stop(): Promise<void> {
+  await runShutdownSteps()
+  await releaseDatabase()
+}
+
 /**
- * Release the database when the process is asked to stop.
+ * Release the database when the process is asked to stop: by a stop signal, or,
+ * in a worker thread, by the `WORKER_STOP_REQUEST` message, which is answered
+ * with `WORKER_STOPPED` once the database is released. The thread is left
+ * running; ending it is up to whoever asked.
  *
  * Idempotent — registering twice would run the stop twice.
  *
@@ -103,8 +115,7 @@ export function registerShutdownHandlers(): void {
   for (const signal of STOP_SIGNALS) {
     process.once(signal, () => {
       void (async () => {
-        await runShutdownSteps()
-        await releaseDatabase()
+        await stop()
         // Explicit, and it is the reason this handler cannot simply do its work
         // and return: registering ANY listener for these signals replaces the
         // default behaviour of terminating. A handler that does not exit leaves
@@ -113,6 +124,15 @@ export function registerShutdownHandlers(): void {
         // fix for it.
         process.exit(0)
       })()
+    })
+  }
+
+  if (!isMainThread && parentPort) {
+    const port = parentPort
+    port.on('message', (message: { type?: unknown } | null) => {
+      if (message?.type === WORKER_STOP_REQUEST) {
+        void stop().then(() => port.postMessage({ type: WORKER_STOPPED }))
+      }
     })
   }
 }

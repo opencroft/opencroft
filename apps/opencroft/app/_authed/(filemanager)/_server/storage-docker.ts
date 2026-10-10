@@ -1,5 +1,5 @@
-import { spawn } from 'child_process'
-import type { Readable } from 'stream'
+import { spawn } from 'node:child_process'
+import type { Readable } from 'node:stream'
 
 import type { DockerConfig, FileEntry } from '@/app/_authed/(filemanager)/_lib/types'
 
@@ -47,7 +47,7 @@ function resolvePath(config: DockerConfig, path: string) {
   if (clean.startsWith('/')) {
     return base + clean
   }
-  return base + '/' + clean
+  return `${base}/${clean}`
 }
 
 export async function listFiles(config: DockerConfig, path: string): Promise<FileEntry[]> {
@@ -75,13 +75,13 @@ export async function listFiles(config: DockerConfig, path: string): Promise<Fil
     .map((line) => {
       const [typeChar, name, size, mtime] = line.split('|')
       const isDir = typeChar === 'd'
-      const filePath = path.endsWith('/') ? path + name : path + '/' + name
+      const filePath = path.endsWith('/') ? path + name : `${path}/${name}`
       return {
         name,
-        path: isDir ? filePath + '/' : filePath,
+        path: isDir ? `${filePath}/` : filePath,
         type: isDir ? ('directory' as const) : ('file' as const),
-        size: isDir ? 0 : parseInt(size) || 0,
-        modified: mtime ? new Date(parseInt(mtime) * 1000).toISOString() : '',
+        size: isDir ? 0 : parseInt(size, 10) || 0,
+        modified: mtime ? new Date(parseInt(mtime, 10) * 1000).toISOString() : '',
       }
     })
 }
@@ -94,7 +94,7 @@ export async function downloadFile(config: DockerConfig, path: string): Promise<
 
 export async function uploadFile(config: DockerConfig, path: string, data: string, filename: string): Promise<void> {
   const dir = resolvePath(config, path)
-  const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
+  const fullPath = dir.endsWith('/') ? dir + filename : `${dir}/${filename}`
   await run(config, `echo '${data}' | base64 -d > '${fullPath}'`)
 }
 
@@ -105,7 +105,7 @@ export async function uploadStream(
   filename: string,
 ): Promise<void> {
   const dir = resolvePath(config, path)
-  const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
+  const fullPath = dir.endsWith('/') ? dir + filename : `${dir}/${filename}`
 
   return new Promise((resolve, reject) => {
     const args = ['--exec', ...dockerArgs(config), 'exec', '-i', config.containerId, 'tee', fullPath]

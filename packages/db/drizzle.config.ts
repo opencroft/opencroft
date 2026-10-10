@@ -1,9 +1,10 @@
+import { readEnv } from '@opencroft/instance'
 import { type Config, defineConfig } from 'drizzle-kit'
 
-// Postgres dialect for both drivers. With a remote DATABASE_URL drizzle-kit
-// targets node-postgres; otherwise it drives the embedded PGlite instance at
-// PGLITE_PATH (used by `generate`/`push`/`studio`).
-const url = process.env.DATABASE_URL
+// Postgres dialect for both drivers. With a remote OPENCROFT_DATABASE_URL
+// drizzle-kit targets node-postgres; otherwise it drives the embedded PGlite
+// instance at OPENCROFT_PGLITE_PATH (used by `generate`/`push`/`studio`).
+const url = readEnv('OPENCROFT_DATABASE_URL')
 const isRemote = !!url && /^postgres(ql)?:\/\//.test(url)
 
 export default defineConfig({
@@ -17,6 +18,6 @@ export default defineConfig({
     ? ({ dbCredentials: { url: url as string } } satisfies Partial<Config>)
     : ({
         driver: 'pglite',
-        dbCredentials: { url: process.env.PGLITE_PATH ?? '../../apps/opencroft/data/pglite' },
+        dbCredentials: { url: readEnv('OPENCROFT_PGLITE_PATH') ?? '../../apps/opencroft/data/pglite' },
       } satisfies Partial<Config>)),
 })

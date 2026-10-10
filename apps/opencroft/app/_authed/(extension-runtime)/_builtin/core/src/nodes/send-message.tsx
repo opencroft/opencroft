@@ -1,17 +1,11 @@
-import { legacy } from '@opencroft/client'
-
-const { InputHandle, NodeFrame, icons } = legacy
+import { InputHandle, NodeFrame } from '@opencroft/client/canvas'
+import { Send } from 'lucide-react'
 
 // ─── SendMessage Node ────────────────────────────────────────────────
 
 export function SendMessageNode({ selected }: { id: string; selected?: boolean }) {
   return (
-    <NodeFrame
-      icon={icons.Send}
-      title='Send Message'
-      subtitle='JSON { thread, message, queue }'
-      selected={selected ?? false}
-    >
+    <NodeFrame icon={Send} title='Send Message' subtitle='JSON { thread, message, queue }' selected={selected ?? false}>
       <div className='flex flex-col gap-1.5'>
         <InputHandle type='text-stream' id='text-in'>
           <span className='text-[10px] text-muted-foreground'>Text</span>

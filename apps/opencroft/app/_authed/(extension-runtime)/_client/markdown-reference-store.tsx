@@ -349,7 +349,7 @@ export class ReferenceStore {
   private decorate({ kind, id }: InlineReference) {
     const entry = this.get(kind, id)
     const shown = this.shown(kind, id, entry)
-    const icon = referenceIcon(shown.icon)
+    const icon = this.resolvers.get(kind)?.markedInText ? null : referenceIcon(shown.icon)
     return {
       className: cn(
         REFERENCE_CHIP_CLASS,

@@ -182,7 +182,8 @@ async function persistRunOutcome(
         // Deleted concurrently — nothing to persist, and nothing is written.
         return
       }
-      const data = (node.data ??= {})
+      node.data ??= {}
+      const data = node.data
       // Opportunistic refresh: since this node is being written anyway,
       // recompute nextRunAt for every enabled rule too — not just the one(s)
       // that fired. Piggybacks on this write rather than adding a new class
@@ -194,7 +195,8 @@ async function persistRunOutcome(
           rule.nextRunAt = computeNextRunAt(rule.cron, refreshedAt)
         }
       }
-      const history = (data.runHistory ??= [])
+      data.runHistory ??= []
+      const history = data.runHistory
       if (history.some((e) => e.id === entryId)) {
         return
       }

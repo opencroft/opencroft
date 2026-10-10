@@ -1,5 +1,7 @@
 // The resolution itself, kept free of the extension runtime so its ORDER can
 // be tested with a fake exposeOutput. Loading the runtime opens the database.
+import type { ExposeOutput } from '@opencroft/server/actions'
+
 import type { TerminalRoute } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/terminal-router-shared'
 import { TERMINAL_ROUTER_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
 import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
@@ -17,14 +19,6 @@ interface ResolvedContextEntry {
 }
 
 const CONTEXT_KEY = '__resolvedContexts'
-
-/** An extension's `exposeOutput`, told the source node's BARE type — the name the extension declared. */
-export type ExposeOutput = (
-  handleId: string,
-  nodeData: Record<string, unknown>,
-  type: string,
-  nodeId: string,
-) => unknown
 
 export interface ContextResolverDeps {
   nodeTypeToExtension: Map<string, NodeTypeHandles>

@@ -96,3 +96,12 @@ self.MonacoEnvironment = {
 // Monaco registers each basic language with a lazy loader, so the grammars
 // become their own chunks and only the ones actually opened are fetched.
 loader.config({ monaco })
+
+// ── Fonts ────────────────────────────────────────────────────────────────────
+//
+// Monaco measures a face's character widths once and caches them. The code
+// face is a web font the page fetches only when text first needs it, so an
+// editor can mount before it arrives and keep placing the cursor and selection
+// by the fallback's widths. Re-measuring whenever the page finishes loading
+// fonts brings every live editor onto the face it actually draws in.
+document.fonts.addEventListener('loadingdone', () => monaco.editor.remeasureFonts())

@@ -1,6 +1,6 @@
-import { spawn } from 'child_process'
-import { promises as fs } from 'fs'
-import path from 'path'
+import { spawn } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 
 import type { SshCredentials } from '@opencroft/terminal'
 import { ssh as sshClient } from '@opencroft/terminal/server'
@@ -12,7 +12,10 @@ import * as sshConfig from '@/app/_authed/(ssh)/_server/ssh-config'
 // --- SSH target resolution ---
 
 function serverTarget(server: Server): string | SshCredentials {
-  const ssh = getSshFeature(server)!
+  const ssh = getSshFeature(server)
+  if (!ssh) {
+    throw new Error(`Server ${server.address} has no SSH feature`)
+  }
 
   // If keyPath is an absolute path, use credentials directly (dashboard servers)
   if (ssh.keyPath && path.isAbsolute(ssh.keyPath)) {
@@ -102,12 +105,12 @@ export const getServerStats = createServerFn({ method: 'POST', strict: { output:
     }
 
     return {
-      os: lines['OS'] || 'unknown',
-      kernel: lines['KERNEL'] || 'unknown',
-      cpu: lines['CPU'] || 'unknown',
-      memory: lines['MEMORY'] || 'unknown',
-      storage: lines['STORAGE'] || 'unknown',
-      uptime: lines['UPTIME'] || 'unknown',
+      os: lines.OS || 'unknown',
+      kernel: lines.KERNEL || 'unknown',
+      cpu: lines.CPU || 'unknown',
+      memory: lines.MEMORY || 'unknown',
+      storage: lines.STORAGE || 'unknown',
+      uptime: lines.UPTIME || 'unknown',
     }
   })
 

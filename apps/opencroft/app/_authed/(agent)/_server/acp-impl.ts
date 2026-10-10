@@ -449,7 +449,7 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     adapterId,
     model: agent.model ?? '',
     // An OpenClaw agent's token and base URL fall back to the deployment's
-    // OPENCLAW_GATEWAY_* vars when its node leaves them unset; no other harness
+    // OPENCROFT_OPENCLAW_GATEWAY_* vars when its node leaves them unset; no other harness
     // takes them (see gateway-defaults).
     apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || gateway.apiKey || '',
     // A container workdir is created in the container on spawn.

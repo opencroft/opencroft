@@ -19,7 +19,11 @@ import { type ExtensionRecord, isInstalledRecord } from '@/app/_authed/(extensio
 import { ExtensionFileList, MANIFEST_PATH } from '@/app/_authed/(extension-editor)/_components/extension-file-list'
 import { PreviewPanel } from '@/app/_authed/(extension-editor)/_components/preview-panel'
 import { loadExtension } from '@/app/_authed/(extension-runtime)/_client/loader'
-import type { CompileError, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
+import {
+  type CompileError,
+  compileErrorLocation,
+  type ExtensionManifest,
+} from '@/app/_authed/(extension-runtime)/_types'
 
 /** How long the typing has to stop before the files are written and rebuilt.
  *  Long enough that a sentence is one build rather than forty. */
@@ -297,8 +301,8 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
       {errors.length > 0 ? (
         <div className='max-h-40 shrink-0 overflow-auto border-t border-destructive/40 bg-destructive/10 px-3 py-2 font-mono text-xs whitespace-pre-wrap text-destructive'>
           {errors.map((error) => (
-            <div key={`${error.file}:${error.line ?? '?'}:${error.message}`}>
-              {error.file}:{error.line ?? '?'} {error.message}
+            <div key={`${compileErrorLocation(error)}:${error.message}`}>
+              {compileErrorLocation(error)} {error.message}
             </div>
           ))}
         </div>
@@ -306,8 +310,8 @@ export function ExtensionSourceEditor({ record, onBack, onSaved }: ExtensionSour
       {warnings.length > 0 ? (
         <div className='max-h-24 shrink-0 overflow-auto border-t border-amber-500/40 bg-amber-500/10 px-3 py-2 font-mono text-xs whitespace-pre-wrap'>
           {warnings.map((warning) => (
-            <div key={`${warning.file}:${warning.line ?? '?'}:${warning.message}`}>
-              {warning.file}:{warning.line ?? '?'} {warning.message}
+            <div key={`${compileErrorLocation(warning)}:${warning.message}`}>
+              {compileErrorLocation(warning)} {warning.message}
             </div>
           ))}
         </div>

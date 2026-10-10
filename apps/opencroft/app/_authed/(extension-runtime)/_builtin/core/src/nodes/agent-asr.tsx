@@ -1,7 +1,5 @@
-import { legacy } from '@opencroft/client'
+import { Input, Label, ScrollArea } from '@opencroft/client/ui'
 import type { ChangeEvent } from 'react'
-
-const { Input, Label, ScrollArea } = legacy
 
 import type { AgentData } from './agent'
 import { KeyValueEditor } from './key-value-editor'

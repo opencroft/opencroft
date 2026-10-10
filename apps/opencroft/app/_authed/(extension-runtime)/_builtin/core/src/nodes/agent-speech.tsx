@@ -1,9 +1,7 @@
-import { legacy } from '@opencroft/client'
-
-const {
+import { invoke } from '@opencroft/client/actions'
+import {
   Input,
   Label,
-  React,
   ScrollArea,
   Select,
   SelectContent,
@@ -12,13 +10,11 @@ const {
   SelectValue,
   Slider,
   Textarea,
-  invoke,
-} = legacy
+} from '@opencroft/client/ui'
+import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 
 import type { AgentData } from './agent'
 import { KeyValueEditor } from './key-value-editor'
-
-const { useCallback, useEffect, useState } = React
 
 // Suggested voices for OpenAI-compatible speech endpoints that expose no
 // `/audio/voices` list of their own.
@@ -49,6 +45,7 @@ export function AgentSpeechTab({
 }) {
   const [caps, setCaps] = useState<TtsCapabilities | null>(null)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the headers array is keyed by its JSON, so the probe re-runs on an edit and not on a new array identity
   const loadCaps = useCallback(async () => {
     if (!data.ttsApiBase?.startsWith('http')) {
       setCaps(null)
@@ -88,7 +85,7 @@ export function AgentSpeechTab({
           <Input
             autoComplete='off'
             value={data.ttsApiBase ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ ttsApiBase: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ ttsApiBase: e.target.value })}
             placeholder='http://localhost:8880/v1'
           />
         </div>
@@ -99,7 +96,7 @@ export function AgentSpeechTab({
             type='password'
             autoComplete='one-time-code'
             value={data.ttsApiKey ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ ttsApiKey: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ ttsApiKey: e.target.value })}
             placeholder='not-needed'
           />
         </div>
@@ -113,7 +110,7 @@ export function AgentSpeechTab({
           <Label>Model</Label>
           <Input
             value={data.ttsModel ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ ttsModel: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ ttsModel: e.target.value })}
             placeholder='0.6B-CustomVoice'
           />
         </div>
@@ -143,7 +140,7 @@ export function AgentSpeechTab({
             <>
               <Input
                 value={data.voice ?? ''}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ voice: e.target.value })}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ voice: e.target.value })}
                 placeholder='Vivian'
                 list='agent-speech-voices'
               />
@@ -163,14 +160,14 @@ export function AgentSpeechTab({
             min='0.25'
             max='4'
             value={data.ttsSpeed ?? 1.0}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ ttsSpeed: Number(e.target.value) })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ ttsSpeed: Number(e.target.value) })}
           />
         </div>
         <div className='flex flex-col gap-1'>
           <Label>Voice Instructions</Label>
           <Textarea
             value={data.ttsInstructions ?? ''}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ ttsInstructions: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ ttsInstructions: e.target.value })}
             placeholder={
               instructionsBlocked ? 'Not supported by this endpoint' : 'Speak cheerfully, like a friendly radio host.'
             }
@@ -190,7 +187,7 @@ export function AgentSpeechTab({
               min='0'
               max='2'
               value={data.ttsTemperature ?? ''}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 updateData({ ttsTemperature: e.target.value === '' ? undefined : Number(e.target.value) })
               }
               placeholder='1.0'
@@ -204,7 +201,7 @@ export function AgentSpeechTab({
               type='number'
               step='1'
               value={data.ttsSeed ?? ''}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 updateData({ ttsSeed: e.target.value === '' ? undefined : Math.floor(Number(e.target.value)) })
               }
               placeholder='(random)'
@@ -219,7 +216,7 @@ export function AgentSpeechTab({
             min='8000'
             max='48000'
             value={data.pcmSampleRate ?? 24000}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange={(e: ChangeEvent<HTMLInputElement>) =>
               updateData({ pcmSampleRate: Number(e.target.value) || 24000 })
             }
           />

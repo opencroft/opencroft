@@ -21,7 +21,7 @@ export function agentAvatarUrl(agent: { nodeId: string; avatar?: string | null }
   }
   // Only what the route can serve is given its address. Anything else -- an
   // `http(s)` address, or a data URL of a type the route refuses -- is handed
-  // over as stored, which is how every agent picture was drawn before.
+  // over as stored, and the page draws it from that value directly.
   if (!parseAvatarDataUrl(image)) {
     return image
   }

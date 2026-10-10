@@ -1,22 +1,10 @@
-import { type ExecutionMode, legacy } from '@opencroft/client'
-
-const {
-  Input,
-  Label,
-  NodeFrame,
-  OutputHandle,
-  React,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  icons,
-} = legacy
+import { NodeFrame, OutputHandle } from '@opencroft/client/canvas'
+import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/client/ui'
+import type { ExecutionMode } from '@opencroft/core'
+import { Wrench } from 'lucide-react'
+import type { ChangeEvent } from 'react'
 
 import type { AgentToolData } from './agent-tool-shared'
-
-const { useMemo } = React
 
 // How a caller waits for the tool. The host reads `data.execution` when it
 // lists and dispatches the tool; the handler behind it is the same either way.
@@ -35,12 +23,12 @@ const EXECUTION_CHOICES: { value: ExecutionMode; label: string; hint: string }[]
   },
 ]
 
-export function AgentToolNode({ id, data, selected }: { id: string; data: AgentToolData; selected?: boolean }) {
+export function AgentToolNode({ data, selected }: { data: AgentToolData; selected?: boolean }) {
   const name = data.name ?? 'new_tool'
 
   return (
     <NodeFrame
-      icon={icons.Wrench}
+      icon={Wrench}
       title={name}
       selected={selected ?? false}
       output={<OutputHandle type='execution-context' id='exec-out' />}
@@ -73,7 +61,7 @@ export function AgentToolInspector({
         <Label className='text-xs'>Tool Name</Label>
         <Input
           value={data.name ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='my_tool'
           className='font-mono'
         />
@@ -83,7 +71,7 @@ export function AgentToolInspector({
         <Label className='text-xs'>Description</Label>
         <Input
           value={data.description ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ description: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ description: e.target.value })}
           placeholder='What this tool does (shown to the agent)'
         />
       </div>
@@ -91,7 +79,7 @@ export function AgentToolInspector({
         <Label className='text-xs'>Input Schema (JSON)</Label>
         <textarea
           value={schemaStr}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ inputSchema: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ inputSchema: e.target.value })}
           className='flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
           placeholder='{"type": "object", "properties": {}}'
           spellCheck={false}
@@ -126,7 +114,7 @@ export function AgentToolInspector({
         <input
           type='checkbox'
           checked={data.requireApproval ?? false}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ requireApproval: e.target.checked })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ requireApproval: e.target.checked })}
           className='rounded border-input'
         />
         <Label

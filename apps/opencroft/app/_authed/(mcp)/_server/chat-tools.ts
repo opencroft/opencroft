@@ -18,6 +18,7 @@ import {
   startThreadAsAgent,
   threadCompactStatusAsAgent,
   threadRefFromSessionKey,
+  threadTurnAsAgent,
 } from '@/app/_authed/(group-chats)/_server/model'
 import { compactOutcome } from '@/app/_authed/(mcp)/_server/compact-outcome'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -342,12 +343,13 @@ export const definitions = [
   {
     name: 'group_chat_turns',
     description:
-      "List a thread's recent turns, newest last — the same summaries the send-message node's " +
-      'listTurns action returns: each turn carries a truncated opening prompt, its status ' +
-      '(finished / in-progress / interrupted / unknown), and the truncated final message when one ' +
-      'exists. Use it to see what a thread agent is doing and whether turns run long or end ' +
-      'interrupted, without pulling the transcript into your context. Pages backwards via ' +
-      '`beforeIndex` from the previous result.',
+      "List a thread's recent turns, newest last: each turn carries a truncated opening prompt, " +
+      'its status (finished / in-progress / interrupted / unknown), and the truncated final ' +
+      'message when one exists. Use it to see what a thread agent is doing and whether turns run ' +
+      'long or end interrupted, without pulling the transcript into your context. An offline ' +
+      'thread (`sessionStatus` "offline") answers from its stored transcript and is not woken. ' +
+      'Pages backwards via `beforeIndex` from the previous result. A text longer than its ' +
+      '`…Length` shows is cut: read that turn whole with group_chat_turn.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -365,6 +367,32 @@ export const definitions = [
         },
       },
       required: ['thread'],
+    },
+  },
+  {
+    name: 'group_chat_turn',
+    description:
+      "Read one of a thread's turns whole: its opening prompt and, when it finished, its final " +
+      'message, the texts group_chat_turns cuts to a preview. Each text is capped at `maxChars` ' +
+      '(stated in the result); `truncated` says whether either was cut, and `promptLength` / ' +
+      '`finalMessageLength` are always the full lengths. An offline thread answers from its ' +
+      'stored transcript and is not woken. Pass an `index` from a group_chat_turns page read in ' +
+      'the same state: an offline thread can number its turns differently from a loaded one, so if ' +
+      '`sessionStatus` changed between offline and not since that page, list the turns again. ' +
+      '`turn` is null when the thread holds no such turn.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        thread: {
+          type: 'string',
+          description: 'A thread reference from group_chat_list. Opaque — pass it back unchanged.',
+        },
+        turn: {
+          type: 'number',
+          description: "The turn's `index` from group_chat_turns.",
+        },
+      },
+      required: ['thread', 'turn'],
     },
   },
 ]
@@ -674,5 +702,17 @@ export const handlers: Record<string, ToolHandler> = {
       beforeIndex: typeof args.beforeIndex === 'number' ? args.beforeIndex : undefined,
     })
     return jsonResult(page)
+  },
+
+  group_chat_turn: async (args, caller) => {
+    const agent = requireCallingAgent(caller)
+    const thread = args.thread as string | undefined
+    if (!thread) {
+      fail(-32602, 'Missing required param: thread')
+    }
+    if (typeof args.turn !== 'number') {
+      fail(-32602, 'Missing required param: turn')
+    }
+    return jsonResult(await threadTurnAsAgent(agent, thread, args.turn))
   },
 }

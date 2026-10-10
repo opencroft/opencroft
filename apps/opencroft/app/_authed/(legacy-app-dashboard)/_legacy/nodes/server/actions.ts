@@ -14,16 +14,13 @@ interface SshConfigEntry {
 }
 
 function serialize(entries: SshConfigEntry[]): string {
-  return (
-    entries
-      .map((e) => {
-        const props = Object.entries(e.properties)
-          .map(([k, v]) => `    ${k} ${v}`)
-          .join('\n')
-        return `Host ${e.host}\n${props}`
-      })
-      .join('\n\n') + '\n'
-  )
+  const blocks = entries.map((e) => {
+    const props = Object.entries(e.properties)
+      .map(([k, v]) => `    ${k} ${v}`)
+      .join('\n')
+    return `Host ${e.host}\n${props}`
+  })
+  return `${blocks.join('\n\n')}\n`
 }
 
 function parse(raw: string): SshConfigEntry[] {
@@ -79,7 +76,7 @@ export const resolveServer = createServerFn({ method: 'POST' })
   .inputValidator((server: Server) => server)
   .handler(async ({ data: server }): Promise<Server> => {
     const ssh = getSshFeature(server)
-    if (!ssh?.keyPath || !ssh.keyPath.includes(':')) {
+    if (!ssh?.keyPath?.includes(':')) {
       return server
     }
     const resolved = resolveKeyPath(ssh.keyPath)

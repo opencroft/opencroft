@@ -1,7 +1,8 @@
 import path from 'node:path'
 
+import { dataDir } from '@opencroft/instance'
+
 import { BUILTIN_OWNER, isBuiltinFolder, parseExtensionId } from '@/app/_authed/(extension-runtime)/_extension-id'
-import { dataDir } from '@/server/data-dir'
 
 const PROJECT_ROOT = process.cwd()
 
@@ -20,6 +21,13 @@ export const BUILD_PROVENANCE_FILE = 'built.json'
  * the extension renders, so its icons are there on its first paint.
  */
 export const CLIENT_ICONS_FILE = 'icons.json'
+
+/**
+ * Written into `dist/` beside a client bundle: the provider points its
+ * declaration registers, read off the bundle itself, with the identity of the
+ * `client.js` they were read from. See provided-points.ts.
+ */
+export const PROVIDED_POINTS_FILE = 'provides.json'
 
 /** Where every extension folder lives: `<data dir>/extensions/<extensionFolder>/`. */
 export function extensionsRoot(): string {

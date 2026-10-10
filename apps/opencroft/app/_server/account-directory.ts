@@ -1,10 +1,11 @@
+import type { MentionedAccount } from '@opencroft/client/chat'
 import { db, user } from '@opencroft/db'
 import { inArray } from 'drizzle-orm'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { agentAvatarUrl } from '@/app/_server/agent-avatar'
 import { userAvatarUrl } from '@/app/_server/user-avatar'
-import { resolveUsernames } from '@/app/_server/usernames'
+import { currentUsernames, type Principal, principalKey, resolveUsernames } from '@/app/_server/usernames'
 
 /**
  * What a stamped handle looks like to a reader, now.
@@ -49,7 +50,23 @@ export interface ResolvedAuthor {
  * nothing.
  */
 export async function authorsByIdentifier(identifiers: string[]): Promise<Record<string, ResolvedAuthor>> {
-  const principals = await resolveUsernames(identifiers)
+  const accounts = await accountsByUsername(identifiers)
+  return Object.fromEntries(
+    Object.entries(accounts).map(([identifier, { name, avatarUrl }]) => [identifier, { name, avatarUrl }]),
+  )
+}
+
+/** One account found by a username, with which account it is. */
+export interface ResolvedAccount extends ResolvedAuthor, Principal {}
+
+/**
+ * The accounts holding these usernames -- or that used to, since a retired
+ * handle still resolves to its account. A username no existing account
+ * answers to is absent from the result. Same single pass, and the same
+ * registry walk only when an agent handle is present, as `authorsByIdentifier`.
+ */
+export async function accountsByUsername(usernames: string[]): Promise<Record<string, ResolvedAccount>> {
+  const principals = await resolveUsernames(usernames)
   if (principals.size === 0) {
     return {}
   }
@@ -66,17 +83,33 @@ export async function authorsByIdentifier(identifiers: string[]): Promise<Record
 
   const [people, agents] = await Promise.all([peopleById(userIds), wantsAgents ? agentsByNodeId() : new Map()])
 
-  const authors: Record<string, ResolvedAuthor> = {}
+  const accounts: Record<string, ResolvedAccount> = {}
   for (const [identifier, principal] of principals) {
     const account = principal.kind === 'agent' ? agents.get(principal.id) : people.get(principal.id)
     if (account) {
-      authors[identifier] = account
+      accounts[identifier] = { ...principal, ...account }
     }
     // No else. A handle whose account has since been deleted resolves to
     // nobody, and saying so is the honest rendering -- the message keeps the
     // text it holds and loses only the face.
   }
-  return authors
+  return accounts
+}
+
+/**
+ * The accounts these usernames name, as a mention shows them: each with the
+ * handle it goes by now, so a mention written with a retired handle shows
+ * the account's current one, as it shows its current name.
+ */
+export async function mentionedAccountsByUsername(names: string[]): Promise<Record<string, MentionedAccount>> {
+  const accounts = await accountsByUsername(names)
+  const current = await currentUsernames(Object.values(accounts))
+  return Object.fromEntries(
+    Object.entries(accounts).map(([username, { kind, id, name, avatarUrl }]) => [
+      username,
+      { kind, name, avatarUrl, username: current.get(principalKey({ kind, id })) ?? username },
+    ]),
+  )
 }
 
 async function peopleById(userIds: string[]): Promise<Map<string, ResolvedAuthor>> {

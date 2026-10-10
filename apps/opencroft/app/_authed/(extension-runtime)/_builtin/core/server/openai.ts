@@ -54,7 +54,7 @@ export async function openaiChat(params: OpenAIChatParams): Promise<OpenAIChatRe
   }
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (params.apiKey?.trim()) {
-    headers['Authorization'] = `Bearer ${params.apiKey}`
+    headers.Authorization = `Bearer ${params.apiKey}`
   }
   const res = await fetch(url, {
     method: 'POST',

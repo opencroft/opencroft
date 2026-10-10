@@ -14,9 +14,9 @@ interface PreviewPanelProps {
 }
 
 export function PreviewPanel({ previewType, version }: PreviewPanelProps) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the registry is mutable module state that no render can see change; `version` is bumped when it is reloaded, so it is what makes the node resolve again
   const resolved = useMemo(
     () => (previewType ? extensionRegistry.resolveNode(previewType) : undefined),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [previewType, version],
   )
 

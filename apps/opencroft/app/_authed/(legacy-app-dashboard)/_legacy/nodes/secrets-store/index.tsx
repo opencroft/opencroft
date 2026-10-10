@@ -38,8 +38,8 @@ function SecretsStoreComponent({ data, selected }: NodeProps<SecretsStoreNode>) 
       {keys.length > 0 && (
         <NodeCardContent>
           <div className='flex flex-col gap-0.5'>
-            {keys.map((k, i) => (
-              <div key={i} className='flex items-center justify-between text-xs'>
+            {keys.map((k) => (
+              <div key={k} className='flex items-center justify-between text-xs'>
                 <span className='font-mono text-foreground/80'>{k}</span>
                 <span className='text-muted-foreground tracking-widest'>•••</span>
               </div>
@@ -108,7 +108,7 @@ function SecretsStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }
       setDirty(false)
       onLoadingChange(false)
     })
-  }, [id])
+  }, [id, onLoadingChange])
 
   useEffect(() => {
     onDirtyChange(dirty, async () => {
@@ -154,6 +154,7 @@ function SecretsStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }
       <div className='flex flex-col gap-1'>
         {rows.map((r, i) => (
           <SecretRowEditor
+            // biome-ignore lint/suspicious/noArrayIndexKey: a new row has no key yet and its editor holds no state of its own; its inputs are controlled, so a removal re-renders the rows below in place
             key={i}
             row={r}
             onChange={(field, val) => updateRow(i, field, val)}

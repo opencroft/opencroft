@@ -143,8 +143,8 @@ test("each workspace's output is printed whole, in npm's order, whichever finish
 })
 
 test('a report of several megabytes reaches a pipe whole', () => {
-  // Read through a pipe, as check-baseline reads it. A full run's report is
-  // megabytes; this one is about four.
+  // Read through a pipe, as any caller capturing it does. A full run's report
+  // is megabytes; this one is about four.
   const { root, meet } = monorepo({
     a: "for (let i = 0; i < 50_000; i++) console.log('line ' + i + ' ' + 'x'.repeat(64))\nconsole.log('end of a')\n",
   })

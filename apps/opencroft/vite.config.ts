@@ -4,6 +4,7 @@ import viteReact from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
 
+import { nitroWorkerStop } from './vite-nitro-worker-stop'
 import { ssrWatchdog } from './vite-ssr-watchdog'
 
 // Deployed containers set this to the proxy hostname(s) they're
@@ -160,6 +161,7 @@ export default defineConfig(async ({ mode }) => {
     },
     plugins: [
       ssrWatchdog(),
+      nitroWorkerStop(),
       ...devtoolsPlugins,
       // Nitro builds the production server into .output/ and, in dev, serves the app
       // plus the extra server routes under serverDir. The terminal WebSocket lives at

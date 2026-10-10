@@ -26,12 +26,12 @@ const { RIGHT_SIDEBAR_PANELS, RightSidebar } = await import('@/app/_shell/right-
 
 after(() => dom.cleanup())
 
-// The one-time extension load is shared and module-level: the first consumer to
-// ask decides what gets called. Arming it with a loader that does nothing means
-// mounting the sidebar never reaches for real extension manifests.
+// A point's providers are loaded once, module-level: the first consumer of the
+// point decides what gets called. Arming the sidebar's point with a loader that
+// does nothing means mounting the sidebar never reaches for real extensions.
 async function armExtensionLoad(): Promise<void> {
   function Arm() {
-    useProvided('arming-only', async () => {})
+    useProvided(RIGHT_SIDEBAR_PANELS, async () => {})
     return null
   }
   const root = createRoot(dom.container)

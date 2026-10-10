@@ -51,8 +51,8 @@ function KeyStoreComponent({ data, selected }: NodeProps<KeyStoreNode>) {
       {names.length > 0 && (
         <NodeCardContent>
           <div className='flex flex-col gap-0.5'>
-            {names.map((name, i) => (
-              <div key={i} className='flex items-center gap-1.5 text-xs font-mono text-foreground/70'>
+            {names.map((name) => (
+              <div key={name} className='flex items-center gap-1.5 text-xs font-mono text-foreground/70'>
                 <KeyRound className='h-2.5 w-2.5 text-muted-foreground' />
                 {name}
               </div>
@@ -134,18 +134,21 @@ function ImportDropZone({ onImport }: { onImport: (name: string, content: string
   )
 
   return (
-    <div
-      className={`flex flex-col items-center justify-center gap-1.5 rounded border-2 border-dashed p-4 cursor-pointer transition-colors ${dragging ? 'border-primary bg-primary/5' : 'border-muted-foreground/30 hover:border-muted-foreground/50'}`}
-      onDragOver={(e) => {
-        e.preventDefault()
-        setDragging(true)
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
-      onClick={() => inputRef.current?.click()}
-    >
-      <Upload className='h-4 w-4 text-muted-foreground' />
-      <p className='text-xs text-muted-foreground'>Drop key files or click to browse</p>
+    <>
+      <button
+        type='button'
+        className={`flex flex-col items-center justify-center gap-1.5 rounded border-2 border-dashed p-4 cursor-pointer transition-colors ${dragging ? 'border-primary bg-primary/5' : 'border-muted-foreground/30 hover:border-muted-foreground/50'}`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+      >
+        <Upload className='h-4 w-4 text-muted-foreground' />
+        <span className='text-xs text-muted-foreground'>Drop key files or click to browse</span>
+      </button>
       <input
         ref={inputRef}
         type='file'
@@ -157,7 +160,7 @@ function ImportDropZone({ onImport }: { onImport: (name: string, content: string
           }
         }}
       />
-    </div>
+    </>
   )
 }
 
@@ -172,6 +175,10 @@ function KeyStoreSettings({ id, updateData, onDirtyChange, onLoadingChange }: No
     updateData({ keyNames: list.map((k) => k.name) })
   }, [id, updateData])
 
+  // Loads once per opened node. `load` writes the key names into the node's
+  // data, which gives `updateData` and so `load` a new identity; depending on
+  // it would load again after every load.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the node id on purpose, see above
   useEffect(() => {
     onLoadingChange(true)
     load().then(() => onLoadingChange(false))

@@ -18,7 +18,7 @@ import { schema } from './schema'
  * migrator runs either way, so a suite sees the schema it would on a datadir.
  *
  * What a datadir has and this does not, which is why a suite that needs either opens a real one
- * (by setting PGLITE_PATH itself, or by calling openDb directly):
+ * (by setting OPENCROFT_PGLITE_PATH itself, or by calling openDb directly):
  *   - the datadir lock (datadir-lock.ts): there is no directory for a second process to open;
  *   - crash recovery (recovering-pglite.ts): reopening after a wasm trap starts from what is on
  *     disk, and here nothing is. A trap leaves this database failing every later query, so a test

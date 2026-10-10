@@ -1,13 +1,10 @@
-import { legacy } from '@opencroft/client'
-
-const {
+import { invoke } from '@opencroft/client/actions'
+import { InputHandle, NodeFrame } from '@opencroft/client/canvas'
+import {
   AgentAvatar,
   Button,
   Input,
-  InputHandle,
   Label,
-  NodeFrame,
-  React,
   ScrollArea,
   Select,
   SelectContent,
@@ -16,14 +13,12 @@ const {
   SelectValue,
   Spinner,
   Textarea,
-  icons,
-  invoke,
-} = legacy
+} from '@opencroft/client/ui'
+import { RefreshCw, Trash2, Upload, User } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import type { KeyValue } from './key-value-editor'
 import { useSecretKeys } from './secrets'
-
-const { useCallback, useRef, useState, useEffect } = React
 
 export interface AgentData {
   name: string
@@ -99,7 +94,7 @@ function readAsDataUrl(file: File): Promise<string> {
 
 export function AgentNode({ data, selected }: { id: string; data: AgentData; selected?: boolean }) {
   return (
-    <NodeFrame icon={icons.User} title={data.name || 'Agent'} selected={selected ?? false}>
+    <NodeFrame icon={User} title={data.name || 'Agent'} selected={selected ?? false}>
       <div className='flex flex-col gap-1.5'>
         <InputHandle type='agent-instruction' id='instructions-in'>
           <span className='text-[10px] text-muted-foreground'>Instructions</span>
@@ -120,7 +115,7 @@ export function AgentInspector({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handlePick = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (!file) {
         return
@@ -139,12 +134,12 @@ export function AgentInspector({
         <div className='flex items-center gap-2'>
           <AgentAvatar avatar={data.avatar} name={data.name} size='lg' />
           <Button variant='outline' size='sm' onClick={() => inputRef.current?.click()}>
-            <icons.Upload className='h-3 w-3 mr-1' />
+            <Upload className='h-3 w-3 mr-1' />
             {data.avatar ? 'Change' : 'Upload'}
           </Button>
           {data.avatar ? (
             <Button variant='ghost' size='sm' onClick={() => updateData({ avatar: undefined })}>
-              <icons.Trash2 className='h-3 w-3' />
+              <Trash2 className='h-3 w-3' />
             </Button>
           ) : null}
           <input ref={inputRef} type='file' accept='image/*' className='hidden' onChange={handlePick} />
@@ -154,7 +149,7 @@ export function AgentInspector({
         <Label>Name</Label>
         <Input
           value={data.name ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ name: e.target.value })}
           placeholder='Agent name'
         />
       </div>
@@ -327,7 +322,7 @@ function LocalProfileFields({
               onClick={loadModels}
               disabled={loadingModels}
             >
-              <icons.RefreshCw className={`size-2.5 mr-1 ${loadingModels ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`size-2.5 mr-1 ${loadingModels ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
           ) : null}
@@ -420,7 +415,7 @@ function LocalProfileFields({
         <Input
           className='h-8 text-xs'
           value={data.baseUrl ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ baseUrl: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ baseUrl: e.target.value })}
           placeholder='Provider default'
         />
         <p className='text-[10px] text-muted-foreground'>Optional OpenAI-compatible endpoint override.</p>
@@ -431,7 +426,7 @@ function LocalProfileFields({
             <input
               type='checkbox'
               checked={data.responsesApi ?? false}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setResponsesApi(e.target.checked)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setResponsesApi(e.target.checked)}
               className='rounded border-input'
             />
             <Label className='text-xs cursor-pointer' onClick={() => setResponsesApi(!data.responsesApi)}>
@@ -449,7 +444,7 @@ function LocalProfileFields({
         <Input
           className='h-8 text-xs'
           value={data.containerName ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ containerName: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ containerName: e.target.value })}
           placeholder='Run on host'
         />
         <p className='text-[10px] text-muted-foreground'>
@@ -461,7 +456,7 @@ function LocalProfileFields({
           <input
             type='checkbox'
             checked={data.autoUnloadIdle ?? false}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ autoUnloadIdle: e.target.checked })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ autoUnloadIdle: e.target.checked })}
             className='rounded border-input'
           />
           <Label
@@ -484,7 +479,7 @@ function LocalProfileFields({
               min={1}
               step={1}
               value={data.autoUnloadIdleMinutes ?? ''}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 updateData({
                   autoUnloadIdleMinutes: e.target.value === '' ? undefined : Number(e.target.value),
                 })
@@ -542,6 +537,7 @@ function OauthAccountSection({ adapterId, nodeId, homeKey }: { adapterId: string
   }, [adapterId, nodeId])
 
   // homeKey is a trigger, not an input: the server reads the home from the node.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: homeKey is only a re-run trigger, the effect does not read it
   useEffect(() => {
     setLogin(null)
     setCode('')
@@ -686,7 +682,7 @@ function OauthAccountSection({ adapterId, nodeId, homeKey }: { adapterId: string
           <div className='flex items-center gap-2'>
             <Input
               value={code}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCode(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setCode(e.target.value)}
               placeholder='Authorization code'
               className='h-8 text-xs'
             />
@@ -721,7 +717,7 @@ function NativeProfileFields({ data, updateData }: { data: AgentData; updateData
           className='text-xs'
           rows={4}
           value={data.systemPrompt ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
           placeholder='Custom harness system prompt…'
         />
       </div>
@@ -734,7 +730,7 @@ function NativeProfileFields({ data, updateData }: { data: AgentData; updateData
           max={2}
           step={0.1}
           value={data.temperature ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          onChange={(e: ChangeEvent<HTMLInputElement>) =>
             updateData({ temperature: e.target.value === '' ? undefined : Number(e.target.value) })
           }
           placeholder='Provider default'
@@ -777,7 +773,7 @@ function ContextWindowField({ data, updateData }: { data: AgentData; updateData:
         min={0}
         step={1000}
         value={data.contextWindow ?? ''}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+        onChange={(e: ChangeEvent<HTMLInputElement>) =>
           updateData({ contextWindow: e.target.value === '' ? undefined : Number(e.target.value) })
         }
         placeholder='Reported by the harness'

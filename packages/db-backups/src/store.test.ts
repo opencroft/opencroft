@@ -28,7 +28,8 @@ const dataDirectory = join(workdir, 'data')
 // scope, and importing @opencroft/db opens the database during evaluation. A
 // static import of either would have been resolved before any of this ran.
 process.env.OPENCROFT_DATA_DIR = dataDirectory
-process.env.PGLITE_PATH = join(workdir, 'pglite')
+process.env.OPENCROFT_PGLITE_PATH = join(workdir, 'pglite')
+delete process.env.OPENCROFT_DATABASE_URL
 delete process.env.DATABASE_URL
 
 mkdirSync(dataDirectory, { recursive: true })

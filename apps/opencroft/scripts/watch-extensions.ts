@@ -5,6 +5,7 @@ import { buildExtension } from '@/app/_authed/(extension-runtime)/_server/compil
 import { listAllExtensionIds } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
 import { extDir, folderOf } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { compileErrorLocation } from '@/app/_authed/(extension-runtime)/_types'
 
 const DEBOUNCE_MS = 300
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -18,7 +19,7 @@ async function rebuild(extensionId: string) {
       console.log(`${label} compiled ✓`)
     } else {
       for (const e of result.errors) {
-        console.error(`${label} ${e.file}:${e.line ?? '?'}  ${e.message}`)
+        console.error(`${label} ${compileErrorLocation(e)}  ${e.message}`)
       }
     }
   } catch (err) {

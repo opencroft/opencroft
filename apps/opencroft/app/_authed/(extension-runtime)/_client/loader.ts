@@ -2,8 +2,10 @@
 
 import { preloadIcons } from 'ui/media/named-icon'
 
+import { clientsProviding, clientsWithSettingsPages } from '@/app/_authed/(extension-runtime)/_client/bundles-to-load'
 import type { ExtensionDeclaration, LoadedExtensionDeclaration } from '@/app/_authed/(extension-runtime)/_client/host'
 import { loadedDeclaration } from '@/app/_authed/(extension-runtime)/_client/loaded-declaration'
+import { providerRegistry } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { declaredIconNames } from '@/app/_authed/(extension-runtime)/_declared-icons'
 import { extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
@@ -57,8 +59,8 @@ async function importBundle(url: string): Promise<LoadedModule> {
 //
 // An extension's PLAIN utilities share the host's `utilities` layer, so order
 // alone separates them: loaded after the host, an extension's `.hidden` would
-// override a host variant such as `sm:flex-row` arriving on a shared `@ext/ui`
-// component. Inserting first is what prevents that, and nothing else does.
+// override a host variant such as `sm:flex-row` arriving on a shared kit
+// component (`@opencroft/client/ui`). Inserting first is what prevents that, and nothing else does.
 //
 // Its VARIANT utilities no longer depend on this. They are emitted into a
 // later cascade layer (see _server/css-cascade-layers.ts), which outranks
@@ -128,19 +130,116 @@ export async function loadExtension(
   return decl
 }
 
+// One listing serves every load that starts while it is on its way, so a page
+// mounting several extension surfaces at once asks once. It also fixes the
+// order provided entries are shown in, whichever extensions load first.
+let listing: Promise<ExtensionClientInfo[]> | null = null
+
+function listClients(): Promise<ExtensionClientInfo[]> {
+  listing ??= listExtensionClients()
+    .then((clients) => {
+      providerRegistry.setOrder(clients.map((client) => client.id))
+      return clients
+    })
+    .finally(() => {
+      listing = null
+    })
+  return listing
+}
+
+// Each listed build is imported once per page, however many surfaces ask for
+// it. A failed import is not kept, so the next load tries again.
+const imports = new Map<string, Promise<LoadedExtensionDeclaration | null>>()
+
+function importOnce(client: ExtensionClientInfo): Promise<LoadedExtensionDeclaration | null> {
+  const key = `${client.id}@${client.clientVersion}`
+  let pending = imports.get(key)
+  if (!pending) {
+    pending = importExtension(client, client.clientVersion).then((decl) => {
+      if (!decl) {
+        imports.delete(key)
+      }
+      return decl
+    })
+    imports.set(key, pending)
+  }
+  return pending
+}
+
+// The server reads what a bundle declares off the bundle itself (see
+// _server/provided-points.ts). A point or settings page it registers outside
+// that reading is missing wherever only the listing loads the bundle, so it is
+// reported rather than left to be noticed as an absent panel.
+function reportUnlistedPoints(client: ExtensionClientInfo, decl: LoadedExtensionDeclaration): void {
+  const listed = client.providedPoints
+  const unlisted = listed ? Object.keys(decl.provides ?? {}).filter((point) => !listed.includes(point)) : []
+  if (client.hasSettingsPages === false && (decl.settings ?? []).length > 0) {
+    unlisted.push('settings pages')
+  }
+  if (unlisted.length > 0) {
+    console.error(
+      `[ext] ${client.id}: registers ${unlisted.join(', ')}, which its listing does not name, so it can be missing where only that is shown`,
+    )
+  }
+}
+
+async function loadClients(clients: ExtensionClientInfo[]): Promise<LoadedExtensionDeclaration[]> {
+  // Imported concurrently. `injectStyles` still runs in listing order — each
+  // call happens synchronously before its first await — so the cascade order
+  // of the extension stylesheets is unaffected.
+  const declarations = await Promise.all(clients.map(importOnce))
+  const loaded: LoadedExtensionDeclaration[] = []
+  declarations.forEach((decl, index) => {
+    if (decl) {
+      reportUnlistedPoints(clients[index], decl)
+      extensionRegistry.register(decl)
+      loaded.push(decl)
+    }
+  })
+  return loaded
+}
+
+/** Every extension, for the surfaces that show any of them: the canvas. */
 export async function loadAllExtensions(): Promise<LoadedExtensionDeclaration[]> {
   // Started beside the listing rather than after it: every bundle waits for the
   // host. A failure here is reported by each import that awaits it.
   installHost().catch(() => {})
-  const clients = await listExtensionClients()
-  // Imported concurrently: the previous serial loop paid one round trip per
-  // extension, back to back. `injectStyles` still runs in manifest order —
-  // each call happens synchronously before its first await — so the cascade
-  // order of the extension stylesheets is unaffected.
-  const declarations = await Promise.all(clients.map((client) => importExtension(client, client.clientVersion)))
-  const loaded = declarations.filter((decl): decl is LoadedExtensionDeclaration => decl !== null)
-  for (const decl of loaded) {
-    extensionRegistry.register(decl)
+  return loadClients(await listClients())
+}
+
+/**
+ * The extensions whose bundles provide `point`, and every one whose points
+ * are not known. Nothing else is fetched, the host included: a page whose
+ * point nobody provides loads no extension code.
+ */
+export async function loadExtensionsProviding(point: string): Promise<LoadedExtensionDeclaration[]> {
+  const clients = await listClients()
+  return loadClients(clientsProviding(clients, point))
+}
+
+/** The extensions that declare settings pages, and every one not known: the settings menu's. */
+export async function loadExtensionsWithSettingsPages(): Promise<LoadedExtensionDeclaration[]> {
+  return loadClients(clientsWithSettingsPages(await listClients()))
+}
+
+// Asked once per page: an extension with no client bundle is never listed, and
+// asking again would only repeat the listing. A listing or a load that fails
+// is forgotten, so the next ref that needs the extension asks again.
+const askedFor = new Set<string>()
+
+/** The extension `extensionId`, when something outside the canvas shows one of its node types. */
+export async function loadExtensionById(extensionId: string): Promise<void> {
+  if (extensionRegistry.getById(extensionId) || askedFor.has(extensionId)) {
+    return
   }
-  return loaded
+  askedFor.add(extensionId)
+  let loaded = false
+  try {
+    const listed = (await listClients()).filter((client) => client.id === extensionId)
+    loaded = (await loadClients(listed)).length === listed.length
+  } finally {
+    if (!loaded) {
+      askedFor.delete(extensionId)
+    }
+  }
 }

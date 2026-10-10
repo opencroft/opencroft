@@ -18,14 +18,10 @@ import type { AttachmentRef, PromptAttachment } from 'agent-client/attachments'
 import { eq, inArray } from 'drizzle-orm'
 import sharp from 'sharp'
 
-/**
- * What a reader may attach.
- *
- * The list is what a vision model is actually served by the providers we reach,
- * not everything a browser will hand over: an SVG is a script host rather than
- * a picture, and a TIFF is a file no endpoint here accepts.
- */
-export const ATTACHABLE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+import { VISION_MIME_TYPES } from '@/app/_authed/(agent)/_lib/vision-image'
+
+/** What a reader may attach: what a vision model is served (see VISION_MIME_TYPES). */
+export const ATTACHABLE_MIME_TYPES = VISION_MIME_TYPES
 
 /**
  * The hard ceiling on one stored image, in decoded bytes.

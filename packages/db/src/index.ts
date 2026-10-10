@@ -13,7 +13,8 @@ const globalForDb = globalThis as unknown as {
   __opencroftDbClosing?: Promise<void>
 }
 
-const handle = await (globalForDb.__opencroftDb ??= openDb())
+globalForDb.__opencroftDb ??= openDb()
+const handle = await globalForDb.__opencroftDb
 
 export const db = handle.db
 
@@ -29,7 +30,8 @@ export const db = handle.db
  * the honest outcome for a caller still working during shutdown.
  */
 export function closeDb(): Promise<void> {
-  return (globalForDb.__opencroftDbClosing ??= handle.close())
+  globalForDb.__opencroftDbClosing ??= handle.close()
+  return globalForDb.__opencroftDbClosing
 }
 
 export { migrationsFolder, openDb } from './connect'

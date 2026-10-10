@@ -2,7 +2,7 @@
 // replacing all existing data in one transaction. The schema is migrated to the
 // current version first, so older backups load cleanly.
 //   node scripts/restore.ts <backup.json>
-// Honors the usual DATABASE_URL / PGLITE_PATH / DB_MIGRATIONS_DIR env.
+// Honors the usual OPENCROFT_DATABASE_URL / OPENCROFT_PGLITE_PATH / OPENCROFT_DB_MIGRATIONS_DIR env.
 
 import fs from 'node:fs'
 

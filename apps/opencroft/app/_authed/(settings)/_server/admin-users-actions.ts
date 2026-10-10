@@ -24,13 +24,25 @@ import {
 import { createServerFn } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 
+import { userAvatarUrl } from '@/app/_server/user-avatar'
+
+/**
+ * An account as the users screens get it: the picture as the address to draw
+ * it from (see `userAvatarUrl`), never the stored bytes, so the list does not
+ * carry every account's picture inside it.
+ */
+export type AdminUser = Omit<AdminListedUser, 'image'> & { avatarUrl: string | null }
+
 export const listUsers = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<AdminListedUser[]> => listUsersAsAdmin(getRequest()),
+  async (): Promise<AdminUser[]> => (await listUsersAsAdmin(getRequest())).map(adminUserOf),
 )
 
 export const getUser = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((userId: string) => userId)
-  .handler(async ({ data: userId }): Promise<AdminListedUser | null> => getUserAsAdmin(getRequest(), userId))
+  .handler(async ({ data: userId }): Promise<AdminUser | null> => {
+    const account = await getUserAsAdmin(getRequest(), userId)
+    return account ? adminUserOf(account) : null
+  })
 
 /** Whether the instance currently has exactly one administrator. */
 export const getSingleAdminWarning = createServerFn({ method: 'GET', strict: { output: false } }).handler(
@@ -75,3 +87,7 @@ export const deleteUser = createServerFn({ method: 'POST', strict: { output: fal
   .handler(async ({ data: userId }): Promise<void> => {
     await deleteUserAsAdmin(getRequest(), userId)
   })
+
+function adminUserOf({ image, ...account }: AdminListedUser): AdminUser {
+  return { ...account, avatarUrl: userAvatarUrl({ id: account.id, image }) }
+}

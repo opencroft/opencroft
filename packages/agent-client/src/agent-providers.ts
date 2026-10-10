@@ -23,6 +23,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
       'claude-sonnet-5-5',
       'claude-sonnet-5',
       'claude-sonnet-4-6',
+      'claude-haiku-5-5',
     ],
     keyEnv: 'ANTHROPIC_API_KEY',
   },

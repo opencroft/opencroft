@@ -10,9 +10,12 @@ import { Scanner } from '@tailwindcss/oxide'
 import * as esbuild from 'esbuild'
 import * as lucideIcons from 'lucide-react'
 
-import { type ExtensionUrlKind, extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { readCheckoutState } from '@/app/_authed/(extension-runtime)/_server/checkout-state'
 import { EXTENSION_UTILITY_LAYER, hasVariant } from '@/app/_authed/(extension-runtime)/_server/css-cascade-layers'
+import { deprecationWarning, logDeprecations } from '@/app/_authed/(extension-runtime)/_server/deprecations'
+import { scanDeprecatedApiUses } from '@/app/_authed/(extension-runtime)/_server/extension-api-deprecations'
+import { hostVirtualPlugin } from '@/app/_authed/(extension-runtime)/_server/host-shims'
+import { scanDeprecatedManifestKeys } from '@/app/_authed/(extension-runtime)/_server/manifest-key-deprecations'
 import {
   BUILD_PROVENANCE_FILE,
   CLIENT_ICONS_FILE,
@@ -22,6 +25,7 @@ import {
   projectRoot,
   stagingName,
 } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { recordBundleDeclares } from '@/app/_authed/(extension-runtime)/_server/provided-points'
 import type { BuildResult, CompileError, ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 
 // Resolve bundled (client) dependencies from every ancestor node_modules, so
@@ -226,426 +230,6 @@ async function scanIconUsage(src: string, metafile: esbuild.Metafile): Promise<I
   return { used: [...used].sort(), violations }
 }
 
-interface HostApiNames {
-  host: string[]
-  ui: string[]
-}
-
-// The names the client shims export are read off the API objects the browser
-// is actually handed, not restated here. A hand-kept export list beside the
-// object it mirrors is two enumerations with nothing holding them together, so
-// a capability added to the object and missed in the list is unreachable
-// through the named import every other capability uses -- and the extension
-// that tries it fails to build on a name the host really does provide.
-//
-// Loaded on demand rather than imported at the top of this file, for two
-// reasons. The module is the client host, which reaches the app's server
-// actions and from there back into this compiler, so a static import would
-// close an import cycle. It also pulls in the app's whole component tree,
-// which a build that never resolves `@ext/host` or `@ext/ui` should not pay
-// for. One load serves every build in the process.
-let hostApiNames: Promise<HostApiNames> | null = null
-
-function loadHostApiNames(): Promise<HostApiNames> {
-  hostApiNames ??= import('@/app/_authed/(extension-runtime)/_client/host')
-    .then((host) => ({
-      host: bindableNames(host.extensionHostApi),
-      ui: bindableNames(host.extensionUiApi),
-    }))
-    // A rejected promise caches as readily as a resolved one, which would turn
-    // one transient failure into every build in the process failing with no
-    // way back. Dropping the reference costs the next build a reload.
-    .catch((error: unknown) => {
-      hostApiNames = null
-      throw error
-    })
-  return hostApiNames
-}
-
-// Names that are legal object keys and legal property accesses, but cannot be
-// bound: `const { <word> } = host` is a syntax error, and the shim is a module,
-// so it is always strict mode -- which is why the strict-mode-only reservations
-// and `eval`/`arguments` belong here alongside the unconditional keywords.
-// Listed rather than discovered by trying, so a key that cannot become a named
-// export leaves extension builds working and the capability reachable through
-// the default export, while the surface test -- which demands every key of the
-// object back out of a real build -- fails and says which name has no
-// idiomatic import.
-const RESERVED_WORDS = new Set([
-  'arguments',
-  'await',
-  'break',
-  'case',
-  'catch',
-  'class',
-  'const',
-  'continue',
-  'debugger',
-  'default',
-  'delete',
-  'do',
-  'else',
-  'enum',
-  'eval',
-  'export',
-  'extends',
-  'false',
-  'finally',
-  'for',
-  'function',
-  'if',
-  'implements',
-  'import',
-  'in',
-  'instanceof',
-  'interface',
-  'let',
-  'new',
-  'null',
-  'package',
-  'private',
-  'protected',
-  'public',
-  'return',
-  'static',
-  'super',
-  'switch',
-  'this',
-  'throw',
-  'true',
-  'try',
-  'typeof',
-  'var',
-  'void',
-  'while',
-  'with',
-  'yield',
-])
-
-// What `@ext/host` declares itself rather than forwarding off the host object,
-// because each is bound to the extension being built: `createStorage`
-// namespaces by extension id, `invoke` targets this extension's own actions.
-//
-// The declarations and the names excluded from the forwarded set are one list,
-// not two beside each other. A seventh name added here is excluded by
-// construction; kept as a separate set it would be forwarded as well, and a
-// duplicate binding is a syntax error that fails every extension build rather
-// than one name.
-export function extensionScopedExports(extensionId: string): { name: string; code: string }[] {
-  const quoted = JSON.stringify(extensionId)
-  const quotedBase = JSON.stringify(extensionUrlBase(extensionId))
-  // The URL shape is defined once, in _extension-id.ts; the host's `extensionUrl`
-  // applies it, so no path is spelled out in generated code.
-  const under = (kind: ExtensionUrlKind) => `(p) => __host.extensionUrl(${quoted}, '${kind}', p)`
-  return [
-    { name: 'extensionId', code: quoted },
-    { name: 'urlBase', code: quotedBase },
-    { name: 'assetUrl', code: under('assets') },
-    { name: 'routeUrl', code: under('http') },
-    // For a URL handed outside the instance. There is no instance-origin
-    // setting, so the origin is the page's own.
-    { name: 'absoluteUrl', code: `(url = ${quotedBase}) => new URL(url, location.origin).href` },
-    { name: 'invoke', code: `(name, ...args) => __host.callAction(${quoted}, name, args)` },
-    { name: 'dispatch', code: '(nodeId, actionId, params) => __host.callNodeAction(nodeId, actionId, params)' },
-    { name: 'createStorage', code: `(key) => __host.createStorage(${quoted}, key)` },
-  ]
-}
-
-export function bindableNames(api: object): string[] {
-  return Object.keys(api).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED_WORDS.has(name))
-}
-
-// `export const { a, b } = source` -- the same destructured re-export the react
-// shim below uses, wrapped so a few hundred component names stay readable in a
-// browser's view of the bundle.
-//
-// Every forwarded name lands in the shim's own top-level scope, so the shim's
-// locals are `__`-prefixed: an API key called `host` or `ui` would otherwise
-// redeclare one, and a duplicate binding is a syntax error that fails every
-// extension build rather than one name.
-function destructuredExports(names: string[], source: string): string {
-  const lines: string[] = []
-  let line = ' '
-  for (const name of names) {
-    if (line.length + name.length + 2 > 100) {
-      lines.push(line)
-      line = ' '
-    }
-    line += ` ${name},`
-  }
-  lines.push(line)
-  return `export const {\n${lines.join('\n')}\n} = ${source};`
-}
-
-function hostVirtualPlugin(side: 'client' | 'server', extensionId: string): esbuild.Plugin {
-  return {
-    name: 'ext-host-virtual',
-    setup(build) {
-      build.onResolve({ filter: /^@ext\/host$/ }, () => ({
-        path: '@ext/host',
-        namespace: 'ext-host',
-      }))
-      build.onResolve({ filter: /^@opencroft\/server$/ }, () => ({
-        path: '@ext/host',
-        namespace: 'ext-host',
-      }))
-      build.onResolve({ filter: /^@ext\/ui$/ }, () => ({
-        path: '@ext/ui',
-        namespace: 'ext-host',
-      }))
-      build.onResolve({ filter: /^@opencroft\/client$/ }, () => ({
-        path: '@opencroft/client',
-        namespace: 'ext-host',
-      }))
-      // Redirect react imports to host's React (prevents duplicate React copies)
-      if (side === 'client') {
-        build.onResolve({ filter: /^react$/ }, () => ({
-          path: 'react',
-          namespace: 'ext-host',
-        }))
-        build.onResolve({ filter: /^react\/jsx-runtime$/ }, () => ({
-          path: 'react/jsx-runtime',
-          namespace: 'ext-host',
-        }))
-        build.onResolve({ filter: /^react-dom$/ }, () => ({
-          path: 'react-dom',
-          namespace: 'ext-host',
-        }))
-        build.onResolve({ filter: /^sonner$/ }, () => ({
-          path: 'sonner',
-          namespace: 'ext-host',
-        }))
-        build.onResolve({ filter: /^lucide-react$/ }, () => ({
-          path: 'lucide-react',
-          namespace: 'ext-host',
-        }))
-      }
-      build.onLoad({ filter: /.*/, namespace: 'ext-host' }, async (args) => {
-        if (side === 'client') {
-          return await clientHostShim(args.path, extensionId)
-        }
-        return serverHostShim(args.path)
-      })
-    },
-  }
-}
-
-async function clientHostShim(specifier: string, extensionId: string): Promise<esbuild.OnLoadResult> {
-  if (specifier === 'react') {
-    return {
-      contents: `
-const api = globalThis.__extHost;
-const React = api.host.React;
-export default React;
-export const {
-  useState, useEffect, useCallback, useMemo, useRef, useContext,
-  useReducer, useId, useLayoutEffect, useSyncExternalStore,
-  useTransition, useDeferredValue, useImperativeHandle, useDebugValue,
-  useInsertionEffect, startTransition,
-  createElement, createContext, createRef, forwardRef, memo, lazy,
-  Component, PureComponent, version,
-  Fragment, Suspense, StrictMode, Children, cloneElement, isValidElement,
-} = React;
-`,
-      loader: 'js',
-    }
-  }
-  if (specifier === 'react/jsx-runtime' || specifier === 'react/jsx-dev-runtime') {
-    return {
-      contents: `
-const React = globalThis.__extHost.host.React;
-export function jsx(type, props, key) {
-  const { children, ...rest } = props || {};
-  if (key !== undefined) { rest.key = key; }
-  return Array.isArray(children)
-    ? React.createElement(type, rest, ...children)
-    : children !== undefined
-      ? React.createElement(type, rest, children)
-      : React.createElement(type, rest);
-}
-export const jsxs = jsx;
-export const jsxDEV = jsx;
-export const Fragment = React.Fragment;
-`,
-      loader: 'js',
-    }
-  }
-  if (specifier === 'react-dom') {
-    // createPortal is real (globalThis.__extHost.host.createPortal, wired to the
-    // host app's own react-dom the same way the 'react' shim above wires up
-    // host.React) -- not stubbed to a no-op. A bare react-dom stub silently broke
-    // any extension-bundled library whose components portal internally (radix-ui's
-    // Portal, used by ContextMenu/DropdownMenu/etc.): the trigger's own state still
-    // flipped, since that's plain React state, but nothing ever mounted, with no
-    // error, because createPortal's return value was thrown away by design.
-    // flushSync stays a synchronous call-through -- forwarding it would need
-    // exposing react-dom's real flushSync too, and unlike createPortal a fallback
-    // that just runs the callback immediately is a reasonable degradation, not a
-    // silent no-op.
-    return {
-      contents: `
-const createPortal = globalThis.__extHost.host.createPortal;
-export default { createPortal };
-export { createPortal };
-export const flushSync = (fn) => fn();
-`,
-      loader: 'js',
-    }
-  }
-  if (specifier === 'sonner') {
-    // The host's own `toast`. A bundled copy of sonner keeps its toasts in a
-    // store of its own, which no Toaster on the page reads, so every toast a
-    // kit component raises would vanish without an error. Only `toast` is
-    // forwarded: the host mounts the one Toaster, and an extension importing
-    // another name fails its build rather than rendering a second one.
-    return {
-      contents: `
-const toast = globalThis.__extHost.host.toast;
-export { toast };
-export default toast;
-`,
-      loader: 'js',
-    }
-  }
-  if (specifier === 'lucide-react') {
-    // The host's icon set (see safe-icons.ts on the app side), so an extension
-    // carries no copy of its own and loads each icon the way the host does.
-    // CommonJS on purpose: esbuild reads a named import from a CommonJS module
-    // as a property access at runtime, so every icon is importable without
-    // this module listing the whole set by name.
-    return {
-      contents: 'module.exports = globalThis.__extHost.host.icons;\n',
-      loader: 'js',
-    }
-  }
-  if (specifier === '@ext/ui') {
-    const { ui: uiNames } = await loadHostApiNames()
-    return {
-      contents: `
-const __api = globalThis.__extHost;
-if (!__api) { throw new Error('Extension API not installed'); }
-const __ui = __api.ui;
-${destructuredExports(uiNames, '__ui')}
-export default __ui;
-`,
-      loader: 'js',
-    }
-  }
-  if (specifier === '@opencroft/client') {
-    // `legacy` carries the same extension-scoped names `@ext/host` exports,
-    // as properties instead of exports -- from the one list, so the two
-    // surfaces cannot come to disagree about what `createStorage` takes.
-    //
-    // The root forwards below are written out instead of being read off the UI
-    // object, because the root is a curated subset of it: packages/client's
-    // index decides what has graduated out of `legacy`, and no object holds
-    // only that. So this is the one list here that can fall behind the surface
-    // it serves -- host-api-surface.test.ts builds a probe importing every
-    // component that file declares, and a declaration with no forwarding line
-    // fails it.
-    const scoped = extensionScopedExports(extensionId)
-    return {
-      contents: `
-const __api = globalThis.__extHost;
-if (!__api) { throw new Error('Extension API not installed'); }
-const __host = __api.host;
-const __ui = __api.ui;
-export const Terminal = __ui.Terminal;
-export const SecretSelector = __ui.SecretSelector;
-export const TerminalSelector = __ui.TerminalSelector;
-export const NodeRef = __ui.NodeRef;
-export const TerminalRef = __ui.TerminalRef;
-export const TerminalList = __ui.TerminalList;
-export const describeGraphRefs = __host.describeGraphRefs;
-export const subscribeGraphRefs = __host.subscribeGraphRefs;
-export const CodeBlock = __ui.CodeBlock;
-export const CodeBlockEditor = __ui.CodeBlockEditor;
-export const Markdown = __ui.Markdown;
-export const markdownDirectiveBlocks = __ui.markdownDirectiveBlocks;
-export const MarkdownEditor = __ui.MarkdownEditor;
-export const MarkdownDiffView = __ui.MarkdownDiffView;
-export const MermaidDiagram = __ui.MermaidDiagram;
-export const callAppAction = __host.callAppAction;
-export const AppLink = __ui.AppLink;
-export const useAppHref = __ui.useAppHref;
-export const useAppLocation = __ui.useAppLocation;
-export const useAppNavigate = __ui.useAppNavigate;
-export const useAppAddressHref = __ui.useAppAddressHref;
-export const useOpenApp = __ui.useOpenApp;
-export const AppTitle = __ui.AppTitle;
-export const AppActions = __ui.AppActions;
-export const AppToolbar = __ui.AppToolbar;
-export const AppSidebar = __ui.AppSidebar;
-export const legacy = {
-  ...__host,
-  ...__ui,
-${scoped.map((entry) => `  ${entry.name}: ${entry.code},`).join('\n')}
-};
-`,
-      loader: 'js',
-    }
-  }
-  const { host: hostNames } = await loadHostApiNames()
-  const scoped = extensionScopedExports(extensionId)
-  const scopedNames = new Set(scoped.map((entry) => entry.name))
-  return {
-    contents: `
-const __api = globalThis.__extHost;
-if (!__api) { throw new Error('Extension API not installed'); }
-const __host = __api.host;
-${scoped.map((entry) => `export const ${entry.name} = ${entry.code};`).join('\n')}
-${destructuredExports(
-  hostNames.filter((name) => !scopedNames.has(name)),
-  '__host',
-)}
-export default __host;
-`,
-    loader: 'js',
-  }
-}
-
-function serverHostShim(specifier: string): esbuild.OnLoadResult {
-  if (specifier === '@ext/ui' || specifier === '@opencroft/client') {
-    return { contents: `throw new Error("${specifier} is only available on the client");`, loader: 'js' }
-  }
-  return {
-    contents: `
-const api = globalThis.__extensionServerApi;
-if (!api) { throw new Error('Extension server API not installed'); }
-const host = api.host;
-export default host;
-export const fs = host.fs;
-export const os = host.os;
-export const path = host.path;
-export const exec = host.exec;
-export const execFile = host.execFile;
-export const cacheDir = host.cacheDir;
-export const dataDir = host.dataDir;
-export const crypto = host.crypto;
-export const secrets = host.secrets;
-export const settings = host.settings;
-export const graph = host.graph;
-export const storage = host.storage;
-export const keyStore = host.keyStore;
-export const secretsStore = host.secretsStore;
-export const localhost = host.localhost;
-export const wsl = host.wsl;
-export const terminal = host.terminal;
-export const ssh = host.ssh;
-export const execContext = host.execContext;
-export const groupChats = host.groupChats;
-export const users = host.users;
-export const events = host.events;
-export const extensionId = host.extensionId;
-export const urlBase = host.urlBase;
-export const assetUrl = host.assetUrl;
-export const routeUrl = host.routeUrl;
-export const absoluteUrl = host.absoluteUrl;
-`,
-    loader: 'js',
-  }
-}
-
 async function readDependencyNames(sourceDir: string): Promise<string[]> {
   try {
     const raw = await fs.readFile(path.join(sourceDir, 'package.json'), 'utf-8')
@@ -803,17 +387,23 @@ async function publishClientBuild(stagingDir: string, outDir: string): Promise<v
   await pruneOrphanChunks(outDir, new Set(nonEntry))
 }
 
-async function compileServerSide(
-  location: BuildLocation,
-  manifest: ExtensionManifest,
-): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+/** One side's build: its errors and warnings, and the source files it bundled (relative to the extension). */
+interface SideResult {
+  errors: CompileError[]
+  warnings: CompileError[]
+  sources: string[]
+}
+
+const NOTHING_BUILT: SideResult = { errors: [], warnings: [], sources: [] }
+
+async function compileServerSide(location: BuildLocation, manifest: ExtensionManifest): Promise<SideResult> {
   const src = location.sourceDir
   const outDir = location.distDir
   await fs.mkdir(outDir, { recursive: true })
 
   const entry = manifest.main ? path.join(src, manifest.main) : await pickEntry(src, SERVER_ENTRY_CANDIDATES)
   if (!entry) {
-    return { errors: [], warnings: [] }
+    return NOTHING_BUILT
   }
 
   const finalOutfile = path.join(outDir, 'server.js')
@@ -857,6 +447,8 @@ async function compileServerSide(
       jsx: 'automatic',
       plugins: [hostVirtualPlugin('server', location.extensionId)],
       external: serverExternals,
+      // For the deprecation scan, read after the build has settled.
+      metafile: true,
       logLevel: 'silent',
       write: true,
       absWorkingDir: src,
@@ -866,29 +458,28 @@ async function compileServerSide(
     return {
       errors: toCompileErrors(result.errors),
       warnings: toCompileErrors(result.warnings),
+      sources: Object.keys(result.metafile?.inputs ?? {}),
     }
   } catch (err) {
     const buildErr = err as esbuild.BuildFailure
     return {
       errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
       warnings: buildErr.warnings ? toCompileErrors(buildErr.warnings) : [],
+      sources: [],
     }
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
-async function compileClientSide(
-  location: BuildLocation,
-  manifest: ExtensionManifest,
-): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+async function compileClientSide(location: BuildLocation, manifest: ExtensionManifest): Promise<SideResult> {
   const src = location.sourceDir
   const outDir = location.distDir
   await fs.mkdir(outDir, { recursive: true })
 
   const entry = await pickEntry(src, CLIENT_ENTRY_CANDIDATES)
   if (!entry) {
-    return { errors: [], warnings: [] }
+    return NOTHING_BUILT
   }
 
   // Splitting can emit any number of chunks alongside the entry, and none of
@@ -927,8 +518,8 @@ async function compileClientSide(
       minify: true,
       jsx: 'automatic',
       plugins: [hostVirtualPlugin('client', location.extensionId), clientStubPlugin(stubSpecifiers, matchedStubs)],
-      // Only for scanIconUsage below, read after the build has settled
-      // — see its own comment for why that must not happen during the build.
+      // For scanIconUsage below and the deprecation scan, read after the build
+      // has settled — see scanIconUsage for why that must not happen during it.
       metafile: true,
       logLevel: 'silent',
       write: true,
@@ -939,6 +530,9 @@ async function compileClientSide(
     // called right now — nobody ever requests the staging path.
     await versionSourceMapLink(path.join(stagingDir, 'client.js'), 'client.js.map')
     await publishClientBuild(stagingDir, outDir)
+    // Read before the build reports success, so the first listing after a
+    // recompile already knows where the new bundle is used.
+    await recordBundleDeclares(outDir)
     // A declared stub that never matched an import is the same class of
     // mistake as a typo'd dependency name — reported as a build error rather
     // than silently doing nothing, so the extension author finds out from
@@ -960,6 +554,7 @@ async function compileClientSide(
         })),
       ],
       warnings: toCompileErrors(result.warnings),
+      sources: Object.keys(result.metafile?.inputs ?? {}),
     }
   } catch (err) {
     await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {})
@@ -967,6 +562,7 @@ async function compileClientSide(
     return {
       errors: buildErr.errors ? toCompileErrors(buildErr.errors) : [{ file: entry, message: String(err) }],
       warnings: buildErr.warnings ? toCompileErrors(buildErr.warnings) : [],
+      sources: [],
     }
   }
 }
@@ -975,7 +571,7 @@ async function compileSide(
   location: BuildLocation,
   manifest: ExtensionManifest,
   side: 'client' | 'server',
-): Promise<{ errors: CompileError[]; warnings: CompileError[] }> {
+): Promise<SideResult> {
   return side === 'client' ? compileClientSide(location, manifest) : compileServerSide(location, manifest)
 }
 
@@ -1262,7 +858,15 @@ async function buildExtensionNow(location: BuildLocation, manifest: ExtensionMan
     compileSide(location, manifest, 'server'),
   ])
   const errors = [...client.errors, ...server.errors]
-  const warnings = [...client.warnings, ...server.warnings]
+  const deprecations = [
+    ...(await scanDeprecatedManifestKeys(location.sourceDir, client.sources)),
+    ...(await scanDeprecatedApiUses(location.sourceDir, [
+      { side: 'client', files: client.sources },
+      { side: 'server', files: server.sources },
+    ])),
+  ]
+  logDeprecations(location.extensionId, deprecations)
+  const warnings = [...client.warnings, ...server.warnings, ...deprecations.map(deprecationWarning)]
   if (errors.length === 0) {
     errors.push(...(await compileClientCss(location)))
   }

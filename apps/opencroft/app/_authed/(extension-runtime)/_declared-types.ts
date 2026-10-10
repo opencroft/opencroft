@@ -29,16 +29,37 @@ import type { ExtensionHandleType } from '@/app/_authed/(extension-runtime)/_typ
 const CORE_HANDLE_TYPES = new Set(coreManifest.handleTypes.map((handleType) => handleType.id))
 const CORE_TYPES = new Set([...coreManifest.nodes.map((node) => node.type), ...CORE_HANDLE_TYPES])
 
+// Each (extension, bare name) is warned about once per process: the client
+// resolves on every render of a pin.
+const warnedBareCoreRefs = new Set<string>()
+
 /**
  * A node or handle type an extension's code names at runtime: bare for its
  * own, qualified for another's. Code written while every extension's types
  * shared one namespace names core's types bare as well, so a bare name the
- * extension does not declare itself, and core does, is core's. `declares`
+ * extension does not declare itself, and core does, is core's. That reading
+ * is deprecated and warned about, once per extension and name. `declares`
  * answers whether the extension declares a qualified type.
  */
 export function resolveCodeTypeRef(extensionId: string, ref: string, declares: (type: string) => boolean): string {
   const own = resolveTypeRef(extensionId, ref)
-  return namesCoreType(ref) && !declares(own) ? qualifyType(CORE_EXTENSION_ID, ref) : own
+  if (!namesCoreType(ref) || declares(own)) {
+    return own
+  }
+  const core = qualifyType(CORE_EXTENSION_ID, ref)
+  const key = `${extensionId}\0${ref}`
+  if (!warnedBareCoreRefs.has(key)) {
+    warnedBareCoreRefs.add(key)
+    console.warn(
+      `[ext] ${extensionId}: the bare "${ref}" is read as core's type, which is deprecated — name it "${core}"`,
+    )
+  }
+  return core
+}
+
+/** Whether `ref` is a bare handle type core declares: what a bare name under the deprecated `contextType` meant. */
+export function isCoreHandleType(ref: string): boolean {
+  return CORE_HANDLE_TYPES.has(ref)
 }
 
 /** Whether `ref` is a bare name core declares: the one case resolveCodeTypeRef asks `declares`. */
@@ -128,7 +149,7 @@ function qualifyHandle<H extends DeclaredHandle>(extensionId: string, handle: H)
       `Extension ${extensionId} declares a handle carrying "${ref ?? ''}": a handle type is the extension's own, bare, or another's, qualified as <owner>.<extension>.<type>`,
     )
   }
-  if (handleType === undefined && CORE_HANDLE_TYPES.has(ref)) {
+  if (handleType === undefined && isCoreHandleType(ref)) {
     return { ...rest, handleType: qualifyType(CORE_EXTENSION_ID, ref) }
   }
   return { ...rest, handleType: resolveTypeRef(extensionId, ref) }

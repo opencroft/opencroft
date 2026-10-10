@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 
 import { declaredTypesOf, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
 
@@ -22,6 +22,25 @@ test("a bare core name the extension declares itself is the extension's own", ()
 test("a bare name core does not declare is the extension's own, and a qualified one is kept", () => {
   assert.equal(resolveCodeTypeRef(ID, 'gauge', nothingDeclared), 'acme.widgets.gauge')
   assert.equal(resolveCodeTypeRef(ID, 'other.ext.terminal-context', nothingDeclared), 'other.ext.terminal-context')
+})
+
+test("reading a bare name as core's type warns once per extension and name, and nothing else warns", () => {
+  const log = mock.method(console, 'warn', () => {})
+  try {
+    resolveCodeTypeRef('acme.once', 'text-stream', nothingDeclared)
+    resolveCodeTypeRef('acme.once', 'text-stream', nothingDeclared)
+    resolveCodeTypeRef('acme.once', 'gauge', nothingDeclared)
+    resolveCodeTypeRef('acme.once', 'builtin.core.section', nothingDeclared)
+    resolveCodeTypeRef('acme.once', 'section', (type) => type === 'acme.once.section')
+    assert.deepEqual(
+      log.mock.calls.map((call) => call.arguments[0]),
+      [
+        '[ext] acme.once: the bare "text-stream" is read as core\'s type, which is deprecated — name it "builtin.core.text-stream"',
+      ],
+    )
+  } finally {
+    log.mock.restore()
+  }
 })
 
 test('the declared types of a read manifest are its nodes, handle types and Apps', () => {

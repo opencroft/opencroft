@@ -1,5 +1,5 @@
 import { db, user, username as usernames } from '@opencroft/db'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull, or } from 'drizzle-orm'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import {
@@ -116,6 +116,42 @@ export async function currentUsername(principal: Principal): Promise<string | nu
     .limit(1)
   return row?.username ?? null
 }
+
+/**
+ * The handles these accounts go by now, in one query, keyed by
+ * `principalKey`. An account not given a handle yet is absent.
+ */
+export async function currentUsernames(principals: Principal[]): Promise<Map<string, string>> {
+  const userIds = principals.flatMap((principal) => (principal.kind === 'user' ? [principal.id] : []))
+  const agentNodeIds = principals.flatMap((principal) => (principal.kind === 'agent' ? [principal.id] : []))
+  const owners = [
+    ...(userIds.length ? [inArray(usernames.userId, userIds)] : []),
+    ...(agentNodeIds.length ? [inArray(usernames.agentNodeId, agentNodeIds)] : []),
+  ]
+  if (owners.length === 0) {
+    return new Map()
+  }
+  const rows = await db
+    .select({
+      username: usernames.username,
+      principalType: usernames.principalType,
+      userId: usernames.userId,
+      agentNodeId: usernames.agentNodeId,
+    })
+    .from(usernames)
+    .where(and(or(...owners), isNull(usernames.retiredAt)))
+  const found = new Map<string, string>()
+  for (const row of rows) {
+    const principal = toPrincipal(row)
+    if (principal) {
+      found.set(principalKey(principal), row.username)
+    }
+  }
+  return found
+}
+
+/** One string per account, for keying maps by account. */
+export const principalKey = (principal: Principal) => `${principal.kind}:${principal.id}`
 
 function ownerMatches(principal: Principal) {
   return principal.kind === 'agent' ? eq(usernames.agentNodeId, principal.id) : eq(usernames.userId, principal.id)

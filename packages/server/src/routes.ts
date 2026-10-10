@@ -1,4 +1,8 @@
-import type { HostUser } from './host'
+/**
+ * `@opencroft/server/routes` — the extension's HTTP routes, exported as
+ * `routes` from its server module.
+ */
+import type { HostUser } from './people'
 
 /**
  * A public HTTP handler, served at `<urlBase>/http/<path>`, where `urlBase`

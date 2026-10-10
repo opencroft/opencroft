@@ -5,30 +5,22 @@
 // with nothing re-encoding them in between.
 //
 // A picture is only re-encoded when it has to be. A screenshot pasted at
-// retina size is several megabytes of pixels no vision model will look at: the
-// providers resize anything past roughly 1568px on its long edge before the
-// model sees it, so sending more is paying to transmit detail that is thrown
-// away at the other end. Under that, the file goes exactly as it arrived —
-// lossless stays lossless, which for a screenshot of text is the difference
-// between readable and not.
+// retina size is several megabytes of pixels no vision model will look at (see
+// VISION_MAX_EDGE). Under that, the file goes exactly as it arrived — lossless
+// stays lossless, which for a screenshot of text is the difference between
+// readable and not. The re-encode threshold sits well under the store's own
+// 4 MB ceiling: it decides how good the picture is, and the ceiling decides
+// whether it is allowed at all.
 //
 // A GIF is never re-encoded: a canvas holds one frame, so re-encoding an
 // animation silently turns it into a still. It is offered as-is and refused by
 // the store if it is too large, which is the honest failure.
 
-/** The long edge past which a picture is downscaled, in pixels. */
-const MAX_EDGE = 1568
-
-/**
- * The size past which a picture is re-encoded, in base64 characters.
- *
- * Base64 is one character per byte to within a rounding error, so this is
- * roughly 1.5 MB. Well under the store's own 4 MB ceiling: this decides how
- * good the picture is, and that decides whether it is allowed at all.
- */
-const REENCODE_ABOVE_CHARS = 1_500_000
-
-const QUALITY_STEPS = [0.92, 0.85, 0.75, 0.6]
+import {
+  VISION_MAX_EDGE as MAX_EDGE,
+  VISION_QUALITY_STEPS as QUALITY_STEPS,
+  VISION_REENCODE_ABOVE_CHARS as REENCODE_ABOVE_CHARS,
+} from '@/app/_authed/(agent)/_lib/vision-image'
 
 /** What one attached picture is, on its way to the store. */
 export interface AttachableImage {

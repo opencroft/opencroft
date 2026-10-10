@@ -44,7 +44,7 @@ import type { SessionActivitySnapshot } from '@/lib/sse-events'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-session-access-test-'))
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -56,10 +56,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
-// No BETTER_AUTH_SECRET in a test process — Better Auth needs a secret
-// configured before it will sign or verify a session at all.
-process.env.NODE_ENV = 'development'
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { db, space, groupChatMember, groupChatThread, groupChatThreadAlias } = await import('@opencroft/db')
 const model = await import('./model')
@@ -116,9 +113,9 @@ await db.insert(space).values({
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')

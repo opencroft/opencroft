@@ -4343,14 +4343,30 @@ test('a store that throws costs durability, never a message', async () => {
 // ── Presence: how often the agent reads ───────────────────────────────────
 //
 // `queue` says how a message relates to what is held; Presence says when what
-// is held is handed over. These use a `custom` cadence of a few milliseconds so
-// the real timer runs — a fake clock would prove the arithmetic (which
-// presence.test.ts already does) and not the thing that actually failed to
-// happen before this existed: nobody asking again.
+// is held is handed over. These run the client's own timer: the arithmetic
+// alone (presence.test.ts) would not show what these pin: that the held message
+// is actually handed over, with nobody asking again. Most use a `custom` cadence
+// of a few milliseconds in real time; those about exactly when in the window a
+// delivery lands fake the clock instead.
 
 const WINDOW_MS = 60
-// Comfortably past a WINDOW_MS wait, without making the suite slow.
+
+// Past a WINDOW_MS wait, for the tests that check nothing happened once the
+// window closed. A loaded machine can run the presence timer later than this,
+// and then those tests miss a bug rather than fail.
 const afterWindow = () => new Promise((resolve) => setTimeout(resolve, WINDOW_MS + 40))
+
+// For the tests that check something DID happen: waits on the outcome itself,
+// so a timer a loaded machine runs late is not a failure.
+async function until(condition: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      assert.fail(`timed out waiting until ${what}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
 
 test('a message to an IDLE session waits for the window, then arrives on its own', async () => {
   // The case with no turn boundary coming. Nothing else would ever ask again,
@@ -4362,12 +4378,56 @@ test('a message to an IDLE session waits for the window, then arrives on its own
   assert.deepEqual(deliveries(h), [], 'nothing may reach the agent before its reading window')
   assert.deepEqual(queueSnapshots(h.events).at(-1), ['hello'], 'and it shows as waiting meanwhile')
 
-  await afterWindow()
+  await until(() => deliveries(h).length > 0, 'the window delivers')
   assert.deepEqual(deliveries(h), [['hello']])
   // Announced as waiting, then cleared when the window let it go — the whole
   // sequence, so an extra state appearing between them is a failure and not
   // something a tail check would absorb.
   assert.deepEqual(queueSnapshots(h.events), [['hello'], []])
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('the timer closing a reading window delivers, even with the wall clock a moment behind it', async (t) => {
+  // A timer can fire a millisecond before Date.now() says its wait is over.
+  // Only the timer is faked here, so it fires with the wall clock still short
+  // of the window's end. Measured again by the wall clock, the message would be
+  // held once more and announced as waiting a second time.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: 60_000 })
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  await h.client.prompt(h.sessionId, 'hello', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.deepEqual(deliveries(h), [], 'held for the window')
+
+  t.mock.timers.tick(60_000)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(deliveries(h), [['hello']])
+  assert.deepEqual(queueSnapshots(h.events), [['hello'], []], 'announced as waiting once, then cleared')
+  t.mock.timers.reset()
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a timer armed for a message taken back does not let the next one skip its own window', async (t) => {
+  // Taking a message back leaves the timer armed for it. When that timer
+  // fires, the message now oldest is half way through its window, and must
+  // wait out the rest.
+  const h = await setup()
+  h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
+  await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  t.mock.timers.tick(WINDOW_MS / 2)
+  await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const first = h.events.filter((event): event is Extract<ChatEvent, { kind: 'queue' }> => event.kind === 'queue').at(-1)
+    ?.items[0]
+  assert.ok(first?.text === 'first', 'the first message is the one held longest')
+  h.client.removeQueued(h.sessionId, first.id)
+
+  t.mock.timers.tick(WINDOW_MS / 2)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(deliveries(h), [], 'the first message’s window is not the second’s')
+  t.mock.timers.tick(WINDOW_MS / 2)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(deliveries(h), [['second']], 'delivered when its own window closes')
+  t.mock.timers.reset()
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -4379,25 +4439,29 @@ test('everything accumulated in the window arrives as ONE delivery', async () =>
   await h.client.prompt(h.sessionId, 'three', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   assert.deepEqual(deliveries(h), [])
 
-  await afterWindow()
+  await until(() => deliveries(h).length > 0, 'the window delivers')
   assert.deepEqual(deliveries(h), [['one', 'two', 'three']], 'one turn, not three')
   // No interrupt happened, so nothing is explained: the tags are the framing.
   assert.equal(h.promptCalls[0].startsWith('<agent-message'), true, h.promptCalls[0])
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a later message does not extend the wait the first one started', async () => {
+test('a later message does not extend the wait the first one started', async (t) => {
   // The window is measured from the OLDEST. If each arrival reset it, a steady
   // trickle would hold the queue shut forever — which is the failure the
-  // oldest-message rule exists to prevent.
+  // oldest-message rule exists to prevent. Both clocks are faked together, so
+  // "at the first message's deadline" is exact rather than a guess at timing.
   const h = await setup()
   h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
   await h.client.prompt(h.sessionId, 'first', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
-  await new Promise((resolve) => setTimeout(resolve, WINDOW_MS / 2))
+  t.mock.timers.tick(WINDOW_MS / 2)
   await h.client.prompt(h.sessionId, 'second', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
 
-  await new Promise((resolve) => setTimeout(resolve, WINDOW_MS / 2 + 40))
+  t.mock.timers.tick(WINDOW_MS / 2)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(deliveries(h), [['first', 'second']], 'due on the first message its own window')
+  t.mock.timers.reset()
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -4533,7 +4597,7 @@ test('a command does not drag the messages behind it out of the window', async (
   assert.deepEqual(h.promptCalls, ['/compact'], 'the command went; the message did not')
 
   h.endTurn()
-  await afterWindow()
+  await until(() => h.promptCalls.length > 1, 'the window delivers')
   assert.deepEqual(partsOf(h.promptCalls[1]), ['after'])
   await h.client.deleteSession(h.sessionId)
 })
@@ -5383,7 +5447,7 @@ test('a wake does not flood a session whose cadence is still holding', async () 
   // below can only be the window the wake itself re-armed. That is the half
   // that separates "held by Presence" from "left until something else happens
   // along to trigger a drain".
-  await afterWindow()
+  await until(() => deliveries(h).length > 0, 'the window delivers')
   assert.deepEqual(deliveries(h), [['held']], 'and the window the wake armed still fires on its own')
   h.endTurn()
   await settle()

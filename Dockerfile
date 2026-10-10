@@ -45,7 +45,7 @@ ENV HOSTNAME=0.0.0.0
 ENV OPENCROFT_CACHE_DIR=/home/node/.cache
 # The boot-time migrator (packages/db) reads its migrations from this path; the
 # workspace sources are copied to /app/packages below.
-ENV DB_MIGRATIONS_DIR=/app/packages/db/migrations
+ENV OPENCROFT_DB_MIGRATIONS_DIR=/app/packages/db/migrations
 
 # Nitro build output: the self-contained Node server (.output/server, incl. the
 # /api/ws/terminal WebSocket route) plus the public client assets (.output/public).

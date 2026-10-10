@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 
+import { loadExtensionById } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { extensionIdOfType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { describeGraphRefs as describeGraphRefsOnServer } from '@/app/_authed/(extension-runtime)/_server/actions'
 import type { GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
 import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
@@ -56,6 +58,18 @@ function describe(id: string): Promise<GraphRefInfo | null> {
       setTimeout(flush, 0)
     }
   })
+}
+
+// A node is shown with its type's name, icon and handles, which come from the
+// extension declaring the type. Outside the canvas nothing else need have
+// loaded that extension, so it is loaded before the answer is handed out.
+async function describeWithType(id: string): Promise<GraphRefInfo | null> {
+  const info = await describe(id)
+  const extensionId = info?.kind === 'node' ? extensionIdOfType(info.type) : null
+  if (extensionId) {
+    await loadExtensionById(extensionId).catch(() => {})
+  }
+  return info
 }
 
 const graphRefListeners = new Set<() => void>()
@@ -160,7 +174,7 @@ export async function describeGraphRefs(refs: string[]): Promise<Record<string, 
   const entries = await Promise.all(
     refs.map(async (ref) => {
       // Asked whole, so an App's answer can carry its name for the handle.
-      const info = await describe(ref)
+      const info = await describeWithType(ref)
       return [ref, info ? describeGraphRef(info, splitTarget(ref).handleId) : null] as const
     }),
   )
@@ -183,7 +197,7 @@ export function useGraphRef(id: string): GraphRefState {
     }
     let current = true
     setState({ status: 'loading' })
-    describe(id).then((info) => {
+    describeWithType(id).then((info) => {
       if (current) {
         setState(info ? { status: 'known', info } : { status: 'unknown' })
       }

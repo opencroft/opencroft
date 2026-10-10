@@ -1,19 +1,8 @@
-import { legacy } from '@opencroft/client'
-
-const {
-  Button,
-  FileBrowser,
-  FileManagerProvider,
-  NodeCard,
-  NodeResizer,
-  React,
-  icons,
-  useNodeAccent,
-  useReactFlow,
-  useUpdateNodeInternals,
-} = legacy
-
-const { useCallback, useEffect, useState } = React
+import { NodeCard, NodeResizer, useNodeAccent, useReactFlow, useUpdateNodeInternals } from '@opencroft/client/canvas'
+import { FileBrowser, FileManagerProvider } from '@opencroft/client/files'
+import { Button } from '@opencroft/client/ui'
+import { X } from 'lucide-react'
+import { type ComponentType, type ReactNode, useCallback, useEffect, useState } from 'react'
 
 const OPEN_ANIMATION_MS = 250
 const CLOSE_ANIMATION_MS = 200
@@ -57,7 +46,7 @@ export const AGENT_INSTRUCTION_HANDLES: HandleDef[] = [
 // ═════════════════════════════════════════════════════════════════════
 
 interface PinButtonProps {
-  icon: React.ComponentType<{ className?: string }>
+  icon: ComponentType<{ className?: string }>
   label: string
   onClick?: () => void
 }
@@ -75,11 +64,7 @@ export function PinButton({ icon: Icon, label, onClick }: PinButtonProps) {
 // StatsList & PinnedBody
 // ═════════════════════════════════════════════════════════════════════
 
-export function StatsList({
-  items,
-}: {
-  items: { icon: React.ComponentType<{ className?: string }>; value: string }[]
-}) {
+export function StatsList({ items }: { items: { icon: ComponentType<{ className?: string }>; value: string }[] }) {
   return (
     <div className='flex flex-col gap-0.5'>
       {items.map((item) => (
@@ -92,7 +77,7 @@ export function StatsList({
   )
 }
 
-export function PinnedBody({ input, output }: { input?: React.ReactNode; output?: React.ReactNode }) {
+export function PinnedBody({ input, output }: { input?: ReactNode; output?: ReactNode }) {
   return (
     <div className='flex justify-between gap-2'>
       {input ? <div className='flex-1 min-w-0'>{input}</div> : null}
@@ -131,12 +116,12 @@ interface WindowShellProps {
   id: string
   selected?: boolean
   loading?: boolean
-  icon: React.ComponentType<{ className?: string }>
+  icon: ComponentType<{ className?: string }>
   iconClassName?: string
   title: string
   bodyClassName?: string
-  input?: React.ReactNode
-  children: React.ReactNode
+  input?: ReactNode
+  children: ReactNode
   minWidth?: number
   minHeight?: number
 }
@@ -194,7 +179,7 @@ export function WindowShell({
             <Icon className={`h-4 w-4 shrink-0 ${iconClassName ?? ''}`} />
             <span className='text-sm font-medium truncate flex-1'>{title}</span>
             <Button variant='ghost' size='icon' className='nodrag nopan h-4 w-4 shrink-0' onClick={close}>
-              <icons.X className='h-3 w-3' />
+              <X className='h-3 w-3' />
             </Button>
           </div>
           <div

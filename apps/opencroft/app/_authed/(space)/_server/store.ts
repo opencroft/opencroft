@@ -703,10 +703,10 @@ class SpacesRegistry {
 
   async setPinned(slug: string, pinned: boolean): Promise<SpaceRuntime | null> {
     const id = this.idFor(slug)
-    if (!id) {
+    const runtime = id ? this.spaces.get(id) : undefined
+    if (!id || !runtime) {
       return null
     }
-    const runtime = this.spaces.get(id)!
     const [row] = await db.update(space).set({ pinned }).where(eq(space.id, id)).returning()
     runtime.pinned = row.pinned
     runtime.updatedAt = row.updatedAt
@@ -716,10 +716,10 @@ class SpacesRegistry {
   /** Set the space's icon: a preset value or a small data URL, checked by the caller. */
   async setIcon(slug: string, icon: string): Promise<SpaceRuntime | null> {
     const id = this.idFor(slug)
-    if (!id) {
+    const runtime = id ? this.spaces.get(id) : undefined
+    if (!id || !runtime) {
       return null
     }
-    const runtime = this.spaces.get(id)!
     const [row] = await db.update(space).set({ icon }).where(eq(space.id, id)).returning()
     runtime.icon = row.icon
     runtime.updatedAt = row.updatedAt

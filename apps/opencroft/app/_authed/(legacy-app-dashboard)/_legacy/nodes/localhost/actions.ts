@@ -50,8 +50,8 @@ function getDiskUsage(): Promise<string> {
           const lines = stdout.trim().split('\n').filter(Boolean)
           const last = lines[lines.length - 1]
           const parts = last.split(',')
-          const free = parseInt(parts[1] || '0')
-          const total = parseInt(parts[2] || '0')
+          const free = parseInt(parts[1] || '0', 10)
+          const total = parseInt(parts[2] || '0', 10)
           const used = total - free
           const gb = (n: number) => `${(n / 1024 ** 3).toFixed(0)}G`
           resolve(`${gb(used)}/${gb(total)}`)

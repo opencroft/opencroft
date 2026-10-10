@@ -1,38 +1,33 @@
-import { legacy } from '@opencroft/client'
-
-const {
-  Badge,
-  Button,
-  CodeEditor,
-  Input,
+import { dispatch } from '@opencroft/client/actions'
+import {
   InputHandle,
-  Label,
+  inspectorIntent,
   NodeFrame,
   OutputHandle,
-  React,
+  useGraphNodes,
+  useNodeContext,
+  useReactFlow,
+} from '@opencroft/client/canvas'
+import { CodeEditor, type CodeEditorLanguage } from '@opencroft/client/code'
+import { extensionId } from '@opencroft/client/extension'
+import { getStream, type Stream, type TextChunk } from '@opencroft/client/streams'
+import {
+  Badge,
+  Button,
+  Label,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
   Textarea,
-  dispatch,
-  extensionId,
-  getStream,
-  icons,
-  inspectorIntent,
-  toast,
-  useGraphNodes,
-  useNodeContext,
-  useReactFlow,
-} = legacy
-type Stream<T> = legacy.Stream<T>
-type TextChunk = legacy.TextChunk
+} from '@opencroft/client/ui'
+import { Code, Hexagon, Pencil, Play, ScrollText, TerminalSquare, X } from 'lucide-react'
+import { type ChangeEvent, useCallback, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 import { type ScriptResult, setScriptResult, useScriptResult } from './script-output-store'
 import { storedType } from './stored-type'
-
-const { useCallback } = React
 
 export interface ScriptData {
   script: string
@@ -47,12 +42,12 @@ interface TerminalContext {
 }
 
 const LANG_CONFIG = {
-  bash: { icon: icons.TerminalSquare, accent: 'oklch(0.7 0.18 60)', label: 'Bash' },
-  python: { icon: icons.Code, accent: 'oklch(0.6 0.18 260)', label: 'Python' },
-  node: { icon: icons.Hexagon, accent: 'oklch(0.65 0.2 150)', label: 'Node.js' },
+  bash: { icon: TerminalSquare, accent: 'oklch(0.7 0.18 60)', label: 'Bash' },
+  python: { icon: Code, accent: 'oklch(0.6 0.18 260)', label: 'Python' },
+  node: { icon: Hexagon, accent: 'oklch(0.65 0.2 150)', label: 'Node.js' },
 } as const
 
-function editorLanguage(language: ScriptData['language']): legacy.CodeEditorLanguage {
+function editorLanguage(language: ScriptData['language']): CodeEditorLanguage {
   if (language === 'python') {
     return 'python'
   }
@@ -71,7 +66,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
   const ctx = useNodeContext<TerminalContext>(id, 'ctx-in')
   const { setNodes } = useReactFlow()
   const result = useScriptResult(id)
-  const [running, setRunning] = React.useState(false)
+  const [running, setRunning] = useState(false)
 
   const errors = (data as ScriptData & { __errors?: string[] }).__errors
 
@@ -120,7 +115,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
             className='nodrag nopan h-5 text-[10px] px-1.5'
             onClick={() => openTab('editor')}
           >
-            <icons.Pencil className='h-2.5 w-2.5 shrink-0' />
+            <Pencil className='h-2.5 w-2.5 shrink-0' />
           </Button>
           <Button
             variant='ghost'
@@ -129,7 +124,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
             onClick={run}
             disabled={running || !data.script.trim()}
           >
-            <icons.Play className='h-2.5 w-2.5 shrink-0' />
+            <Play className='h-2.5 w-2.5 shrink-0' />
           </Button>
         </div>
       }
@@ -149,7 +144,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
                 className='nodrag nopan h-5 text-[10px] px-1.5'
                 onClick={() => openTab('output')}
               >
-                <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
+                <ScrollText className='h-2.5 w-2.5 shrink-0' />
                 <span>Output</span>
               </Button>
             ) : (
@@ -173,7 +168,7 @@ interface SecretsStoreNodeData {
 function SecretsPicker({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const nodes = useGraphNodes()
 
-  const availableKeys = React.useMemo(() => {
+  const availableKeys = useMemo(() => {
     const keys = new Set<string>()
     for (const n of nodes as { type?: string; data?: SecretsStoreNodeData }[]) {
       if (n.type !== storedType(extensionId, 'core-secrets-store')) continue
@@ -184,7 +179,7 @@ function SecretsPicker({ value, onChange }: { value: string; onChange: (next: st
     return [...keys].sort()
   }, [nodes])
 
-  const selected = React.useMemo(
+  const selected = useMemo(
     () =>
       value
         .split('\n')
@@ -193,16 +188,16 @@ function SecretsPicker({ value, onChange }: { value: string; onChange: (next: st
     [value],
   )
 
-  const remaining = React.useMemo(() => availableKeys.filter((k) => !selected.includes(k)), [availableKeys, selected])
+  const remaining = useMemo(() => availableKeys.filter((k) => !selected.includes(k)), [availableKeys, selected])
 
-  const remove = React.useCallback(
+  const remove = useCallback(
     (name: string) => {
       onChange(selected.filter((s) => s !== name).join('\n'))
     },
     [onChange, selected],
   )
 
-  const add = React.useCallback(
+  const add = useCallback(
     (name: string) => {
       if (!name || selected.includes(name)) return
       onChange([...selected, name].join('\n'))
@@ -227,7 +222,7 @@ function SecretsPicker({ value, onChange }: { value: string; onChange: (next: st
               >
                 <span>{name}</span>
                 <button type='button' onClick={() => remove(name)} className='hover:opacity-70'>
-                  <icons.X className='h-3 w-3' />
+                  <X className='h-3 w-3' />
                 </button>
               </Badge>
             )
@@ -285,7 +280,7 @@ function ScriptInspector({
         <Label>Environment (one per line, KEY=VALUE)</Label>
         <Textarea
           value={data.env ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ env: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ env: e.target.value })}
           placeholder={'NODE_ENV=production\nDEBUG=false'}
           className='font-mono text-xs min-h-[60px]'
         />

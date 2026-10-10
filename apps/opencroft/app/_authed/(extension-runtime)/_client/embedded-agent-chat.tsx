@@ -343,7 +343,7 @@ function useOnGraphChange(onChange: () => void): void {
 }
 
 // The loader alone, centred on the whole panel. No stand-in for the composer
-// under it: an empty frame there read as a broken panel, and an opening thread
+// under it: an empty frame there reads as a broken panel, and an opening thread
 // draws no composer under its own loader either (see GroupChatThreadChat), so
 // this loading state and the thread's that follows it look alike.
 function CenteredSpinner({ className }: { className?: string }) {

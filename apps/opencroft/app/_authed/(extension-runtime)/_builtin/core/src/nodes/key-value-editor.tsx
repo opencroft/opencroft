@@ -1,7 +1,6 @@
-import { legacy } from '@opencroft/client'
+import { Button, Input, Label } from '@opencroft/client/ui'
+import { Plus, X } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-
-const { Button, Input, Label, icons } = legacy
 
 // A name/value pair as stored in node data — request headers, environment
 // variables, and anything else shaped like a small string map that has to keep
@@ -30,8 +29,7 @@ export function KeyValueEditor({
     <div className='flex flex-col gap-1.5'>
       <Label className='text-[10px] text-muted-foreground'>{label}</Label>
       {entries.map((entry, index) => (
-        // Index-keyed deliberately: rows are positional and a name is free to
-        // be blank or duplicated mid-edit, so there is no stable id to key on.
+        // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional and a name is free to be blank or duplicated mid-edit, so there is no stable id to key on
         <div key={index} className='flex items-center gap-1.5'>
           <Input
             value={entry.name}
@@ -51,7 +49,7 @@ export function KeyValueEditor({
             className='size-7 p-0'
             onClick={() => onChange(entries.filter((_, i) => i !== index))}
           >
-            <icons.X className='size-3' />
+            <X className='size-3' />
           </Button>
         </div>
       ))}
@@ -61,7 +59,7 @@ export function KeyValueEditor({
         className='h-6 self-start text-[10px]'
         onClick={() => onChange([...entries, { name: '', value: '' }])}
       >
-        <icons.Plus className='size-3 mr-1' />
+        <Plus className='size-3 mr-1' />
         Add
       </Button>
     </div>

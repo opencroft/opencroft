@@ -1,5 +1,5 @@
-import { exec, spawn } from 'child_process'
-import type { Readable } from 'stream'
+import { exec, spawn } from 'node:child_process'
+import type { Readable } from 'node:stream'
 
 import type { FileEntry, WslConfig } from '@/app/_authed/(filemanager)/_lib/types'
 
@@ -27,7 +27,7 @@ function resolvePath(config: WslConfig, path: string) {
   if (clean.startsWith('/')) {
     return base + clean
   }
-  return base + '/' + clean
+  return `${base}/${clean}`
 }
 
 export async function listFiles(config: WslConfig, path: string): Promise<FileEntry[]> {
@@ -47,12 +47,12 @@ export async function listFiles(config: WslConfig, path: string): Promise<FileEn
     .map((line) => {
       const [typeChar, name, size, mtime] = line.split('|')
       const isDir = typeChar === 'd'
-      const filePath = path.endsWith('/') ? path + name : path + '/' + name
+      const filePath = path.endsWith('/') ? path + name : `${path}/${name}`
       return {
         name,
-        path: isDir ? filePath + '/' : filePath,
+        path: isDir ? `${filePath}/` : filePath,
         type: isDir ? ('directory' as const) : ('file' as const),
-        size: isDir ? 0 : parseInt(size) || 0,
+        size: isDir ? 0 : parseInt(size, 10) || 0,
         modified: mtime ? new Date(parseFloat(mtime) * 1000).toISOString() : '',
       }
     })
@@ -66,13 +66,13 @@ export async function downloadFile(config: WslConfig, path: string): Promise<str
 
 export async function uploadFile(config: WslConfig, path: string, data: string, filename: string): Promise<void> {
   const dir = resolvePath(config, path)
-  const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
+  const fullPath = dir.endsWith('/') ? dir + filename : `${dir}/${filename}`
   await run(config.distro, `echo '${data}' | base64 -d > '${fullPath}'`)
 }
 
 export async function uploadStream(config: WslConfig, path: string, stream: Readable, filename: string): Promise<void> {
   const dir = resolvePath(config, path)
-  const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
+  const fullPath = dir.endsWith('/') ? dir + filename : `${dir}/${filename}`
 
   return new Promise((resolve, reject) => {
     const proc = spawn('wsl', ['-d', config.distro, '--', 'tee', fullPath], {

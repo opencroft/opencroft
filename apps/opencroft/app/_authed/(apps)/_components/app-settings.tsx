@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'u
 
 import { removeSpaceApp, renameSpaceApp, transferSpaceApp, updateSpaceApp } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
@@ -75,7 +75,7 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
   const [removing, setRemoving] = useState(false)
 
   // The extension's client half, for Apps that ship a custom parameter form.
-  const { items: definitions } = useProvided<AppDefinition>('apps', loadAllExtensions)
+  const { items: definitions } = useProvided<AppDefinition>('apps', loadExtensionsProviding)
   const CustomForm = meta ? definitions.find((d) => d.type === meta.type)?.form : undefined
   const Icon = resolveIcon(meta?.icon)
 

@@ -93,6 +93,10 @@ import appCss from '@/app/globals.css?url'
 //                                    browser asks for them on the login page
 //                                    and while installing, and the colour is
 //                                    no secret: the icon shows it to anyone.
+//   /fonts/*                        the app's typefaces and their licences,
+//                                    static files from public/fonts. The
+//                                    login page draws in them too, and they
+//                                    are published open-licence fonts.
 //   /api/build-info                 branch + commit only, no secret, and the
 //                                    one surface this whole night's work has
 //                                    depended on as an unauthenticated
@@ -149,6 +153,19 @@ export const Route = createRootRoute({
         { name: 'description', content: 'Platform for your home lab' },
       ],
       links: [
+        // The app's own fonts (see public/fonts/fonts.css). Only Inter's Latin
+        // upright is preloaded: it is what every first screen draws, and the
+        // other scripts, the italics and the mono face load when text needs
+        // them. `anonymous` matches the CORS mode the @font-face fetch uses, so
+        // the browser reuses the preloaded file instead of fetching it twice.
+        { rel: 'stylesheet', href: '/fonts/fonts.css' },
+        {
+          rel: 'preload',
+          href: '/fonts/inter/inter-latin-wght-normal.woff2',
+          as: 'font',
+          type: 'font/woff2',
+          crossOrigin: 'anonymous',
+        },
         { rel: 'stylesheet', href: appCss },
         // The icons and the manifest are drawn in the instance's brand colour
         // (see brandIconHref for why the colour is in their addresses).

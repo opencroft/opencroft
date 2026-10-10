@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { GraphNodeRecord } from '@opencroft/server'
+import type { GraphNodeRecord } from '@opencroft/server/graph'
 
 import {
   DELETE_OVERRIDE_PARAM,

@@ -15,9 +15,12 @@ import {
   restoreBackupNow,
   setBackupSchedule,
 } from '@opencroft/db-backups/server'
-import { useEffect, useRef, useState, useTransition } from 'react'
+import { useRouteContext } from '@tanstack/react-router'
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
 import { toast } from 'sonner'
-import { BackupRestore } from 'ui/settings/backup-restore'
+import { type BackupInstanceKeys, BackupRestore } from 'ui/settings/backup-restore'
+
+import { getInstanceKeys } from '@/app/_authed/(settings)/_server/instance-keys-actions'
 
 // The page is the kit's BackupRestore; what stays here is everything that
 // touches the world: the backup server, the file picker, the confirmations
@@ -57,8 +60,22 @@ function describeRestore(filename: string, contents: BackupContents): string {
   return lines.join('\n')
 }
 
+// Said before the page reloads after a restore, so the person who restored
+// learns it at once rather than when a secret is next used.
+function undecryptableAfterRestore(count: number): string {
+  return (
+    `Restored, but ${count} stored secret(s) cannot be decrypted with this instance's OPENCROFT_SECRETS_KEY. ` +
+    'They were encrypted under the key of the instance the backup came from. ' +
+    'Set OPENCROFT_SECRETS_KEY to that key and restart, or store them again.'
+  )
+}
+
 export default function BackupSettings() {
+  // The keys are an administrator's concern, and their endpoint refuses
+  // anyone else: the card is simply not drawn for other readers.
+  const { isAdmin } = useRouteContext({ from: '/_authed' })
   const [backups, setBackups] = useState<BackupFileInfo[]>([])
+  const [instanceKeys, setInstanceKeys] = useState<BackupInstanceKeys | undefined>(undefined)
   const [stats, setStats] = useState<BackupStorageStats | null>(null)
   const [schedule, setSchedule] = useState<BackupScheduleConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -66,20 +83,31 @@ export default function BackupSettings() {
   const [pending, startTransition] = useTransition()
   const fileInput = useRef<HTMLInputElement>(null)
 
-  function refresh() {
+  const refresh = useCallback(() => {
     setLoading(true)
     startTransition(async () => {
-      const [list, storage] = await Promise.all([listBackups(), getBackupStats()])
+      const [list, storage, keys] = await Promise.all([
+        listBackups(),
+        getBackupStats(),
+        // A failure here costs the keys card, not the backup list.
+        isAdmin
+          ? getInstanceKeys().catch((err: unknown) => {
+              console.error('[backup] instance keys could not be read', err)
+              return undefined
+            })
+          : undefined,
+      ])
       setBackups(list)
       setStats(storage)
+      setInstanceKeys(keys)
       setLoading(false)
     })
-  }
+  }, [isAdmin])
 
   useEffect(() => {
     refresh()
     getBackupSchedule().then(setSchedule)
-  }, [])
+  }, [refresh])
 
   function handleScheduleChange(next: BackupScheduleConfig) {
     startTransition(async () => {
@@ -156,6 +184,12 @@ export default function BackupSettings() {
         }
         const result = await restoreBackupNow({ data: filename })
         const restoredRows = Object.values(result.restored).reduce((sum, count) => sum + count, 0)
+        // The restore has happened whatever this answers, so a failed check
+        // must not stop the reload; the keys card after it says the same.
+        const keys = isAdmin ? await getInstanceKeys().catch(() => undefined) : undefined
+        if (keys && keys.undecryptableSecrets > 0) {
+          alert(undecryptableAfterRestore(keys.undecryptableSecrets))
+        }
         toast.success(`Restored ${restoredRows.toLocaleString()} rows and ${result.filesWritten} files — reloading…`)
         window.location.reload()
       } catch (err) {
@@ -206,6 +240,7 @@ export default function BackupSettings() {
     <>
       <BackupRestore
         backups={backups}
+        instanceKeys={instanceKeys}
         stats={stats}
         schedule={schedule}
         onScheduleChange={handleScheduleChange}

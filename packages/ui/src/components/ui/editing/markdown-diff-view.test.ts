@@ -27,8 +27,14 @@ test('a changed block is drawn removed in a del frame, then added in an ins fram
 
 test('a changed list item is framed alone; the items around it are drawn unframed', () => {
   const markup = view('- one\n- two\n- three', '- one\n- 2\n- three')
-  assert.match(markup, /<div[^>]*><p data-block="- one">- one<\/p><\/div><del data-diff="removed"[^>]*><p data-block="- two">/)
-  assert.match(markup, /<ins data-diff="added"[^>]*><p data-block="- 2">- 2<\/p><\/ins><div[^>]*><p data-block="- three">/)
+  assert.match(
+    markup,
+    /<div[^>]*><p data-block="- one">- one<\/p><\/div><del data-diff="removed"[^>]*><p data-block="- two">/,
+  )
+  assert.match(
+    markup,
+    /<ins data-diff="added"[^>]*><p data-block="- 2">- 2<\/p><\/ins><div[^>]*><p data-block="- three">/,
+  )
   assert.equal(markup.match(/data-diff=/g)?.length, 2)
 })
 
@@ -65,11 +71,18 @@ test("a list's parts join on every edge, in one block with the list's margins", 
 
 test('every part lets its margins out, framed or not, so they meet the next part as in one list', () => {
   // A prose may make its children scroll, which keeps their margins inside them.
-  const markup = view('- fruit\n  - apples\n  - pears\n- nuts\n- figs', '- fruit\n  - apples\n  - plums\n- nuts\n- dates').replace(
+  const markup = view(
+    '- fruit\n  - apples\n  - pears\n- nuts\n- figs',
+    '- fruit\n  - apples\n  - plums\n- nuts\n- dates',
+  ).replace(
     /^(<style[^>]*>.*?<\/style>)?<div class="prose-docs"><div class="-mx-3 my-\[var\(--prose-list-space\)\] px-3">/,
     '',
   )
-  const parts = [...markup.matchAll(/<(div|del|ins|ul)[^>]*class="([^"]*)"[^>]*>(?:<li[^>]*>)?(?:<div[^>]*>)?<p data-block="([^"]*)"/g)]
+  const parts = [
+    ...markup.matchAll(
+      /<(div|del|ins|ul)[^>]*class="([^"]*)"[^>]*>(?:<li[^>]*>)?(?:<div[^>]*>)?<p data-block="([^"]*)"/g,
+    ),
+  ]
   assert.deepEqual(
     parts.map((match) => [match[1], match[3]]),
     [
@@ -103,7 +116,10 @@ test("a nested run stands from the item above as the page's nested list, and fro
       ...(markup.split('<li class="my-0">')[1]?.split('</li></ul>')[0] ?? '').matchAll(
         /<(div|del|ins)[^>]*class="([^"]*)"[^>]*><p data-block="([^"]*)"/g,
       ),
-    ].map(([, element, classes, block]) => [element, classes.replaceAll('&amp;', '&').replaceAll('&gt;', '>').split(' '), block] as const)
+    ].map(
+      ([, element, classes, block]) =>
+        [element, classes.replaceAll('&amp;', '&').replaceAll('&gt;', '>').split(' '), block] as const,
+    )
   const followed = nestedParts(view('- fruit\n  - apples\n  - pears\n- nuts', '- fruit\n  - plums\n  - pears\n- nuts'))
   assert.deepEqual(
     followed.map(([element, , block]) => [element, block]),
@@ -148,7 +164,10 @@ test('a code block whose language changed is one line diff, headed by the change
   assert.doesNotMatch(markup, /data-diff="(removed|added)"/)
   assert.match(markup, /removed: <\/span><span[^>]*>(<span[^>]*>)?closing/)
 
-  const relabelled = view('```\nplain\nsecond\nthird\nfourth\nfifth\n```', '```sh\nplain\nsecond\nthird\nfourth\nfifth\n```')
+  const relabelled = view(
+    '```\nplain\nsecond\nthird\nfourth\nfifth\n```',
+    '```sh\nplain\nsecond\nthird\nfourth\nfifth\n```',
+  )
   assert.match(relabelled, /<del[^>]*>no language<\/del>.*<ins[^>]*>sh<\/ins>/)
   // Code that did not change under a changed fence is shown, every line of it
   // and none folded, as unchanged rows.
@@ -266,7 +285,9 @@ test('a pair marks the words it changed, all of each version when it shares none
     const root = createRoot(window.document.createElement('div'))
     const marked = async (before: string, after: string, draw: (markdown: string) => ReactNode = renderBlock) => {
       await act(() => root.render(createElement(MarkdownDiffView, { before, after, renderBlock: draw })))
-      return Object.fromEntries([...highlights].map(([name, ranges]) => [name, [...ranges].map((range) => range.toString())]))
+      return Object.fromEntries(
+        [...highlights].map(([name, ranges]) => [name, [...ranges].map((range) => range.toString())]),
+      )
     }
     assert.deepEqual(await marked('- Pick from the lower branches', '- Pick from any branch'), {
       'markdown-diff-removed': ['the lower branches'],
@@ -298,7 +319,12 @@ test('a pair marks the words it changed, all of each version when it shares none
     const drawDiagrams = (markdown: string) => {
       const edge = /^```mermaid\ngraph TD\n {2}(.*)\n```$/.exec(markdown)
       return edge
-        ? createElement('svg', null, createElement('style', null, '.node{fill:#eee}'), createElement('text', null, edge[1]))
+        ? createElement(
+            'svg',
+            null,
+            createElement('style', null, '.node{fill:#eee}'),
+            createElement('text', null, edge[1]),
+          )
         : renderBlock(markdown)
     }
     assert.deepEqual(await marked(diagram('Gate --> Barn'), diagram('Gate --> Shed'), drawDiagrams), {
@@ -332,7 +358,9 @@ const colourLines = (code: string, info: string) => {
 const codeRows = (host: Element) =>
   [...host.querySelectorAll('[data-diff="code"] > :last-child > div')].map((row) => [
     row.querySelector('.sr-only')?.textContent,
-    [...row.querySelectorAll('.shiki-token')].map((piece) => `${piece.textContent}=${(piece as HTMLElement).style.getPropertyValue('--shiki-light')}`),
+    [...row.querySelectorAll('.shiki-token')].map(
+      (piece) => `${piece.textContent}=${(piece as HTMLElement).style.getPropertyValue('--shiki-light')}`,
+    ),
   ])
 
 test('a code diff colours removed lines in the earlier language, and added and unchanged ones in the later', async () => {
@@ -387,7 +415,12 @@ test('an edit keeps the colours of the lines it did not touch until its own colo
     const show = (after: string) =>
       act(async () =>
         root.render(
-          createElement(MarkdownDiffView, { before: '```yaml\nkeep: 1\nold: 2\n```', after, renderBlock, highlightCode }),
+          createElement(MarkdownDiffView, {
+            before: '```yaml\nkeep: 1\nold: 2\n```',
+            after,
+            renderBlock,
+            highlightCode,
+          }),
         ),
       )
     await show('```yaml\nkeep: 1\nnew: 3\n```')
@@ -428,7 +461,10 @@ test("a long code block's colours each land on their own line", () => {
     const own: { start: number; end: number; style: string }[] = []
     if (line) {
       const colon = line.indexOf(':')
-      runs.push({ start: at, end: at + colon, style: 'key' }, { start: at + colon + 2, end: at + line.length, style: 'value' })
+      runs.push(
+        { start: at, end: at + colon, style: 'key' },
+        { start: at + colon + 2, end: at + line.length, style: 'value' },
+      )
       own.push({ start: 0, end: colon, style: 'key' }, { start: colon + 2, end: line.length, style: 'value' })
     }
     expected.push(own)

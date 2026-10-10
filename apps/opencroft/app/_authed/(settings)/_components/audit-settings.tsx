@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
+import { useCallback, useEffect, useState, useTransition } from 'react'
 import { type AuditStatusFilter, McpAudit } from 'ui/settings/mcp-audit'
 
 import {
@@ -21,7 +21,7 @@ export default function AuditSettings() {
   const [loading, setLoading] = useState(true)
   const [pending, startTransition] = useTransition()
 
-  const reload = (next: AuditQuery) => {
+  const reload = useCallback((next: AuditQuery) => {
     setLoading(true)
     startTransition(async () => {
       const [rows, knownTools] = await Promise.all([listAuditEntries({ data: next }), listAuditTools()])
@@ -29,11 +29,11 @@ export default function AuditSettings() {
       setTools(knownTools)
       setLoading(false)
     })
-  }
+  }, [])
 
   useEffect(() => {
     reload({})
-  }, [])
+  }, [reload])
 
   const onToolChange = (next: string | undefined) => {
     setTool(next)

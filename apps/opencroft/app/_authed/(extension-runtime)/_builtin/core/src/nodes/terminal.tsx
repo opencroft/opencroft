@@ -1,10 +1,9 @@
-import { legacy } from '@opencroft/client'
-
-const { InputHandle, React, Terminal, icons, useNodeContext } = legacy
+import { InputHandle, useNodeContext } from '@opencroft/client/canvas'
+import { Terminal, type TerminalConfig } from '@opencroft/client/terminal'
+import { TerminalSquare } from 'lucide-react'
+import { useState } from 'react'
 
 import { WindowShell } from '../shared'
-
-const { useState } = React
 
 interface WindowData {
   title: string
@@ -90,7 +89,7 @@ export function TerminalWindowNode({ id, data, selected }: { id: string; data: W
       id={id}
       selected={selected}
       loading={connection !== null && status !== 'connected'}
-      icon={icons.TerminalSquare}
+      icon={TerminalSquare}
       iconClassName='text-green-400'
       title={data.title || 'Terminal'}
       bodyClassName='bg-black'
@@ -98,7 +97,7 @@ export function TerminalWindowNode({ id, data, selected }: { id: string; data: W
     >
       {connection ? (
         <Terminal
-          connection={connection as unknown as import('@opencroft/terminal/client').TerminalConfig}
+          connection={connection as unknown as TerminalConfig}
           fontSize={13}
           sessionKey={id}
           shared

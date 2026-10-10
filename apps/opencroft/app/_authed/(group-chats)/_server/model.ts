@@ -47,9 +47,14 @@ import {
   type TabKeyMove,
 } from '@/app/_authed/(agent)/_server/session-key-move'
 import { applySessionOptions } from '@/app/_authed/(agent)/_server/session-options'
+import {
+  type TurnDetail,
+  type TurnsPage,
+  turnForSessionKey,
+  turnsPageForSessionKey,
+} from '@/app/_authed/(agent)/_server/session-turns'
 import { composeEnvelope } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
-import { type TurnsPage, turnsPageForSessionKey } from '@/app/_authed/(extension-runtime)/_server/host'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import type {
   CompactAck,
@@ -3558,12 +3563,13 @@ export async function threadCompactStatusAsAgent(agent: AgentRef, threadRef: str
 }
 
 /**
- * A thread's recent turns, as an agent — the tool-surface counterpart to the
- * send-message node's `listTurns` action, built on the same shared core
- * (`turnsPageForSessionKey`), so a turn reads identically wherever it is
- * inspected from: same summaries, same truncation, same paging, same
- * in-progress marking. Gate matches `threadCompactStatusAsAgent`: the CALLER's
- * membership (via `resolveThreadForAgent`) and nothing else — reading turn
+ * A thread's recent turns, as an agent — built on the turn-paging core
+ * (`turnsPageForSessionKey`) that `threadTurnsForSender` shares, so a turn
+ * reads identically to an agent tool and to an extension: same summaries, same
+ * truncation, same paging, same in-progress marking. An offline thread answers
+ * from its stored transcript without starting its session. Gate matches
+ * `threadCompactStatusAsAgent`: the CALLER's membership (via
+ * `resolveThreadForAgent`) and nothing else — reading turn
  * summaries of a thread the caller was put into is the same class of read as
  * the thread's transcript on screen.
  */
@@ -3575,6 +3581,17 @@ export async function listThreadTurnsAsAgent(
   const agentNodeId = await requireAgentNode(agent)
   const row = await resolveThreadForAgent(agentNodeId, threadRef)
   return turnsPageForSessionKey(row.sessionKey, { turns: params?.turns, beforeIndex: params?.beforeIndex })
+}
+
+/**
+ * One turn of a thread in full, as an agent — what `listThreadTurnsAsAgent`
+ * lists cut to a preview, for reading a long answer whole. Same gate: the
+ * caller's membership and nothing else.
+ */
+export async function threadTurnAsAgent(agent: AgentRef, threadRef: string, index: number): Promise<TurnDetail> {
+  const agentNodeId = await requireAgentNode(agent)
+  const row = await resolveThreadForAgent(agentNodeId, threadRef)
+  return turnForSessionKey(row.sessionKey, index)
 }
 
 /**

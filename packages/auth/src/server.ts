@@ -6,6 +6,7 @@
 
 import { db } from '@opencroft/db'
 import { account, session, user, verification } from '@opencroft/db/schema'
+import { ensureInstanceKey, readEnv } from '@opencroft/instance'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { admin } from 'better-auth/plugins'
@@ -16,42 +17,22 @@ import * as z from 'zod'
 import { sponsorPromptUserField } from './sponsor-prompt'
 import { THEME_PREFERENCES, themeUserField } from './theme'
 
-// The placeholder an explicitly-development deployment falls back to. Fixed
-// rather than random because sessions are signed with it: a value that changed
-// per process would sign everyone out on every restart, which reads as a bug in
-// session handling rather than as missing configuration.
-const DEVELOPMENT_SECRET = 'opencroft-development-secret-not-for-production'
-
-// Sessions are cookie-backed and the secret keys them, so this must be set
-// anywhere real sessions matter.
-//
-// The fallback is gated on NODE_ENV being *explicitly* 'development', not on it
-// not being 'production'. The production container leaves NODE_ENV unset
-// entirely, so "not production" would quietly hand it a secret published in
-// this repo — anyone could forge a session cookie. Unset means the throw, which
-// is the safe direction to be wrong in: a deployment that has not been
-// configured says so instead of pretending.
+// Sessions are cookie-backed and the secret keys them. OPENCROFT_AUTH_SECRET
+// when set; otherwise the instance's own, generated into the key file on first
+// use, so it is random per instance and stable across restarts. There is no
+// built-in fallback: any fixed value would be published in this repo, and
+// anyone could forge a session cookie with it. It reaches Better Auth through
+// `secret`, which the library takes over its own BETTER_AUTH_SECRET variable.
 function resolveSecret(): string {
-  const configured = process.env.BETTER_AUTH_SECRET
-  if (configured) {
-    return configured
-  }
-  if (process.env.NODE_ENV === 'development') {
-    return DEVELOPMENT_SECRET
-  }
-  throw new Error(
-    'BETTER_AUTH_SECRET is not set. Sessions are signed with it, so it is required ' +
-      'outside development (set NODE_ENV=development to use the built-in placeholder). ' +
-      'Use at least 32 random characters, and keep it stable — changing it signs everyone out.',
-  )
+  return ensureInstanceKey('OPENCROFT_AUTH_SECRET').value
 }
 
 // Social sign-in is configuration, not code: a provider is offered when both
 // halves of its credential are present and is simply absent otherwise. Nothing
 // here needs changing to turn one on — set the pair and it appears.
 const SOCIAL_PROVIDER_ENV = {
-  google: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
-  apple: ['APPLE_CLIENT_ID', 'APPLE_CLIENT_SECRET'],
+  google: ['OPENCROFT_GOOGLE_CLIENT_ID', 'OPENCROFT_GOOGLE_CLIENT_SECRET'],
+  apple: ['OPENCROFT_APPLE_CLIENT_ID', 'OPENCROFT_APPLE_CLIENT_SECRET'],
 } as const
 
 export type SocialProviderId = keyof typeof SOCIAL_PROVIDER_ENV
@@ -66,14 +47,14 @@ export type SocialProviderId = keyof typeof SOCIAL_PROVIDER_ENV
 export function configuredSocialProviders(): SocialProviderId[] {
   return (Object.keys(SOCIAL_PROVIDER_ENV) as SocialProviderId[]).filter((id) => {
     const [idVar, secretVar] = SOCIAL_PROVIDER_ENV[id]
-    return Boolean(process.env[idVar]) && Boolean(process.env[secretVar])
+    return Boolean(readEnv(idVar)) && Boolean(readEnv(secretVar))
   })
 }
 
 function socialProviders() {
   const entries = configuredSocialProviders().map((id) => {
     const [idVar, secretVar] = SOCIAL_PROVIDER_ENV[id]
-    return [id, { clientId: process.env[idVar] as string, clientSecret: process.env[secretVar] as string }] as const
+    return [id, { clientId: readEnv(idVar) as string, clientSecret: readEnv(secretVar) as string }] as const
   })
   return Object.fromEntries(entries)
 }
@@ -81,14 +62,14 @@ function socialProviders() {
 // Built on first use, not at import.
 //
 // This module is reached from the route that mounts the handler, so building
-// eagerly would make an unconfigured deployment fail at boot — the whole app,
-// not just sign-in. Deferring it means such a deployment starts, serves every
-// page, and fails only where auth is actually used, with an error naming the
-// variable to set.
+// eagerly would read, and on a first start write, the key file at import. A
+// key file that cannot be read would then take the whole app down at boot,
+// not just sign-in. Deferring it means the failure lands where auth is used,
+// with an error naming the file.
 function buildAuth() {
   return betterAuth({
-    // Read here rather than at import, so an unconfigured deployment still
-    // starts and the provider list reflects the environment at first use.
+    // Read here rather than at import, so the provider list reflects the
+    // environment at first use.
     socialProviders: socialProviders(),
     database: drizzleAdapter(db, {
       provider: 'pg',

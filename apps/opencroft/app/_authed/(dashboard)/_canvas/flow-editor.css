@@ -11,9 +11,9 @@
 
 .dashboard-mvp-flow .react-flow__nodesselection,
 .dashboard-mvp-flow .react-flow__nodesselection-rect {
-  background: transparent !important;
-  border: none !important;
-  pointer-events: none !important;
+  background: transparent;
+  border: none;
+  pointer-events: none;
 }
 
 .dashboard-mvp-flow .react-flow__pane {
@@ -52,13 +52,13 @@
 }
 
 .dashboard-mvp-flow .inline-handle.react-flow__handle {
-  position: relative !important;
-  top: auto !important;
-  right: auto !important;
-  left: auto !important;
-  transform: none !important;
-  width: 10px !important;
-  height: 10px !important;
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  transform: none;
+  width: 10px;
+  height: 10px;
 }
 
 .dashboard-mvp-flow .react-flow__node-terminal {
@@ -66,6 +66,7 @@
 }
 
 .dashboard-mvp-flow .react-flow__node-section {
+  /* biome-ignore lint/complexity/noImportantStyles: React Flow sets the node wrapper's z-index as an inline style, which only !important can beat */
   z-index: -1 !important;
   height: 100%;
 }

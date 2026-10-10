@@ -49,6 +49,7 @@ import {
   resolveAuth,
   type SourceRequest,
 } from '@/app/_authed/(extension-runtime)/_server/source-repository'
+import { compileErrorLocation } from '@/app/_authed/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
 
 export interface InstallRequest extends SourceRequest {
@@ -149,7 +150,7 @@ async function installNow(request: InstallRequest, update: boolean): Promise<Ext
       manifest,
     )
     if (!build.success) {
-      const summary = build.errors.map((e) => `${e.file}:${e.line ?? '?'}  ${e.message}`).join('\n')
+      const summary = build.errors.map((e) => `${compileErrorLocation(e)}  ${e.message}`).join('\n')
       throw new Error(`${folder} did not build:\n${summary}`)
     }
     row = await swapIntoPlace(folder, staging, {
@@ -375,7 +376,7 @@ export async function checkForUpdates(folder: string): Promise<UpdateCheck> {
 }
 
 /**
- * Install the extensions the EXTENSIONS env var lists, at boot: each one not yet
+ * Install the extensions the OPENCROFT_EXTENSIONS env var lists, at boot: each one not yet
  * installed, and each one pinned to a version it is not at. Logs, never throws.
  */
 export async function autoInstallExtensions(): Promise<void> {

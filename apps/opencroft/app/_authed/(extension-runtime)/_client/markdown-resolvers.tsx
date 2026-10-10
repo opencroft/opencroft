@@ -1,12 +1,12 @@
 'use client'
 
-import type { MarkdownResolver } from '@opencroft/client'
+import type { MarkdownResolver, ProvidedPoints } from '@opencroft/client'
 import { useRouter } from '@tanstack/react-router'
-import type { InlineReference } from 'agent-chat/components/markdown-references'
+import { type InlineReference, whenMarkdownReferencesWanted } from 'agent-chat/components/markdown-references'
 import { ReferenceChip } from 'agent-chat/components/reference-chip'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { ReferenceStore, referenceIcon } from '@/app/_authed/(extension-runtime)/_client/markdown-reference-store'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
@@ -14,7 +14,7 @@ import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 // Markdown resolvers: the extensions' `provides.markdownResolvers`, and the
 // chip every recognised reference is drawn as.
 
-const POINT = 'markdownResolvers'
+const POINT = 'markdownResolvers' satisfies keyof ProvidedPoints
 
 /** How long a reference at the end of a still-growing text waits before it is resolved. */
 export const TRAILING_DELAY_MS = 400
@@ -65,6 +65,7 @@ function ResolvedReference({ kind, id, trailing }: InlineReference) {
       status={entry?.status ?? 'pending'}
       href={href}
       onOpen={open}
+      popover={shown.popover}
       menu={menu.map((item) => {
         const ItemIcon = item.icon ? resolveIcon(item.icon) : null
         return {
@@ -79,11 +80,18 @@ function ResolvedReference({ kind, id, trailing }: InlineReference) {
 
 /**
  * Keeps the reference source in step with the extensions' resolvers. Mounted
- * once, in the signed-in shell, so every page has it; starts the shared
- * extension load if nothing else on the page has.
+ * once, in the signed-in shell, so every page has it; the extensions that
+ * provide resolvers are loaded when the page first shows markdown, and not on
+ * a page that never does.
  */
 export function MarkdownResolversHost() {
-  const { items } = useProvided<MarkdownResolver>(POINT, loadAllExtensions)
+  const [wanted, setWanted] = useState(false)
+  useEffect(() => whenMarkdownReferencesWanted(() => setWanted(true)), [])
+  return wanted ? <MarkdownResolversSync /> : null
+}
+
+function MarkdownResolversSync() {
+  const { items } = useProvided<MarkdownResolver>(POINT, loadExtensionsProviding)
   useEffect(() => {
     referenceStore.sync(items)
   }, [items])

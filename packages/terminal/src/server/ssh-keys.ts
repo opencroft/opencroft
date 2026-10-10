@@ -45,7 +45,7 @@ async function isPrivateKey(filePath: string): Promise<boolean> {
 
 async function isKeyInWsl(name: string): Promise<boolean> {
   try {
-    await exec('test -f ~/.ssh/keys/' + name)
+    await exec(`test -f ~/.ssh/keys/${name}`)
     return true
   } catch {
     return false
@@ -56,7 +56,8 @@ async function isKeyInWsl(name: string): Promise<boolean> {
 
 export const sshKeys = {
   name(keyPath: string): string {
-    return keyPath.split(/[/\\]/).pop()!
+    // split() always yields at least one element; the fallback only satisfies the compiler
+    return keyPath.split(/[/\\]/).pop() ?? keyPath
   },
 
   read(keyPath: string): Promise<string> {

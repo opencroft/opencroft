@@ -9,13 +9,14 @@
   --xy-background-pattern-color: oklch(1 0 0 / 4%);
 }
 
-.react-flow__nodesselection-rect {
-  background: transparent !important;
-  border: none !important;
+.react-flow .react-flow__nodesselection-rect {
+  background: transparent;
+  border: none;
 }
 
 .react-flow__node-section,
 .react-flow__node-domain {
+  /* biome-ignore lint/complexity/noImportantStyles: React Flow sets the node wrapper's z-index as an inline style, which only !important can beat */
   z-index: -1 !important;
 }
 
@@ -33,12 +34,12 @@
   box-shadow: none;
 }
 
-.inline-handle.react-flow__handle {
-  position: relative !important;
-  top: auto !important;
-  right: auto !important;
-  left: auto !important;
-  transform: none !important;
-  width: 10px !important;
-  height: 10px !important;
+.react-flow .inline-handle.react-flow__handle {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  transform: none;
+  width: 10px;
+  height: 10px;
 }

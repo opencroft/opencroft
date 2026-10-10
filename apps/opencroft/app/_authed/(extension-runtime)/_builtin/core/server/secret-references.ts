@@ -1,4 +1,4 @@
-import type { GraphNodeRecord } from '@opencroft/server'
+import type { GraphNodeRecord } from '@opencroft/server/graph'
 
 // ═══════════════════════════════════════════════════════════════════
 // Secret references

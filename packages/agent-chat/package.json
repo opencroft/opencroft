@@ -19,6 +19,7 @@
     "./session": "./src/session.ts",
     "./user-parts": "./src/user-parts.ts",
     "./components/markdown-references": "./src/components/markdown-references.ts",
+    "./components/markdown-reference-scan": "./src/components/markdown-reference-scan.ts",
     "./components/code-highlight": "./src/components/code-highlight.ts",
     "./components/*": "./src/components/*.tsx",
     "./server": "./src/server/index.ts",
@@ -52,8 +53,10 @@
     "react-markdown": "^10.1.0",
     "remark-directive": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "shiki": "^4.4.3",
-    "ui": "*"
+    "ui": "*",
+    "unified": "^11.0.5"
   },
   "peerDependencies": {
     "@tanstack/react-start": "*",

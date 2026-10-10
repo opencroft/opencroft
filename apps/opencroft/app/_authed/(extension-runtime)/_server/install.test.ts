@@ -133,8 +133,8 @@ async function commitOnBranch(dir: string, branch: string, version: string): Pro
  * registry is fetched. The cache is emptied afterwards.
  */
 async function withRegistry(extensions: RegistryExtension[], run: () => Promise<void>): Promise<void> {
-  const saved = process.env.EXTENSION_REGISTRIES
-  delete process.env.EXTENSION_REGISTRIES
+  const saved = process.env.OPENCROFT_EXTENSION_REGISTRIES
+  delete process.env.OPENCROFT_EXTENSION_REGISTRIES
   try {
     const cache = new Map()
     for (const source of await getRegistrySources()) {
@@ -146,7 +146,7 @@ async function withRegistry(extensions: RegistryExtension[], run: () => Promise<
   } finally {
     clearRegistryCache()
     if (saved !== undefined) {
-      process.env.EXTENSION_REGISTRIES = saved
+      process.env.OPENCROFT_EXTENSION_REGISTRIES = saved
     }
   }
 }

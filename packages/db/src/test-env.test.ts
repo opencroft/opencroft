@@ -38,7 +38,7 @@ function childScript(name: string, body: string): string {
       "import { existsSync } from 'node:fs'",
       // Concatenation rather than template literals: this is the CHILD's source, and a `${}` here
       // would be read as this file's own interpolation by everything that lints it.
-      'const dir = process.env.PGLITE_PATH ?? ""',
+      'const dir = process.env.OPENCROFT_PGLITE_PATH ?? ""',
       'console.log("PATH=" + dir)',
       'console.log("EXISTS_DURING_RUN=" + existsSync(dir))',
       body,
@@ -61,12 +61,12 @@ function run(
   script: string,
   opts: { tmp: string; env?: Record<string, string>; signal?: NodeJS.Signals },
 ): Promise<Ended> {
-  // Cleared rather than merely not set: an ambient PGLITE_PATH would send the child down the
+  // Cleared rather than merely not set: an ambient OPENCROFT_PGLITE_PATH would send the child down the
   // caller-supplied branch, where it creates nothing — and every assertion about what it cleans up
   // would then pass without the code under test ever having run. The run directory of the run this
   // file is part of is cleared too: its sweep is already claimed, and a child inheriting it would
   // never sweep.
-  const { PGLITE_PATH: _ambient, OPENCROFT_TEST_RUN_DIR: _outer, ...inherited } = process.env
+  const { OPENCROFT_PGLITE_PATH: _ambient, OPENCROFT_TEST_RUN_DIR: _outer, ...inherited } = process.env
   const child = spawn(process.execPath, ['--import', 'tsx', script], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...inherited, TMPDIR: opts.tmp, ...opts.env },
@@ -141,14 +141,14 @@ test('a run killed part-way takes its datadir with it, and still dies of the sig
 
 test('a datadir the caller supplied is left exactly where it was, sweep included', async () => {
   // The control on the three above: they would also pass if this module removed whatever
-  // PGLITE_PATH happened to point at.
+  // OPENCROFT_PGLITE_PATH happened to point at.
   //
   // The name and the age are the control, not decoration. A directory named something this module
   // would never make, and freshly created, is one no code path here can reach -- so it could only
   // ever exercise the create/remove half, and would report "the caller's datadir is safe" while
   // the sweep was free to take it. This one is named like ours and backdated past the cutoff, so
   // it is eligible by every signal the sweep has EXCEPT being the one in use. That is the case a
-  // person actually creates: re-pointing PGLITE_PATH at a previous run's leftover to look inside
+  // person actually creates: re-pointing OPENCROFT_PGLITE_PATH at a previous run's leftover to look inside
   // it, which is by then old and carries the prefix.
   const tmp = scratchTmp()
   const supplied = join(tmp, `${PREFIX}kept-to-look-inside`)
@@ -157,7 +157,7 @@ test('a datadir the caller supplied is left exactly where it was, sweep included
   utimesSync(supplied, old, old)
   const script = childScript('supplied.mts', '')
 
-  const ended = await run(script, { tmp, env: { PGLITE_PATH: supplied } })
+  const ended = await run(script, { tmp, env: { OPENCROFT_PGLITE_PATH: supplied } })
 
   assert.equal(ended.code, 0)
   assert.equal(ended.dir, supplied, 'the caller’s choice was honoured')
@@ -246,13 +246,13 @@ test('a suite that leaves its database to this module gets one in memory, and no
   assert.match(ended.output, /^DATADIR_WRITTEN=false$/m, 'and is not the datadir')
 })
 
-test('a suite that sets its own PGLITE_PATH gets a real datadir there, as before', async () => {
+test('a suite that sets its own OPENCROFT_PGLITE_PATH gets a real datadir there', async () => {
   // The way a suite that needs the datadir lock or crash recovery keeps them.
   const script = childScript(
     'own-datadir.mts',
     [
       'const own = dir + "-own"',
-      'process.env.PGLITE_PATH = own',
+      'process.env.OPENCROFT_PGLITE_PATH = own',
       `const { db, closeDb } = await import(${JSON.stringify(index)})`,
       "await db.execute('select 1')",
       'console.log("OWN_WRITTEN=" + existsSync(own + "/PG_VERSION"))',

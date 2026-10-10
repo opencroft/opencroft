@@ -38,9 +38,11 @@ export async function buildTemplateDatadir(): Promise<void> {
     throw new Error('buildTemplateDatadir runs inside a test run: OPENCROFT_TEST_RUN_DIR is not set')
   }
   // openDb reads its target from the environment. This process exists to build the template, so
-  // pointing it here for good is safe, and a real DATABASE_URL must never be what gets migrated.
+  // pointing it here for good is safe, and a real database URL, under either of its names, must
+  // never be what gets migrated.
+  delete process.env.OPENCROFT_DATABASE_URL
   delete process.env.DATABASE_URL
-  process.env.PGLITE_PATH = dir
+  process.env.OPENCROFT_PGLITE_PATH = dir
   const { openDb } = await import('./connect')
   const { close } = await openDb()
   await close()

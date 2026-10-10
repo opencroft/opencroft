@@ -62,6 +62,7 @@ function SectionSettings(props: NodeSettingsProps<SectionData>) {
         <div className='flex gap-1'>
           {COLORS.map((c) => (
             <button
+              type='button'
               key={c}
               className='h-6 w-6 rounded-full border-2'
               style={{

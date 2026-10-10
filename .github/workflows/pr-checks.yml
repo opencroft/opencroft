@@ -66,14 +66,11 @@ jobs:
           kill $VITE_PID 2>/dev/null || true
           test -f app/routeTree.gen.ts
 
-      - name: Typecheck
-        run: npm run typecheck
+      # Biome over the whole repository, then every workspace's typecheck; any
+      # lint finding or type error fails it. On a checkout with no changes it
+      # writes nothing.
+      - name: Format, lint and typecheck
+        run: npm run fix
 
       - name: Test
         run: npm run test
-
-      # Compares Biome's findings with lint-baseline.json and fails on findings
-      # above it and below it, so a fix records the lower number in the same
-      # change. `npm run check:full` shows the whole tree without the baseline.
-      - name: Format / lint against the recorded baseline
-        run: npm run check

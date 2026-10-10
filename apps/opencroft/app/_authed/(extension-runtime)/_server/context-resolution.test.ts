@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { ExposeOutput } from '@opencroft/server/actions'
+
 import { routeOutput, type TerminalRouterData } from '../_builtin/core/src/nodes/terminal-router-shared'
-import { type ContextResolverDeps, type ExposeOutput, resolveContexts } from './context-resolution'
+import { type ContextResolverDeps, resolveContexts } from './context-resolution'
 import type { GraphEdgeRecord, GraphNodeRecord, GraphSnapshot } from './host'
 
 // A three-node chain in which the middle node's output depends on its own

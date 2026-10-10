@@ -1,10 +1,10 @@
-import { legacy } from '@opencroft/client'
-
-const { NodeFrame, OutputHandle, React, Terminal, icons, inspectorIntent, invoke, useReactFlow } = legacy
+import { invoke } from '@opencroft/client/actions'
+import { inspectorIntent, NodeFrame, OutputHandle, useReactFlow } from '@opencroft/client/canvas'
+import { Terminal } from '@opencroft/client/terminal'
+import { Cpu, HardDrive, MemoryStick, Monitor, TerminalSquare } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { InspectorFilesBody, PinButton, PinnedBody, StatsList } from '../shared'
-
-const { useCallback, useEffect, useState } = React
 
 interface LocalhostStats {
   os: string
@@ -46,7 +46,7 @@ export function LocalhostNode({
 
   return (
     <NodeFrame
-      icon={icons.Monitor}
+      icon={Monitor}
       title={stats?.hostname || 'Localhost'}
       subtitle={stats?.platform}
       status={stats ? 'success' : 'neutral'}
@@ -57,10 +57,10 @@ export function LocalhostNode({
           stats ? (
             <StatsList
               items={[
-                { icon: icons.Monitor, value: stats.os },
-                { icon: icons.Cpu, value: stats.cpu },
-                { icon: icons.MemoryStick, value: stats.memory },
-                { icon: icons.HardDrive, value: stats.storage },
+                { icon: Monitor, value: stats.os },
+                { icon: Cpu, value: stats.cpu },
+                { icon: MemoryStick, value: stats.memory },
+                { icon: HardDrive, value: stats.storage },
               ]}
             />
           ) : (
@@ -69,7 +69,7 @@ export function LocalhostNode({
         }
         output={
           <OutputHandle type='terminal-context' id='terminal'>
-            <PinButton icon={icons.TerminalSquare} label='Terminal' onClick={openTerminal} />
+            <PinButton icon={TerminalSquare} label='Terminal' onClick={openTerminal} />
           </OutputHandle>
         }
       />

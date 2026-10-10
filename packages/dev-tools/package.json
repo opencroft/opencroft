@@ -1,0 +1,17 @@
+{
+  "name": "@opencroft/dev-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The one biome config, and the fix and typecheck commands the core repository and every extension repository run.",
+  "bin": {
+    "opencroft-dev": "./bin/opencroft-dev.mjs"
+  },
+  "exports": {
+    "./biome.shared.json": "./biome.shared.json",
+    "./extension-typecheck": "./src/extension-typecheck.mjs"
+  },
+  "scripts": {
+    "test": "node ../../scripts/run-tests.mjs"
+  }
+}

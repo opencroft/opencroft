@@ -31,8 +31,8 @@ test('the embedded chat shows only the loader while it loads, with no composer f
   // walks the whole document and the run dies before it reports.
   const has = (selector: string) => container.querySelector(selector) !== null
   assert.equal(has('svg[aria-label="Loading"]'), true, 'the loader is shown while the chat loads')
-  // The composer frame is a node card; the stand-in it used to hold was an
-  // empty block the composer's height.
+  // The composer frame is a node card; a composer stand-in would be an empty
+  // block the composer's height.
   assert.equal(has('.shadow-node-shadow'), false, 'no composer frame under the loader')
   assert.equal(has('.h-16'), false, 'no composer stand-in under the loader')
   assert.equal(has('textarea'), false)

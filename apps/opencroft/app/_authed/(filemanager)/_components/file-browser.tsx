@@ -139,9 +139,25 @@ function FileRow({
     <ContextMenu>
       <ContextMenuTrigger
         render={
+          // biome-ignore lint/a11y/useSemanticElements: the row hosts the inline rename input and a context menu trigger, which cannot live inside a <button>
           <div
+            role='button'
+            tabIndex={0}
             className='flex items-center gap-3 px-3 py-2 hover:bg-accent/50 rounded-md cursor-pointer text-sm'
             onClick={() => isDir && !isRenaming && onNavigate(entry.path)}
+            onKeyDown={(e) => {
+              // Ignore keys typed into the inline rename input, which bubble up to the row.
+              if (e.target !== e.currentTarget) {
+                return
+              }
+              if (e.key === 'Enter' && isDir && !isRenaming) {
+                e.preventDefault()
+                onNavigate(entry.path)
+              } else if (e.key === 'F2' && !isRenaming) {
+                e.preventDefault()
+                onRenameStart()
+              }
+            }}
             onContextMenu={(e) => e.stopPropagation()}
           />
         }
@@ -154,6 +170,7 @@ function FileRow({
         {isRenaming ? (
           <InlineInput initial={entry.name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
         ) : (
+          // biome-ignore lint/a11y/noStaticElementInteractions: double-click is a pointer-only shortcut; the keyboard route to rename is F2 on the row and the context menu
           <span
             className='flex-1 truncate'
             onDoubleClick={(e) => {
@@ -233,18 +250,18 @@ function Breadcrumbs({ path, onNavigate }: { path: string; onNavigate: (path: st
   const parts = path.split('/').filter(Boolean)
   const crumbs = parts.map((part, i) => ({
     label: part,
-    path: '/' + parts.slice(0, i + 1).join('/'),
+    path: `/${parts.slice(0, i + 1).join('/')}`,
   }))
 
   return (
     <Flex row align='center' className='gap-1 text-sm text-muted-foreground min-w-0 overflow-hidden'>
-      <button className='hover:text-foreground shrink-0' onClick={() => onNavigate('/')}>
+      <button type='button' className='hover:text-foreground shrink-0' onClick={() => onNavigate('/')}>
         /
       </button>
       {crumbs.map((crumb, i) => (
         <Flex row align='center' className='gap-1 min-w-0' key={crumb.path}>
           {i > 0 && <span>/</span>}
-          <button className='hover:text-foreground truncate' onClick={() => onNavigate(crumb.path)}>
+          <button type='button' className='hover:text-foreground truncate' onClick={() => onNavigate(crumb.path)}>
             {crumb.label}
           </button>
         </Flex>
@@ -310,7 +327,7 @@ export function FileBrowser() {
   }
 
   const parentPath =
-    fm.currentPath === '/' ? null : '/' + fm.currentPath.split('/').filter(Boolean).slice(0, -1).join('/') || '/'
+    fm.currentPath === '/' ? null : `/${fm.currentPath.split('/').filter(Boolean).slice(0, -1).join('/')}` || '/'
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = Array.from(e.target.files ?? [])

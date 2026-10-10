@@ -39,6 +39,10 @@ import {
   handlers as mcpServerHandlers,
 } from '@/app/_authed/(mcp)/_server/mcp-server-tools'
 import {
+  definitions as remoteImageDefinitions,
+  handlers as remoteImageHandlers,
+} from '@/app/_authed/(mcp)/_server/remote-image-tools'
+import {
   definitions as remoteDefinitions,
   handlers as remoteHandlers,
   backgroundRunners as remoteRunners,
@@ -107,16 +111,16 @@ export { replaceExact, requireCallingAgent } from '@/app/_authed/(mcp)/_server/t
  *   (a) it cannot mutate state by construction, and
  *   (b) its output cannot page a credential store wholesale.
  *
- * READ (a) STRICTLY, because three entries here only just satisfy it. The
- * remote reads do not read a file through an API that cannot write -- they
+ * READ (a) STRICTLY, because the remote reads here only just satisfy it. They
+ * do not read a file through an API that cannot write -- they
  * COMPOSE A SHELL COMMAND. What makes them non-mutating is a conjunction that
  * a future edit can break silently: no verb in the command writes, and every
  * value interpolated into it is quoted. Neither half is enforced by anything;
  * both are properties of the handlers as they stand.
  *
- * THAT NOW MATTERS TWICE OVER. Before this set existed those three prompted,
- * so an unquoted interpolation added later would have been shown to somebody
- * before it ran. They are auto-allowed now, and nobody will be asked. A change
+ * THAT MATTERS BECAUSE THEY ARE AUTO-ALLOWED: nobody is asked before one runs,
+ * so an unquoted interpolation added later would run without anyone seeing
+ * it first. A change
  * to how any of them builds its argv is therefore a change to this
  * classification, whether or not the person making it opens this file.
  *
@@ -140,7 +144,7 @@ export { replaceExact, requireCallingAgent } from '@/app/_authed/(mcp)/_server/t
  *                       included.
  *   ask_user         -- interrupts a person.
  *
- * The three remote reads ARE here despite reading files this process cannot
+ * The remote reads ARE here despite reading files this process cannot
  * vet: their risk is disclosure rather than mutation, and a prompt does not
  * defend against disclosure once it is the fortieth of the hour. What defends
  * values is not storing them where a read finds them.
@@ -162,6 +166,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   // compaction's progress. All scoped to the calling agent already.
   'group_chat_list',
   'group_chat_turns',
+  'group_chat_turn',
   'group_chat_compact_status',
   'artifact_list',
   // Configuration read. Secret values are redacted by the handler itself, so
@@ -171,6 +176,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'remote_read',
   'remote_glob',
   'remote_grep',
+  // The same disclosure as remote_read, as a picture: whoever may read a file
+  // may view it. Its commands are reading verbs with the path quoted too.
+  'remote_view_image',
   // Background-task read: a task's record — its state, timing and an output
   // tail the service bounds. Its risk is the remote reads' one, disclosure of
   // what a command printed; stopping a task is task_cancel, which is gated.
@@ -244,6 +252,7 @@ const declaredTools: DeclaredTool[] = [
   ...spaceDefinitions,
   ...extensionManagementDefinitions,
   ...remoteDefinitions,
+  ...remoteImageDefinitions,
   ...actionDefinitions,
   ...appDefinitions,
   ...taskDefinitions,
@@ -498,6 +507,7 @@ const handlers: Record<string, ToolHandler> = {
   ...spaceHandlers,
   ...extensionManagementHandlers,
   ...remoteHandlers,
+  ...remoteImageHandlers,
   ...actionHandlers,
   ...appHandlers,
   ...taskHandlers,

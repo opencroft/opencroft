@@ -61,8 +61,6 @@ before(async () => {
   assert.ok(address && typeof address === 'object')
   url = `ws://127.0.0.1:${address.port}`
 
-  // Sessions signed with the development secret, as the other session tests do.
-  process.env.NODE_ENV = 'development'
   const signedUp = await ensureAuth().api.signUpEmail({
     body: { name: 'Socket Tester', email: 'socket-docs@example.test', password: 'password123456' },
     asResponse: true,

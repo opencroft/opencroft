@@ -1,9 +1,7 @@
-import { legacy } from '@opencroft/client'
+import { InputHandle, NodeFrame, OutputHandle } from '@opencroft/client/canvas'
+import { getStream, type Stream, type TextChunk } from '@opencroft/client/streams'
+import { Sparkles } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-
-const { InputHandle, NodeFrame, OutputHandle, getStream, icons } = legacy
-type Stream<T> = legacy.Stream<T>
-type TextChunk = legacy.TextChunk
 
 import { AssistantSelector, useAssistant } from './openai-assistant'
 
@@ -21,7 +19,7 @@ export function TextGenerationNode({ data, selected }: { id: string; data: TextG
 
   return (
     <NodeFrame
-      icon={icons.Sparkles}
+      icon={Sparkles}
       title='Text Generation'
       subtitle={subtitle}
       selected={selected ?? false}

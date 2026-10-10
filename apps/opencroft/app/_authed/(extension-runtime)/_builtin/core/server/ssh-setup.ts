@@ -1,5 +1,5 @@
-import type { ServerConfig } from '@opencroft/server'
-import host from '@opencroft/server'
+import { exec, execFile, fs, os, path } from '@opencroft/server/system'
+import { type ServerConfig, ssh } from '@opencroft/server/terminal'
 
 import { keyStoreReadPublicKey } from './key-store'
 
@@ -38,7 +38,7 @@ export interface HostKeyStatus {
 }
 
 function knownHostsPath(): string {
-  return host.path.join(host.os.homedir(), '.ssh', 'known_hosts')
+  return path.join(os.homedir(), '.ssh', 'known_hosts')
 }
 
 /** `[host]:port` for non-standard ports, bare host for 22 — matches the format
@@ -49,11 +49,11 @@ function knownHostsHost(address: string, port: number): string {
 
 async function scanFingerprint(address: string, port: number): Promise<string | undefined> {
   try {
-    const scanned = await host.execFile('ssh-keyscan', ['-p', String(port), address])
+    const scanned = await execFile('ssh-keyscan', ['-p', String(port), address])
     if (!scanned.trim()) {
       return undefined
     }
-    const info = await host.exec(`printf '%s' ${shellSingleQuote(scanned)} | ssh-keygen -lf - 2>/dev/null | head -n1`)
+    const info = await exec(`printf '%s' ${shellSingleQuote(scanned)} | ssh-keygen -lf - 2>/dev/null | head -n1`)
     const match = info.match(/\s(SHA256:\S+)\s/)
     return match ? match[1] : info.trim() || undefined
   } catch {
@@ -68,7 +68,7 @@ export async function hostKeyStatus(address: string, port: number): Promise<Host
   }
   let trusted = false
   try {
-    await host.execFile('ssh-keygen', ['-F', knownHostsHost(address, port), '-f', knownHostsPath()])
+    await execFile('ssh-keygen', ['-F', knownHostsHost(address, port), '-f', knownHostsPath()])
     trusted = true
   } catch {
     trusted = false
@@ -88,7 +88,7 @@ export async function acceptHostKey(address: string, port: number): Promise<Host
   }
   let scanned: string
   try {
-    scanned = await host.execFile('ssh-keyscan', ['-p', String(port), address])
+    scanned = await execFile('ssh-keyscan', ['-p', String(port), address])
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (/enoent|not found|no such file/i.test(msg)) {
@@ -100,11 +100,11 @@ export async function acceptHostKey(address: string, port: number): Promise<Host
     throw new Error(`Could not reach ${address}:${port} to read its host key`)
   }
   const kh = knownHostsPath()
-  const dir = host.path.join(host.os.homedir(), '.ssh')
-  await host.fs.mkdir(dir, { recursive: true })
+  const dir = path.join(os.homedir(), '.ssh')
+  await fs.mkdir(dir, { recursive: true })
   // Drop any existing entry for this host so we don't accumulate duplicates.
-  await host.execFile('ssh-keygen', ['-R', knownHostsHost(address, port), '-f', kh]).catch(() => null)
-  await host.exec(
+  await execFile('ssh-keygen', ['-R', knownHostsHost(address, port), '-f', kh]).catch(() => null)
+  await exec(
     `printf '%s\\n' ${shellSingleQuote(scanned.trim())} >> ${shellSingleQuote(kh)} && chmod 600 ${shellSingleQuote(kh)}`,
   )
   const fingerprint = await scanFingerprint(address, port)
@@ -129,7 +129,7 @@ export async function installPublicKey(config: ServerConfig, publicKey: string):
     `K=$(printf '%s' '${b64}' | base64 -d)`,
     'grep -qF "$K" ~/.ssh/authorized_keys || printf \'%s\\n\' "$K" >> ~/.ssh/authorized_keys',
   ].join(' && ')
-  await host.ssh.exec(config, script)
+  await ssh.exec(config, script)
 }
 
 /** Resolve a `"<storeId>:<name>"` key reference to its public key text. */

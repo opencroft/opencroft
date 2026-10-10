@@ -9,7 +9,7 @@ import { avatarResponse, readStoredAvatar } from '@/app/_server/user-avatar'
 // A NITRO ROUTE, NOT A TANSTACK ONE, for the reason the attachment route gives:
 // the title bar draws it with an <img>, and under the dev server only a route
 // of Nitro's own is reached by a request whose Sec-Fetch-Dest is `image`.
-// As a TanStack route it answered fetch() and 404'd every picture drawn.
+// A TanStack route answers fetch() but 404s every picture an <img> draws.
 export default defineEventHandler(async (event) => {
   const userId = decodedParam(event.context.params?.userId)
   if (!userId) {

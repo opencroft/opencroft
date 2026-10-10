@@ -1,8 +1,7 @@
-import { legacy } from '@opencroft/client'
-
-const { Button, InputHandle, NodeFrame, React, icons, inspectorIntent, useReactFlow } = legacy
-
-const { useCallback, useEffect, useRef } = React
+import { InputHandle, inspectorIntent, NodeFrame, useReactFlow } from '@opencroft/client/canvas'
+import { Button } from '@opencroft/client/ui'
+import { Copy, ScrollText, Trash2 } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef } from 'react'
 
 export interface LogEntry {
   at: number
@@ -39,7 +38,7 @@ export function LogNode({ id, data, selected }: { id: string; data: LogData; sel
 
   return (
     <NodeFrame
-      icon={icons.ScrollText}
+      icon={ScrollText}
       title='Log'
       subtitle={subtitle}
       selected={selected ?? false}
@@ -52,7 +51,7 @@ export function LogNode({ id, data, selected }: { id: string; data: LogData; sel
           onClick={openOutput}
           disabled={entries.length === 0}
         >
-          <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
+          <ScrollText className='h-2.5 w-2.5 shrink-0' />
           <span>Output</span>
         </Button>
       }
@@ -71,6 +70,7 @@ export function LogInspector({
   const entries = data.entries ?? []
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: new entries are the trigger to scroll to the end; the effect does not read them
   useEffect(() => {
     const el = scrollRef.current
     if (el) {
@@ -87,6 +87,17 @@ export function LogInspector({
     updateData({ entries: [] })
   }, [updateData])
 
+  // Entries carry no id and several can share a timestamp, so the key is the timestamp plus the
+  // occurrence count of that timestamp; unlike an array index it survives trimming from the front.
+  const keyedEntries = useMemo(() => {
+    const seen = new Map<number, number>()
+    return entries.map((entry) => {
+      const occurrence = seen.get(entry.at) ?? 0
+      seen.set(entry.at, occurrence + 1)
+      return { key: `${entry.at}-${occurrence}`, entry }
+    })
+  }, [entries])
+
   return (
     <div className='flex flex-col gap-3'>
       <label className='flex flex-col gap-1 text-xs'>
@@ -96,9 +107,7 @@ export function LogInspector({
           min={1}
           className='h-8 rounded border bg-transparent px-2 text-xs'
           value={data.max ?? DEFAULT_MAX}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            updateData({ max: Number(e.target.value) || DEFAULT_MAX })
-          }
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ max: Number(e.target.value) || DEFAULT_MAX })}
         />
       </label>
       <div className='flex flex-col gap-1'>
@@ -106,10 +115,10 @@ export function LogInspector({
           <span className='text-xs'>Output</span>
           <div className='flex items-center gap-1'>
             <Button variant='ghost' size='sm' onClick={copy} disabled={entries.length === 0}>
-              <icons.Copy className='h-3 w-3 mr-1' /> Copy
+              <Copy className='h-3 w-3 mr-1' /> Copy
             </Button>
             <Button variant='ghost' size='sm' onClick={clear} disabled={entries.length === 0}>
-              <icons.Trash2 className='h-3 w-3 mr-1' /> Clear
+              <Trash2 className='h-3 w-3 mr-1' /> Clear
             </Button>
           </div>
         </div>
@@ -118,8 +127,8 @@ export function LogInspector({
             <p className='text-[10px] text-muted-foreground italic'>No log entries yet.</p>
           ) : (
             <div className='font-mono text-[11px] text-[#cccccc] flex flex-col gap-1'>
-              {entries.map((e: LogEntry, i: number) => (
-                <div key={`${e.at}-${i}`} className='whitespace-pre-wrap break-words'>
+              {keyedEntries.map(({ key, entry: e }) => (
+                <div key={key} className='whitespace-pre-wrap break-words'>
                   <span className='text-muted-foreground'>[{formatTime(e.at)}]</span> <span>{e.text}</span>
                 </div>
               ))}

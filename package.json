@@ -10,15 +10,12 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "node scripts/check-lint-baseline.mjs",
-    "check:full": "biome check",
-    "fix": "biome check --write",
+    "fix": "opencroft-dev fix",
     "test": "node scripts/run-workspace-tests.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev": "npm run dev -w @opencroft/app",
     "build": "npm run build -w @opencroft/app",
-    "start": "npm run start -w @opencroft/app",
-    "check:baseline": "node scripts/check-baseline.mjs"
+    "start": "npm run start -w @opencroft/app"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16"

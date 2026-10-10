@@ -1,5 +1,11 @@
 'use client'
 
+import type {
+  AgentChatInputControl,
+  AgentChatInputControlProps,
+  AgentChatStatusIndicator,
+} from '@opencroft/client/chat'
+import type { ProvidedPoints } from '@opencroft/client/extension'
 import { ChainDot, Chained } from 'agent-chat/components/chain'
 import type {
   ChatTurnRenderers,
@@ -9,12 +15,11 @@ import type {
 import { ThinkingBlock } from 'agent-chat/components/thinking-block'
 import type { AgentChatEdit, AgentChatSession } from 'agent-chat/session'
 import type { AvailableCommand } from 'agent-client/types'
-import type { ComponentType } from 'react'
 import { GenericToolView } from 'ui/tool-views/run-views'
 import { lookupToolView } from 'ui/tool-views/tool-views'
 
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { RenderBoundary } from '@/components/render-boundary'
 import { AppToolViewHost } from '@/components/tool-views/app-tool-view-host'
@@ -184,31 +189,16 @@ export interface AgentSession {
 }
 
 // ── Extension-provided chat-input controls (e.g. voice) ──────────────────────
-// Core owns only the injection point and this contract. The actual controls
-// (mic capture, TTS playback) live in an extension that declares
+// Core owns only the injection point and its contract, `AgentChatInputControl`
+// in `@opencroft/client/chat`. The actual controls (mic capture, TTS playback)
+// live in an extension that declares
 // `provides: { 'agent-chat-input-controls': [{ id, component }] }` and resolves
 // the agent's ASR/TTS config server-side from `agentNodeId`. Core never
 // references any specific extension.
-export interface AgentVoiceControlProps {
-  /** The active agent's node id; the control resolves its ASR/TTS config from it. */
-  agentNodeId: string
-  /** Append transcribed text to the composer draft. */
-  insertText: (text: string) => void
-  /** Send a message as the user. */
-  send: (text: string) => void
-  /** Read the live message list (e.g. to speak the latest reply). */
-  getMessages: () => ChatMessage[]
-  /** True while the agent is generating a reply; flips false when the turn completes. */
-  streaming: boolean
-}
+const INPUT_CONTROLS = 'agent-chat-input-controls' satisfies keyof ProvidedPoints
 
-export interface AgentChatInputControl {
-  id: string
-  component: ComponentType<AgentVoiceControlProps>
-}
-
-export function AgentChatInputControls(props: AgentVoiceControlProps) {
-  const { items } = useProvided<AgentChatInputControl>('agent-chat-input-controls', loadAllExtensions)
+export function AgentChatInputControls(props: AgentChatInputControlProps) {
+  const { items } = useProvided<AgentChatInputControl>(INPUT_CONTROLS, loadExtensionsProviding)
   return (
     <>
       {items.map((control) => (
@@ -225,13 +215,10 @@ export function AgentChatInputControls(props: AgentVoiceControlProps) {
 // visibility (e.g. a TTS playback visualizer that only appears while audio is
 // playing). Same pattern as the input controls above — core owns only the
 // injection point, no extension is referenced by name.
-export interface AgentChatStatusIndicator {
-  id: string
-  component: ComponentType
-}
+const STATUS_INDICATORS = 'agent-chat-status-indicators' satisfies keyof ProvidedPoints
 
 export function AgentChatStatusIndicators() {
-  const { items } = useProvided<AgentChatStatusIndicator>('agent-chat-status-indicators', loadAllExtensions)
+  const { items } = useProvided<AgentChatStatusIndicator>(STATUS_INDICATORS, loadExtensionsProviding)
   return (
     <>
       {items.map((indicator) => (

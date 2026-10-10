@@ -10,7 +10,7 @@ import { Flex } from 'ui/layout/flex'
 
 import { addSpaceApp } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta } from '@/app/_authed/(apps)/_server/types'
-import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
+import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
@@ -35,7 +35,7 @@ export function AddApp({ spaceSlug, app }: Props) {
   const [saving, setSaving] = useState(false)
   // The extensions' client halves, for Apps that ship a custom parameter
   // form. Matched by type, as the App's component is.
-  const { items: definitions } = useProvided<AppDefinition>('apps', loadAllExtensions)
+  const { items: definitions } = useProvided<AppDefinition>('apps', loadExtensionsProviding)
   const CustomForm = definitions.find((d) => d.type === app.type)?.form
   const Icon = resolveIcon(app.icon)
   const previewSlug = name.trim() ? instanceSlugFor(name) : '…'

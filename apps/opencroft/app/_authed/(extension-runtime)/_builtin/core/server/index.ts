@@ -1,5 +1,9 @@
-import type { ExecOptions, ServerConfig, TerminalContext } from '@opencroft/server'
-import host from '@opencroft/server'
+import { extensionId } from '@opencroft/server/extension'
+import { graph } from '@opencroft/server/graph'
+import { mcpTokens } from '@opencroft/server/people'
+import { secrets } from '@opencroft/server/secrets'
+import { crypto, execFile, os, path } from '@opencroft/server/system'
+import { type ExecOptions, type ServerConfig, ssh, type TerminalContext, terminal } from '@opencroft/server/terminal'
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
 import { HARNESS_ADAPTERS } from 'agent-client/harness-adapters'
 import {
@@ -64,14 +68,14 @@ function listAgentCatalog(): AgentCatalog {
 // (Codex) reads it from there and nowhere else, so a sign-in, a status check
 // or a disconnect aimed anywhere else would act on a login the agent never sees.
 async function agentOauthPlacement(nodeId: string): Promise<OauthPlacement> {
-  const node = await host.graph.getNode(String(nodeId ?? ''))
-  if (node?.type !== storedType(host.extensionId, 'agent')) {
+  const node = await graph.getNode(String(nodeId ?? ''))
+  if (node?.type !== storedType(extensionId, 'agent')) {
     throw new Error('Agent node not found')
   }
   const { harnessHome, containerName } = agentPlacement(
     node.data as { name?: string; containerName?: string },
     node.id,
-    { cwd: process.cwd(), join: host.path.join },
+    { cwd: process.cwd(), join: path.join },
   )
   return { harnessHome, containerName }
 }
@@ -84,7 +88,7 @@ async function listModels(params: { baseUrl?: string; apiKeySecret?: string }): 
   if (!base) {
     return []
   }
-  const key = params.apiKeySecret ? ((await host.secrets.resolve(params.apiKeySecret)) ?? '') : ''
+  const key = params.apiKeySecret ? ((await secrets.resolve(params.apiKeySecret)) ?? '') : ''
   const headers: Record<string, string> = {}
   if (key) {
     headers.Authorization = `Bearer ${key}`
@@ -135,7 +139,7 @@ async function resolveHeaderValue(value: string): Promise<string> {
     return value
   }
   const name = value.slice(SECRET_PREFIX.length).trim()
-  const resolved = name ? await host.secrets.resolve(name) : null
+  const resolved = name ? await secrets.resolve(name) : null
   if (resolved === null) {
     throw new Error(`Secret "${name}" not found in any Secrets Store`)
   }
@@ -248,7 +252,7 @@ async function ttsCapabilities(params: {
   return caps
 }
 
-const isWindows = host.os.platform() === 'win32'
+const isWindows = os.platform() === 'win32'
 
 // ═══════════════════════════════════════════════════════════════════
 // Localhost
@@ -270,7 +274,7 @@ function formatBytes(b: number): string {
 async function getLocalhostDiskUsage(): Promise<string> {
   if (isWindows) {
     try {
-      const stdout = await host.execFile('wmic', [
+      const stdout = await execFile('wmic', [
         'logicaldisk',
         'where',
         'DeviceID="C:"',
@@ -291,7 +295,7 @@ async function getLocalhostDiskUsage(): Promise<string> {
     }
   }
   try {
-    const stdout = await host.execFile('df', ['-h', '/'])
+    const stdout = await execFile('df', ['-h', '/'])
     const lines = stdout.trim().split('\n')
     const parts = lines[1]?.split(/\s+/)
     return parts ? `${parts[2]}/${parts[1]}` : 'unknown'
@@ -301,16 +305,16 @@ async function getLocalhostDiskUsage(): Promise<string> {
 }
 
 async function getLocalhostStats(): Promise<LocalhostStats> {
-  const cpus = host.os.cpus()
-  const totalMem = host.os.totalmem()
-  const freeMem = host.os.freemem()
+  const cpus = os.cpus()
+  const totalMem = os.totalmem()
+  const freeMem = os.freemem()
   return {
-    os: `${host.os.type()} ${host.os.release()}`,
-    cpu: `${cpus.length}x ${cpus[0]?.model || host.os.arch()}`,
+    os: `${os.type()} ${os.release()}`,
+    cpu: `${cpus.length}x ${cpus[0]?.model || os.arch()}`,
     memory: `${formatBytes(totalMem - freeMem)}/${formatBytes(totalMem)}`,
     storage: await getLocalhostDiskUsage(),
-    hostname: host.os.hostname(),
-    platform: host.os.platform(),
+    hostname: os.hostname(),
+    platform: os.platform(),
   }
 }
 
@@ -335,17 +339,17 @@ async function getWslStats(distro: string): Promise<WslStats> {
     'echo "MEMORY=$(free -h 2>/dev/null | awk \'/^Mem:/{print $3"/"$2}\' || echo unknown)"',
     'echo "STORAGE=$(df -h / 2>/dev/null | awk \'NR==2{print $3"/"$2}\' || echo unknown)"',
   ].join(' && ')
-  const out = await host.execFile('wsl', ['-d', distro, '--exec', 'bash', '-c', script])
+  const out = await execFile('wsl', ['-d', distro, '--exec', 'bash', '-c', script])
   const lines: Record<string, string> = {}
   for (const line of out.trim().split('\n')) {
     const [key, ...rest] = line.split('=')
     lines[key] = rest.join('=')
   }
   return {
-    os: lines['OS'] || 'unknown',
-    cpu: lines['CPU'] || 'unknown',
-    memory: lines['MEMORY'] || 'unknown',
-    storage: lines['STORAGE'] || 'unknown',
+    os: lines.OS || 'unknown',
+    cpu: lines.CPU || 'unknown',
+    memory: lines.MEMORY || 'unknown',
+    storage: lines.STORAGE || 'unknown',
   }
 }
 
@@ -361,7 +365,7 @@ interface SecretRowOut {
 }
 
 async function secretsStoreGetSecrets(storeId: string): Promise<SecretRowOut[]> {
-  const rows = await host.secrets.list(storeId)
+  const rows = await secrets.list(storeId)
   return rows.map((r) => ({
     id: r.id,
     key: r.key,
@@ -371,16 +375,16 @@ async function secretsStoreGetSecrets(storeId: string): Promise<SecretRowOut[]> 
 }
 
 async function secretsStoreSetSecret(storeId: string, key: string, value: string): Promise<void> {
-  await host.secrets.set(storeId, key, value)
+  await secrets.set(storeId, key, value)
 }
 
 async function secretsStoreDeleteSecret(storeId: string, key: string): Promise<void> {
-  await host.secrets.delete(storeId, key)
+  await secrets.delete(storeId, key)
 }
 
 async function secretsStoreRotateSecret(storeId: string, key: string): Promise<string> {
-  const value = host.crypto.randomToken()
-  await host.secrets.set(storeId, key, value)
+  const value = crypto.randomToken()
+  await secrets.set(storeId, key, value)
   return value
 }
 
@@ -392,7 +396,7 @@ interface OrphanRow {
 }
 
 async function secretsStoreListOrphans(currentStoreId: string): Promise<OrphanRow[]> {
-  const rows = await host.secrets.listAll()
+  const rows = await secrets.listAll()
   return rows
     .filter((r) => r.storeId !== currentStoreId)
     .map((r) => ({
@@ -404,7 +408,7 @@ async function secretsStoreListOrphans(currentStoreId: string): Promise<OrphanRo
 }
 
 async function secretsStoreDeleteOrphan(id: string): Promise<void> {
-  await host.secrets.deleteById(id)
+  await secrets.deleteById(id)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -440,7 +444,7 @@ async function terminalExecDetailed(
   command: string,
   opts?: ExecOptions,
 ): Promise<{ stdout: string; truncated: boolean }> {
-  const result = await host.terminal.execResult(ctx, command, opts)
+  const result = await terminal.execResult(ctx, command, opts)
   if (result.exitCode !== 0) {
     const detail = result.timedOut ? ' (timed out)' : ''
     const suffix = result.stderr ? `: ${result.stderr}` : ''
@@ -462,17 +466,17 @@ async function serverGetStats(config: ServerConfig): Promise<ServerStats> {
     'echo "MEMORY=$(free -h 2>/dev/null | awk \'/^Mem:/{print $3"/"$2}\' || echo unknown)"',
     'echo "STORAGE=$(df -h / 2>/dev/null | awk \'NR==2{print $3"/"$2}\' || echo unknown)"',
   ].join(' && ')
-  const out = await host.ssh.exec(config, script)
+  const out = await ssh.exec(config, script)
   const lines: Record<string, string> = {}
   for (const line of out.trim().split('\n')) {
     const [key, ...rest] = line.split('=')
     lines[key] = rest.join('=')
   }
   return {
-    os: lines['OS'] || 'unknown',
-    cpu: lines['CPU'] || 'unknown',
-    memory: lines['MEMORY'] || 'unknown',
-    storage: lines['STORAGE'] || 'unknown',
+    os: lines.OS || 'unknown',
+    cpu: lines.CPU || 'unknown',
+    memory: lines.MEMORY || 'unknown',
+    storage: lines.STORAGE || 'unknown',
   }
 }
 
@@ -486,7 +490,7 @@ async function resolveRouteTarget(target: string): Promise<TerminalContext> {
   if (slash <= 0 || slash === target.length - 1) {
     throw new Error(`Not a terminal target: "${target}" (expected "node-id/handle-id")`)
   }
-  return host.terminal.getContext(target.slice(0, slash), target.slice(slash + 1))
+  return terminal.getContext(target.slice(0, slash), target.slice(slash + 1))
 }
 
 export const actions = {
@@ -511,12 +515,12 @@ export const actions = {
   'secretsStore.listOrphans': (storeId: string) => secretsStoreListOrphans(storeId),
   'secretsStore.deleteOrphan': (id: string) => secretsStoreDeleteOrphan(id),
   'server.getStats': (config: ServerConfig) => serverGetStats(config),
-  'server.resolveKey': (keyPath: string) => host.ssh.resolveKey(keyPath),
+  'server.resolveKey': (keyPath: string) => ssh.resolveKey(keyPath),
   'server.hostKeyStatus': (address: string, port: number) => hostKeyStatus(address, port),
   'server.acceptHostKey': (address: string, port: number) => acceptHostKey(address, port),
   'server.installKey': async (config: ServerConfig, keyRef: string) =>
     installPublicKey(config, await resolvePublicKey(keyRef)),
-  'terminal.run': (ctx: TerminalContext, args: string[]) => host.terminal.run(ctx, args),
+  'terminal.run': (ctx: TerminalContext, args: string[]) => terminal.run(ctx, args),
   // A Terminal Router route's context at the moment it is added (see the node's inspector).
   'terminalRouter.resolve': (target: string) => resolveRouteTarget(String(target ?? '')),
   'terminal.exec': (ctx: TerminalContext, command: string, opts?: ExecOptions) =>
@@ -546,10 +550,10 @@ export const actions = {
   // plaintext comes back from create only; list never carries it. `input` is
   // passed through as sent: an absent expiry must be refused by the host's
   // validation, not defaulted here to "never".
-  'agent.listMcpTokens': (nodeId: string) => host.mcpTokens.list(String(nodeId ?? '')),
+  'agent.listMcpTokens': (nodeId: string) => mcpTokens.list(String(nodeId ?? '')),
   'agent.createMcpToken': (nodeId: string, input: { name: string; expiresAt: string | null }) =>
-    host.mcpTokens.create(String(nodeId ?? ''), input),
-  'agent.deleteMcpToken': (nodeId: string, id: string) => host.mcpTokens.delete(String(nodeId ?? ''), String(id ?? '')),
+    mcpTokens.create(String(nodeId ?? ''), input),
+  'agent.deleteMcpToken': (nodeId: string, id: string) => mcpTokens.delete(String(nodeId ?? ''), String(id ?? '')),
   'tts.capabilities': (params: { baseUrl?: string; apiKey?: string; headers?: HeaderPair[] }) =>
     ttsCapabilities(params),
 }

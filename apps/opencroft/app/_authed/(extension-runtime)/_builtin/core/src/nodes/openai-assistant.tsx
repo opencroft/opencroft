@@ -1,21 +1,10 @@
-import { legacy } from '@opencroft/client'
+import { NodeFrame, useGraphNodes } from '@opencroft/client/canvas'
+import { extensionId } from '@opencroft/client/extension'
+import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/client/ui'
+import { UserRound } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 
 import { storedType } from './stored-type'
-
-const {
-  Input,
-  Label,
-  NodeFrame,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  extensionId,
-  icons,
-  useGraphNodes,
-} = legacy
 
 export interface OpenAIAssistantData {
   name: string
@@ -28,7 +17,7 @@ export interface OpenAIAssistantData {
 export function OpenAIAssistantNode({ data, selected }: { data: OpenAIAssistantData; selected?: boolean }) {
   return (
     <NodeFrame
-      icon={icons.UserRound}
+      icon={UserRound}
       title={data.name || 'AI Assistant'}
       subtitle={data.chatModel || '—'}
       selected={selected ?? false}

@@ -1,10 +1,12 @@
-import { legacy } from '@opencroft/client'
-
-const { Button, Label, NodeFrame, React, Textarea, createPortal, icons, invoke, toast, useNodeAccent } = legacy
+import { invoke } from '@opencroft/client/actions'
+import { NodeFrame, useNodeAccent } from '@opencroft/client/canvas'
+import { Button, Label, Textarea } from '@opencroft/client/ui'
+import { Copy, Play, ScrollText, Sparkles, Square, X } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { toast } from 'sonner'
 
 import { AssistantSelector, useAssistant } from './openai-assistant'
-
-const { useCallback, useRef, useState } = React
 
 export interface OpenAIClientData {
   assistantId: string
@@ -26,7 +28,20 @@ function ResponseOverlay({ title, content, onClose }: { title: string; content: 
     toast.success('Copied')
   }, [content])
 
+  // The backdrop click is a pointer shortcut; Escape is the keyboard way to close.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
   return createPortal(
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the backdrop click is a pointer-only shortcut; Escape (handled above) closes the overlay from the keyboard
+    // biome-ignore lint/a11y/noStaticElementInteractions: the backdrop click is a pointer-only shortcut; Escape (handled above) closes the overlay from the keyboard
     <div
       className='fixed inset-0 z-[9999] flex flex-col bg-background/95 backdrop-blur-sm'
       onClick={(e) => {
@@ -39,11 +54,11 @@ function ResponseOverlay({ title, content, onClose }: { title: string; content: 
         <div className='h-2 w-2 rounded-full' style={{ backgroundColor: accent }} />
         <span className='text-sm font-medium flex-1'>{title}</span>
         <Button size='sm' className='h-7 text-xs' onClick={copy}>
-          <icons.Copy className='h-3 w-3 mr-1' />
+          <Copy className='h-3 w-3 mr-1' />
           Copy
         </Button>
         <Button variant='ghost' size='icon' className='h-7 w-7' onClick={onClose}>
-          <icons.X className='h-4 w-4' />
+          <X className='h-4 w-4' />
         </Button>
       </div>
       <div className='flex-1 min-h-0 overflow-auto p-4'>
@@ -110,7 +125,7 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
   return (
     <>
       <NodeFrame
-        icon={icons.Sparkles}
+        icon={Sparkles}
         title='OpenAI Client'
         subtitle={assistant?.chatModel || 'no assistant'}
         status={status}
@@ -125,11 +140,7 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
               onClick={running ? stop : run}
               disabled={!running && !canRun}
             >
-              {running ? (
-                <icons.Square className='h-2.5 w-2.5 shrink-0' />
-              ) : (
-                <icons.Play className='h-2.5 w-2.5 shrink-0' />
-              )}
+              {running ? <Square className='h-2.5 w-2.5 shrink-0' /> : <Play className='h-2.5 w-2.5 shrink-0' />}
             </Button>
             {result ? (
               <Button
@@ -138,7 +149,7 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
                 className='nodrag nopan h-5 text-[10px] px-1.5'
                 onClick={() => setViewerOpen(true)}
               >
-                <icons.ScrollText className='h-2.5 w-2.5 shrink-0' />
+                <ScrollText className='h-2.5 w-2.5 shrink-0' />
               </Button>
             ) : null}
           </div>
@@ -194,7 +205,7 @@ export function OpenAIClientInspector({
         <Label>System Prompt (optional)</Label>
         <Textarea
           value={data.systemPrompt ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
           placeholder='You are a helpful assistant.'
           className='text-xs min-h-[80px]'
         />
@@ -203,7 +214,7 @@ export function OpenAIClientInspector({
         <Label>User Prompt</Label>
         <Textarea
           value={data.userPrompt ?? ''}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => updateData({ userPrompt: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ userPrompt: e.target.value })}
           placeholder='Ask something…'
           className='text-xs min-h-[120px]'
         />

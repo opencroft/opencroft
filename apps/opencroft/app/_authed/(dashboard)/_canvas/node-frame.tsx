@@ -112,7 +112,7 @@ function StaleHandleLabel({ id }: { id: string }) {
   )
 }
 
-function StaleErrorHandle({ id, role }: StaleHandle) {
+function StaleErrorHandle({ id, side }: { id: string; side: StaleHandle['role'] }) {
   const ctx = useContext(ErrorHandleIdsContext)
   const add = ctx?.add
   const remove = ctx?.remove
@@ -120,11 +120,11 @@ function StaleErrorHandle({ id, role }: StaleHandle) {
     if (!add || !remove) {
       return undefined
     }
-    const key = `${role}:${id}`
+    const key = `${side}:${id}`
     add(key)
     return () => remove(key)
-  }, [add, remove, role, id])
-  if (role === 'source') {
+  }, [add, remove, side, id])
+  if (side === 'source') {
     return (
       <OutputHandle type='terminal-context' id={id} color='var(--destructive)'>
         <StaleHandleLabel id={id} />
@@ -148,12 +148,12 @@ function StaleHandlesBody() {
     <div className='flex gap-3 px-4 pb-3'>
       <div className='flex flex-col gap-1.5 shrink-0'>
         {targets.map((s) => (
-          <StaleErrorHandle key={`t:${s.id}`} id={s.id} role='target' />
+          <StaleErrorHandle key={`t:${s.id}`} id={s.id} side='target' />
         ))}
       </div>
       <div className='flex flex-col gap-1 flex-1 min-w-0 items-end'>
         {sources.map((s) => (
-          <StaleErrorHandle key={`s:${s.id}`} id={s.id} role='source' />
+          <StaleErrorHandle key={`s:${s.id}`} id={s.id} side='source' />
         ))}
       </div>
     </div>

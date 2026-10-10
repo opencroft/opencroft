@@ -1,24 +1,19 @@
-import { legacy } from '@opencroft/client'
-
-const {
+import {
   Badge,
   Button,
   Input,
-  Label,
-  React,
   ScrollArea,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  icons,
-  toast,
-} = legacy
+} from '@opencroft/client/ui'
+import { Loader2, Plus, Trash2 } from 'lucide-react'
+import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 import { type KeyValue, KeyValueEditor } from './key-value-editor'
-
-const { useCallback, useEffect, useState } = React
 
 type McpTransport = 'http' | 'sse' | 'stdio'
 
@@ -134,7 +129,7 @@ export function AgentMcpTab() {
           />
         ))}
         <Button variant='outline' size='sm' onClick={add}>
-          <icons.Plus className='size-3 mr-1' />
+          <Plus className='size-3 mr-1' />
           Add server
         </Button>
         <Button size='sm' onClick={save} disabled={saving || hasConflict}>
@@ -167,7 +162,7 @@ function McpServerRow({
           value={config.name}
           placeholder='name'
           className='h-7 text-xs'
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ name: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ name: e.target.value })}
         />
         <Select
           value={config.transport}
@@ -189,7 +184,7 @@ function McpServerRow({
           </SelectContent>
         </Select>
         <Button variant='ghost' size='sm' className='size-7 p-0' onClick={onRemove}>
-          <icons.Trash2 className='size-3' />
+          <Trash2 className='size-3' />
         </Button>
       </div>
       {duplicate ? <span className='text-[10px] text-destructive'>Duplicate name</span> : null}
@@ -199,13 +194,13 @@ function McpServerRow({
             value={config.command ?? ''}
             placeholder='command'
             className='h-7 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ command: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ command: e.target.value })}
           />
           <Input
             value={(config.args ?? []).join(' ')}
             placeholder='args'
             className='h-7 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            onChange={(e: ChangeEvent<HTMLInputElement>) =>
               onChange({ args: e.target.value.split(' ').filter(Boolean) })
             }
           />
@@ -217,7 +212,7 @@ function McpServerRow({
             value={config.url ?? ''}
             placeholder='https://example.com/mcp'
             className='h-7 text-xs font-mono'
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ url: e.target.value })}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ url: e.target.value })}
           />
           <KeyValueEditor
             label='Headers (e.g. Authorization: Bearer …)'
@@ -234,7 +229,7 @@ function McpServerRow({
           onClick={onTest}
           disabled={check?.status === 'checking'}
         >
-          {check?.status === 'checking' ? <icons.Loader2 className='size-3 animate-spin' /> : 'Test'}
+          {check?.status === 'checking' ? <Loader2 className='size-3 animate-spin' /> : 'Test'}
         </Button>
         <CheckBadge check={check} />
       </div>

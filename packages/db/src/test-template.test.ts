@@ -15,7 +15,7 @@ import { openMemoryDb } from './test-memory-db'
 import { buildTemplateDatadir, templateDatadir, templateDump } from './test-template'
 
 const workdir = mkdtempSync(join(tmpdir(), 'opencroft-test-template-test-'))
-const ENV_KEYS = ['OPENCROFT_TEST_RUN_DIR', 'PGLITE_PATH', 'DATABASE_URL'] as const
+const ENV_KEYS = ['OPENCROFT_TEST_RUN_DIR', 'OPENCROFT_PGLITE_PATH', 'OPENCROFT_DATABASE_URL'] as const
 const savedEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]))
 
 after(() => {

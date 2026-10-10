@@ -9,7 +9,7 @@ function serialize(value: unknown): string {
   if (text.length <= MAX_PAYLOAD) {
     return text
   }
-  return text.slice(0, MAX_PAYLOAD) + '…'
+  return `${text.slice(0, MAX_PAYLOAD)}…`
 }
 
 export interface AuditEntryInput {

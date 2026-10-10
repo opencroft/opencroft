@@ -1,6 +1,6 @@
 // The repository's test runner, which lives at the root because every
-// workspace's `test` script calls it. Tested here for the same reason
-// baseline-report.test.ts is: this is where tooling tests run.
+// workspace's `test` script calls it. Tested here because this is where
+// tooling tests run.
 //
 // Each case runs the real runner as a child process over a scratch workspace
 // of its own, so what is asserted is what a run does, not what the script
@@ -173,7 +173,7 @@ test('the global setup runs once, before any file, and its output stays out of t
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(readFileSync(join(scratch, 'seen-by-a'), 'utf8'), 'once\n')
   assert.equal(readFileSync(join(scratch, 'seen-by-b'), 'utf8'), 'once\n')
-  // A totals line in the report would be read by check-baseline as a suite's.
+  // The setup's own totals line stays out of the report, which has one per suite.
   assert.deepEqual(run.stdout.match(/^# fail \d+$/gm), ['# fail 0'])
   assert.match(run.stderr, /^# fail 7$/m, 'the setup still printed, to stderr')
 })
@@ -203,11 +203,11 @@ test('the run directory exists while the files run and is gone when the run ends
   assert.equal(existsSync(runDir), false)
 })
 
-test('a PGLITE_PATH the caller exported is not handed to every file', () => {
+test('an OPENCROFT_PGLITE_PATH the caller exported is not handed to every file', () => {
   const out = join(scratch, 'pglite-path')
-  const dir = workspace({ 'src/a.test.ts': records(out, "process.env.PGLITE_PATH ?? 'unset'") })
+  const dir = workspace({ 'src/a.test.ts': records(out, "process.env.OPENCROFT_PGLITE_PATH ?? 'unset'") })
 
-  const run = runIn(dir, { PGLITE_PATH: join(scratch, 'shared-datadir') })
+  const run = runIn(dir, { OPENCROFT_PGLITE_PATH: join(scratch, 'shared-datadir') })
 
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(readFileSync(out, 'utf8'), 'unset')

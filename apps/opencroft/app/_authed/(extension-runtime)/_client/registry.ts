@@ -6,6 +6,8 @@ import { iconComponent } from 'ui/media/named-icon'
 
 import type {
   CommandModeDefinition,
+  ExtensionComponentProps,
+  ExtensionInspectorProps,
   LoadedExtensionDeclaration,
   NodeContextMenuItem,
   SettingsPageDefinition,
@@ -39,10 +41,8 @@ export interface ResolvedNode {
   accent: string
   handles: ExtensionHandle[]
   defaultData: Record<string, unknown>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  component: ComponentType<any>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  inspector?: ComponentType<any>
+  component: ComponentType<ExtensionComponentProps>
+  inspector?: ComponentType<ExtensionInspectorProps>
 
   inspectorTabs?: Array<{
     id: string
@@ -50,8 +50,7 @@ export interface ResolvedNode {
     icon?: string
     fullHeight?: boolean
     keepMounted?: boolean
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    component: ComponentType<any>
+    component: ComponentType<ExtensionInspectorProps>
   }>
 
   contextMenuItems?: NodeContextMenuItem[]

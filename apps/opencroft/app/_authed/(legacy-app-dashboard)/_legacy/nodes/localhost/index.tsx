@@ -114,7 +114,7 @@ function LocalhostSettings({ onDirtyChange, onLoadingChange }: NodeSettingsProps
       setStats(s)
       onLoadingChange(false)
     })
-  }, [])
+  }, [onLoadingChange])
 
   useEffect(() => {
     onDirtyChange(false, () => {})

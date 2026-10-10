@@ -34,7 +34,7 @@ afterEach(async () => {
 let datadirs = 0
 async function openFreshDb(): Promise<DB> {
   datadirs += 1
-  process.env.PGLITE_PATH = join(workdir, `db-${datadirs}`)
+  process.env.OPENCROFT_PGLITE_PATH = join(workdir, `db-${datadirs}`)
   open = await openDb()
   await open.db.execute(sql`create table item (id int primary key, label text not null)`)
   return open.db

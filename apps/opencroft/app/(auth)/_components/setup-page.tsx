@@ -2,8 +2,10 @@
 
 import { signIn } from '@opencroft/auth/client'
 import type { SetupFailure } from '@opencroft/auth/server'
-import { useRouter } from '@tanstack/react-router'
+import { useRouteContext, useRouter } from '@tanstack/react-router'
+import { TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
+import { Alert, AlertDescription, AlertTitle } from 'ui/alert'
 import { AuthAdminSetupForm } from 'ui/auth/auth-admin-setup-form'
 import { AuthShell } from 'ui/auth/auth-shell'
 
@@ -52,6 +54,7 @@ function validate(values: { name: string; email: string; password: string }): Fi
  */
 export function SetupPage() {
   const router = useRouter()
+  const { keyFileNotice } = useRouteContext({ from: '/(auth)/setup' })
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -102,6 +105,16 @@ export function SetupPage() {
           This instance has no accounts yet. The one you create now is an administrator.
         </p>
       </div>
+      {/* The host's own child beside the form, as the form's design has it.
+          The same words stay on Settings → Backup & Restore while the key
+          file is in use. */}
+      {keyFileNotice && (
+        <Alert>
+          <TriangleAlert />
+          <AlertTitle>Keys are stored in the data volume</AlertTitle>
+          <AlertDescription>{keyFileNotice}</AlertDescription>
+        </Alert>
+      )}
       <AuthAdminSetupForm
         name={name}
         onNameChange={setName}

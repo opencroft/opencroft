@@ -185,11 +185,11 @@ async function persistToDownstreamLogs(
       continue
     }
     const max =
-      (target.data?.['max'] as number | undefined) && (target.data?.['max'] as number) > 0
-        ? (target.data?.['max'] as number)
+      (target.data?.max as number | undefined) && (target.data?.max as number) > 0
+        ? (target.data?.max as number)
         : DEFAULT_LOG_MAX
     await updateNodeData(spaceId, target.id, (prev) => {
-      const prevEntries = (prev['entries'] as LogEntry[] | undefined) ?? []
+      const prevEntries = (prev.entries as LogEntry[] | undefined) ?? []
       const entry: LogEntry = { at: Date.now(), text }
       const nextEntries =
         prevEntries.length >= max

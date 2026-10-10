@@ -1,11 +1,12 @@
-import { legacy } from '@opencroft/client'
-
-const { NodeFrame, OutputHandle, React, Schedules, icons } = legacy
-type KitRunHistoryEntry = legacy.RunHistoryEntry
-type KitScheduleRule = legacy.ScheduleRule
-type UpcomingRun = legacy.UpcomingRun
-
-const { useEffect, useState } = React
+import { NodeFrame, OutputHandle } from '@opencroft/client/canvas'
+import {
+  type RunHistoryEntry as KitRunHistoryEntry,
+  type ScheduleRule as KitScheduleRule,
+  Schedules,
+  type UpcomingRun,
+} from '@opencroft/client/ui'
+import { AlarmClock } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 // ── Persisted data shape ──────────────────────────────────────────────
 // Matches the server scheduler's shape exactly (server/scheduler/event-scheduler.ts,
@@ -127,7 +128,7 @@ export function EventNode({ data, selected }: { id: string; data: EventData; sel
 
   return (
     <NodeFrame
-      icon={icons.AlarmClock}
+      icon={AlarmClock}
       title='Event'
       subtitle={ruleCount === 0 ? 'No schedules' : `${ruleCount} schedule${ruleCount === 1 ? '' : 's'}`}
       selected={selected ?? false}

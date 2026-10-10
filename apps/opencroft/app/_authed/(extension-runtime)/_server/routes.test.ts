@@ -24,7 +24,7 @@ import type { ExtensionRoute, ExtensionRouteContext } from '@opencroft/server'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-extension-routes-test-'))
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -36,10 +36,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
-// No BETTER_AUTH_SECRET in a test process — Better Auth needs a secret
-// configured before it will sign or verify a session at all.
-process.env.NODE_ENV = 'development'
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { ensureAuth, getSessionUser } = await import('@opencroft/auth/server')
 const { dispatchExtensionRoute } = await import('./routes')

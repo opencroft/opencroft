@@ -38,7 +38,7 @@ const workdir = await mkdtemp(join(tmpdir(), 'opencroft-group-chats-test-'))
 // reads: the flag stays false while the file exists, which is the one failure
 // that would make the sleep tests at the end of this file pass vacuously.
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
-process.env.DB_MIGRATIONS_DIR = join(
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
   '..',
@@ -50,10 +50,7 @@ process.env.DB_MIGRATIONS_DIR = join(
   'db',
   'migrations',
 )
-delete process.env.DATABASE_URL
-// No BETTER_AUTH_SECRET in a test process — Better Auth needs a secret
-// configured before it will sign or verify a session at all.
-process.env.NODE_ENV = 'development'
+delete process.env.OPENCROFT_DATABASE_URL
 
 const {
   db,
@@ -643,9 +640,9 @@ test('deleteThread tears the session down before dropping the row it is reachabl
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -815,9 +812,9 @@ test('deleteGroupChat tears down every thread session before the rows they are r
       providerId: 'test-provider',
       adapterId: 'openclaw',
       model: 'test-model',
-      apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+      apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
       cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
-      baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+      baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
     }
     store.connections.set(connectionKey(selection), {
       connection: observingConnection(),
@@ -959,9 +956,9 @@ test('deleteGroupChat drains threads started while it is tearing down, instead o
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -1053,9 +1050,9 @@ test('deleteGroupChat sweeps a session re-created after its own thread was torn 
       providerId: 'test-provider',
       adapterId: 'openclaw',
       model: 'test-model',
-      apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+      apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
       cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
-      baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+      baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
     }
     store.connections.set(connectionKey(selection), {
       connection: connectionFor(agentNodeId),
@@ -1377,9 +1374,9 @@ test('removing an agent tears its session down before dropping the membership ro
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -1524,9 +1521,9 @@ test('a changed topic rides the next send into an open thread, once', async () =
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -1603,9 +1600,9 @@ test('a thread started with no message opens its session and says nothing into i
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store, 'agent-client global store must exist after import')
@@ -1659,9 +1656,9 @@ test('a changed pin set rides the next send the same way the topic does', async 
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -1719,9 +1716,9 @@ test('a group-chat thread can be compacted at all', async () => {
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -1783,9 +1780,9 @@ test('compaction restores CURRENT topic and pins, not what the thread was told w
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -1884,9 +1881,9 @@ test('the name is never delivered to an agent', async () => {
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2049,9 +2046,9 @@ test('a new thread is told the pins, and records what it was told', async () => 
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2101,9 +2098,9 @@ test('a chat with nothing pinned sends the envelope it sent before pins existed'
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2166,9 +2163,9 @@ test('a first prompt that fails leaves the context unrecorded, and a later send 
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2370,7 +2367,7 @@ test('an offline thread with prior activity reports its last-known usage with as
   )
 })
 
-test("a thread's recent turns are readable by a member agent, via the same core the send-message listTurns uses", async () => {
+test("a thread's recent turns are readable by a member agent", async () => {
   const owner = await makeUser('thread-turns-owner@example.test')
   const chat = await model.createGroupChat(reqAs(owner), 'watched for turns', 'stay observable')
   await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
@@ -2390,7 +2387,7 @@ test("a thread's recent turns are readable by a member agent, via the same core 
   )
   assert.ok(
     ['finished', 'in-progress', 'interrupted', 'unknown'].includes(first.status),
-    'status is one of the listTurns statuses',
+    'status is one of the turn statuses',
   )
   assert.equal(typeof page.hasMore, 'boolean')
 })
@@ -2414,6 +2411,97 @@ test('thread turns are refused for a non-member agent and for a fabricated ref, 
     () => model.listThreadTurnsAsAgent('Agent Session', 'bogus.fake.thread'),
     /not.found|not available/i,
     'a fabricated ref is refused the same way',
+  )
+})
+
+test('one turn of a thread reads whole where the turns list cuts it to a preview', async () => {
+  const owner = await makeUser('thread-turn-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'long answers', 'read them whole')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const answer = `${'a long answer '.repeat(200)}the end`
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session', { reply: answer })
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'ask for a long answer')
+  await waitForPrompts(prompts, 1)
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+
+  const [listed] = (await model.listThreadTurnsAsAgent('Agent Session', ref)).turns
+  assert.equal(listed.status, 'finished')
+  assert.equal(listed.finalMessageLength, answer.length)
+  assert.notEqual(listed.finalMessage, answer, 'the list keeps its preview')
+
+  const detail = await model.threadTurnAsAgent('Agent Session', ref, listed.index)
+  assert.equal(detail.turn?.index, listed.index)
+  assert.equal(detail.turn?.finalMessage, answer)
+  assert.equal(detail.turn?.finalMessageLength, answer.length)
+  assert.ok(detail.turn?.prompt.includes('ask for a long answer'))
+  assert.equal(detail.truncated, false)
+  assert.ok(detail.maxChars >= answer.length, 'the cap is stated in the result')
+
+  const missing = await model.threadTurnAsAgent('Agent Session', ref, listed.index + 10_000)
+  assert.equal(missing.turn, null, 'an index past the history names no turn')
+})
+
+// A short session, far below the transcript cap and with nothing left open for
+// a reopen to close, so offline and loaded number its turns alike. Past the cap
+// they do not (see session-turns.ts), which this test does not reach.
+test("an offline thread's turns read from its stored transcript without waking it, as a short session read them loaded", async () => {
+  const owner = await makeUser('thread-turns-offline-owner@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'offline turns', 'read while asleep')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+
+  const answer = `${'an answer worth reading later '.repeat(40)}the end`
+  const prompts: string[] = []
+  seedMockConnection(prompts, 'Agent Session', { reply: answer, resumable: true })
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'what did you find?')
+  await waitForPrompts(prompts, 1)
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+
+  const livePage = await model.listThreadTurnsAsAgent('Agent Session', ref)
+  const [liveTurn] = livePage.turns
+  assert.equal(liveTurn?.status, 'finished', 'sanity: the turn ended while the session was loaded')
+  const liveDetail = await model.threadTurnAsAgent('Agent Session', ref, liveTurn.index)
+
+  const { stopLocalSessionProcessImpl } = await import('@/app/_authed/(agent)/_server/acp-impl')
+  await stopLocalSessionProcessImpl(started.thread.sessionKey)
+  const isLoaded = () => agentClient.listSessions().some((s) => s.sessionKey === started.thread.sessionKey)
+  assert.equal(isLoaded(), false, 'sanity: the session must actually be offline before reading it')
+
+  const offlinePage = await model.listThreadTurnsAsAgent('Agent Session', ref)
+  assert.equal(offlinePage.sessionStatus, 'offline')
+  assert.deepEqual(
+    offlinePage.turns,
+    livePage.turns,
+    'below the cap, the stored transcript lists the same turns at the same indices',
+  )
+  assert.equal(offlinePage.hasMore, livePage.hasMore)
+  assert.equal(offlinePage.nextBeforeIndex, livePage.nextBeforeIndex)
+
+  const offlineDetail = await model.threadTurnAsAgent('Agent Session', ref, liveTurn.index)
+  assert.equal(offlineDetail.sessionStatus, 'offline')
+  assert.deepEqual(offlineDetail.turn, liveDetail.turn, 'one turn reads whole from the stored transcript too')
+  assert.equal(offlineDetail.turn?.finalMessage, answer)
+  assert.equal((await model.threadTurnAsAgent('Agent Session', ref, liveTurn.index + 10_000)).turn, null)
+
+  assert.equal(isLoaded(), false, 'reading the turns does not start the session')
+  assert.equal(prompts.length, 1, 'and delivers nothing to it')
+})
+
+test('one turn of a thread is refused for a non-member agent and for a fabricated ref', async () => {
+  const owner = await makeUser('thread-turn-refusal@example.test')
+  const chat = await model.createGroupChat(reqAs(owner), 'private turn', 'keep out')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-session' })
+  const prompts: string[] = []
+  seedMockConnection(prompts)
+  const started = await model.startThread(reqAs(owner), chat.id, 'agent-session', 'members only')
+  await waitForPrompts(prompts, 1)
+  const ref = model.threadRefFromSessionKey(started.thread.sessionKey)
+
+  await assert.rejects(() => model.threadTurnAsAgent('Outsider Agent', ref, 0), /./)
+  await assert.rejects(
+    () => model.threadTurnAsAgent('Agent Session', 'bogus.fake.thread', 0),
+    /not.found|not available/i,
   )
 })
 
@@ -2449,9 +2537,9 @@ test('an agent can send into a thread of a chat it is in, through the shared del
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2572,9 +2660,9 @@ test('an agent may send into a thread whose agent is itself', async () => {
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2652,9 +2740,9 @@ test('compactThreadAsAgent compacts the addressed thread and re-delivers standin
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', workspaceSlug),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -2905,9 +2993,9 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -3047,15 +3135,21 @@ test('a system grant is a listable member row, and only senders that exist quali
 function seedMockConnection(
   prompts: string[],
   agentName = 'Agent Session',
-  opts?: { resumable?: boolean; forkable?: boolean },
+  opts?: { resumable?: boolean; forkable?: boolean; reply?: string },
 ): void {
   const connection = {
     newSession: async () => ({ sessionId: `mock-${crypto.randomUUID()}` }),
     // Answered only when the seeded entry advertises the capability below —
     // the engine refuses before reaching a connection that did not.
     unstable_forkSession: async () => ({ sessionId: `mock-fork-${crypto.randomUUID()}` }),
-    prompt: async (params: { prompt: Array<{ text?: string }> }) => {
+    prompt: async (params: { sessionId: string; prompt: Array<{ text?: string }> }) => {
       prompts.push(params.prompt.map((b) => b.text ?? '').join(''))
+      if (opts?.reply) {
+        handleUpdate({
+          sessionId: params.sessionId,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: opts.reply } },
+        } as Parameters<typeof handleUpdate>[0])
+      }
       return { stopReason: 'end_turn' }
     },
     resumeSession: async (params: { sessionId: string }) => ({ sessionId: params.sessionId }),
@@ -3068,9 +3162,9 @@ function seedMockConnection(
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug(agentName)),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   if (!store) {
@@ -4789,9 +4883,9 @@ test('asleep, a node delivery into an idle session still reports delivered — w
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -4852,9 +4946,9 @@ test('asleep, group_chat_send returns exactly the result it returns awake', asyn
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -4947,9 +5041,9 @@ test('awake, the status still tracks the running turn — delivered when idle, q
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -5101,9 +5195,9 @@ test('a thread whose agent is mid-turn is refused, and is deletable once the tur
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -5274,9 +5368,9 @@ function seedConfigurableConnection(log: string[]): void {
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session Two')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)
@@ -5974,9 +6068,9 @@ test('a message waiting behind a running turn is dropped when the thread is arch
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
-    apiKey: process.env.OPENCLAW_GATEWAY_TOKEN || '',
+    apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
     cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
-    baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+    baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore
   assert.ok(store)

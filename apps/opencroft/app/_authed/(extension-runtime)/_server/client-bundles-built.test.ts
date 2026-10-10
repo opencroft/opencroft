@@ -193,7 +193,14 @@ test('the browser listing names each client bundle with only what importing it t
 
   assert.deepEqual(
     clients.find((client) => client.id === id),
-    { id, folder: id, clientVersion: await clientBundleVersion(id), clientIcons: [] },
+    {
+      id,
+      folder: id,
+      clientVersion: await clientBundleVersion(id),
+      clientIcons: [],
+      providedPoints: [],
+      hasSettingsPages: false,
+    },
   )
   assert.ok(await clientBundleVersion(id), 'the bundle was built, so the version above is a real one')
   assert.equal(

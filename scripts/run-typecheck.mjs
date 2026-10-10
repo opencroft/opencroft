@@ -11,22 +11,11 @@
 // typechecks itself separately, so those files are already covered there;
 // here they're just filtered out and counted, not silently dropped.
 //
-// A `.typecheck-baseline` file (one error signature per line, produced by
-// this same filtering with line/column stripped) lets a package carry known,
-// already-scoped debt without either hiding it or blocking every unrelated
-// change. No file means zero tolerance.
-//
-// A baseline entry that gets fixed doesn't remove itself -- pass --prune to
-// drop entries that no longer reproduce, so the baseline (and the ratchet)
-// tightens downward too, not just up. Without --prune, a stale entry is
-// still reported, just not treated as a failure.
+// Every error of the package's own fails the run: nothing is tolerated.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 
-const args = process.argv.slice(2)
-const prune = args.includes('--prune')
-const roots = args.filter((arg) => arg !== '--prune')
+const roots = process.argv.slice(2)
 if (roots.length === 0) {
   roots.push('src')
 }
@@ -35,16 +24,16 @@ const result = spawnSync('npx', ['tsc', '--noEmit', '-p', 'tsconfig.json'], { en
 const output = `${result.stdout || ''}${result.stderr || ''}`
 const lines = output.split('\n').filter((line) => line.length > 0)
 
-const errorPattern = /^(.+?)\(\d+,\d+\): (error TS\d+: .*)$/
+const errorPattern = /^(.+?)\((\d+),\d+\): (error TS\d+: .*)$/
 const entries = []
 const unrecognized = []
 
 for (const line of lines) {
   const match = line.match(errorPattern)
   if (match) {
-    const [, file, rest] = match
+    const [, file, row, rest] = match
     const isOwned = roots.some((root) => file === root || file.startsWith(`${root}/`))
-    entries.push({ isOwned, signature: `${file}: ${rest}` })
+    entries.push({ isOwned, signature: `${file}:${row}: ${rest}` })
     continue
   }
   // tsc wraps a diagnostic's extra detail (e.g. missing properties) on
@@ -60,19 +49,6 @@ for (const line of lines) {
 const owned = entries.filter((entry) => entry.isOwned).map((entry) => entry.signature)
 const foreign = entries.filter((entry) => !entry.isOwned).map((entry) => entry.signature)
 
-const baselinePath = '.typecheck-baseline'
-const baseline = existsSync(baselinePath)
-  ? new Set(
-      readFileSync(baselinePath, 'utf8')
-        .split('\n')
-        .filter((line) => line.length > 0),
-    )
-  : new Set()
-
-const ownedSet = new Set(owned)
-const newOwned = owned.filter((signature) => !baseline.has(signature))
-const stale = [...baseline].filter((signature) => !ownedSet.has(signature))
-
 if (foreign.length > 0) {
   console.log(`${foreign.length} cross-package diagnostic(s) ignored -- caught by that package's own typecheck run.`)
 }
@@ -83,30 +59,10 @@ if (unrecognized.length > 0) {
   process.exit(1)
 }
 
-if (stale.length > 0) {
-  const noun = stale.length === 1 ? 'entry' : 'entries'
-  if (prune) {
-    const kept = [...baseline].filter((signature) => ownedSet.has(signature)).sort()
-    if (kept.length === 0) {
-      unlinkSync(baselinePath)
-    } else {
-      writeFileSync(baselinePath, `${kept.join('\n')}\n`)
-    }
-    console.log(`Pruned ${stale.length} stale baseline ${noun} that no longer reproduce.`)
-  } else {
-    console.log(`${stale.length} baseline ${noun} stale (fixed but still listed) -- rerun with --prune to remove.`)
-  }
-}
-
-if (newOwned.length > 0) {
-  console.log(`${newOwned.length} new error(s):`)
-  console.log(newOwned.join('\n'))
-  process.exit(1)
-}
-
 if (owned.length > 0) {
-  console.log(`${owned.length} known baseline error(s), no new ones. See .typecheck-baseline.`)
-  process.exit(0)
+  console.log(`${owned.length} error(s):`)
+  console.log(owned.join('\n'))
+  process.exit(1)
 }
 
 // A non-zero tsc exit with no diagnostic classified either way (owned or

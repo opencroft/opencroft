@@ -1,22 +1,18 @@
-import { legacy } from '@opencroft/client'
-
-const {
+import { invoke } from '@opencroft/client/actions'
+import { NodeFrame } from '@opencroft/client/canvas'
+import {
   Button,
   Input,
   Label,
-  NodeFrame,
-  React,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  icons,
-  invoke,
-  toast,
-} = legacy
-
-const { useCallback, useEffect, useState } = React
+} from '@opencroft/client/ui'
+import { Dices, Eye, EyeOff, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 interface SecretRow {
   id?: string
@@ -33,7 +29,7 @@ export function SecretsStoreNode({ data, selected }: { data: SecretsData; select
   const keys = data.secretKeys ?? []
   return (
     <NodeFrame
-      icon={icons.ShieldCheck}
+      icon={ShieldCheck}
       title='Secrets Store'
       subtitle={keys.length > 0 ? `${keys.length} secrets` : 'empty'}
       selected={selected ?? false}
@@ -93,7 +89,7 @@ function SecretRowEditor({ row, onChange, onRemove, onRotate }: SecretRowEditorP
           className='h-7 text-xs font-mono flex-1'
         />
         <Button variant='ghost' size='icon' className='h-7 w-7' onClick={() => setVisible(!visible)}>
-          {visible ? <icons.EyeOff className='h-3 w-3' /> : <icons.Eye className='h-3 w-3' />}
+          {visible ? <EyeOff className='h-3 w-3' /> : <Eye className='h-3 w-3' />}
         </Button>
         <Button
           variant='ghost'
@@ -103,10 +99,10 @@ function SecretRowEditor({ row, onChange, onRemove, onRotate }: SecretRowEditorP
           disabled={!canRotate}
           title={canRotate ? 'Rotate token' : 'Save before rotating'}
         >
-          <icons.RefreshCw className='h-3 w-3' />
+          <RefreshCw className='h-3 w-3' />
         </Button>
         <Button variant='ghost' size='icon' className='h-7 w-7' onClick={onRemove}>
-          <icons.Trash2 className='h-3 w-3' />
+          <Trash2 className='h-3 w-3' />
         </Button>
       </div>
       <div className='pl-1 text-[10px] text-muted-foreground'>edited {formatEditedAt(row.updatedAt)}</div>
@@ -298,7 +294,7 @@ export function SecretsStoreInspector({
       </div>
       <div className='flex gap-1'>
         <Button variant='outline' size='sm' className='h-7 text-xs flex-1' onClick={addRow}>
-          <icons.Plus className='h-3 w-3 mr-1' /> Add Secret
+          <Plus className='h-3 w-3 mr-1' /> Add Secret
         </Button>
         <Button size='sm' className='h-7 text-xs' onClick={persist} disabled={!dirty}>
           Save
@@ -343,7 +339,7 @@ export function SecretsStoreInspector({
             </SelectContent>
           </Select>
           <Button size='sm' className='h-7 text-xs' onClick={handleGenerate} disabled={!genName.trim() || generating}>
-            <icons.Dices className='h-3 w-3' />
+            <Dices className='h-3 w-3' />
           </Button>
         </div>
       </div>
@@ -368,7 +364,7 @@ export function SecretsStoreInspector({
                   onClick={() => deleteOrphan(o.id, o.key)}
                   title='Delete orphan row'
                 >
-                  <icons.Trash2 className='h-3 w-3' />
+                  <Trash2 className='h-3 w-3' />
                 </Button>
               </div>
             ))}

@@ -22,10 +22,11 @@ import { getSetupStatus } from '@/app/(auth)/_server/setup'
 // applies to the API surfaces.
 export const Route = createFileRoute('/(auth)/setup')({
   beforeLoad: async () => {
-    const { needsSetup } = await getSetupStatus()
+    const { needsSetup, keyFileNotice } = await getSetupStatus()
     if (!needsSetup) {
       throw redirect({ to: '/' })
     }
+    return { keyFileNotice }
   },
   component: SetupPage,
 })

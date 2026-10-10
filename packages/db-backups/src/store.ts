@@ -11,6 +11,7 @@ import {
   resetDatabase as resetAllTables,
   restoreBackup,
 } from '@opencroft/db/backup'
+import { dataDir } from '@opencroft/instance'
 import { eq } from 'drizzle-orm'
 
 import {
@@ -35,11 +36,6 @@ export interface BackupFileInfo {
   sizeBytes: number
   createdAt: string
   format: BackupFormat
-}
-
-function dataDir(...segments: string[]): string {
-  const base = process.env.OPENCROFT_DATA_DIR || path.join(process.cwd(), 'data')
-  return path.join(base, ...segments)
 }
 
 const BACKUPS_DIR = dataDir('backups')

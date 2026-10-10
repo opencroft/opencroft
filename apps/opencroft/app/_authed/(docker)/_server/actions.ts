@@ -1,5 +1,5 @@
-import { spawn } from 'child_process'
-import { networkInterfaces } from 'os'
+import { spawn } from 'node:child_process'
+import { networkInterfaces } from 'node:os'
 
 import { createServerFn } from '@tanstack/react-start'
 

@@ -52,13 +52,16 @@ export function compileTemplate(template: CustomTemplate): NodeTypeDefinition | 
     if (!result || typeof result !== 'object') {
       return null
     }
+    if (!result.component) {
+      throw new Error('template does not define a component')
+    }
     return {
       type: `custom-${template.id}`,
       label: result.label ?? template.name,
       icon: result.icon ?? Box,
       group: result.group ?? 'Custom',
       defaultData: result.defaultData ?? (() => ({})),
-      component: result.component!,
+      component: result.component,
       settings: result.settings ?? (() => null),
     }
   } catch (e) {

@@ -30,7 +30,7 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
     return null
   }
   const obj = parsed as Record<string, unknown>
-  if (typeof obj['message'] !== 'string') {
+  if (typeof obj.message !== 'string') {
     return null
   }
   // Refused rather than ignored, and THROWN rather than returned as null: these
@@ -53,18 +53,18 @@ export function tryParseJsonMessage(text: string): ParsedMessage | null {
   // `force` is named specifically because it was this parameter under its old
   // name, so a caller still sending it gets pointed at its replacement rather
   // than a bare "queue is required".
-  const queue = obj['queue']
+  const queue = obj.queue
   if (queue !== 'wait' && queue !== 'push') {
     const had = 'force' in obj ? ' (`force` has been replaced by `queue: "push"`)' : ''
     throw new Error(`send: "queue" is required and must be "wait" or "push"${had}`)
   }
   return {
-    message: obj['message'],
+    message: obj.message,
     queue,
     // NO `sender`. Who a message is from is stamped by the send path, from
     // what actually fed the run, and is never read from the payload: a field
     // the caller writes is a field the caller can write wrongly, and an author
     // nobody checked makes the avatar beside it a lie rather than a fact.
-    thread: optStr(obj['thread']),
+    thread: optStr(obj.thread),
   }
 }

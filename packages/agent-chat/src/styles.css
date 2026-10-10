@@ -132,10 +132,8 @@
     --prose-pre-white-space: pre;
     --prose-pre-overflow-wrap: normal;
     --prose-pre-code-size: 0.875em;
-    /* 2 at 0.875em is the pitch a docs code block has always shown: 1.75 of
-       the block's 0.85em, which its line box used to impose over the code's
-       own line height. Now the code's own line height decides, and a code
-       diff takes the same. */
+    /* 2 at 0.875em gives the pitch of 1.75 at the block's 0.85em. The code's
+       own line height decides the pitch, and a code diff takes the same. */
     --prose-pre-code-line-height: 2;
 
     --prose-rule-space: 2em;
@@ -286,8 +284,8 @@
   }
 
   /* The code is a block of its own, so its lines are set at its own size and
-     line height. Inline, they sat in the `pre`'s line boxes, whose line height
-     at the `pre`'s larger size decided the pitch instead. */
+     line height. Inline, they would sit in the `pre`'s line boxes, whose line
+     height at the `pre`'s larger size would decide the pitch instead. */
   :is(.prose-chat, .prose-docs) pre code {
     display: block;
     background: transparent;

@@ -1,6 +1,6 @@
 'use client'
 
-import type { Node, NodeProps } from '@xyflow/react'
+import type { NodeProps } from '@xyflow/react'
 import type React from 'react'
 import { memo } from 'react'
 
@@ -10,8 +10,6 @@ interface CommentNodeData {
   onDismiss?: (nodeId: string) => void
   [key: string]: unknown
 }
-
-type CommentNodeType = Node<CommentNodeData, 'comment'>
 
 /**
  * A ReactFlow node that renders a floating comment bubble.
@@ -37,6 +35,7 @@ export const CommentNode = memo(function CommentNode({ data }: NodeProps) {
             aria-label='Dismiss comment'
           >
             <svg
+              aria-hidden='true'
               width='12'
               height='12'
               viewBox='0 0 24 24'

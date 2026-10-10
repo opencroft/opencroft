@@ -1,4 +1,4 @@
-import type { Readable } from 'stream'
+import type { Readable } from 'node:stream'
 
 import type { SshCredentials } from '@opencroft/terminal'
 import { ssh as sshClient } from '@opencroft/terminal/server'
@@ -21,7 +21,7 @@ function resolvePath(config: SshConfig, p: string) {
   if (clean.startsWith('/')) {
     return base + clean
   }
-  return base + '/' + clean
+  return `${base}/${clean}`
 }
 
 export async function listFiles(config: SshConfig, path: string): Promise<FileEntry[]> {
@@ -30,7 +30,7 @@ export async function listFiles(config: SshConfig, path: string): Promise<FileEn
 
   return entries.map((item) => ({
     name: item.name,
-    path: (path.endsWith('/') ? path : path + '/') + item.name,
+    path: (path.endsWith('/') ? path : `${path}/`) + item.name,
     type: item.isDirectory ? ('directory' as const) : ('file' as const),
     size: item.size,
     modified: new Date(item.mtime * 1000).toISOString(),
@@ -45,13 +45,13 @@ export async function downloadFile(config: SshConfig, path: string): Promise<str
 
 export async function uploadFile(config: SshConfig, path: string, data: string, filename: string): Promise<void> {
   const dir = resolvePath(config, path)
-  const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
+  const fullPath = dir.endsWith('/') ? dir + filename : `${dir}/${filename}`
   await sshClient.sftp.write(toCreds(config), fullPath, Buffer.from(data, 'base64'))
 }
 
 export async function uploadStream(config: SshConfig, path: string, stream: Readable, filename: string): Promise<void> {
   const dir = resolvePath(config, path)
-  const fullPath = dir.endsWith('/') ? dir + filename : dir + '/' + filename
+  const fullPath = dir.endsWith('/') ? dir + filename : `${dir}/${filename}`
   await sshClient.upload(toCreds(config), fullPath, stream)
 }
 

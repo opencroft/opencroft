@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
+import { readEnv } from '@opencroft/instance'
+
 import type { InstallAuth } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
 import { runGit, withGitAuth } from './git-exec'
@@ -61,7 +63,7 @@ interface ParsedRegistryEntry {
 }
 
 /**
- * Parse a single EXTENSION_REGISTRIES entry.
+ * Parse a single OPENCROFT_EXTENSION_REGISTRIES entry.
  * Supports inline credentials:
  *   token@owner/repo
  *   user:token@owner/repo
@@ -123,7 +125,7 @@ function parseRegistryEntry(entry: string): ParsedRegistryEntry {
 }
 
 function parseRegistriesEnv(): RegistrySource[] {
-  const raw = process.env.EXTENSION_REGISTRIES?.trim()
+  const raw = readEnv('OPENCROFT_EXTENSION_REGISTRIES')?.trim()
   if (!raw) {
     return [{ name: 'OpenCroft', url: DEFAULT_REGISTRY }]
   }
@@ -236,7 +238,7 @@ async function fetchRegistryManifest(source: RegistrySource): Promise<ResolvedRe
     }
     if (creds) {
       const basic = Buffer.from(`${creds.username}:${creds.token}`).toString('base64')
-      headers['Authorization'] = `Basic ${basic}`
+      headers.Authorization = `Basic ${basic}`
     }
 
     const response = await fetch(rawUrl, { headers, signal: AbortSignal.timeout(15000) })
@@ -347,11 +349,11 @@ export interface ExtensionSpec {
 }
 
 /**
- * Parse the EXTENSIONS env var, the extensions installed at boot:
+ * Parse the OPENCROFT_EXTENSIONS env var, the extensions installed at boot:
  * "acme.extension-a:1.0.0,author.extension-b"
  */
 export function parseExtensionsEnv(): ExtensionSpec[] {
-  const raw = process.env.EXTENSIONS?.trim()
+  const raw = readEnv('OPENCROFT_EXTENSIONS')?.trim()
   if (!raw) {
     return []
   }

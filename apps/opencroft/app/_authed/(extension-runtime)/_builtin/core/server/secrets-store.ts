@@ -1,4 +1,5 @@
-import host from '@opencroft/server'
+import { secrets } from '@opencroft/server/secrets'
+import { crypto } from '@opencroft/server/system'
 
 // ═══════════════════════════════════════════════════════════════════
 // Secrets Store — generate/rotate
@@ -45,11 +46,11 @@ export async function secretsStoreGenerate(
   }
   const charset = options?.format === 'symbols' ? SYMBOLS_CHARSET : ALPHANUMERIC_CHARSET
 
-  const existing = await host.secrets.get(storeId, trimmedName)
+  const existing = await secrets.get(storeId, trimmedName)
   const status: GenerateSecretResult['status'] = existing === null ? 'created' : 'rotated'
 
-  const value = host.crypto.randomString(length, charset)
-  await host.secrets.set(storeId, trimmedName, value)
+  const value = crypto.randomString(length, charset)
+  await secrets.set(storeId, trimmedName, value)
 
   return { name: trimmedName, status }
 }

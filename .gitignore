@@ -38,6 +38,9 @@ yarn-error.log*
 # extension is a separate repository, and on a deployed instance a shared one.
 .extension-typecheck/
 
+# Staged extension copies and generated projects of `opencroft-dev typecheck`.
+.opencroft-dev/
+
 *.local.json
 
 dist/

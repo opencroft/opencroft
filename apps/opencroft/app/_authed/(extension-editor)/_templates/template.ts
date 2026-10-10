@@ -5,35 +5,31 @@
  */
 export function extensionTemplate(slug: string): Record<string, string> {
   const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  const manifest = {
+    name,
+    version: '0.0.1',
+    description: 'A new local extension',
+    nodes: [
+      {
+        type: `${slug}-node`,
+        name: `${name} Node`,
+        category: 'Custom',
+        icon: 'Box',
+      },
+    ],
+  }
 
   return {
-    'extension.json':
-      JSON.stringify(
-        {
-          name,
-          version: '0.0.1',
-          description: 'A new local extension',
-          nodes: [
-            {
-              type: `${slug}-node`,
-              name: `${name} Node`,
-              category: 'Custom',
-              icon: 'Box',
-            },
-          ],
-        },
-        null,
-        2,
-      ) + '\n',
+    'extension.json': `${JSON.stringify(manifest, null, 2)}\n`,
 
-    'src/client.tsx': `import { legacy } from '@opencroft/client';
-
-const { defineExtension, NodeFrame, OutputHandle, icons } = legacy;
+    'src/client.tsx': `import { NodeFrame, OutputHandle } from '@opencroft/client/canvas';
+import { defineExtension } from '@opencroft/client/extension';
+import { Box } from 'lucide-react';
 
 const ${camelCase(slug)}Node = ({ data, selected }) => {
   return (
     <NodeFrame
-      icon={icons.Box}
+      icon={Box}
       title={data.title || '${name} Node'}
       selected={selected || false}
     >
@@ -62,7 +58,9 @@ export default extension;
 `,
 
     'server/index.ts': `// Server actions for this extension.
-// Available: host.fs, host.os, host.exec, host.execFile, host.secrets, host.crypto
+// The host is imported from its modules, for example:
+//   import { exec, execFile, fs, os } from '@opencroft/server/system'
+//   import { secrets } from '@opencroft/server/secrets'
 
 export const actions = {
   '${slug}-node.ping': async () => 'pong',

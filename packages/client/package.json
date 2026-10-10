@@ -7,7 +7,22 @@
     "typecheck": "node ../../scripts/run-typecheck.mjs src"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./actions": "./src/actions.ts",
+    "./app": "./src/app.ts",
+    "./canvas": "./src/canvas.ts",
+    "./chat": "./src/chat.ts",
+    "./code": "./src/code.ts",
+    "./docker": "./src/docker.ts",
+    "./extension": "./src/extension.ts",
+    "./files": "./src/files.ts",
+    "./graph": "./src/graph.ts",
+    "./markdown": "./src/markdown.ts",
+    "./secrets": "./src/secrets.ts",
+    "./storage": "./src/storage.ts",
+    "./streams": "./src/streams.ts",
+    "./terminal": "./src/terminal.ts",
+    "./ui": "./src/ui.ts"
   },
   "dependencies": {
     "@opencroft/core": "*",

@@ -10,9 +10,17 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test, { beforeEach } from 'node:test'
 
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'packages', 'db', 'migrations')
-delete process.env.DATABASE_URL
-process.env.NODE_ENV = 'development'
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  'packages',
+  'db',
+  'migrations',
+)
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { db, user, username: usernames } = await import('@opencroft/db')
 const store = await import('./usernames')
@@ -57,6 +65,29 @@ test('a retired username still resolves, and to the same account', async () => {
   assert.deepEqual(await store.resolveUsername('ada'), ada, 'the old handle still points at her')
   assert.deepEqual(await store.resolveUsername('ada.l'), ada)
   assert.equal(await store.currentUsername(ada), 'ada.l', 'but only the new one is current')
+})
+
+test('many accounts answer with the handles they go by now, people and agents alike', async () => {
+  const ada = await person('Ada Lovelace')
+  const alan = await person('Alan Turing')
+  const unnamed = await person('Grace Hopper')
+  const bot = { kind: 'agent' as const, id: 'agent-node-1' }
+  await store.changeUsername(ada, 'ada')
+  await store.changeUsername(ada, 'ada.l')
+  await store.changeUsername(alan, 'alan')
+  await store.changeUsername(bot, 'agent.bot')
+
+  const current = await store.currentUsernames([ada, alan, unnamed, bot])
+  assert.deepEqual(
+    Object.fromEntries(current),
+    {
+      [store.principalKey(ada)]: 'ada.l',
+      [store.principalKey(alan)]: 'alan',
+      [store.principalKey(bot)]: 'agent.bot',
+    },
+    'the retired handle is not answered, and an account with none is absent',
+  )
+  assert.equal((await store.currentUsernames([])).size, 0)
 })
 
 // ---------------------------------------------------------------------------

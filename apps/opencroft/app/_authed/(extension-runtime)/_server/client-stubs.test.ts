@@ -54,7 +54,7 @@ test('a declared specifier resolves to an empty module instead of esbuild trying
   // This package does not exist anywhere on disk — an unstubbed dynamic
   // import of it would fail the build with a resolution error. If the build
   // succeeds, the stub is what made that import resolve, not a real package.
-  const { id, manifest, dir } = await makeFixture({
+  const { id, manifest } = await makeFixture({
     clientStubs: ['totally-nonexistent-heavy-package'],
     clientSource:
       "export async function loadHeavy() {\n  const mod = await import('totally-nonexistent-heavy-package')\n  return mod\n}\n",
@@ -84,7 +84,7 @@ test('a stub only empties the specifier it names — a normal import alongside i
 })
 
 test('a clientStubs entry that never matches an import is a build error, not a silent no-op', async () => {
-  const { id, manifest, dir } = await makeFixture({
+  const { id, manifest } = await makeFixture({
     clientStubs: ['this-specifier-is-never-imported'],
     clientSource: "export const marker = 'unrelated'\n",
   })

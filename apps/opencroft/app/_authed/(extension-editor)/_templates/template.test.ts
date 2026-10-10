@@ -62,23 +62,28 @@ test('the template names no extension id: the folder it is created in is the id'
   assert.doesNotMatch(files['src/client.tsx'], /local[./]probe-extension/)
 })
 
-test('the template hands out the spelling that carries type declarations', () => {
+test('the template hands out the module spellings that carry type declarations', () => {
   const files = extensionTemplate('probe-extension')
 
-  assert.match(files['src/client.tsx'], /from '@opencroft\/client'/)
+  assert.match(files['src/client.tsx'], /from '@opencroft\/client\/extension'/)
+  assert.match(files['src/client.tsx'], /from '@opencroft\/client\/canvas'/)
+  assert.match(files['src/client.tsx'], /from 'lucide-react'/)
 
   // Not merely "the new one is present". Every spelling resolves to a shim over
   // the same host object, so a template importing two of them would compile and
-  // read as correct while still teaching an untyped one to every extension made
-  // from it. There are TWO untyped ones, not one -- the host surface and the ui
-  // surface -- and both are named below, because a test that forbids one of a
-  // pair reads as a rule about the pair and is not.
+  // read as correct while still teaching an old one to every extension made
+  // from it. There are THREE old ones, not one -- the host surface, the ui
+  // surface and the `legacy` namespace of the package roots -- and all are
+  // named below, because a test that forbids one of a set reads as a rule about
+  // the set and is not.
   //
   // Over every file the template emits rather than the client one alone: the
-  // untyped host spelling is resolved on the server side too, so a template
-  // that reached for it there would teach the same thing from a file this
-  // assertion was not looking at.
+  // old host spelling is resolved on the server side too, so a template that
+  // reached for it there would teach the same thing from a file this assertion
+  // was not looking at.
   const emitted = Object.values(files).join('\n')
   assert.doesNotMatch(emitted, /@ext\/host/)
   assert.doesNotMatch(emitted, /@ext\/ui/)
+  assert.doesNotMatch(emitted, /\blegacy\b/)
+  assert.doesNotMatch(emitted, /from '@opencroft\/(client|server)'/)
 })

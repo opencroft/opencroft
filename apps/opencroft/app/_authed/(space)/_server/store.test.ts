@@ -16,7 +16,11 @@ async function freshSpace(slug: string) {
 
 // The graph a bare space address resolves to -- what these tests write.
 function defaultGraph(space: SpaceRuntime) {
-  return space.graphs.get(space.defaultGraphSlug)!
+  const graph = space.graphs.get(space.defaultGraphSlug)
+  if (!graph) {
+    throw new Error(`Space ${space.slug} has no default graph "${space.defaultGraphSlug}"`)
+  }
+  return graph
 }
 
 // ---------------------------------------------------------------------------

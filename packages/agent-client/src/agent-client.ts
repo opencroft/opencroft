@@ -64,7 +64,7 @@ import {
 } from './pagination'
 import { type PermissionHandler, permissionContext } from './permission-context'
 import { type ResolvedPermissions, toolKey } from './permissions'
-import { DEFAULT_PRESENCE, msUntilDue, presenceWindowMs } from './presence'
+import { DEFAULT_PRESENCE, msUntilDue, oldestMessageAt, presenceWindowMs } from './presence'
 import { blockBytes, PROMPT_BLOCK_BUDGET, promptBudget } from './prompt-size'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
 import { buildSpawnConfig, findAdapter, findProvider, isNativeSelection } from './resolve'
@@ -3970,8 +3970,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    * happened by the time a drain runs, it takes the whole leading run rather
    * than one entry, so a settle landing mid-cancel can no longer ship one stale
    * message on its own.
+   *
+   * `windowClosedFor` is the oldest send time of the run a presence timer was
+   * armed for, passed by that timer when it fires: see the presence gate below.
    */
-  function drainQueue(sessionId: string): Promise<void> | undefined {
+  function drainQueue(sessionId: string, windowClosedFor?: number | null): Promise<void> | undefined {
     const session = store.sessions.get(sessionId)
     if (!session) {
       return undefined
@@ -4000,14 +4003,22 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // someone invoking harness machinery now, not writing to be read at the
     // agent's cadence.
     if (run[0].kind === 'message' && !consumePresenceBypass(session)) {
-      const waitMs = msUntilDue(run, presenceWindow(session), Date.now())
+      // A timer can fire a millisecond before `Date.now()` says its wait is
+      // over: the timer's clock and the wall clock each round to the
+      // millisecond on their own. Asked again by the wall clock, the run would
+      // be held for that millisecond and announced as waiting a second time.
+      // So the timer's firing closes the window for the run it was armed for;
+      // a run with a different oldest message is still measured.
+      const oldest = oldestMessageAt(run)
+      const waitMs =
+        oldest !== null && oldest === windowClosedFor ? 0 : msUntilDue(run, presenceWindow(session), Date.now())
       if (waitMs !== null && waitMs > 0) {
         // Announced HERE rather than at enqueue, because this is the moment it
         // is known to be waiting. A message held by the reading window is
         // exactly as unread as one held by a running turn, and an idle session
         // has no turn to have announced it.
         emitQueue(sessionId, queue)
-        armPresenceTimer(sessionId, session, waitMs)
+        armPresenceTimer(sessionId, session, waitMs, oldest)
         // "Never gated" has to mean never, including from BEHIND. A system
         // entry queued after messages the window is holding would otherwise
         // inherit their wait — and the caller waiting on its turn (compaction
@@ -4320,7 +4331,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
    * tomorrow is not a reason for the host to stay up, and in tests it is the
    * difference between a suite that exits and one that hangs.
    */
-  function armPresenceTimer(sessionId: string, session: SessionState, waitMs: number): void {
+  function armPresenceTimer(sessionId: string, session: SessionState, waitMs: number, oldest: number | null): void {
     if (session.presenceTimer) {
       clearTimeout(session.presenceTimer)
     }
@@ -4337,7 +4348,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (session.activeTurns > 0 && !steersMidTurn(session)) {
         return
       }
-      void drainQueue(sessionId)
+      void drainQueue(sessionId, oldest)
     }, waitMs)
     timer.unref?.()
     session.presenceTimer = timer
@@ -6498,9 +6509,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // page further back (a scroll-up "load older"). Returns null for an
     // unknown session.
     //
-    // Turn granularity is for callers that are actually listing turns — the
-    // send-message node's listTurns action. The chat transcript pages by
-    // records instead; see getRecordsWindow.
+    // Turn granularity is for callers that want whole turns, never one cut in
+    // half. The chat transcript pages by records instead; see
+    // getRecordsWindow.
     getEventsWindow(sessionId: string, opts: { beforeIndex?: number; turns: number }): EventsWindow | null {
       const session = store.sessions.get(sessionId)
       if (!session) {

@@ -3,12 +3,24 @@ import test from 'node:test'
 
 import { gatewayDefaults } from './gateway-defaults'
 
-const env = { OPENCLAW_GATEWAY_URL: 'https://gateway.example', OPENCLAW_GATEWAY_TOKEN: 'gw-token-000' }
+const env = {
+  OPENCROFT_OPENCLAW_GATEWAY_URL: 'https://gateway.example',
+  OPENCROFT_OPENCLAW_GATEWAY_TOKEN: 'gw-token-000',
+}
 
 test('an OpenClaw agent falls back to the gateway URL and token', () => {
   assert.deepEqual(gatewayDefaults('openclaw', env), {
     baseUrl: 'https://gateway.example',
     apiKey: 'gw-token-000',
+  })
+})
+
+test('the former OPENCLAW_GATEWAY_* names still supply them', (t) => {
+  t.mock.method(console, 'warn', () => {})
+  const former = { OPENCLAW_GATEWAY_URL: 'https://former.example', OPENCLAW_GATEWAY_TOKEN: 'gw-token-001' }
+  assert.deepEqual(gatewayDefaults('openclaw', former), {
+    baseUrl: 'https://former.example',
+    apiKey: 'gw-token-001',
   })
 })
 

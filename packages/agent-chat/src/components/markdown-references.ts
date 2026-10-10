@@ -89,8 +89,43 @@ export function getMarkdownReferences(): MarkdownReferenceSource | null {
 
 export function subscribeMarkdownReferences(listener: () => void): () => void {
   listeners = [...listeners, listener]
+  markWanted()
   return () => {
     listeners = listeners.filter((candidate) => candidate !== listener)
+  }
+}
+
+// Every markdown surface subscribes to the source, so the first subscription
+// is the first moment anything could show a reference.
+let wanted = false
+let wantedCallbacks: Array<() => void> = []
+
+function markWanted(): void {
+  if (wanted) {
+    return
+  }
+  wanted = true
+  const callbacks = wantedCallbacks
+  wantedCallbacks = []
+  for (const callback of callbacks) {
+    callback()
+  }
+}
+
+/**
+ * Calls `onWanted` once, when a markdown surface first reads the reference
+ * source -- at once if one already has -- so a host can put off building its
+ * source until something could show it. Returns a function that cancels a
+ * call still waiting.
+ */
+export function whenMarkdownReferencesWanted(onWanted: () => void): () => void {
+  if (wanted) {
+    onWanted()
+    return () => {}
+  }
+  wantedCallbacks = [...wantedCallbacks, onWanted]
+  return () => {
+    wantedCallbacks = wantedCallbacks.filter((candidate) => candidate !== onWanted)
   }
 }
 
@@ -233,6 +268,34 @@ export function remarkInlineReferences() {
     const end = String(file.value ?? '').trimEnd().length
     walkReferences(tree, recognisers, end)
   }
+}
+
+/**
+ * The references `recognisers` claim in a parsed markdown tree, in document
+ * order: exactly what the renderer would draw as references, by the same walk,
+ * so never inside code, raw HTML or a link's own label. For a reader that has
+ * to agree with what is drawn -- a server acting on the references in a text.
+ * Rewrites `tree` as rendering does.
+ */
+export function collectReferences(tree: Root, recognisers: readonly ReferenceRecogniser[]): InlineReference[] {
+  if (recognisers.length === 0) {
+    return []
+  }
+  // Nothing is still arriving: the text is whole.
+  walkReferences(tree, recognisers, Number.POSITIVE_INFINITY)
+  const found: InlineReference[] = []
+  const visit = (parent: Parent) => {
+    for (const child of parent.children as Array<RootContent | ReferenceNode>) {
+      if (child.type === 'inlineReference') {
+        const { kind, id } = child.data.hProperties
+        found.push({ kind, id, trailing: false })
+      } else if ('children' in child) {
+        visit(child)
+      }
+    }
+  }
+  visit(tree)
+  return found
 }
 
 // Named apart from the directive plugin's walk: the design kit evaluates a

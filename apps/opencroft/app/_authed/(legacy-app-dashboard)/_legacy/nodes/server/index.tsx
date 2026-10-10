@@ -107,6 +107,10 @@ function ServerComponent({ data, selected, positionAbsoluteX, positionAbsoluteY 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
 
+  // Fetched once per server (name and address). `ssh` and `data.features` are
+  // new objects on every update of the node's data, so depending on them would
+  // fetch again on every edit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the server's identity on purpose, see above
   useEffect(() => {
     if (!ssh || !data.address || !data.name) {
       return
@@ -365,6 +369,10 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
   const [stats, setStats] = useState<ServerStats | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // Both hooks below are keyed on the server's identity (name and address).
+  // `serverData.features` is a new array on every keystroke in the settings
+  // draft, so depending on it would fetch stats while the user types.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the server's identity on purpose, see above
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
@@ -378,11 +386,12 @@ function StatsSubSection({ serverData }: { serverData: ServerData }) {
     setLoading(false)
   }, [serverData.name, serverData.address])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `serverData.features` is left out on purpose, see above
   useEffect(() => {
     if (serverData.address && getSsh(serverData.features)) {
       refresh()
     }
-  }, [serverData.name, serverData.address])
+  }, [serverData.address, refresh])
 
   if (!stats && !loading) {
     return null
@@ -480,7 +489,9 @@ function ServerSettings(props: NodeSettingsProps<ServerData>) {
             <Input
               value={ssh.port || ''}
               onChange={(e) =>
-                update({ features: updateFeature(features, 'ssh', { port: parseInt(e.target.value) || undefined }) })
+                update({
+                  features: updateFeature(features, 'ssh', { port: parseInt(e.target.value, 10) || undefined }),
+                })
               }
               placeholder='22'
               className='h-7 text-xs font-mono'

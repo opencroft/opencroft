@@ -69,7 +69,12 @@ export function spawnPipe(cmd: string, args: string[], stream: Readable): Promis
     })
     proc.on('error', reject)
 
-    stream.pipe(proc.stdin!)
+    if (!proc.stdin) {
+      proc.kill()
+      reject(new Error(`${cmd} was spawned without a stdin pipe`))
+      return
+    }
+    stream.pipe(proc.stdin)
   })
 }
 

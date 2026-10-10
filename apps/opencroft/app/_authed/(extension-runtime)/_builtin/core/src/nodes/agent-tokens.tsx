@@ -1,8 +1,7 @@
-import { legacy } from '@opencroft/client'
-
-const { ApiTokenCreateForm, ApiTokenList, ApiTokenReveal, Button, React, ScrollArea, Spinner, invoke, toast } = legacy
-
-const { useCallback, useEffect, useState } = React
+import { invoke } from '@opencroft/client/actions'
+import { ApiTokenCreateForm, ApiTokenList, ApiTokenReveal, Button, ScrollArea, Spinner } from '@opencroft/client/ui'
+import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 
 // What agent.listMcpTokens returns — ISO strings, null for "not set".
 interface McpToken {

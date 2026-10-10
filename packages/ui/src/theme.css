@@ -4,6 +4,15 @@
    values themselves live in styles.css and ship with the host page. */
 @custom-variant dark (&:is(.dark *));
 
+/* The faces are the app's own (public/fonts/fonts.css, linked from the
+   document head), so text looks the same on every OS. Not `inline`: utilities
+   read the variables at runtime, so an extension compiled against this file
+   with `theme(reference)` follows the host page's values. */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

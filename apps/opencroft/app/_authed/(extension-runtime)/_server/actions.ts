@@ -4,6 +4,7 @@
 // export here keeps those imports "live" for the client bundle too, and can
 // silently reintroduce a client-bundle build break. Plain server-only helpers go
 // in extension-action-impl.ts instead.
+import type { MentionedAccount } from '@opencroft/client'
 import { createServerFn } from '@tanstack/react-start'
 
 import {
@@ -22,6 +23,7 @@ import {
   type TerminalSourceTarget,
 } from '@/app/_authed/(extension-runtime)/_server/terminal-sources'
 import type { ExtensionClientInfo } from '@/app/_authed/(extension-runtime)/_types'
+import { mentionedAccountsByUsername } from '@/app/_server/account-directory'
 import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
@@ -99,4 +101,12 @@ export const describeGraphRefs = createServerFn({ method: 'POST', strict: { outp
   .handler(async ({ data }): Promise<Record<string, GraphRefInfo | null>> => {
     await requireSessionServerFn()
     return describeGraphRefsImpl(Array.isArray(data.ids) ? data.ids.map(String) : [])
+  })
+
+/** The accounts holding these usernames, for the mention chip; one no account holds is absent. */
+export const describeMentionedAccounts = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: { usernames: string[] }) => data)
+  .handler(async ({ data }): Promise<Record<string, MentionedAccount>> => {
+    await requireSessionServerFn()
+    return mentionedAccountsByUsername(Array.isArray(data.usernames) ? data.usernames.map(String) : [])
   })

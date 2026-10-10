@@ -13,9 +13,9 @@ function readStorage<T>(key: string, fallback: T): T {
 export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T | ((prev: T) => T)) => void] {
   const [storedValue, setStoredValue] = useState<T>(initialValue)
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-read only when the key changes; a caller's `initialValue` is often a new object or array every render, and listing it would re-read storage on every render
   useEffect(() => {
     setStoredValue(readStorage(key, initialValue))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
   // Stable per key, and an updater sees the current value rather than the one

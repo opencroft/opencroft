@@ -15,8 +15,8 @@
 // copy was never the one anyone checked.
 //
 // WHY SOURCE RATHER THAN A RENDER. Components in an extension `src` tree take
-// React and every UI primitive from `@opencroft/client`'s `legacy`, which is
-// TYPE DECLARATIONS ONLY -- the runtime is injected by the host. So nothing in
+// React from `react` and every UI primitive from the `@opencroft/client/*`
+// modules, which are TYPE DECLARATIONS ONLY -- the runtime is injected by the host. So nothing in
 // this repository can render this file, and a rendering guard for it cannot be
 // written today. Reading the source is the accepted ceiling for
 // extension components here; that trade-off was considered and accepted.

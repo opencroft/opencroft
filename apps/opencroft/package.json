@@ -12,6 +12,7 @@
     "typecheck": "node ../../scripts/run-typecheck.mjs app server",
     "posttypecheck": "node scripts/typecheck-extensions.mjs",
     "dev:ext": "npx tsx scripts/watch-extensions.ts",
+    "generate:legacy-declarations": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx scripts/generate-legacy-declarations.ts",
     "monitor": "npx tsx scripts/monitor-server.ts",
     "build": "npm run check:server-fn-shape && vite build && npm run check:client-bundle",
     "check:client-bundle": "node scripts/check-client-bundle.mjs",
@@ -34,6 +35,7 @@
     "@opencroft/core": "*",
     "@opencroft/db": "*",
     "@opencroft/db-backups": "*",
+    "@opencroft/instance": "*",
     "@opencroft/server": "*",
     "@opencroft/terminal": "*",
     "@opencroft/usage-rollup": "*",
@@ -91,6 +93,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@opencroft/dev-tools": "*",
     "@tailwindcss/postcss": "^4",
     "@tanstack/devtools-vite": "latest",
     "@types/dom-navigation": "^1.0.7",

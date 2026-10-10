@@ -96,7 +96,13 @@ export function OpBlock({
           <div
             inert
             className={cn(
-              'max-h-48 overflow-hidden',
+              // Positioned as well as clipped: `overflow: hidden` clips only
+              // what it contains, and an absolutely positioned descendant
+              // (a screen-reader label) is contained by its nearest positioned
+              // ancestor. Without one here such content escapes the clamp and
+              // stretches the transcript's scroll height by the body's full,
+              // unclamped length.
+              'relative max-h-48 overflow-hidden',
               // A fade rather than a shadow: it is drawn in the content's own
               // colours, so it reads the same in every theme.
               overflowing && 'mask-b-from-70%',

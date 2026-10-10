@@ -1,633 +1,1172 @@
+// GENERATED from the extension API modules and the host's runtime surface by
+// apps/opencroft/app/_authed/(extension-runtime)/_server/legacy-declarations.ts.
+// Do not edit: run `npm run generate:legacy-declarations -w apps/opencroft`.
 /**
- * `legacy` — the full `@ext/host` + `@ext/ui` client surface, ported 1:1 so
- * extensions can move off `@ext` onto `@opencroft/client`. The runtime is
- * injected by the host; these are the type declarations. APIs graduate out of
- * `legacy` into the typed `@opencroft/client` root over time.
+ * `legacy` — the deprecated `@ext/host` + `@ext/ui` client surface under one
+ * namespace. Every name here is its module's own, re-exported; import it from
+ * that module instead.
  */
-import type { ComponentType, FC, ReactNode } from 'react'
 
-// ── Contracts ───────────────────────────────────────────────────────────────
+export {
+  /** @deprecated Use `import React from 'react'` (or the hooks by name). */
+  default as React,
+} from 'react'
+export {
+  /** @deprecated Use `import { createPortal } from 'react-dom'`. */
+  createPortal,
+} from 'react-dom'
 
-export interface ExtensionHandle {
-  id: string
-  /**
-   * What a connection on this handle carries: one of this extension's own
-   * handle types bare (`signal`), another extension's qualified
-   * (`builtin.core.terminal-context`). Required unless the deprecated
-   * `contextType` stands in for it.
-   */
-  handleType?: string
-  /** @deprecated Declare `handleType`. Read only when `handleType` is absent. */
-  contextType?: string
-  role: 'source' | 'target'
-  label?: string
-  dynamic?: boolean
+export {
+  /** @deprecated Import `callAppAction` from `@opencroft/client/actions`. */
+  callAppAction,
+  /** @deprecated Import `dispatch` from `@opencroft/client/actions`. */
+  dispatch,
+  /** @deprecated Import `invoke` from `@opencroft/client/actions`. */
+  invoke,
+} from './actions'
+export {
+  /** @deprecated Import `AppActions` from `@opencroft/client/app`. */
+  AppActions,
+  /** @deprecated Import `AppComponentProps` from `@opencroft/client/app`. */
+  type AppComponentProps,
+  /** @deprecated Import `AppDefinition` from `@opencroft/client/app`. */
+  type AppDefinition,
+  /** @deprecated Import `AppFormProps` from `@opencroft/client/app`. */
+  type AppFormProps,
+  /** @deprecated Import `AppLink` from `@opencroft/client/app`. */
+  AppLink,
+  /** @deprecated Import `AppLinkProps` from `@opencroft/client/app`. */
+  type AppLinkProps,
+  /** @deprecated Import `AppLocation` from `@opencroft/client/app`. */
+  type AppLocation,
+  /** @deprecated Import `AppNavigateOptions` from `@opencroft/client/app`. */
+  type AppNavigateOptions,
+  /** @deprecated Import `AppSidebar` from `@opencroft/client/app`. */
+  AppSidebar,
+  /** @deprecated Import `AppSidebarProps` from `@opencroft/client/app`. */
+  type AppSidebarProps,
+  /** @deprecated Import `AppTitle` from `@opencroft/client/app`. */
+  AppTitle,
+  /** @deprecated Import `AppToolbar` from `@opencroft/client/app`. */
+  AppToolbar,
+  /** @deprecated Import `UrlParamControls` from `@opencroft/client/app`. */
+  type UrlParamControls,
+  /** @deprecated Import `UrlParamWriteOptions` from `@opencroft/client/app`. */
+  type UrlParamWriteOptions,
+  /** @deprecated Import `useAppAddressHref` from `@opencroft/client/app`. */
+  useAppAddressHref,
+  /** @deprecated Import `useAppHref` from `@opencroft/client/app`. */
+  useAppHref,
+  /** @deprecated Import `useAppLocation` from `@opencroft/client/app`. */
+  useAppLocation,
+  /** @deprecated Import `useAppNavigate` from `@opencroft/client/app`. */
+  useAppNavigate,
+  /** @deprecated Import `useIsMobile` from `@opencroft/client/app`. */
+  useIsMobile,
+  /** @deprecated Import `useOpenApp` from `@opencroft/client/app`. */
+  useOpenApp,
+  /** @deprecated Import `useUrlParam` from `@opencroft/client/app`. */
+  useUrlParam,
+} from './app'
+export {
+  /** @deprecated Import `CommandBar` from `@opencroft/client/canvas`. */
+  CommandBar,
+  /** @deprecated Import `CommandBarMenu` from `@opencroft/client/canvas`. */
+  CommandBarMenu,
+  /** @deprecated Import `CommandBarMenuItem` from `@opencroft/client/canvas`. */
+  CommandBarMenuItem,
+  /** @deprecated Import `CommandBarNode` from `@opencroft/client/canvas`. */
+  type CommandBarNode,
+  /** @deprecated Import `CommandModeDefinition` from `@opencroft/client/canvas`. */
+  type CommandModeDefinition,
+  /** @deprecated Import `CommandModeProps` from `@opencroft/client/canvas`. */
+  type CommandModeProps,
+  /** @deprecated Import `CommandModeShortcut` from `@opencroft/client/canvas`. */
+  type CommandModeShortcut,
+  /** @deprecated Import `ExtensionComponentProps` from `@opencroft/client/canvas`. */
+  type ExtensionComponentProps,
+  /** @deprecated Import `ExtensionContextType` from `@opencroft/client/canvas`. */
+  type ExtensionContextType,
+  /** @deprecated Import `ExtensionHandle` from `@opencroft/client/canvas`. */
+  type ExtensionHandle,
+  /** @deprecated Import `ExtensionHandleType` from `@opencroft/client/canvas`. */
+  type ExtensionHandleType,
+  /** @deprecated Import `ExtensionInspectorProps` from `@opencroft/client/canvas`. */
+  type ExtensionInspectorProps,
+  /** @deprecated Import `GraphCanvas` from `@opencroft/client/canvas`. */
+  GraphCanvas,
+  /** @deprecated Import `Handle` from `@opencroft/client/canvas`. */
+  Handle,
+  /** @deprecated Import `HandlePinProps` from `@opencroft/client/canvas`. */
+  type HandlePinProps,
+  /** @deprecated Import `InputHandle` from `@opencroft/client/canvas`. */
+  InputHandle,
+  /** @deprecated Import `InspectorIntent` from `@opencroft/client/canvas`. */
+  type InspectorIntent,
+  /** @deprecated Import `InspectorTab` from `@opencroft/client/canvas`. */
+  type InspectorTab,
+  /** @deprecated Import `inspectorIntent` from `@opencroft/client/canvas`. */
+  inspectorIntent,
+  /** @deprecated Import `NodeCard` from `@opencroft/client/canvas`. */
+  NodeCard,
+  /** @deprecated Import `NodeCardContent` from `@opencroft/client/canvas`. */
+  NodeCardContent,
+  /** @deprecated Import `NodeCardHeader` from `@opencroft/client/canvas`. */
+  NodeCardHeader,
+  /** @deprecated Import `NodeContextMenuContext` from `@opencroft/client/canvas`. */
+  type NodeContextMenuContext,
+  /** @deprecated Import `NodeContextMenuItem` from `@opencroft/client/canvas`. */
+  type NodeContextMenuItem,
+  /** @deprecated Import `NodeDefinition` from `@opencroft/client/canvas`. */
+  type NodeDefinition,
+  /** @deprecated Import `NodeFrame` from `@opencroft/client/canvas`. */
+  NodeFrame,
+  /** @deprecated Import `NodeResizer` from `@opencroft/client/canvas`. */
+  NodeResizer,
+  /** @deprecated Import `OutputHandle` from `@opencroft/client/canvas`. */
+  OutputHandle,
+  /** @deprecated Import `OverlayControl` from `@opencroft/client/canvas`. */
+  type OverlayControl,
+  /** @deprecated Import `Position` from `@opencroft/client/canvas`. */
+  Position,
+  /** @deprecated Import `ResolvedContext` from `@opencroft/client/canvas`. */
+  type ResolvedContext,
+  /** @deprecated Import `useGraphEdges` from `@opencroft/client/canvas`. */
+  useGraphEdges,
+  /** @deprecated Import `useGraphNodes` from `@opencroft/client/canvas`. */
+  useGraphNodes,
+  /** @deprecated Import `useInspectorIntent` from `@opencroft/client/canvas`. */
+  useInspectorIntent,
+  /** @deprecated Import `useNodeAccent` from `@opencroft/client/canvas`. */
+  useNodeAccent,
+  /** @deprecated Import `useNodeContext` from `@opencroft/client/canvas`. */
+  useNodeContext,
+  /** @deprecated Import `useOverlay` from `@opencroft/client/canvas`. */
+  useOverlay,
+  /** @deprecated Import `useReactFlow` from `@opencroft/client/canvas`. */
+  useReactFlow,
+  /** @deprecated Import `useUpdateNodeInternals` from `@opencroft/client/canvas`. */
+  useUpdateNodeInternals,
+} from './canvas'
+export {
+  /** @deprecated Import `AgentChatInputControl` from `@opencroft/client/chat`. */
+  type AgentChatInputControl,
+  /** @deprecated Import `AgentChatInputControlProps` from `@opencroft/client/chat`. */
+  type AgentChatInputControlProps,
+  /** @deprecated Import `AgentChatMessage` from `@opencroft/client/chat`. */
+  type AgentChatMessage,
+  /** @deprecated Import `AgentChatStatusIndicator` from `@opencroft/client/chat`. */
+  type AgentChatStatusIndicator,
+  /** @deprecated Import `ChatDock` from `@opencroft/client/chat`. */
+  ChatDock,
+  /** @deprecated Import `ChatDockControl` from `@opencroft/client/chat`. */
+  type ChatDockControl,
+  /** @deprecated Import `ChatDockProps` from `@opencroft/client/chat`. */
+  type ChatDockProps,
+  /** @deprecated Import `ChatSelector` from `@opencroft/client/chat`. */
+  ChatSelector,
+  /** @deprecated Import `ChatSelectorProps` from `@opencroft/client/chat`. */
+  type ChatSelectorProps,
+  /** @deprecated Import `describeMentionedAccounts` from `@opencroft/client/chat`. */
+  describeMentionedAccounts,
+  /** @deprecated Import `EmbeddedAgentChat` from `@opencroft/client/chat`. */
+  EmbeddedAgentChat,
+  /** @deprecated Import `EmbeddedAgentChatProps` from `@opencroft/client/chat`. */
+  type EmbeddedAgentChatProps,
+  /** @deprecated Import `EmbeddedChatSelection` from `@opencroft/client/chat`. */
+  type EmbeddedChatSelection,
+  /** @deprecated Import `MentionedAccount` from `@opencroft/client/chat`. */
+  type MentionedAccount,
+  /** @deprecated Import `SelectionContextValue` from `@opencroft/client/chat`. */
+  type SelectionContextValue,
+  /** @deprecated Import `SelectionProvider` from `@opencroft/client/chat`. */
+  SelectionProvider,
+  /** @deprecated Import `UserSelection` from `@opencroft/client/chat`. */
+  type UserSelection,
+  /** @deprecated Import `useChatDock` from `@opencroft/client/chat`. */
+  useChatDock,
+  /** @deprecated Import `useSelection` from `@opencroft/client/chat`. */
+  useSelection,
+} from './chat'
+export {
+  /** @deprecated Import `CodeBlock` from `@opencroft/client/code`. */
+  CodeBlock,
+  /** @deprecated Import `CodeBlockEditor` from `@opencroft/client/code`. */
+  CodeBlockEditor,
+  /** @deprecated Import `CodeBlockEditorProps` from `@opencroft/client/code`. */
+  type CodeBlockEditorProps,
+  /** @deprecated Import `CodeBlockProps` from `@opencroft/client/code`. */
+  type CodeBlockProps,
+  /** @deprecated Import `CodeEditor` from `@opencroft/client/code`. */
+  CodeEditor,
+  /** @deprecated Import `CodeEditorDiffMode` from `@opencroft/client/code`. */
+  type CodeEditorDiffMode,
+  /** @deprecated Import `CodeEditorHideUnchangedRegions` from `@opencroft/client/code`. */
+  type CodeEditorHideUnchangedRegions,
+  /** @deprecated Import `CodeEditorLanguage` from `@opencroft/client/code`. */
+  type CodeEditorLanguage,
+  /** @deprecated Import `CodeEditorOnMount` from `@opencroft/client/code`. */
+  type CodeEditorOnMount,
+  /** @deprecated Import `CodeEditorProps` from `@opencroft/client/code`. */
+  type CodeEditorProps,
+  /** @deprecated Import `MonacoCodeEditor` from `@opencroft/client/code`. */
+  type MonacoCodeEditor,
+  /** @deprecated Import `MonacoDiffEditor` from `@opencroft/client/code`. */
+  type MonacoDiffEditor,
+  /** @deprecated Import `MonacoNamespace` from `@opencroft/client/code`. */
+  type MonacoNamespace,
+} from './code'
+export {
+  /** @deprecated Import `DockerContainerSnapshot` from `@opencroft/client/docker`. */
+  type DockerContainerSnapshot,
+  /** @deprecated Import `useDockerContainers` from `@opencroft/client/docker`. */
+  useDockerContainers,
+  /** @deprecated Import `useDockerSnapshotReceived` from `@opencroft/client/docker`. */
+  useDockerSnapshotReceived,
+  /** @deprecated Import `useSeedDockerContainers` from `@opencroft/client/docker`. */
+  useSeedDockerContainers,
+} from './docker'
+export {
+  /** @deprecated Import `absoluteUrl` from `@opencroft/client/extension`. */
+  absoluteUrl,
+  /** @deprecated Import `assetUrl` from `@opencroft/client/extension`. */
+  assetUrl,
+  /** @deprecated Import `defineExtension` from `@opencroft/client/extension`. */
+  defineExtension,
+  /** @deprecated Import `ExtensionDeclaration` from `@opencroft/client/extension`. */
+  type ExtensionDeclaration,
+  /** @deprecated Import `ExtensionDeclarationManifest` from `@opencroft/client/extension`. */
+  type ExtensionDeclarationManifest,
+  /** @deprecated Import `extensionId` from `@opencroft/client/extension`. */
+  extensionId,
+  /** @deprecated Import `ProvidedPoints` from `@opencroft/client/extension`. */
+  type ProvidedPoints,
+  /** @deprecated Import `RightSidebarPanel` from `@opencroft/client/extension`. */
+  type RightSidebarPanel,
+  /** @deprecated Import `routeUrl` from `@opencroft/client/extension`. */
+  routeUrl,
+  /** @deprecated Import `SettingsPageDefinition` from `@opencroft/client/extension`. */
+  type SettingsPageDefinition,
+  /** @deprecated Import `urlBase` from `@opencroft/client/extension`. */
+  urlBase,
+} from './extension'
+export {
+  /** @deprecated Import `FileBrowser` from `@opencroft/client/files`. */
+  FileBrowser,
+  /** @deprecated Import `FileManagerProvider` from `@opencroft/client/files`. */
+  FileManagerProvider,
+} from './files'
+export {
+  /** @deprecated Import `describeGraphRefs` from `@opencroft/client/graph`. */
+  describeGraphRefs,
+  /** @deprecated Import `GraphRefDescription` from `@opencroft/client/graph`. */
+  type GraphRefDescription,
+  /** @deprecated Import `NodeRef` from `@opencroft/client/graph`. */
+  NodeRef,
+  /** @deprecated Import `NodeRefProps` from `@opencroft/client/graph`. */
+  type NodeRefProps,
+  /** @deprecated Import `subscribeGraphRefs` from `@opencroft/client/graph`. */
+  subscribeGraphRefs,
+} from './graph'
+export {
+  /** @deprecated Import `Markdown` from `@opencroft/client/markdown`. */
+  Markdown,
+  /** @deprecated Import `MarkdownDiffView` from `@opencroft/client/markdown`. */
+  MarkdownDiffView,
+  /** @deprecated Import `MarkdownDiffViewProps` from `@opencroft/client/markdown`. */
+  type MarkdownDiffViewProps,
+  /** @deprecated Import `MarkdownEditor` from `@opencroft/client/markdown`. */
+  MarkdownEditor,
+  /** @deprecated Import `MarkdownEditorOwnDocument` from `@opencroft/client/markdown`. */
+  type MarkdownEditorOwnDocument,
+  /** @deprecated Import `MarkdownEditorProps` from `@opencroft/client/markdown`. */
+  type MarkdownEditorProps,
+  /** @deprecated Import `MarkdownEditorSharedDocument` from `@opencroft/client/markdown`. */
+  type MarkdownEditorSharedDocument,
+  /** @deprecated Import `MarkdownEditorSurfaceProps` from `@opencroft/client/markdown`. */
+  type MarkdownEditorSurfaceProps,
+  /** @deprecated Import `MarkdownEditorToolbarGroup` from `@opencroft/client/markdown`. */
+  type MarkdownEditorToolbarGroup,
+  /** @deprecated Import `MarkdownProps` from `@opencroft/client/markdown`. */
+  type MarkdownProps,
+  /** @deprecated Import `MarkdownReference` from `@opencroft/client/markdown`. */
+  type MarkdownReference,
+  /** @deprecated Import `MarkdownReferenceMenuItem` from `@opencroft/client/markdown`. */
+  type MarkdownReferenceMenuItem,
+  /** @deprecated Import `MarkdownReferenceTone` from `@opencroft/client/markdown`. */
+  type MarkdownReferenceTone,
+  /** @deprecated Import `MarkdownResolver` from `@opencroft/client/markdown`. */
+  type MarkdownResolver,
+  /** @deprecated Import `MermaidDiagram` from `@opencroft/client/markdown`. */
+  MermaidDiagram,
+  /** @deprecated Import `MermaidDiagramProps` from `@opencroft/client/markdown`. */
+  type MermaidDiagramProps,
+  /** @deprecated Import `markdownDirectiveBlocks` from `@opencroft/client/markdown`. */
+  markdownDirectiveBlocks,
+} from './markdown'
+export {
+  /** @deprecated Import `SecretSelector` from `@opencroft/client/secrets`. */
+  SecretSelector,
+  /** @deprecated Import `SecretSelectorProps` from `@opencroft/client/secrets`. */
+  type SecretSelectorProps,
+} from './secrets'
+export {
+  /** @deprecated Import `createStorage` from `@opencroft/client/storage`. */
+  createStorage,
+  /** @deprecated Import `ExtensionStorage` from `@opencroft/client/storage`. */
+  type ExtensionStorage,
+} from './storage'
+export {
+  /** @deprecated Import `broadcast` from `@opencroft/client/streams`. */
+  broadcast,
+  /** @deprecated Import `getStream` from `@opencroft/client/streams`. */
+  getStream,
+  /** @deprecated Import `Stream` from `@opencroft/client/streams`. */
+  type Stream,
+  /** @deprecated Import `subscribe` from `@opencroft/client/streams`. */
+  subscribe,
+  /** @deprecated Import `TextChunk` from `@opencroft/client/streams`. */
+  type TextChunk,
+} from './streams'
+export {
+  /** @deprecated Import `Terminal` from `@opencroft/client/terminal`. */
+  Terminal,
+  /** @deprecated Use `Terminal` from `@opencroft/client/terminal`. */
+  Terminal as InspectorTerminalBody,
+  /** @deprecated Import `TerminalConfig` from `@opencroft/client/terminal`. */
+  type TerminalConfig,
+  /** @deprecated Import `TerminalList` from `@opencroft/client/terminal`. */
+  TerminalList,
+  /** @deprecated Import `TerminalListProps` from `@opencroft/client/terminal`. */
+  type TerminalListProps,
+  /** @deprecated Import `TerminalProps` from `@opencroft/client/terminal`. */
+  type TerminalProps,
+  /** @deprecated Import `TerminalRef` from `@opencroft/client/terminal`. */
+  TerminalRef,
+  /** @deprecated Import `TerminalRefProps` from `@opencroft/client/terminal`. */
+  type TerminalRefProps,
+  /** @deprecated Import `TerminalSelector` from `@opencroft/client/terminal`. */
+  TerminalSelector,
+  /** @deprecated Import `TerminalSelectorProps` from `@opencroft/client/terminal`. */
+  type TerminalSelectorProps,
+  /** @deprecated Import `TerminalStatus` from `@opencroft/client/terminal`. */
+  type TerminalStatus,
+} from './terminal'
+export {
+  /** @deprecated Import `Accordion` from `@opencroft/client/ui`. */
+  Accordion,
+  /** @deprecated Import `AccordionContent` from `@opencroft/client/ui`. */
+  AccordionContent,
+  /** @deprecated Import `AccordionItem` from `@opencroft/client/ui`. */
+  AccordionItem,
+  /** @deprecated Import `AccordionTrigger` from `@opencroft/client/ui`. */
+  AccordionTrigger,
+  /** @deprecated Import `AccountCard` from `@opencroft/client/ui`. */
+  AccountCard,
+  /** @deprecated Import `AccountCardProps` from `@opencroft/client/ui`. */
+  type AccountCardProps,
+  /** @deprecated Import `AdaptivePopup` from `@opencroft/client/ui`. */
+  AdaptivePopup,
+  /** @deprecated Import `AdaptivePopupProps` from `@opencroft/client/ui`. */
+  type AdaptivePopupProps,
+  /** @deprecated Import `AgentAvatar` from `@opencroft/client/ui`. */
+  AgentAvatar,
+  /** @deprecated Import `AgentAvatarSize` from `@opencroft/client/ui`. */
+  type AgentAvatarSize,
+  /** @deprecated Import `AgentJobRef` from `@opencroft/client/ui`. */
+  type AgentJobRef,
+  /** @deprecated Import `AgentRef` from `@opencroft/client/ui`. */
+  type AgentRef,
+  /** @deprecated Import `AgentSessionGroup` from `@opencroft/client/ui`. */
+  type AgentSessionGroup,
+  /** @deprecated Import `AgentSessionList` from `@opencroft/client/ui`. */
+  AgentSessionList,
+  /** @deprecated Import `AgentSessionListProps` from `@opencroft/client/ui`. */
+  type AgentSessionListProps,
+  /** @deprecated Import `AgentSessionSummary` from `@opencroft/client/ui`. */
+  type AgentSessionSummary,
+  /** @deprecated Import `Alert` from `@opencroft/client/ui`. */
+  Alert,
+  /** @deprecated Import `AlertAction` from `@opencroft/client/ui`. */
+  AlertAction,
+  /** @deprecated Import `AlertDescription` from `@opencroft/client/ui`. */
+  AlertDescription,
+  /** @deprecated Import `AlertDialog` from `@opencroft/client/ui`. */
+  AlertDialog,
+  /** @deprecated Import `AlertDialogAction` from `@opencroft/client/ui`. */
+  AlertDialogAction,
+  /** @deprecated Import `AlertDialogCancel` from `@opencroft/client/ui`. */
+  AlertDialogCancel,
+  /** @deprecated Import `AlertDialogContent` from `@opencroft/client/ui`. */
+  AlertDialogContent,
+  /** @deprecated Import `AlertDialogDescription` from `@opencroft/client/ui`. */
+  AlertDialogDescription,
+  /** @deprecated Import `AlertDialogFooter` from `@opencroft/client/ui`. */
+  AlertDialogFooter,
+  /** @deprecated Import `AlertDialogHeader` from `@opencroft/client/ui`. */
+  AlertDialogHeader,
+  /** @deprecated Import `AlertDialogMedia` from `@opencroft/client/ui`. */
+  AlertDialogMedia,
+  /** @deprecated Import `AlertDialogOverlay` from `@opencroft/client/ui`. */
+  AlertDialogOverlay,
+  /** @deprecated Import `AlertDialogPortal` from `@opencroft/client/ui`. */
+  AlertDialogPortal,
+  /** @deprecated Import `AlertDialogTitle` from `@opencroft/client/ui`. */
+  AlertDialogTitle,
+  /** @deprecated Import `AlertDialogTrigger` from `@opencroft/client/ui`. */
+  AlertDialogTrigger,
+  /** @deprecated Import `AlertTitle` from `@opencroft/client/ui`. */
+  AlertTitle,
+  /** @deprecated Import `AlignItems` from `@opencroft/client/ui`. */
+  type AlignItems,
+  /** @deprecated Import `ApiToken` from `@opencroft/client/ui`. */
+  type ApiToken,
+  /** @deprecated Import `ApiTokenCreateForm` from `@opencroft/client/ui`. */
+  ApiTokenCreateForm,
+  /** @deprecated Import `ApiTokenCreateFormProps` from `@opencroft/client/ui`. */
+  type ApiTokenCreateFormProps,
+  /** @deprecated Import `ApiTokenExpiryOption` from `@opencroft/client/ui`. */
+  type ApiTokenExpiryOption,
+  /** @deprecated Import `ApiTokenList` from `@opencroft/client/ui`. */
+  ApiTokenList,
+  /** @deprecated Import `ApiTokenListProps` from `@opencroft/client/ui`. */
+  type ApiTokenListProps,
+  /** @deprecated Import `ApiTokenReveal` from `@opencroft/client/ui`. */
+  ApiTokenReveal,
+  /** @deprecated Import `ApiTokenRevealProps` from `@opencroft/client/ui`. */
+  type ApiTokenRevealProps,
+  /** @deprecated Import `AspectRatio` from `@opencroft/client/ui`. */
+  AspectRatio,
+  /** @deprecated Import `Avatar` from `@opencroft/client/ui`. */
+  Avatar,
+  /** @deprecated Import `AvatarBadge` from `@opencroft/client/ui`. */
+  AvatarBadge,
+  /** @deprecated Import `AvatarFallback` from `@opencroft/client/ui`. */
+  AvatarFallback,
+  /** @deprecated Import `AvatarGroup` from `@opencroft/client/ui`. */
+  AvatarGroup,
+  /** @deprecated Import `AvatarGroupCount` from `@opencroft/client/ui`. */
+  AvatarGroupCount,
+  /** @deprecated Import `AvatarImage` from `@opencroft/client/ui`. */
+  AvatarImage,
+  /** @deprecated Import `Badge` from `@opencroft/client/ui`. */
+  Badge,
+  /** @deprecated Import `Breadcrumb` from `@opencroft/client/ui`. */
+  Breadcrumb,
+  /** @deprecated Import `BreadcrumbEllipsis` from `@opencroft/client/ui`. */
+  BreadcrumbEllipsis,
+  /** @deprecated Import `BreadcrumbItem` from `@opencroft/client/ui`. */
+  BreadcrumbItem,
+  /** @deprecated Import `BreadcrumbLink` from `@opencroft/client/ui`. */
+  BreadcrumbLink,
+  /** @deprecated Import `BreadcrumbList` from `@opencroft/client/ui`. */
+  BreadcrumbList,
+  /** @deprecated Import `BreadcrumbPage` from `@opencroft/client/ui`. */
+  BreadcrumbPage,
+  /** @deprecated Import `BreadcrumbSeparator` from `@opencroft/client/ui`. */
+  BreadcrumbSeparator,
+  /** @deprecated Import `Button` from `@opencroft/client/ui`. */
+  Button,
+  /** @deprecated Import `ButtonGroup` from `@opencroft/client/ui`. */
+  ButtonGroup,
+  /** @deprecated Import `ButtonGroupSeparator` from `@opencroft/client/ui`. */
+  ButtonGroupSeparator,
+  /** @deprecated Import `ButtonGroupText` from `@opencroft/client/ui`. */
+  ButtonGroupText,
+  /** @deprecated Import `badgeVariants` from `@opencroft/client/ui`. */
+  badgeVariants,
+  /** @deprecated Import `buttonGroupVariants` from `@opencroft/client/ui`. */
+  buttonGroupVariants,
+  /** @deprecated Import `buttonVariants` from `@opencroft/client/ui`. */
+  buttonVariants,
+  /** @deprecated Import `Calendar` from `@opencroft/client/ui`. */
+  Calendar,
+  /** @deprecated Import `CalendarDayButton` from `@opencroft/client/ui`. */
+  CalendarDayButton,
+  /** @deprecated Import `Card` from `@opencroft/client/ui`. */
+  Card,
+  /** @deprecated Import `CardAction` from `@opencroft/client/ui`. */
+  CardAction,
+  /** @deprecated Import `CardContent` from `@opencroft/client/ui`. */
+  CardContent,
+  /** @deprecated Import `CardDescription` from `@opencroft/client/ui`. */
+  CardDescription,
+  /** @deprecated Import `CardFooter` from `@opencroft/client/ui`. */
+  CardFooter,
+  /** @deprecated Import `CardHeader` from `@opencroft/client/ui`. */
+  CardHeader,
+  /** @deprecated Import `CardTitle` from `@opencroft/client/ui`. */
+  CardTitle,
+  /** @deprecated Import `Carousel` from `@opencroft/client/ui`. */
+  Carousel,
+  /** @deprecated Import `CarouselApi` from `@opencroft/client/ui`. */
+  type CarouselApi,
+  /** @deprecated Import `CarouselContent` from `@opencroft/client/ui`. */
+  CarouselContent,
+  /** @deprecated Import `CarouselItem` from `@opencroft/client/ui`. */
+  CarouselItem,
+  /** @deprecated Import `CarouselNext` from `@opencroft/client/ui`. */
+  CarouselNext,
+  /** @deprecated Import `CarouselPrevious` from `@opencroft/client/ui`. */
+  CarouselPrevious,
+  /** @deprecated Import `ChartConfig` from `@opencroft/client/ui`. */
+  type ChartConfig,
+  /** @deprecated Import `ChartContainer` from `@opencroft/client/ui`. */
+  ChartContainer,
+  /** @deprecated Import `ChartLegend` from `@opencroft/client/ui`. */
+  ChartLegend,
+  /** @deprecated Import `ChartLegendContent` from `@opencroft/client/ui`. */
+  ChartLegendContent,
+  /** @deprecated Import `ChartStyle` from `@opencroft/client/ui`. */
+  ChartStyle,
+  /** @deprecated Import `ChartTooltip` from `@opencroft/client/ui`. */
+  ChartTooltip,
+  /** @deprecated Import `ChartTooltipContent` from `@opencroft/client/ui`. */
+  ChartTooltipContent,
+  /** @deprecated Import `ChatInput` from `@opencroft/client/ui`. */
+  ChatInput,
+  /** @deprecated Import `ChatInputProps` from `@opencroft/client/ui`. */
+  type ChatInputProps,
+  /** @deprecated Import `ChatMessage` from `@opencroft/client/ui`. */
+  ChatMessage,
+  /** @deprecated Import `ChatMessageProps` from `@opencroft/client/ui`. */
+  type ChatMessageProps,
+  /** @deprecated Import `Checkbox` from `@opencroft/client/ui`. */
+  Checkbox,
+  /** @deprecated Import `Collapsible` from `@opencroft/client/ui`. */
+  Collapsible,
+  /** @deprecated Import `CollapsibleContent` from `@opencroft/client/ui`. */
+  CollapsibleContent,
+  /** @deprecated Import `CollapsibleTrigger` from `@opencroft/client/ui`. */
+  CollapsibleTrigger,
+  /** @deprecated Import `Combobox` from `@opencroft/client/ui`. */
+  Combobox,
+  /** @deprecated Import `ComboboxChip` from `@opencroft/client/ui`. */
+  ComboboxChip,
+  /** @deprecated Import `ComboboxChips` from `@opencroft/client/ui`. */
+  ComboboxChips,
+  /** @deprecated Import `ComboboxChipsInput` from `@opencroft/client/ui`. */
+  ComboboxChipsInput,
+  /** @deprecated Import `ComboboxCollection` from `@opencroft/client/ui`. */
+  ComboboxCollection,
+  /** @deprecated Import `ComboboxContent` from `@opencroft/client/ui`. */
+  ComboboxContent,
+  /** @deprecated Import `ComboboxEmpty` from `@opencroft/client/ui`. */
+  ComboboxEmpty,
+  /** @deprecated Import `ComboboxGroup` from `@opencroft/client/ui`. */
+  ComboboxGroup,
+  /** @deprecated Import `ComboboxInput` from `@opencroft/client/ui`. */
+  ComboboxInput,
+  /** @deprecated Import `ComboboxItem` from `@opencroft/client/ui`. */
+  ComboboxItem,
+  /** @deprecated Import `ComboboxLabel` from `@opencroft/client/ui`. */
+  ComboboxLabel,
+  /** @deprecated Import `ComboboxList` from `@opencroft/client/ui`. */
+  ComboboxList,
+  /** @deprecated Import `ComboboxSeparator` from `@opencroft/client/ui`. */
+  ComboboxSeparator,
+  /** @deprecated Import `ComboboxTrigger` from `@opencroft/client/ui`. */
+  ComboboxTrigger,
+  /** @deprecated Import `ComboboxValue` from `@opencroft/client/ui`. */
+  ComboboxValue,
+  /** @deprecated Import `Command` from `@opencroft/client/ui`. */
+  Command,
+  /** @deprecated Import `CommandDialog` from `@opencroft/client/ui`. */
+  CommandDialog,
+  /** @deprecated Import `CommandEmpty` from `@opencroft/client/ui`. */
+  CommandEmpty,
+  /** @deprecated Import `CommandGroup` from `@opencroft/client/ui`. */
+  CommandGroup,
+  /** @deprecated Import `CommandInput` from `@opencroft/client/ui`. */
+  CommandInput,
+  /** @deprecated Import `CommandItem` from `@opencroft/client/ui`. */
+  CommandItem,
+  /** @deprecated Import `CommandList` from `@opencroft/client/ui`. */
+  CommandList,
+  /** @deprecated Import `CommandSeparator` from `@opencroft/client/ui`. */
+  CommandSeparator,
+  /** @deprecated Import `CommandShortcut` from `@opencroft/client/ui`. */
+  CommandShortcut,
+  /** @deprecated Import `ContextMenu` from `@opencroft/client/ui`. */
+  ContextMenu,
+  /** @deprecated Import `ContextMenuCheckboxItem` from `@opencroft/client/ui`. */
+  ContextMenuCheckboxItem,
+  /** @deprecated Import `ContextMenuContent` from `@opencroft/client/ui`. */
+  ContextMenuContent,
+  /** @deprecated Import `ContextMenuGroup` from `@opencroft/client/ui`. */
+  ContextMenuGroup,
+  /** @deprecated Import `ContextMenuItem` from `@opencroft/client/ui`. */
+  ContextMenuItem,
+  /** @deprecated Import `ContextMenuLabel` from `@opencroft/client/ui`. */
+  ContextMenuLabel,
+  /** @deprecated Import `ContextMenuPortal` from `@opencroft/client/ui`. */
+  ContextMenuPortal,
+  /** @deprecated Import `ContextMenuRadioGroup` from `@opencroft/client/ui`. */
+  ContextMenuRadioGroup,
+  /** @deprecated Import `ContextMenuRadioItem` from `@opencroft/client/ui`. */
+  ContextMenuRadioItem,
+  /** @deprecated Import `ContextMenuSeparator` from `@opencroft/client/ui`. */
+  ContextMenuSeparator,
+  /** @deprecated Import `ContextMenuShortcut` from `@opencroft/client/ui`. */
+  ContextMenuShortcut,
+  /** @deprecated Import `ContextMenuSub` from `@opencroft/client/ui`. */
+  ContextMenuSub,
+  /** @deprecated Import `ContextMenuSubContent` from `@opencroft/client/ui`. */
+  ContextMenuSubContent,
+  /** @deprecated Import `ContextMenuSubTrigger` from `@opencroft/client/ui`. */
+  ContextMenuSubTrigger,
+  /** @deprecated Import `ContextMenuTrigger` from `@opencroft/client/ui`. */
+  ContextMenuTrigger,
+  /** @deprecated Import `ControlledInput` from `@opencroft/client/ui`. */
+  ControlledInput,
+  /** @deprecated Import `ControlledInputProps` from `@opencroft/client/ui`. */
+  type ControlledInputProps,
+  /** @deprecated Import `ControlledTextarea` from `@opencroft/client/ui`. */
+  ControlledTextarea,
+  /** @deprecated Import `ControlledTextareaProps` from `@opencroft/client/ui`. */
+  type ControlledTextareaProps,
+  /** @deprecated Import `createIFrameRoute` from `@opencroft/client/ui`. */
+  createIFrameRoute,
+  /** @deprecated Import `Dialog` from `@opencroft/client/ui`. */
+  Dialog,
+  /** @deprecated Import `DialogClose` from `@opencroft/client/ui`. */
+  DialogClose,
+  /** @deprecated Import `DialogContent` from `@opencroft/client/ui`. */
+  DialogContent,
+  /** @deprecated Import `DialogDescription` from `@opencroft/client/ui`. */
+  DialogDescription,
+  /** @deprecated Import `DialogFooter` from `@opencroft/client/ui`. */
+  DialogFooter,
+  /** @deprecated Import `DialogHeader` from `@opencroft/client/ui`. */
+  DialogHeader,
+  /** @deprecated Import `DialogOverlay` from `@opencroft/client/ui`. */
+  DialogOverlay,
+  /** @deprecated Import `DialogPortal` from `@opencroft/client/ui`. */
+  DialogPortal,
+  /** @deprecated Import `DialogTitle` from `@opencroft/client/ui`. */
+  DialogTitle,
+  /** @deprecated Import `DialogTrigger` from `@opencroft/client/ui`. */
+  DialogTrigger,
+  /** @deprecated Import `DirectionProvider` from `@opencroft/client/ui`. */
+  DirectionProvider,
+  /** @deprecated Import `Drawer` from `@opencroft/client/ui`. */
+  Drawer,
+  /** @deprecated Import `DrawerClose` from `@opencroft/client/ui`. */
+  DrawerClose,
+  /** @deprecated Import `DrawerContent` from `@opencroft/client/ui`. */
+  DrawerContent,
+  /** @deprecated Import `DrawerDescription` from `@opencroft/client/ui`. */
+  DrawerDescription,
+  /** @deprecated Import `DrawerFooter` from `@opencroft/client/ui`. */
+  DrawerFooter,
+  /** @deprecated Import `DrawerHeader` from `@opencroft/client/ui`. */
+  DrawerHeader,
+  /** @deprecated Import `DrawerOverlay` from `@opencroft/client/ui`. */
+  DrawerOverlay,
+  /** @deprecated Import `DrawerPortal` from `@opencroft/client/ui`. */
+  DrawerPortal,
+  /** @deprecated Import `DrawerSwipeHandle` from `@opencroft/client/ui`. */
+  DrawerSwipeHandle,
+  /** @deprecated Import `DrawerTitle` from `@opencroft/client/ui`. */
+  DrawerTitle,
+  /** @deprecated Import `DrawerTrigger` from `@opencroft/client/ui`. */
+  DrawerTrigger,
+  /** @deprecated Import `DropdownMenu` from `@opencroft/client/ui`. */
+  DropdownMenu,
+  /** @deprecated Import `DropdownMenuCheckboxItem` from `@opencroft/client/ui`. */
+  DropdownMenuCheckboxItem,
+  /** @deprecated Import `DropdownMenuContent` from `@opencroft/client/ui`. */
+  DropdownMenuContent,
+  /** @deprecated Import `DropdownMenuGroup` from `@opencroft/client/ui`. */
+  DropdownMenuGroup,
+  /** @deprecated Import `DropdownMenuItem` from `@opencroft/client/ui`. */
+  DropdownMenuItem,
+  /** @deprecated Import `DropdownMenuLabel` from `@opencroft/client/ui`. */
+  DropdownMenuLabel,
+  /** @deprecated Import `DropdownMenuPortal` from `@opencroft/client/ui`. */
+  DropdownMenuPortal,
+  /** @deprecated Import `DropdownMenuRadioGroup` from `@opencroft/client/ui`. */
+  DropdownMenuRadioGroup,
+  /** @deprecated Import `DropdownMenuRadioItem` from `@opencroft/client/ui`. */
+  DropdownMenuRadioItem,
+  /** @deprecated Import `DropdownMenuSeparator` from `@opencroft/client/ui`. */
+  DropdownMenuSeparator,
+  /** @deprecated Import `DropdownMenuShortcut` from `@opencroft/client/ui`. */
+  DropdownMenuShortcut,
+  /** @deprecated Import `DropdownMenuSub` from `@opencroft/client/ui`. */
+  DropdownMenuSub,
+  /** @deprecated Import `DropdownMenuSubContent` from `@opencroft/client/ui`. */
+  DropdownMenuSubContent,
+  /** @deprecated Import `DropdownMenuSubTrigger` from `@opencroft/client/ui`. */
+  DropdownMenuSubTrigger,
+  /** @deprecated Import `DropdownMenuTrigger` from `@opencroft/client/ui`. */
+  DropdownMenuTrigger,
+  /** @deprecated Import `Empty` from `@opencroft/client/ui`. */
+  Empty,
+  /** @deprecated Import `EmptyContent` from `@opencroft/client/ui`. */
+  EmptyContent,
+  /** @deprecated Import `EmptyDescription` from `@opencroft/client/ui`. */
+  EmptyDescription,
+  /** @deprecated Import `EmptyHeader` from `@opencroft/client/ui`. */
+  EmptyHeader,
+  /** @deprecated Import `EmptyMedia` from `@opencroft/client/ui`. */
+  EmptyMedia,
+  /** @deprecated Import `EmptyTitle` from `@opencroft/client/ui`. */
+  EmptyTitle,
+  /** @deprecated Import `ExampleFrame` from `@opencroft/client/ui`. */
+  ExampleFrame,
+  /** @deprecated Import `ExampleFrameProps` from `@opencroft/client/ui`. */
+  type ExampleFrameProps,
+  /** @deprecated Import `Field` from `@opencroft/client/ui`. */
+  Field,
+  /** @deprecated Import `FieldContent` from `@opencroft/client/ui`. */
+  FieldContent,
+  /** @deprecated Import `FieldDescription` from `@opencroft/client/ui`. */
+  FieldDescription,
+  /** @deprecated Import `FieldError` from `@opencroft/client/ui`. */
+  FieldError,
+  /** @deprecated Import `FieldGroup` from `@opencroft/client/ui`. */
+  FieldGroup,
+  /** @deprecated Import `FieldLabel` from `@opencroft/client/ui`. */
+  FieldLabel,
+  /** @deprecated Import `FieldLegend` from `@opencroft/client/ui`. */
+  FieldLegend,
+  /** @deprecated Import `FieldSeparator` from `@opencroft/client/ui`. */
+  FieldSeparator,
+  /** @deprecated Import `FieldSet` from `@opencroft/client/ui`. */
+  FieldSet,
+  /** @deprecated Import `FieldTitle` from `@opencroft/client/ui`. */
+  FieldTitle,
+  /** @deprecated Import `FixedArea` from `@opencroft/client/ui`. */
+  FixedArea,
+  /** @deprecated Import `FixedAreaProps` from `@opencroft/client/ui`. */
+  type FixedAreaProps,
+  /** @deprecated Import `Flex` from `@opencroft/client/ui`. */
+  Flex,
+  /** @deprecated Import `FlexDirection` from `@opencroft/client/ui`. */
+  type FlexDirection,
+  /** @deprecated Import `FlexProps` from `@opencroft/client/ui`. */
+  type FlexProps,
+  /** @deprecated Import `Grid` from `@opencroft/client/ui`. */
+  Grid,
+  /** @deprecated Import `GridProps` from `@opencroft/client/ui`. */
+  type GridProps,
+  /** @deprecated Import `GridSize` from `@opencroft/client/ui`. */
+  type GridSize,
+  /** @deprecated Import `GridSizeSwitcher` from `@opencroft/client/ui`. */
+  GridSizeSwitcher,
+  /** @deprecated Import `GridSizeSwitcherProps` from `@opencroft/client/ui`. */
+  type GridSizeSwitcherProps,
+  /** @deprecated Import `gridSizeClasses` from `@opencroft/client/ui`. */
+  gridSizeClasses,
+  /** @deprecated Import `HoverCard` from `@opencroft/client/ui`. */
+  HoverCard,
+  /** @deprecated Import `HoverCardContent` from `@opencroft/client/ui`. */
+  HoverCardContent,
+  /** @deprecated Import `HoverCardTrigger` from `@opencroft/client/ui`. */
+  HoverCardTrigger,
+  /** @deprecated Import `humanizeCron` from `@opencroft/client/ui`. */
+  humanizeCron,
+  /** @deprecated Import `IFrame` from `@opencroft/client/ui`. */
+  IFrame,
+  /** @deprecated Import `ImageArea` from `@opencroft/client/ui`. */
+  ImageArea,
+  /** @deprecated Import `ImageAreaProps` from `@opencroft/client/ui`. */
+  type ImageAreaProps,
+  /** @deprecated Import `Input` from `@opencroft/client/ui`. */
+  Input,
+  /** @deprecated Import `InputGroup` from `@opencroft/client/ui`. */
+  InputGroup,
+  /** @deprecated Import `InputGroupAddon` from `@opencroft/client/ui`. */
+  InputGroupAddon,
+  /** @deprecated Import `InputGroupButton` from `@opencroft/client/ui`. */
+  InputGroupButton,
+  /** @deprecated Import `InputGroupInput` from `@opencroft/client/ui`. */
+  InputGroupInput,
+  /** @deprecated Import `InputGroupText` from `@opencroft/client/ui`. */
+  InputGroupText,
+  /** @deprecated Import `InputGroupTextarea` from `@opencroft/client/ui`. */
+  InputGroupTextarea,
+  /** @deprecated Import `InputOTP` from `@opencroft/client/ui`. */
+  InputOTP,
+  /** @deprecated Import `InputOTPGroup` from `@opencroft/client/ui`. */
+  InputOTPGroup,
+  /** @deprecated Import `InputOTPSeparator` from `@opencroft/client/ui`. */
+  InputOTPSeparator,
+  /** @deprecated Import `InputOTPSlot` from `@opencroft/client/ui`. */
+  InputOTPSlot,
+  /** @deprecated Import `Item` from `@opencroft/client/ui`. */
+  Item,
+  /** @deprecated Import `ItemActions` from `@opencroft/client/ui`. */
+  ItemActions,
+  /** @deprecated Import `ItemContent` from `@opencroft/client/ui`. */
+  ItemContent,
+  /** @deprecated Import `ItemDescription` from `@opencroft/client/ui`. */
+  ItemDescription,
+  /** @deprecated Import `ItemFooter` from `@opencroft/client/ui`. */
+  ItemFooter,
+  /** @deprecated Import `ItemGroup` from `@opencroft/client/ui`. */
+  ItemGroup,
+  /** @deprecated Import `ItemHeader` from `@opencroft/client/ui`. */
+  ItemHeader,
+  /** @deprecated Import `ItemMedia` from `@opencroft/client/ui`. */
+  ItemMedia,
+  /** @deprecated Import `ItemSeparator` from `@opencroft/client/ui`. */
+  ItemSeparator,
+  /** @deprecated Import `ItemTitle` from `@opencroft/client/ui`. */
+  ItemTitle,
+  /** @deprecated Import `JustifyContent` from `@opencroft/client/ui`. */
+  type JustifyContent,
+  /** @deprecated Import `Kbd` from `@opencroft/client/ui`. */
+  Kbd,
+  /** @deprecated Import `KbdGroup` from `@opencroft/client/ui`. */
+  KbdGroup,
+  /** @deprecated Import `Label` from `@opencroft/client/ui`. */
+  Label,
+  /** @deprecated Import `Menubar` from `@opencroft/client/ui`. */
+  Menubar,
+  /** @deprecated Import `MenubarCheckboxItem` from `@opencroft/client/ui`. */
+  MenubarCheckboxItem,
+  /** @deprecated Import `MenubarContent` from `@opencroft/client/ui`. */
+  MenubarContent,
+  /** @deprecated Import `MenubarGroup` from `@opencroft/client/ui`. */
+  MenubarGroup,
+  /** @deprecated Import `MenubarItem` from `@opencroft/client/ui`. */
+  MenubarItem,
+  /** @deprecated Import `MenubarLabel` from `@opencroft/client/ui`. */
+  MenubarLabel,
+  /** @deprecated Import `MenubarMenu` from `@opencroft/client/ui`. */
+  MenubarMenu,
+  /** @deprecated Import `MenubarPortal` from `@opencroft/client/ui`. */
+  MenubarPortal,
+  /** @deprecated Import `MenubarRadioGroup` from `@opencroft/client/ui`. */
+  MenubarRadioGroup,
+  /** @deprecated Import `MenubarRadioItem` from `@opencroft/client/ui`. */
+  MenubarRadioItem,
+  /** @deprecated Import `MenubarSeparator` from `@opencroft/client/ui`. */
+  MenubarSeparator,
+  /** @deprecated Import `MenubarShortcut` from `@opencroft/client/ui`. */
+  MenubarShortcut,
+  /** @deprecated Import `MenubarSub` from `@opencroft/client/ui`. */
+  MenubarSub,
+  /** @deprecated Import `MenubarSubContent` from `@opencroft/client/ui`. */
+  MenubarSubContent,
+  /** @deprecated Import `MenubarSubTrigger` from `@opencroft/client/ui`. */
+  MenubarSubTrigger,
+  /** @deprecated Import `MenubarTrigger` from `@opencroft/client/ui`. */
+  MenubarTrigger,
+  /** @deprecated Import `MenuLayout` from `@opencroft/client/ui`. */
+  MenuLayout,
+  /** @deprecated Import `MenuLayoutProps` from `@opencroft/client/ui`. */
+  type MenuLayoutProps,
+  /** @deprecated Import `NamedSection` from `@opencroft/client/ui`. */
+  NamedSection,
+  /** @deprecated Import `NamedSectionProps` from `@opencroft/client/ui`. */
+  type NamedSectionProps,
+  /** @deprecated Import `NativeSelect` from `@opencroft/client/ui`. */
+  NativeSelect,
+  /** @deprecated Import `NativeSelectOptGroup` from `@opencroft/client/ui`. */
+  NativeSelectOptGroup,
+  /** @deprecated Import `NativeSelectOption` from `@opencroft/client/ui`. */
+  NativeSelectOption,
+  /** @deprecated Import `NavigationMenu` from `@opencroft/client/ui`. */
+  NavigationMenu,
+  /** @deprecated Import `NavigationMenuContent` from `@opencroft/client/ui`. */
+  NavigationMenuContent,
+  /** @deprecated Import `NavigationMenuIndicator` from `@opencroft/client/ui`. */
+  NavigationMenuIndicator,
+  /** @deprecated Import `NavigationMenuItem` from `@opencroft/client/ui`. */
+  NavigationMenuItem,
+  /** @deprecated Import `NavigationMenuLink` from `@opencroft/client/ui`. */
+  NavigationMenuLink,
+  /** @deprecated Import `NavigationMenuList` from `@opencroft/client/ui`. */
+  NavigationMenuList,
+  /** @deprecated Import `NavigationMenuPositioner` from `@opencroft/client/ui`. */
+  NavigationMenuPositioner,
+  /** @deprecated Import `NavigationMenuTrigger` from `@opencroft/client/ui`. */
+  NavigationMenuTrigger,
+  /** @deprecated Import `navigationMenuTriggerStyle` from `@opencroft/client/ui`. */
+  navigationMenuTriggerStyle,
+  /** @deprecated Import `Page` from `@opencroft/client/ui`. */
+  Page,
+  /** @deprecated Import `PageProps` from `@opencroft/client/ui`. */
+  type PageProps,
+  /** @deprecated Import `Pagination` from `@opencroft/client/ui`. */
+  Pagination,
+  /** @deprecated Import `PaginationContent` from `@opencroft/client/ui`. */
+  PaginationContent,
+  /** @deprecated Import `PaginationEllipsis` from `@opencroft/client/ui`. */
+  PaginationEllipsis,
+  /** @deprecated Import `PaginationItem` from `@opencroft/client/ui`. */
+  PaginationItem,
+  /** @deprecated Import `PaginationLink` from `@opencroft/client/ui`. */
+  PaginationLink,
+  /** @deprecated Import `PaginationNext` from `@opencroft/client/ui`. */
+  PaginationNext,
+  /** @deprecated Import `PaginationPrevious` from `@opencroft/client/ui`. */
+  PaginationPrevious,
+  /** @deprecated Import `Popover` from `@opencroft/client/ui`. */
+  Popover,
+  /** @deprecated Import `PopoverContent` from `@opencroft/client/ui`. */
+  PopoverContent,
+  /** @deprecated Import `PopoverDescription` from `@opencroft/client/ui`. */
+  PopoverDescription,
+  /** @deprecated Import `PopoverHeader` from `@opencroft/client/ui`. */
+  PopoverHeader,
+  /** @deprecated Import `PopoverTitle` from `@opencroft/client/ui`. */
+  PopoverTitle,
+  /** @deprecated Import `PopoverTrigger` from `@opencroft/client/ui`. */
+  PopoverTrigger,
+  /** @deprecated Import `PopupContent` from `@opencroft/client/ui`. */
+  PopupContent,
+  /** @deprecated Import `PopupContentProps` from `@opencroft/client/ui`. */
+  type PopupContentProps,
+  /** @deprecated Import `PopupFooter` from `@opencroft/client/ui`. */
+  PopupFooter,
+  /** @deprecated Import `PopupFooterProps` from `@opencroft/client/ui`. */
+  type PopupFooterProps,
+  /** @deprecated Import `PopupHeader` from `@opencroft/client/ui`. */
+  PopupHeader,
+  /** @deprecated Import `PopupHeaderProps` from `@opencroft/client/ui`. */
+  type PopupHeaderProps,
+  /** @deprecated Import `PopupRecyclingContent` from `@opencroft/client/ui`. */
+  PopupRecyclingContent,
+  /** @deprecated Import `PopupRecyclingContentProps` from `@opencroft/client/ui`. */
+  type PopupRecyclingContentProps,
+  /** @deprecated Import `PopupSubHeader` from `@opencroft/client/ui`. */
+  PopupSubHeader,
+  /** @deprecated Import `PopupSubHeaderProps` from `@opencroft/client/ui`. */
+  type PopupSubHeaderProps,
+  /** @deprecated Import `Progress` from `@opencroft/client/ui`. */
+  Progress,
+  /** @deprecated Import `ProgressIndicator` from `@opencroft/client/ui`. */
+  ProgressIndicator,
+  /** @deprecated Import `ProgressLabel` from `@opencroft/client/ui`. */
+  ProgressLabel,
+  /** @deprecated Import `ProgressTrack` from `@opencroft/client/ui`. */
+  ProgressTrack,
+  /** @deprecated Import `ProgressValue` from `@opencroft/client/ui`. */
+  ProgressValue,
+  /** @deprecated Import `RadioGroup` from `@opencroft/client/ui`. */
+  RadioGroup,
+  /** @deprecated Import `RadioGroupItem` from `@opencroft/client/ui`. */
+  RadioGroupItem,
+  /** @deprecated Import `RecyclingView` from `@opencroft/client/ui`. */
+  RecyclingView,
+  /** @deprecated Import `ResizableHandle` from `@opencroft/client/ui`. */
+  ResizableHandle,
+  /** @deprecated Import `ResizablePanel` from `@opencroft/client/ui`. */
+  ResizablePanel,
+  /** @deprecated Import `ResizablePanelGroup` from `@opencroft/client/ui`. */
+  ResizablePanelGroup,
+  /** @deprecated Import `RunHistoryEntry` from `@opencroft/client/ui`. */
+  type RunHistoryEntry,
+  /** @deprecated Import `RunStatus` from `@opencroft/client/ui`. */
+  type RunStatus,
+  /** @deprecated Import `ScheduleMode` from `@opencroft/client/ui`. */
+  type ScheduleMode,
+  /** @deprecated Import `ScheduleRule` from `@opencroft/client/ui`. */
+  type ScheduleRule,
+  /** @deprecated Import `Schedules` from `@opencroft/client/ui`. */
+  Schedules,
+  /** @deprecated Import `SchedulesProps` from `@opencroft/client/ui`. */
+  type SchedulesProps,
+  /** @deprecated Import `ScheduleUnit` from `@opencroft/client/ui`. */
+  type ScheduleUnit,
+  /** @deprecated Import `ScrollArea` from `@opencroft/client/ui`. */
+  ScrollArea,
+  /** @deprecated Import `ScrollAreaScrollbars` from `@opencroft/client/ui`. */
+  type ScrollAreaScrollbars,
+  /** @deprecated Import `ScrollBar` from `@opencroft/client/ui`. */
+  ScrollBar,
+  /** @deprecated Import `ScrollContent` from `@opencroft/client/ui`. */
+  ScrollContent,
+  /** @deprecated Import `ScrollFooter` from `@opencroft/client/ui`. */
+  ScrollFooter,
+  /** @deprecated Import `ScrollHeader` from `@opencroft/client/ui`. */
+  ScrollHeader,
+  /** @deprecated Import `ScrollPage` from `@opencroft/client/ui`. */
+  ScrollPage,
+  /** @deprecated Import `ScrollToBottomButton` from `@opencroft/client/ui`. */
+  ScrollToBottomButton,
+  /** @deprecated Import `SearchableDropdown` from `@opencroft/client/ui`. */
+  SearchableDropdown,
+  /** @deprecated Import `Select` from `@opencroft/client/ui`. */
+  Select,
+  /** @deprecated Import `SelectContent` from `@opencroft/client/ui`. */
+  SelectContent,
+  /** @deprecated Import `SelectGroup` from `@opencroft/client/ui`. */
+  SelectGroup,
+  /** @deprecated Import `SelectItem` from `@opencroft/client/ui`. */
+  SelectItem,
+  /** @deprecated Import `SelectLabel` from `@opencroft/client/ui`. */
+  SelectLabel,
+  /** @deprecated Import `SelectScrollDownButton` from `@opencroft/client/ui`. */
+  SelectScrollDownButton,
+  /** @deprecated Import `SelectScrollUpButton` from `@opencroft/client/ui`. */
+  SelectScrollUpButton,
+  /** @deprecated Import `SelectSeparator` from `@opencroft/client/ui`. */
+  SelectSeparator,
+  /** @deprecated Import `SelectTrigger` from `@opencroft/client/ui`. */
+  SelectTrigger,
+  /** @deprecated Import `SelectValue` from `@opencroft/client/ui`. */
+  SelectValue,
+  /** @deprecated Import `Separator` from `@opencroft/client/ui`. */
+  Separator,
+  /** @deprecated Import `Sheet` from `@opencroft/client/ui`. */
+  Sheet,
+  /** @deprecated Import `SheetClose` from `@opencroft/client/ui`. */
+  SheetClose,
+  /** @deprecated Import `SheetContent` from `@opencroft/client/ui`. */
+  SheetContent,
+  /** @deprecated Import `SheetDescription` from `@opencroft/client/ui`. */
+  SheetDescription,
+  /** @deprecated Import `SheetFooter` from `@opencroft/client/ui`. */
+  SheetFooter,
+  /** @deprecated Import `SheetHeader` from `@opencroft/client/ui`. */
+  SheetHeader,
+  /** @deprecated Import `SheetTitle` from `@opencroft/client/ui`. */
+  SheetTitle,
+  /** @deprecated Import `SheetTrigger` from `@opencroft/client/ui`. */
+  SheetTrigger,
+  /** @deprecated Import `Sidebar` from `@opencroft/client/ui`. */
+  Sidebar,
+  /** @deprecated Import `SidebarContent` from `@opencroft/client/ui`. */
+  SidebarContent,
+  /** @deprecated Import `SidebarFooter` from `@opencroft/client/ui`. */
+  SidebarFooter,
+  /** @deprecated Import `SidebarGroup` from `@opencroft/client/ui`. */
+  SidebarGroup,
+  /** @deprecated Import `SidebarGroupAction` from `@opencroft/client/ui`. */
+  SidebarGroupAction,
+  /** @deprecated Import `SidebarGroupContent` from `@opencroft/client/ui`. */
+  SidebarGroupContent,
+  /** @deprecated Import `SidebarGroupLabel` from `@opencroft/client/ui`. */
+  SidebarGroupLabel,
+  /** @deprecated Import `SidebarHeader` from `@opencroft/client/ui`. */
+  SidebarHeader,
+  /** @deprecated Import `SidebarInput` from `@opencroft/client/ui`. */
+  SidebarInput,
+  /** @deprecated Import `SidebarInset` from `@opencroft/client/ui`. */
+  SidebarInset,
+  /** @deprecated Import `SidebarMenu` from `@opencroft/client/ui`. */
+  SidebarMenu,
+  /** @deprecated Import `SidebarMenuAction` from `@opencroft/client/ui`. */
+  SidebarMenuAction,
+  /** @deprecated Import `SidebarMenuBadge` from `@opencroft/client/ui`. */
+  SidebarMenuBadge,
+  /** @deprecated Import `SidebarMenuButton` from `@opencroft/client/ui`. */
+  SidebarMenuButton,
+  /** @deprecated Import `SidebarMenuItem` from `@opencroft/client/ui`. */
+  SidebarMenuItem,
+  /** @deprecated Import `SidebarMenuSkeleton` from `@opencroft/client/ui`. */
+  SidebarMenuSkeleton,
+  /** @deprecated Import `SidebarMenuSub` from `@opencroft/client/ui`. */
+  SidebarMenuSub,
+  /** @deprecated Import `SidebarMenuSubButton` from `@opencroft/client/ui`. */
+  SidebarMenuSubButton,
+  /** @deprecated Import `SidebarMenuSubItem` from `@opencroft/client/ui`. */
+  SidebarMenuSubItem,
+  /** @deprecated Import `SidebarProvider` from `@opencroft/client/ui`. */
+  SidebarProvider,
+  /** @deprecated Import `SidebarRail` from `@opencroft/client/ui`. */
+  SidebarRail,
+  /** @deprecated Import `SidebarSeparator` from `@opencroft/client/ui`. */
+  SidebarSeparator,
+  /** @deprecated Import `SidebarTrigger` from `@opencroft/client/ui`. */
+  SidebarTrigger,
+  /** @deprecated Import `SimpleSchedule` from `@opencroft/client/ui`. */
+  type SimpleSchedule,
+  /** @deprecated Import `Skeleton` from `@opencroft/client/ui`. */
+  Skeleton,
+  /** @deprecated Import `Slider` from `@opencroft/client/ui`. */
+  Slider,
+  /** @deprecated Import `Spinner` from `@opencroft/client/ui`. */
+  Spinner,
+  /** @deprecated Import `StatusIndicator` from `@opencroft/client/ui`. */
+  StatusIndicator,
+  /** @deprecated Import `StatusIndicatorProps` from `@opencroft/client/ui`. */
+  type StatusIndicatorProps,
+  /** @deprecated Import `StatusVariant` from `@opencroft/client/ui`. */
+  type StatusVariant,
+  /** @deprecated Import `Switch` from `@opencroft/client/ui`. */
+  Switch,
+  /** @deprecated Import `Table` from `@opencroft/client/ui`. */
+  Table,
+  /** @deprecated Import `TableBody` from `@opencroft/client/ui`. */
+  TableBody,
+  /** @deprecated Import `TableCaption` from `@opencroft/client/ui`. */
+  TableCaption,
+  /** @deprecated Import `TableCell` from `@opencroft/client/ui`. */
+  TableCell,
+  /** @deprecated Import `TableFooter` from `@opencroft/client/ui`. */
+  TableFooter,
+  /** @deprecated Import `TableHead` from `@opencroft/client/ui`. */
+  TableHead,
+  /** @deprecated Import `TableHeader` from `@opencroft/client/ui`. */
+  TableHeader,
+  /** @deprecated Import `TableRow` from `@opencroft/client/ui`. */
+  TableRow,
+  /** @deprecated Import `Tabs` from `@opencroft/client/ui`. */
+  Tabs,
+  /** @deprecated Import `TabsContent` from `@opencroft/client/ui`. */
+  TabsContent,
+  /** @deprecated Import `TabsList` from `@opencroft/client/ui`. */
+  TabsList,
+  /** @deprecated Import `TabsTrigger` from `@opencroft/client/ui`. */
+  TabsTrigger,
+  /** @deprecated Import `Textarea` from `@opencroft/client/ui`. */
+  Textarea,
+  /** @deprecated Import `ThemeProvider` from `@opencroft/client/ui`. */
+  ThemeProvider,
+  /** @deprecated Import `Toaster` from `@opencroft/client/ui`. */
+  Toaster,
+  /** @deprecated Import `Toggle` from `@opencroft/client/ui`. */
+  Toggle,
+  /** @deprecated Import `ToggleGroup` from `@opencroft/client/ui`. */
+  ToggleGroup,
+  /** @deprecated Import `ToggleGroupItem` from `@opencroft/client/ui`. */
+  ToggleGroupItem,
+  /** @deprecated Import `Tooltip` from `@opencroft/client/ui`. */
+  Tooltip,
+  /** @deprecated Import `TooltipContent` from `@opencroft/client/ui`. */
+  TooltipContent,
+  /** @deprecated Import `TooltipProvider` from `@opencroft/client/ui`. */
+  TooltipProvider,
+  /** @deprecated Import `TooltipTrigger` from `@opencroft/client/ui`. */
+  TooltipTrigger,
+  /** @deprecated Import `TypingDots` from `@opencroft/client/ui`. */
+  TypingDots,
+  /** @deprecated Import `TypingDotsProps` from `@opencroft/client/ui`. */
+  type TypingDotsProps,
+  /** @deprecated Import `tabsListVariants` from `@opencroft/client/ui`. */
+  tabsListVariants,
+  /** @deprecated Import `toggleVariants` from `@opencroft/client/ui`. */
+  toggleVariants,
+  /** @deprecated Import `UpcomingRun` from `@opencroft/client/ui`. */
+  type UpcomingRun,
+  /** @deprecated Import `useCarousel` from `@opencroft/client/ui`. */
+  useCarousel,
+  /** @deprecated Import `useComboboxAnchor` from `@opencroft/client/ui`. */
+  useComboboxAnchor,
+  /** @deprecated Import `useDirection` from `@opencroft/client/ui`. */
+  useDirection,
+  /** @deprecated Import `useScrollToBottom` from `@opencroft/client/ui`. */
+  useScrollToBottom,
+  /** @deprecated Import `useSidebar` from `@opencroft/client/ui`. */
+  useSidebar,
+  /** @deprecated Import `validateCron` from `@opencroft/client/ui`. */
+  validateCron,
+} from './ui'
+
+import * as iconsNamespace from 'lucide-react'
+
+export {
+  /** @deprecated Use `import { toast } from 'sonner'`. */
+  toast,
+} from 'sonner'
+
+export {
+  /** @deprecated Use each icon by name from `lucide-react`. */
+  iconsNamespace as icons,
 }
-
-/** A handle type this extension declares, by its bare id; the host qualifies it with the extension's id. */
-export interface ExtensionHandleType {
-  id: string
-  label: string
-  color: string
-}
-
-/** @deprecated Renamed `ExtensionHandleType`. */
-export type ExtensionContextType = ExtensionHandleType
-
-export interface ExtensionComponentProps<D = Record<string, unknown>> {
-  id: string
-  data: D
-  selected?: boolean
-}
-
-export interface ExtensionInspectorProps<D = Record<string, unknown>> {
-  nodeId: string
-  data: D
-  updateData: (patch: Partial<D>) => void
-}
-
-export interface InspectorTab<D = Record<string, unknown>> {
-  id: string
-  label: string
-  icon?: string
-  fullHeight?: boolean
-  /**
-   * Stay mounted while the inspector shows this node, so leaving the tab and coming back finds it
-   * as it was. It unmounts when the inspector closes or moves to another node.
-   */
-  keepMounted?: boolean
-  component: ComponentType<ExtensionInspectorProps<D>>
-}
-
-/** Context passed to a node context-menu item's `isEnabled`/`onSelect`. */
-export interface NodeContextMenuContext<D = Record<string, unknown>> {
-  nodeId: string
-  /** The node's type as this extension declared it: bare. */
-  type: string
-  /** @deprecated Read `type`, which holds the same bare value. */
-  typeId: string
-  data: D
-  /**
-   * The node's wired inputs as the open canvas has them, keyed by target
-   * handle id — what `useNodeContext` returns per handle. Prefer it over
-   * `data.__resolvedContexts`, which the server writes on save and which lags
-   * wiring done in the open page.
-   */
-  contexts: Record<string, ResolvedContext>
-}
-
-export interface NodeContextMenuItem<D = Record<string, unknown>> {
-  /** Unique item id, used as the React key */
-  id: string
-  /** Item label shown in the menu */
-  label: string
-  /** Icon name from lucide-react (optional) */
-  icon?: string
-  /** Styles the item as a destructive (red) action */
-  destructive?: boolean
-  /** Whether the item is selectable; omit to always enable. May be async (e.g. checking live node state). */
-  isEnabled?: (ctx: NodeContextMenuContext<D>) => boolean | Promise<boolean>
-  /** Invoked when the item is selected. */
-  onSelect: (ctx: NodeContextMenuContext<D>) => void | Promise<void>
-}
-
-export interface NodeDefinition<D = Record<string, unknown>> {
-  /**
-   * The node's type, bare: a slug unique among this extension's nodes. The
-   * host qualifies it with the extension's id (`<owner>.<extension>.<type>`),
-   * which is the form graph data carries. Required unless the deprecated
-   * `typeId` stands in for it.
-   */
-  type?: string
-  /** @deprecated Declare `type`. Read only when `type` is absent. */
-  typeId?: string
-  name: string
-  category?: string
-  description?: string
-  icon?: string
-  accent?: string
-  handles?: ExtensionHandle[]
-  defaultData?: D
-  component: ComponentType<ExtensionComponentProps<D>>
-  inspector?: ComponentType<ExtensionInspectorProps<D>>
-  inspectorTabs?: InspectorTab<D>[]
-  /** Entries this node type contributes to its right-click context menu, after the built-in Copy/Delete actions. */
-  contextMenuItems?: NodeContextMenuItem<D>[]
-  /**
-   * Told the node's type as declared here (bare), and the node's wired inputs
-   * as the open canvas has them (`contexts`, keyed by target handle id, as in
-   * `NodeContextMenuContext`). An output built from an input reads it there,
-   * not from `data.__resolvedContexts`, which lags wiring done in the open page.
-   * Consumers on the canvas get the value as returned, so it may be live, such
-   * as a stream. They get a new context only when the value changes: plain
-   * objects and arrays by content, anything else by identity, so an unchanged
-   * live value must be the same instance each call.
-   */
-  exposeOutput?: (
-    handleId: string,
-    data: D,
-    type: string,
-    nodeId: string,
-    contexts: Record<string, ResolvedContext>,
-  ) => unknown
-}
-
-export interface ExtensionDeclarationManifest {
-  /**
-   * @deprecated The runtime supplies the extension's id when it loads the
-   * bundle, and files everything the bundle declares under that. Leave it out;
-   * a different value is ignored, with a console warning.
-   */
-  id?: string
-  name?: string
-  version?: string
-  description?: string
-}
-
-export interface CommandBarNode {
-  id: string
-  label: string
-  subtitle: string
-  data: Record<string, unknown>
-  icon: import('lucide-react').LucideIcon
-  accent: string
-}
-
-export interface CommandModeProps {
-  nodes: CommandBarNode[]
-  spaceName: string
-  selectedNodeId: string | null
-  focusTick: number
-  /** Params passed by the caller of activate(modeId, params); null when opened without any. */
-  params: unknown
-  onFocusNode: (nodeId: string) => void
-  onClose: () => void
-  onFocusChange: (focused: boolean) => void
-}
-
-export interface CommandModeShortcut {
-  /**
-   * A `KeyboardEvent.code` value — the physical key, not the character it
-   * produces, so the shortcut fires the same way on every keyboard layout.
-   * Held with Ctrl (or Cmd on macOS) plus whichever of `shift`/`alt` below are
-   * set. Letters: `'KeyF'`. Digits: `'Digit1'`. Punctuation has its own names
-   * (`'Comma'`, `'Period'`, `'Slash'`, `'Minus'`, ...) — never the character
-   * itself, since on some layouts a digit or punctuation key needs a modifier
-   * to type the character it is labelled with on a US keyboard.
-   */
-  code: string
-  shift?: boolean
-  alt?: boolean
-}
-
-export interface CommandModeDefinition {
-  id: string
-  label: string
-  icon?: string
-  description?: string
-  shortcut?: CommandModeShortcut
-  component: ComponentType<CommandModeProps>
-}
-
-export interface SettingsPageDefinition {
-  id: string
-  label: string
-  icon?: string
-  component: ComponentType
-}
-
-export interface ExtensionDeclaration {
-  manifest: ExtensionDeclarationManifest
-  /** The handle types this extension declares, bare. */
-  handleTypes?: ExtensionHandleType[]
-  /** @deprecated Declare `handleTypes`. Read only when `handleTypes` is absent. */
-  contexts?: ExtensionHandleType[]
-  nodes?: NodeDefinition[]
-  commandModes?: CommandModeDefinition[]
-  settings?: SettingsPageDefinition[]
-  /** Generic, feature-defined provider points (e.g. `apps`). */
-  provides?: Record<string, unknown[]>
-}
-
-export interface HandlePinProps {
-  /** The handle type: bare for one of this extension's own, qualified for another's. Also the default `id`. */
-  type: string
-  id?: string
-  color?: string
-  children?: ReactNode
-}
-
-export interface ExtensionStorage {
-  get<T = unknown>(key: string): Promise<T | null>
-  set<T = unknown>(key: string, value: T): Promise<void>
-  delete(key: string): Promise<void>
-  list(): Promise<string[]>
-  clear(): Promise<void>
-}
-
-// ── Extension authoring ─────────────────────────────────────────────────────
-
-export declare const defineExtension: (decl: ExtensionDeclaration) => ExtensionDeclaration
-/** The extension's own id, `<owner>.<extension>`. Never hard-code it. */
-export declare const extensionId: string
-/**
- * Where the host serves this extension: `/api/ext/<extensionId>`. Extensions
- * never build their own URLs — use this, `assetUrl`, `routeUrl` and
- * `absoluteUrl`.
- */
-export declare const urlBase: string
-/** The URL of a static file under the extension's `assets/` folder. */
-export declare const assetUrl: (path: string) => string
-/** The URL of one of the extension's declared HTTP `routes`. */
-export declare const routeUrl: (path: string) => string
-/**
- * An instance-relative URL (`urlBase`, or what `assetUrl` / `routeUrl` return)
- * in absolute form, resolved against the page's origin — for a link handed
- * outside the instance. Defaults to `urlBase`.
- */
-export declare const absoluteUrl: (url?: string) => string
-export declare const invoke: <T = unknown>(name: string, ...args: unknown[]) => Promise<T>
-export declare const dispatch: (nodeId: string, actionId: string, params?: Record<string, unknown>) => Promise<unknown>
-export declare const createStorage: (namespace?: string) => ExtensionStorage
-
-// ── React + canvas runtime (host-provided) ──────────────────────────────────
-
-export declare const React: typeof import('react')
-export declare const createPortal: typeof import('react-dom').createPortal
-export declare const Handle: typeof import('@xyflow/react').Handle
-export declare const Position: typeof import('@xyflow/react').Position
-export declare const NodeResizer: typeof import('@xyflow/react').NodeResizer
-export declare const useReactFlow: typeof import('@xyflow/react').useReactFlow
-export declare const useUpdateNodeInternals: typeof import('@xyflow/react').useUpdateNodeInternals
-export declare const useGraphNodes: typeof import('@xyflow/react').useNodes
-export declare const useGraphEdges: typeof import('@xyflow/react').useEdges
-export declare const icons: typeof import('lucide-react')
-export declare const toast: typeof import('sonner').toast
-
-export declare const InputHandle: FC<HandlePinProps>
-export declare const OutputHandle: FC<HandlePinProps>
-
-/**
- * The full canvas surface behind a Graph App instance -- editor, chat and
- * providers, pointed at the instance's graph. What the builtin Graph App's
- * component renders, and all it renders.
- */
-export declare const GraphCanvas: FC<{ instanceId: string }>
-
-export declare const NodeFrame: ComponentType<Record<string, unknown>>
-export declare const NodeCard: ComponentType<Record<string, unknown>>
-export declare const NodeCardHeader: ComponentType<Record<string, unknown>>
-export declare const NodeCardContent: ComponentType<Record<string, unknown>>
-export declare const useNodeAccent: () => string
-
-/** A resolved context flowing through a connected edge. */
-export interface ResolvedContext<V = unknown> {
-  sourceNodeId: string
-  sourceHandleId: string
-  type: string
-  value: V
-}
-export declare const useNodeContext: <V = unknown>(nodeId: string, targetHandleId: string) => ResolvedContext<V> | null
-
-export interface InspectorIntent {
-  tab?: string
-  instanceId?: string
-  tabRequestId?: number
-}
-export declare const inspectorIntent: {
-  get: (nodeId: string) => InspectorIntent
-  open: (nodeId: string, tab: string, instanceId?: string) => void
-  setTab: (nodeId: string, tab: string) => void
-  setInstance: (nodeId: string, instanceId: string | undefined) => void
-  subscribe: (cb: () => void) => () => void
-  onOpen: (cb: (nodeId: string) => void) => () => void
-}
-export declare const useInspectorIntent: (nodeId: string) => InspectorIntent
-
-/** Overlay control returned by useOverlay; activate(modeId, params?) opens a registered command mode. */
-export interface OverlayControl {
-  activate: (modeId: string, params?: unknown) => void
-  dismiss: () => void
-}
-export declare const useOverlay: (slots?: Record<string, unknown>) => OverlayControl
-
-// ── Streaming ────────────────────────────────────────────────────────────────
-
-export interface TextChunk {
-  text: string
-  final: boolean
-}
-
-export interface Stream<T> {
-  subscribe(fn: (chunk: T) => void): () => void
-  broadcast(chunk: T): void
-}
-
-export declare const getStream: <T>(nodeId: string, handleId: string) => Stream<T>
-export declare const subscribe: <T>(stream: Stream<T>, fn: (chunk: T) => void) => () => void
-export declare const broadcast: <T>(stream: Stream<T>, chunk: T) => void
-
-// ── Docker container state (host-provided hooks) ────────────────────────────
-
-export declare const useDockerContainers: (...args: unknown[]) => unknown
-export declare const useDockerSnapshotReceived: (...args: unknown[]) => unknown
-export declare const useSeedDockerContainers: (...args: unknown[]) => unknown
-
-// ── The host's chat surface ─────────────────────────────────────────────────
-// Offered whole so an extension mounts the host's own conversation rather than
-// arranging the pieces: the dock chrome, the embedded thread, and the picker
-// that chooses which thread it shows. Host-injected at runtime.
-
-/** Which conversation an embedded chat surface shows. */
-export type EmbeddedChatSelection = { threadId: string } | { newId: string }
-
-export interface EmbeddedAgentChatProps {
-  /** The group chat's slug — the first segment of every thread session key. */
-  space: string
-  /** The DEFAULT thread slug this surface owns, one per member agent. */
-  id: string
-  /** Override the shown conversation. Unset = the default thread. */
-  thread?: EmbeddedChatSelection | null
-  /**
-   * What to NAME the chat if this surface has to create it. The address is
-   * always `space`; this is only the display name, and it defaults to the slug
-   * when a host has no better one.
-   */
-  title?: string
-  /**
-   * Reports whether the chat RESOLVED: true only when it exists and the caller
-   * can see it, false while loading and when it is missing, refused or failed.
-   */
-  onChatAvailable?: (available: boolean) => void
-  className?: string
-}
-export declare const EmbeddedAgentChat: FC<EmbeddedAgentChatProps>
-
-export interface ChatSelectorProps {
-  /** The group chat's slug — same address the embedded chat surface takes. */
-  space: string
-  /** The current selection, so the open menu can mark the active thread. */
-  selection?: EmbeddedChatSelection | null
-  onChange: (selection: EmbeddedChatSelection) => void
-  /** A larger tap target for touch surfaces; default is the compact header button. */
-  size?: 'icon' | 'icon-sm' | 'icon-xs'
-  className?: string
-}
-export declare const ChatSelector: FC<ChatSelectorProps>
-
-export interface ChatDockProps {
-  /** The group chat's address: the space's slug. */
-  space: string
-  /** The thread slug this surface addresses by default. */
-  id: string
-  /** What the panel's header calls the conversation. */
-  title: string
-  /** The chat's display name, used only if it has to be created. */
-  chatName?: string
-  /** The surface the chat sits beside, floats over, or covers. */
-  children: ReactNode
-}
-/**
- * The whole chrome around an embedded thread — corner launcher, the three
- * docks plus the floating window, the mobile cover and its Back behaviour.
- */
-export declare const ChatDock: FC<ChatDockProps>
-
-/** What the surface inside a `ChatDock` can ask of the dock around it. */
-export interface ChatDockControl {
-  /** The chat this dock shows: the slug it was given as `space`. */
-  space: string
-  /**
-   * Opens the panel (the full-screen cover on a phone) on this thread of the
-   * dock's chat. It becomes the remembered conversation, as if picked on the
-   * chat's home; the panel's position and size stay as the reader left them.
-   */
-  openThread: (threadId: string) => void
-}
-/** The `ChatDock` around the calling surface, or null when it has none. */
-export declare const useChatDock: () => ChatDockControl | null
-
-// ── Selection scope ─────────────────────────────────────────────────────────
-// What the reader has selected on the surface the chat sits beside, and
-// whether it rides along with the next message.
-
-export interface UserSelection {
-  /** What the quotation shows. Presentation only — never sent to the agent. */
-  label: string
-  /** What the agent receives when passing is on. */
-  content: string
-}
-
-export interface SelectionContextValue {
-  /** The current selection, or null when nothing is selected. */
-  selection: UserSelection | null
-  /**
-   * Whether a selection rides along with the next message. A standing
-   * preference of the reader rather than a property of what is selected:
-   * publishing a selection does not touch it, and it can be set with nothing
-   * selected at all. Kept per browser, so every scope starts from the reader's
-   * last answer.
-   */
-  passEnabled: boolean
-  setSelection: (selection: UserSelection | null) => void
-  clearSelection: () => void
-  togglePass: () => void
-}
-
-export declare const SelectionProvider: FC<{ children: ReactNode }>
-/** Throws outside a `SelectionProvider` rather than returning an empty scope. */
-export declare const useSelection: () => SelectionContextValue
-
-// ── URL parameters, and the breakpoint ──────────────────────────────────────
-
-export interface UrlParamWriteOptions {
-  /**
-   * Replace the current history entry instead of pushing a new one. Defaults
-   * to `true`, so state that changes as often as the screen does does not make
-   * the back button walk through it one step at a time.
-   */
-  replace?: boolean
-}
-
-export interface UrlParamControls {
-  /** The current value, or `null` when the parameter is absent. */
-  value: string | null
-  /** Write the parameter, leaving every other parameter untouched. */
-  set: (value: string, options?: UrlParamWriteOptions) => void
-  /** Remove the parameter, leaving every other parameter untouched. */
-  remove: (options?: UrlParamWriteOptions) => void
-}
-
-/** One URL search parameter, for state that should survive a reload. */
-export declare const useUrlParam: (name: string) => UrlParamControls
-
-/** The kit's mobile breakpoint, the same signal the host's own chat dock reads. */
-export declare const useIsMobile: () => boolean
-
-// ── UI components ────────────────────────────────────────────────────────────
-// The full `ui` package surface (every shadcn component plus SearchableDropdown,
-// Popover, Command, Combobox, …). Host-injected at runtime; `ui/ext` is the set.
-export * from 'ui/ext'
-
-// App-provided components that live outside the `ui` package.
-export declare const FileBrowser: ComponentType<Record<string, unknown>>
-export declare const FileManagerProvider: ComponentType<Record<string, unknown>>
-export declare const Terminal: FC<import('@opencroft/terminal/client').TerminalProps>
-/** Pre-@opencroft/terminal name for the `Terminal` component. */
-export declare const InspectorTerminalBody: typeof Terminal
-export declare const CommandBar: ComponentType<Record<string, unknown>>
-export declare const CommandBarMenu: ComponentType<Record<string, unknown>>
-export declare const CommandBarMenuItem: ComponentType<Record<string, unknown>>
-
-// Whatever this is, it reaches Monaco verbatim, and Monaco registers around
-// forty languages and accepts every one of them at run time. So this union was
-// never the set that works — it was a ceiling on the set you were allowed to
-// ask for, and the six below are simply the ones the host's own surfaces
-// happened to need.
-//
-// `(string & {})` opens it to the other thirty-odd while keeping the six as
-// autocomplete. The alternative — naming all forty — was rejected twice over.
-// It would put a copy of Monaco's registry in a file that does not own it, so
-// every entry is either a lie until the next Monaco upgrade or a truth nobody
-// re-checked. And it buys nothing for the callers that need the width, because
-// they compute the language at run time from something that is already a
-// string: an extension mapping a file path to a language has a `string` in
-// hand, so a closed union would meet it with a cast at every call site and
-// throw away the only thing a closed union is for.
-//
-// Kept identical to the host component's own declaration in
-// apps/opencroft/components/code-editor.tsx — the two are the same type
-// written twice, because this package deliberately declares rather than
-// imports the runtime it describes.
-export type CodeEditorLanguage = 'typescript' | 'javascript' | 'python' | 'shell' | 'json' | 'plaintext' | (string & {})
-
-/** Which of the two renderings of the same pair of documents is on screen. */
-export type CodeEditorDiffMode = 'unified' | 'split'
-
-/**
- * Handed the editor and the `monaco` namespace once the editor is live —
- * @monaco-editor/react's own mount signature, passed straight through.
- *
- * The editor is a union because the two modes are two different editors, and
- * which one arrives follows `original`: given -> a diff editor, omitted -> an
- * ordinary one. A caller that takes both narrows at run time on the method
- * only the diff has — `'getModifiedEditor' in editor`.
- *
- * `monaco` is the second argument for a reason beyond convenience. Reaching
- * the namespace is the only way to construct the values its own APIs take
- * (`new monaco.Range(...)` for a decoration, say), and an extension bundle is
- * a browser ESM bundle with no runtime module resolver, so importing
- * `monaco-editor` for it is not open to you. Receiving it here is what lets an
- * extension install the `window.monaco` shim it would otherwise have no way to
- * obtain — and it is the host's one namespace, not a second copy.
- */
-export type MonacoNamespace = typeof import('monaco-editor')
-/** What `onMount` hands over when `original` is omitted. */
-export type MonacoCodeEditor = import('monaco-editor').editor.IStandaloneCodeEditor
-/** What `onMount` hands over when `original` is given. */
-export type MonacoDiffEditor = import('monaco-editor').editor.IStandaloneDiffEditor
-
-export type CodeEditorOnMount = (editor: MonacoCodeEditor | MonacoDiffEditor, monaco: MonacoNamespace) => void
-
-/**
- * Monaco's folding of long runs of untouched context, in diff mode.
- *
- * Every field is optional and what is left out keeps the host's default, so a
- * caller that cares about one number does not have to restate the other two.
- */
-export interface CodeEditorHideUnchangedRegions {
-  /** Fold at all. Defaults to true. */
-  enabled?: boolean
-  /** Runs shorter than this are never folded — folding them saves nothing. Defaults to 4. */
-  minimumLineCount?: number
-  /** Unchanged lines kept either side of a change. Defaults to 3. */
-  contextLineCount?: number
-}
-
-export interface CodeEditorProps {
-  /** In diff mode (`original` given) this is the modified side. */
-  value: string
-  /**
-   * The unchanged side of a diff. Given -> this renders a diff; omitted -> an
-   * ordinary editor.
-   *
-   * Note that the two modes are two different components underneath
-   * (@monaco-editor/react's `Editor` and `DiffEditor`), so flipping `original`
-   * between undefined and defined remounts the editor and drops its undo
-   * history. That is acceptable for the intended use — a file does not turn
-   * into a diff mid-edit — but nothing in the type says so, so it is said here.
-   */
-  original?: string
-  language?: CodeEditorLanguage
-  /** Applies to the editable side only; `original` is always read-only. */
-  readOnly?: boolean
-  onChange?: (value: string) => void
-  /** Reveal and place the cursor on this 1-based line once, on mount. */
-  line?: number
-  /**
-   * Defaults to filling its container, which must have a definite height — in
-   * diff mode it instead defaults to the content's own height, bounded, because
-   * diffs are meant to sit inline in a column of other content.
-   */
-  height?: string | number
-  /**
-   * The escape hatch out of these props and into Monaco itself, for the things
-   * no prop here can express: decorations, diff-change enumeration, mouse and
-   * cursor and scroll subscriptions, pixel positions for an overlay. Without
-   * it, an extension that needs any of those has to mount its own editor —
-   * which is the one thing sharing this component exists to prevent.
-   *
-   * See `CodeEditorOnMount` for which editor arrives and how to tell.
-   */
-  onMount?: CodeEditorOnMount
-  /**
-   * Which diff rendering to show. Omitted, the mode is the component's own
-   * state and its overlaid toggle drives it; given, you own it and this
-   * becomes an ordinary controlled prop.
-   *
-   * For a surface whose diff mode is not the reader's private business but
-   * part of a larger state — one already persisted, shared across several
-   * diffs at once, or driven from a toolbar that belongs to you.
-   */
-  diffMode?: CodeEditorDiffMode
-  /**
-   * Fired when the component's own toggle is pressed. The way to keep that
-   * toggle working while `diffMode` is controlled — without it a controlled
-   * caller's toggle renders and does nothing, since the state it writes is not
-   * the state being displayed.
-   */
-  onDiffModeChange?: (mode: CodeEditorDiffMode) => void
-  /**
-   * Draw the overlaid unified/split toggle. Defaults to true.
-   *
-   * Set false when you already have this control in your own toolbar —
-   * otherwise `diffMode` gets you a second toggle sitting on top of the diff,
-   * competing with the one you drew yourself.
-   */
-  showModeToggle?: boolean
-  /**
-   * Folding of long runs of untouched context, in diff mode. Defaults to
-   * `{ enabled: true, minimumLineCount: 4, contextLineCount: 3 }`; an object
-   * given here is merged over that, so naming one field keeps the others.
-   *
-   * `false` is the shorthand for showing the whole file, which is what a
-   * caller offering its own "show full file" control needs — and also what a
-   * caller revealing a deep-linked `line` needs, because folding can close
-   * over the very line being revealed.
-   */
-  hideUnchangedRegions?: false | CodeEditorHideUnchangedRegions
-}
-/**
- * The host's code editor, in either of two modes: an ordinary editor, or —
- * given `original` — a diff against it, with a unified/split toggle of its own
- * that `diffMode` / `showModeToggle` let you take over.
- *
- * Provided here rather than imported from an editor package so every surface
- * shares one editor runtime — an extension bundle has no runtime module
- * resolver, so its own copy would initialise a second one.
- *
- * `onMount` is the way out of these props when they run out: it hands over the
- * editor and the `monaco` namespace, which between them reach everything
- * Monaco can do without a second editor being mounted to get at it.
- */
-export declare const CodeEditor: FC<CodeEditorProps>

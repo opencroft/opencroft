@@ -8,9 +8,17 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test, { beforeEach } from 'node:test'
 
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'packages', 'db', 'migrations')
-delete process.env.DATABASE_URL
-process.env.NODE_ENV = 'development'
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  'packages',
+  'db',
+  'migrations',
+)
+delete process.env.OPENCROFT_DATABASE_URL
 
 const { db, user } = await import('@opencroft/db')
 const { eq } = await import('drizzle-orm')

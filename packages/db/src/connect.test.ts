@@ -13,9 +13,12 @@ import test, { after } from 'node:test'
 import { openDb } from './connect'
 import { DatadirBusyError } from './datadir-lock'
 
-// A DATABASE_URL in the environment would send openDb down the node-postgres
+// An OPENCROFT_DATABASE_URL (or the deprecated DATABASE_URL, which connect.ts
+// still honours) in the environment would send openDb down the node-postgres
 // branch, where locking is Postgres's own problem — and these tests would
 // silently stop testing anything.
+process.env.OPENCROFT_DATABASE_URL = undefined
+delete process.env.OPENCROFT_DATABASE_URL
 process.env.DATABASE_URL = undefined
 delete process.env.DATABASE_URL
 
@@ -47,7 +50,7 @@ writeFileSync(
 async function startOpener(dataDir: string): Promise<ChildProcess> {
   const child = spawn(process.execPath, ['--import', 'tsx', openerScript], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PGLITE_PATH: dataDir },
+    env: { ...process.env, OPENCROFT_PGLITE_PATH: dataDir },
   })
   children.push(child)
   let out = ''
@@ -69,7 +72,7 @@ test('openDb refuses a datadir another process already has open', async () => {
   const dataDir = join(workdir, 'live', 'pglite')
   const opener = await startOpener(dataDir)
 
-  process.env.PGLITE_PATH = dataDir
+  process.env.OPENCROFT_PGLITE_PATH = dataDir
   const error = await openDb().then(
     () => null,
     (e: unknown) => e,
@@ -86,7 +89,7 @@ test('openDb closes cleanly and the datadir can then be opened again', async () 
   // The release path matters as much as the refusal: a lock that outlived its
   // own process would make every one-shot script a single-use operation.
   const dataDir = join(workdir, 'reopen', 'pglite')
-  process.env.PGLITE_PATH = dataDir
+  process.env.OPENCROFT_PGLITE_PATH = dataDir
 
   const first = await openDb()
   await first.close()

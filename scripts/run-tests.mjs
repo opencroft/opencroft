@@ -11,7 +11,7 @@
 // (@opencroft/db's test-env) or from the suite itself -- so files running side
 // by side never share one. Two processes on one datadir would corrupt it, or,
 // since packages/db's advisory lock, refuse; either is a failed run, which is
-// why an inherited PGLITE_PATH is cleared below rather than handed to every
+// why an inherited OPENCROFT_PGLITE_PATH is cleared below rather than handed to every
 // file at once.
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -82,10 +82,6 @@ for (const root of roots) {
 // every machine.
 const sizes = new Map(testFiles.map((file) => [file, statSync(file).size]))
 testFiles.sort((a, b) => sizes.get(b) - sizes.get(a) || (a < b ? -1 : 1))
-// Read by check-baseline.mjs, which pairs one totals line against each suite
-// that had files to run -- a workspace with a test script and no test files
-// exits below without producing any. Reword this and that audit stops finding
-// what it counts, with nothing to fail the build.
 console.log(`Found ${testFiles.length} test files.\n`)
 
 if (testFiles.length === 0) {
@@ -109,8 +105,8 @@ if (existsSync('scripts/test-setup.mjs')) {
 args.push('--test', `--test-concurrency=${testConcurrency()}`)
 // Node picks its reporter from whether stdout is a terminal, so a caller that
 // captures this output gets one format interactively and another through a
-// pipe. check-baseline reads these results, so it asks for the machine-readable
-// one by name rather than depending on which side of that default it landed on.
+// pipe. A caller that parses the results asks for the machine-readable one by
+// name rather than depending on which side of that default it landed on.
 if (process.env.OPENCROFT_TEST_TAP) {
   args.push('--test-reporter=tap', '--test-reporter-destination=stdout')
 }
@@ -128,8 +124,19 @@ const env = { ...process.env }
 // what gets tested.
 delete env.TSX_TSCONFIG_PATH
 // Inherited by every file at once, a datadir is shared by all of them. Left
-// unset, each process makes its own (see the header).
+// unset, each process makes its own (see the header). Under its former name
+// too, which the database code still honours.
+delete env.OPENCROFT_PGLITE_PATH
 delete env.PGLITE_PATH
+// Set for every file, so no test that signs a session or encrypts a secret
+// falls through to the instance key file, which would be created in the data
+// directory of the checkout the run started from. Tests of the key file
+// itself unset them and point OPENCROFT_DATA_DIR at a directory of their own.
+// The former names are dropped so an exported one cannot stand in for these.
+env.OPENCROFT_AUTH_SECRET = 'test-auth-secret-not-a-real-one'
+env.OPENCROFT_SECRETS_KEY = 'test-secrets-key-not-a-real-one'
+delete env.BETTER_AUTH_SECRET
+delete env.SECRETS_KEY
 // A workspace-local tsconfig.test.json is the test runner's own answer to
 // rendering JSX: the shared tsconfig leaves the transform to the bundler
 // (`jsx: preserve`), which the runner has none of, so a component throws
@@ -207,14 +214,13 @@ function sweepStaleRunDirs() {
 //
 // A setup that fails is reported and the run goes on without it: what it
 // prepares only saves time, so each file still builds its own, and whatever
-// broke the setup then fails the suites it breaks, where the baseline audit
-// can see it.
+// broke the setup then fails the suites it breaks, where the run reports it.
 function runGlobalSetup() {
   if (!existsSync('scripts/test-global-setup.mjs')) {
     return
   }
-  // Its stdout goes to stderr: stdout is the test report, which check-baseline
-  // parses line by line.
+  // Its stdout goes to stderr: stdout is the test report, which a caller may
+  // parse line by line.
   const setup = spawnSync(process.execPath, ['--import', TSX, 'scripts/test-global-setup.mjs'], {
     stdio: ['ignore', 2, 2],
     env,

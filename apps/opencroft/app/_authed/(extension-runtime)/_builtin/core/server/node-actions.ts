@@ -1,5 +1,7 @@
-import type { HostSendMessageResult, ServerConfig } from '@opencroft/server'
-import host from '@opencroft/server'
+import { type HostSendMessageResult, sendMessage } from '@opencroft/server/chat'
+import { graph } from '@opencroft/server/graph'
+import { secrets } from '@opencroft/server/secrets'
+import type { ServerConfig } from '@opencroft/server/terminal'
 
 import { fireEvent } from './event'
 import { keyStoreCreateKey, keyStoreDeleteKey, keyStoreListKeys } from './key-store'
@@ -82,7 +84,7 @@ async function scriptRun(ctx: ActionCtx): Promise<ScriptResult> {
   const secretEnv: Record<string, string> = {}
   if (secretNames.length > 0) {
     for (const name of secretNames) {
-      const value = await host.secrets.resolve(name)
+      const value = await secrets.resolve(name)
       if (value === null) {
         throw new Error(`Secret "${name}" not found in any Secrets Store`)
       }
@@ -155,7 +157,7 @@ async function textGenerationRun(ctx: ActionCtx): Promise<void> {
   if (!data.assistantId) {
     throw new Error('No assistant selected')
   }
-  const node = await host.graph.getNode(data.assistantId)
+  const node = await graph.getNode(data.assistantId)
   const assistant = (node?.data ?? {}) as AssistantData
   if (!assistant.chatModel?.trim()) {
     throw new Error('Assistant has no chat model configured')
@@ -239,7 +241,7 @@ function requireSecretName(ctx: ActionCtx): string {
 }
 
 async function syncSecretKeys(ctx: ActionCtx): Promise<string[]> {
-  const names = await host.secrets.listKeys(ctx.nodeId)
+  const names = await secrets.listKeys(ctx.nodeId)
   ctx.updateData({ secretKeys: names })
   return names
 }
@@ -257,7 +259,7 @@ async function secretsStoreGenerateAction(ctx: ActionCtx): Promise<GenerateSecre
 }
 
 function secretsStoreListAction(ctx: ActionCtx): Promise<{ names: string[] }> {
-  return host.secrets.listKeys(ctx.nodeId).then((names) => ({ names }))
+  return secrets.listKeys(ctx.nodeId).then((names) => ({ names }))
 }
 
 async function secretsStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: string; secretKeys: string[] }> {
@@ -266,15 +268,15 @@ async function secretsStoreDeleteAction(ctx: ActionCtx): Promise<{ deleted: stri
   // removes it. An absent name is refused rather than deleted for a second
   // time: without this a typo, or a name that lives in a different store,
   // reports a successful deletion having removed nothing.
-  if (!(await host.secrets.listKeys(ctx.nodeId)).includes(name)) {
+  if (!(await secrets.listKeys(ctx.nodeId)).includes(name)) {
     throw new Error(`Secret "${name}" is not in this store`)
   }
-  const references = findSecretReferences(await host.graph.listNodes(), name)
+  const references = findSecretReferences(await graph.listNodes(), name)
   const refusal = refuseSecretDelete(name, references, ctx.params[DELETE_OVERRIDE_PARAM] === true)
   if (refusal) {
     throw new Error(refusal.message)
   }
-  await host.secrets.delete(ctx.nodeId, name)
+  await secrets.delete(ctx.nodeId, name)
   return { deleted: name, secretKeys: await syncSecretKeys(ctx) }
 }
 
@@ -301,7 +303,7 @@ async function sendMessageSendAction(ctx: ActionCtx): Promise<HostSendMessageRes
   // having no sender. Both are handed over and the host decides between them,
   // because deciding here would put the rule in the one place that changes
   // whenever somebody adds a node type.
-  return host.sendMessage.send(ctx.nodeId, ctx.params, ctx.inputSource('text-in')?.sourceNodeId, ctx.callerAgent)
+  return sendMessage.send(ctx.nodeId, ctx.params, ctx.inputSource('text-in')?.sourceNodeId, ctx.callerAgent)
 }
 
 // ── Server node actions ───────────────────────────────────────────────────

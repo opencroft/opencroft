@@ -4,6 +4,7 @@ import { afterEach, test } from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { Markdown } from './markdown'
+import { referencesInMarkdown } from './markdown-reference-scan'
 import {
   findReferences,
   type InlineReference,
@@ -143,6 +144,42 @@ test('inline rendering keeps references', () => {
     render('Fix ABC-9', true),
     '<span class="prose-chat">Fix <span data-selection-text="ABC-9"><b data-ref="ticket">ABC-9</b></span></span>',
   )
+})
+
+// The scan a server acts on and the drawing a reader sees have to agree, text
+// by text: each fixture puts claimed identifiers in prose and in the places
+// the renderer leaves alone.
+const MIXED = [
+  'Fix ABC-1, then XY-2.',
+  'Inline `ABC-3` is code, ABC-4 is not.',
+  '```\nABC-5 in a fence\n```\nand ABC-6 after it',
+  '[ABC-7](https://elsewhere.test/ABC-7) is a label; https://app.example.com/page is bare.',
+  '- ABC-8\n  - nested XY-9\n\n> quoted ABC-10',
+  ':::note\nIn a note, ABC-11.\n:::',
+  'An :icon[ABC-12] directive, and ABC-13:done',
+  '| ABC-14 | `XY-15` |\n|---|---|\n| <b>ABC-16</b> | XY-17 |',
+  '**ABC-18** and _XY-19_ and ~~ABC-20~~',
+]
+
+test('referencesInMarkdown finds exactly the references Markdown draws', () => {
+  install()
+  for (const text of MIXED) {
+    rendered.length = 0
+    render(text)
+    assert.deepEqual(
+      referencesInMarkdown(text, RECOGNISERS).map(({ kind, id }) => [kind, id]),
+      rendered.map(({ kind, id }) => [kind, id]),
+      text,
+    )
+  }
+})
+
+test('referencesInMarkdown skips code and labels, and needs no installed source', () => {
+  assert.deepEqual(
+    MIXED.slice(1, 4).flatMap((text) => referencesInMarkdown(text, RECOGNISERS).map(({ id }) => id)),
+    ['ABC-4', 'ABC-6', 'https://app.example.com/page'],
+  )
+  assert.deepEqual(referencesInMarkdown('ABC-1', []), [])
 })
 
 test('findReferences folds every text recogniser into one scan, in order', () => {

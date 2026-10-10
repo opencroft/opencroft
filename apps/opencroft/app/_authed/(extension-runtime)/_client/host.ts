@@ -62,7 +62,10 @@ import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-
 import { TerminalSelector } from '@/app/_authed/(extension-runtime)/_client/terminal-selector'
 import { resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
 import { extensionIdOfType, extensionUrl } from '@/app/_authed/(extension-runtime)/_extension-id'
-import { invokeExtensionAction } from '@/app/_authed/(extension-runtime)/_server/actions'
+import {
+  describeMentionedAccounts as describeMentionedAccountsOnServer,
+  invokeExtensionAction,
+} from '@/app/_authed/(extension-runtime)/_server/actions'
 import { dispatchNodeAction } from '@/app/_authed/(extension-runtime)/_server/node-actions'
 import type { ExtensionHandle, ExtensionHandleType, ResolvedContext } from '@/app/_authed/(extension-runtime)/_types'
 import { FileBrowser } from '@/app/_authed/(filemanager)/_components/file-browser'
@@ -589,6 +592,8 @@ export const extensionHostApi = {
   // reference's name rather than the component -- a markdown resolver.
   describeGraphRefs,
   subscribeGraphRefs,
+  // The accounts behind `@<username>` mentions, for the mention chip.
+  describeMentionedAccounts: (usernames: string[]) => describeMentionedAccountsOnServer({ data: { usernames } }),
   createStorage: createStorageFor,
   createPortal,
   icons: safeIcons,
@@ -626,6 +631,81 @@ export const extensionHostApi = {
   useIsMobile,
 }
 
+// What each `@opencroft/client/<module>` forwards: the module's names, read
+// off these objects by the extension compiler. Names the compiler binds to the
+// extension being built (`invoke`, `createStorage`, `assetUrl`, …) are not
+// here; it adds them to their modules itself. The two flat objects above are
+// the deprecated `@ext/host` / `@ext/ui` surface, unchanged for compatibility.
+export const extensionClientModules = {
+  actions: { callAppAction },
+  app: {
+    AppLink,
+    useAppHref,
+    useAppLocation,
+    useAppNavigate,
+    useAppAddressHref,
+    useOpenApp,
+    AppTitle: TitleBarTitle,
+    AppActions: TitleBarPortal,
+    AppToolbar: TitleBarToolbar,
+    AppSidebar,
+    useUrlParam,
+    useIsMobile,
+  },
+  canvas: {
+    NodeFrame,
+    useNodeAccent,
+    NodeCard,
+    NodeCardHeader,
+    NodeCardContent,
+    NodeResizer,
+    InputHandle,
+    OutputHandle,
+    Handle,
+    Position,
+    useNodeContext,
+    inspectorIntent,
+    useInspectorIntent,
+    useOverlay,
+    useGraphNodes: useNodes,
+    useGraphEdges: useEdges,
+    useReactFlow,
+    useUpdateNodeInternals,
+    GraphCanvas,
+    CommandBar,
+    CommandBarMenu,
+    CommandBarMenuItem,
+  },
+  chat: {
+    EmbeddedAgentChat,
+    ChatSelector,
+    ChatDock,
+    useChatDock,
+    SelectionProvider,
+    useSelection,
+    describeMentionedAccounts: extensionHostApi.describeMentionedAccounts,
+  },
+  code: { CodeBlock, CodeBlockEditor, CodeEditor },
+  docker: { useDockerContainers, useDockerSnapshotReceived, useSeedDockerContainers },
+  extension: { defineExtension },
+  files: { FileBrowser, FileManagerProvider },
+  graph: { NodeRef, describeGraphRefs, subscribeGraphRefs },
+  markdown: {
+    Markdown,
+    markdownDirectiveBlocks,
+    MarkdownEditor,
+    MarkdownDiffView: HostMarkdownDiffView,
+    MermaidDiagram,
+  },
+  secrets: { SecretSelector },
+  storage: {},
+  streams: { getStream, subscribe, broadcast },
+  terminal: { Terminal, TerminalSelector, TerminalRef, TerminalList },
+  ui: { ...uiKit },
+}
+
+export type ExtensionClientModules = typeof extensionClientModules
+
 export type { Stream, TextChunk }
 
 export type ExtensionHostApi = typeof extensionHostApi
@@ -633,6 +713,7 @@ export type ExtensionHostApi = typeof extensionHostApi
 interface ExtensionGlobalApi {
   host: ExtensionHostApi
   ui: typeof extensionUiApi
+  modules: ExtensionClientModules
 }
 
 export function installClientHost(): void {
@@ -643,5 +724,6 @@ export function installClientHost(): void {
   win.__extHost = {
     host: extensionHostApi,
     ui: extensionUiApi,
+    modules: extensionClientModules,
   }
 }

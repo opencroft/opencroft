@@ -39,7 +39,8 @@ const globalForApps = globalThis as unknown as {
 }
 
 function loadedInstances(): Map<string, LoadedInstance> {
-  return (globalForApps.__spaceAppsLoaded ??= new Map())
+  globalForApps.__spaceAppsLoaded ??= new Map()
+  return globalForApps.__spaceAppsLoaded
 }
 
 /**

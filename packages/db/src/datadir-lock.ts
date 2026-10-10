@@ -33,6 +33,8 @@ import { unlinkSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { threadId } from 'node:worker_threads'
 
 // How long to wait for the holder to say who it is. The refusal does NOT
 // depend on this: connect() completing is a kernel fact, so a holder that is
@@ -45,11 +47,27 @@ const IDENTITY_TIMEOUT_MS = 500
 // a refusal rather than spinning.
 const ACQUIRE_ATTEMPTS = 3
 
+// How long to wait for a holder that is another thread of this same process.
+// That holder is on its way out — a dev server replaces its SSR worker by
+// starting the new one before the old one has stopped — so refusing at once
+// would leave the new worker without a database for the rest of its life.
+// Bounded, because a sibling that never lets go is still a refusal.
+const SIBLING_WAIT_MS = 30_000
+const SIBLING_POLL_MS = 200
+
 export interface DatadirHolder {
   host: string
   pid: number
+  // Absent from a holder that predates this field; such a holder is never
+  // treated as a sibling thread.
+  threadId?: number
   script: string
   since: string
+}
+
+export interface LockDatadirOptions {
+  /** How long to wait for a sibling-thread holder to let go. */
+  siblingWaitMs?: number
 }
 
 export class DatadirBusyError extends Error {
@@ -89,6 +107,7 @@ function describeSelf(): DatadirHolder {
   return {
     host: os.hostname(),
     pid: process.pid,
+    threadId,
     script: process.argv[1] ?? '<unknown>',
     since: new Date().toISOString(),
   }
@@ -137,6 +156,7 @@ function parseHolder(raw: string): DatadirHolder | null {
     return {
       host: parsed.host,
       pid: parsed.pid,
+      threadId: typeof parsed.threadId === 'number' ? parsed.threadId : undefined,
       script: typeof parsed.script === 'string' ? parsed.script : '<unknown>',
       since: typeof parsed.since === 'string' ? parsed.since : '<unknown>',
     }
@@ -188,9 +208,19 @@ function probeHolder(lockPath: string): Promise<{ alive: boolean; holder: Datadi
   })
 }
 
+function isSiblingThread(holder: DatadirHolder | null, self: DatadirHolder): boolean {
+  return (
+    holder !== null &&
+    holder.host === self.host &&
+    holder.pid === self.pid &&
+    holder.threadId !== undefined &&
+    holder.threadId !== self.threadId
+  )
+}
+
 function refusalMessage(dataDir: string, holder: DatadirHolder | null): string {
   const who = holder
-    ? `  holder: host=${holder.host} pid=${holder.pid} script=${holder.script} open since ${holder.since}`
+    ? `  holder: host=${holder.host} pid=${holder.pid} thread=${holder.threadId ?? '?'} script=${holder.script} open since ${holder.since}`
     : '  holder: alive, but did not answer in time to identify itself'
   return [
     `Refusing to open the PGlite database at ${dataDir}: another process already has it open.`,
@@ -213,12 +243,20 @@ function refusalMessage(dataDir: string, holder: DatadirHolder | null): string {
  * Call this at the point a datadir is opened, not wherever a driver happens to
  * be constructed: the lock is keyed to the directory, so throwaway datadirs
  * (one per test run) never contend with each other or with the app's.
+ *
+ * A holder in another process, or in this same thread, is refused at once. A
+ * holder in another thread of this process is waited for, up to
+ * `siblingWaitMs`, and refused only if it is still holding then.
  */
-export async function lockDatadir(dataDir: string): Promise<DatadirLock> {
+export async function lockDatadir(dataDir: string, options: LockDatadirOptions = {}): Promise<DatadirLock> {
   const lockPath = lockPathFor(dataDir)
   const self = describeSelf()
 
-  for (let attempt = 1; attempt <= ACQUIRE_ATTEMPTS; attempt++) {
+  const waitForSiblingUntil = Date.now() + (options.siblingWaitMs ?? SIBLING_WAIT_MS)
+  let waitingForSibling = false
+  let staleTakeovers = 0
+
+  while (staleTakeovers < ACQUIRE_ATTEMPTS) {
     const listened = await listenExclusive(lockPath, self)
     if (listened.ok) {
       return {
@@ -248,6 +286,16 @@ export async function lockDatadir(dataDir: string): Promise<DatadirLock> {
 
     const probe = await probeHolder(lockPath)
     if (probe.alive) {
+      // Once a holder has named itself a sibling thread, a later probe that
+      // gets no name is taken to be that sibling too busy to answer, as it
+      // can be while it closes its database. If it was someone else after
+      // all, the cost is a refusal that comes when the wait runs out.
+      waitingForSibling ||= isSiblingThread(probe.holder, self)
+      const stillSibling = probe.holder === null || isSiblingThread(probe.holder, self)
+      if (waitingForSibling && stillSibling && Date.now() < waitForSiblingUntil) {
+        await sleep(SIBLING_POLL_MS)
+        continue
+      }
       throw new DatadirBusyError(refusalMessage(dataDir, probe.holder), probe.holder)
     }
 
@@ -260,6 +308,7 @@ export async function lockDatadir(dataDir: string): Promise<DatadirLock> {
         throw error
       }
     }
+    staleTakeovers++
   }
 
   throw new DatadirBusyError(

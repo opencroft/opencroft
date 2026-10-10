@@ -1,8 +1,7 @@
-import { legacy } from '@opencroft/client'
-
-const { Input, Label, NodeFrame, OutputHandle, React, icons, useGraphEdges } = legacy
-
-const { useMemo } = React
+import { NodeFrame, OutputHandle, useGraphEdges } from '@opencroft/client/canvas'
+import { Input, Label } from '@opencroft/client/ui'
+import { Route } from 'lucide-react'
+import { type ChangeEvent, useMemo } from 'react'
 
 export interface ApiRouteData {
   path: string
@@ -10,16 +9,6 @@ export interface ApiRouteData {
 }
 
 const ALL_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
-
-const METHOD_COLORS: Record<string, string> = {
-  GET: 'text-green-400',
-  POST: 'text-yellow-400',
-  PUT: 'text-blue-400',
-  PATCH: 'text-cyan-400',
-  DELETE: 'text-red-400',
-  HEAD: 'text-purple-400',
-  OPTIONS: 'text-muted-foreground',
-}
 
 function MethodBadge({ method, active, onClick }: { method: string; active: boolean; onClick: () => void }) {
   return (
@@ -47,7 +36,7 @@ export function ApiRouteNode({ id, data, selected }: { id: string; data: ApiRout
 
   return (
     <NodeFrame
-      icon={icons.Route}
+      icon={Route}
       title={'API'}
       selected={selected ?? false}
       errors={
@@ -92,7 +81,7 @@ export function ApiRouteInspector({
         <Label className='text-xs'>Route Path</Label>
         <Input
           value={data.path ?? '/'}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateData({ path: e.target.value })}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ path: e.target.value })}
           placeholder='/users/:id'
           className='font-mono'
         />

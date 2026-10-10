@@ -387,7 +387,11 @@ function DiffLineRow({
   colours?: readonly ColourRun[]
 }) {
   return (
-    <div className={cn('flex min-w-0', LINE_TONE[entry.kind])}>
+    // Positioned so the row is the containing block of its screen-reader
+    // label: an `sr-only` span is absolutely positioned, and without this it
+    // is placed against some ancestor outside a clipping preview, where every
+    // hidden line's label still adds to the page's scroll height.
+    <div className={cn('relative flex min-w-0', LINE_TONE[entry.kind])}>
       <span aria-hidden className={cn('w-4 shrink-0 select-none text-center', SIGN_TONE[entry.kind])}>
         {SIGN[entry.kind]}
       </span>

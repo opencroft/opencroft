@@ -2,21 +2,32 @@
 // a mock: the thing worth proving is that Better Auth's adapter, our table
 // definitions and the migrations actually agree, which a mock would hide.
 //
-// PGLITE_PATH and the migrations folder are set before importing anything that
-// touches the db package — `@opencroft/db` opens the connection and migrates at
-// import time, so the environment has to be in place first.
+// OPENCROFT_PGLITE_PATH and the migrations folder are set before importing
+// anything that touches the db package — `@opencroft/db` opens the connection
+// and migrates at import time, so the environment has to be in place first.
 
 import assert from 'node:assert/strict'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after, before } from 'node:test'
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-auth-test-'))
-process.env.PGLITE_PATH = join(workdir, 'pglite')
-process.env.DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', 'db', 'migrations')
-process.env.BETTER_AUTH_SECRET = 'test-secret-not-a-real-one'
-delete process.env.DATABASE_URL
+process.env.OPENCROFT_PGLITE_PATH = join(workdir, 'pglite')
+process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(import.meta.dirname, '..', '..', 'db', 'migrations')
+process.env.OPENCROFT_AUTH_SECRET = 'test-secret-not-a-real-one'
+// The database code honours each variable's former name too, so an ambient
+// one must not reach this throwaway database either.
+for (const name of [
+  'OPENCROFT_DATABASE_URL',
+  'DATABASE_URL',
+  'PGLITE_PATH',
+  'DB_MIGRATIONS_DIR',
+  'BETTER_AUTH_SECRET',
+]) {
+  delete process.env[name]
+}
 
 const { countUsers, createFirstAdmin, getSessionUser } = await import('./server')
 
@@ -183,38 +194,71 @@ test('setup refuses to run a second time', async () => {
   assert.equal(await countUsers(), 1, 'the refused call must not have created anything')
 })
 
-// The production container leaves NODE_ENV unset, so "not production" would
-// hand it the placeholder published in this repo. These pin the direction the
-// fallback is gated in, since getting it backwards is silent.
-test('an unset NODE_ENV with no secret refuses, rather than taking the placeholder', async () => {
-  const { BETTER_AUTH_SECRET, NODE_ENV } = process.env
-  delete process.env.BETTER_AUTH_SECRET
-  delete process.env.NODE_ENV
+// Runs `body` with the auth secret unset under both its names and the data
+// directory, where the key file lives, moved to a directory of its own.
+async function withoutConfiguredSecret(body: (keyFile: string) => Promise<void>): Promise<void> {
+  const { OPENCROFT_AUTH_SECRET, OPENCROFT_DATA_DIR } = process.env
+  const dataDir = await mkdtemp(join(workdir, 'data-'))
+  delete process.env.OPENCROFT_AUTH_SECRET
+  process.env.OPENCROFT_DATA_DIR = dataDir
   try {
-    const fresh = await import(`./server?secret-unset-${Date.now()}`)
-    assert.throws(() => fresh.ensureAuth(), /BETTER_AUTH_SECRET is not set/)
+    await body(join(dataDir, 'instance-secrets.json'))
   } finally {
-    process.env.BETTER_AUTH_SECRET = BETTER_AUTH_SECRET
-    if (NODE_ENV === undefined) {
-      delete process.env.NODE_ENV
+    process.env.OPENCROFT_AUTH_SECRET = OPENCROFT_AUTH_SECRET
+    delete process.env.BETTER_AUTH_SECRET
+    if (OPENCROFT_DATA_DIR === undefined) {
+      delete process.env.OPENCROFT_DATA_DIR
     } else {
-      process.env.NODE_ENV = NODE_ENV
+      process.env.OPENCROFT_DATA_DIR = OPENCROFT_DATA_DIR
     }
   }
+}
+
+test('with no auth secret set, sessions are signed with a key generated into the key file and reused', async () => {
+  await withoutConfiguredSecret(async (keyFile) => {
+    const first = await import(`./server?generated-${Date.now()}`)
+    // Importing must not touch the file: a key file that cannot be read would
+    // otherwise take the whole app down at boot rather than only sign-in.
+    assert.equal(existsSync(keyFile), false, 'importing the module must not create the key file')
+
+    const secret = (await first.ensureAuth().$context).secret
+    const saved = JSON.parse(readFileSync(keyFile, 'utf8')).OPENCROFT_AUTH_SECRET
+    assert.equal(secret, saved, 'the secret in use is the one saved in the key file')
+    assert.ok(secret.length >= 32, 'a generated secret is long enough for Better Auth')
+
+    // A second build, as after a restart, reads the same key back.
+    const second = await import(`./server?reused-${Date.now()}`)
+    assert.equal((await second.ensureAuth().$context).secret, saved)
+  })
 })
 
-test('the failure names the variable and only bites on use, not on import', async () => {
-  const { BETTER_AUTH_SECRET } = process.env
-  delete process.env.BETTER_AUTH_SECRET
-  try {
-    // Importing must not throw — an unconfigured deployment has to boot and
-    // serve its pages; only reaching for auth may fail.
-    const fresh = await import(`./server?lazy-${Date.now()}`)
-    assert.equal(typeof fresh.ensureAuth, 'function', 'the module must import cleanly without a secret')
-    assert.throws(() => fresh.ensureAuth(), /BETTER_AUTH_SECRET/)
-  } finally {
-    process.env.BETTER_AUTH_SECRET = BETTER_AUTH_SECRET
-  }
+test('OPENCROFT_AUTH_SECRET, when set, wins over the key file', async () => {
+  await withoutConfiguredSecret(async (keyFile) => {
+    writeFileSync(keyFile, JSON.stringify({ OPENCROFT_AUTH_SECRET: 'from-the-file-not-a-real-one-0123456789' }))
+    process.env.OPENCROFT_AUTH_SECRET = 'from-the-env-not-a-real-one-0123456789'
+    const fresh = await import(`./server?env-wins-${Date.now()}`)
+    assert.equal((await fresh.ensureAuth().$context).secret, 'from-the-env-not-a-real-one-0123456789')
+  })
+})
+
+test('the former BETTER_AUTH_SECRET alone still signs sessions', async () => {
+  await withoutConfiguredSecret(async (keyFile) => {
+    process.env.BETTER_AUTH_SECRET = 'from-the-former-name-not-a-real-one-0123'
+    const fresh = await import(`./server?former-${Date.now()}`)
+    assert.equal((await fresh.ensureAuth().$context).secret, 'from-the-former-name-not-a-real-one-0123')
+    assert.equal(existsSync(keyFile), false, 'an environment value is never written to the key file')
+  })
+})
+
+// Better Auth reads BETTER_AUTH_SECRET itself when no `secret` is passed, so
+// this is what shows the library is handed ours rather than finding its own.
+test('with both names set, Better Auth is handed OPENCROFT_AUTH_SECRET', async () => {
+  await withoutConfiguredSecret(async () => {
+    process.env.OPENCROFT_AUTH_SECRET = 'from-the-new-name-not-a-real-one-012345'
+    process.env.BETTER_AUTH_SECRET = 'from-the-former-name-not-a-real-one-0123'
+    const fresh = await import(`./server?both-${Date.now()}`)
+    assert.equal((await fresh.ensureAuth().$context).secret, 'from-the-new-name-not-a-real-one-012345')
+  })
 })
 
 // Registration over HTTP must be refused by us, not left to a library default
@@ -248,6 +292,43 @@ test('registration over HTTP is refused, whatever Origin it carries', async () =
     rows.every((row) => row.email !== 'walkin@example.test'),
     'a refused registration must not leave an account behind',
   )
+})
+
+test('a social provider is offered when both halves are set, under the new names or the former ones', async (t) => {
+  t.mock.method(console, 'warn', () => {})
+  const { configuredSocialProviders } = await import('./server')
+  const names = [
+    'OPENCROFT_GOOGLE_CLIENT_ID',
+    'OPENCROFT_GOOGLE_CLIENT_SECRET',
+    'OPENCROFT_APPLE_CLIENT_ID',
+    'OPENCROFT_APPLE_CLIENT_SECRET',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'APPLE_CLIENT_ID',
+    'APPLE_CLIENT_SECRET',
+  ]
+  const saved = new Map(names.map((name) => [name, process.env[name]]))
+  try {
+    for (const name of names) {
+      delete process.env[name]
+    }
+    assert.deepEqual(configuredSocialProviders(), [])
+
+    process.env.OPENCROFT_GOOGLE_CLIENT_ID = 'google-id'
+    assert.deepEqual(configuredSocialProviders(), [], 'half a credential offers nothing')
+    process.env.OPENCROFT_GOOGLE_CLIENT_SECRET = 'google-secret'
+    process.env.APPLE_CLIENT_ID = 'apple-id'
+    process.env.APPLE_CLIENT_SECRET = 'apple-secret'
+    assert.deepEqual(configuredSocialProviders(), ['google', 'apple'])
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) {
+        delete process.env[name]
+      } else {
+        process.env[name] = value
+      }
+    }
+  }
 })
 
 test('the refusal covers any endpoint under /sign-up, not just the one that exists today', async () => {

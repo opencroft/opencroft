@@ -1,4 +1,5 @@
-import host from '@opencroft/server'
+import { cacheDir } from '@opencroft/server/storage'
+import { exec, execFile, fs, os, path } from '@opencroft/server/system'
 import { derivePublicKey, generateSshKey, inspectSshKey, type SshKeyType } from '@opencroft/terminal/server'
 
 // ═══════════════════════════════════════════════════════════════════
@@ -9,7 +10,7 @@ import { derivePublicKey, generateSshKey, inspectSshKey, type SshKeyType } from 
 // never be returned to callers (e.g. agents driving node actions).
 // ═══════════════════════════════════════════════════════════════════
 
-const isWindows = host.os.platform() === 'win32'
+const isWindows = os.platform() === 'win32'
 
 export interface KeyEntry {
   name: string
@@ -20,20 +21,20 @@ export interface KeyEntry {
 }
 
 export function keyStoreDir(nodeId: string): string {
-  return host.cacheDir('key-store', nodeId)
+  return cacheDir('key-store', nodeId)
 }
 
 async function setKeyPermissions(filePath: string): Promise<void> {
   if (!isWindows) {
-    await host.fs.chmod(filePath, 0o600)
+    await fs.chmod(filePath, 0o600)
     return
   }
-  await host.execFile('icacls', [filePath, '/inheritance:r', '/grant:r', `${host.os.userInfo().username}:F`])
+  await execFile('icacls', [filePath, '/inheritance:r', '/grant:r', `${os.userInfo().username}:F`])
 }
 
 async function isPrivateKey(filePath: string): Promise<boolean> {
   try {
-    const content = await host.fs.readFile(filePath, 'utf-8')
+    const content = await fs.readFile(filePath, 'utf-8')
     return content.includes('PRIVATE KEY') || content.includes('-----BEGIN')
   } catch {
     return false
@@ -42,7 +43,7 @@ async function isPrivateKey(filePath: string): Promise<boolean> {
 
 async function isKeyInWsl(name: string): Promise<boolean> {
   try {
-    await host.exec(`test -f ~/.ssh/keys/${name}`)
+    await exec(`test -f ~/.ssh/keys/${name}`)
     return true
   } catch {
     return false
@@ -53,7 +54,7 @@ export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
   const dir = keyStoreDir(storeId)
   let entries: string[]
   try {
-    entries = await host.fs.readdir(dir)
+    entries = await fs.readdir(dir)
   } catch {
     return []
   }
@@ -62,22 +63,22 @@ export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
     if (name.endsWith('.pub')) {
       continue
     }
-    const filePath = host.path.join(dir, name)
-    const stat = await host.fs.stat(filePath)
+    const filePath = path.join(dir, name)
+    const stat = await fs.stat(filePath)
     if (!stat.isFile() || !(await isPrivateKey(filePath))) {
       continue
     }
     let type = 'unknown'
     let fingerprint = ''
     // Best effort: one unreadable key costs its own metadata, not the list.
-    const info = inspectSshKey(await host.fs.readFile(filePath, 'utf-8').catch(() => ''))
+    const info = inspectSshKey(await fs.readFile(filePath, 'utf-8').catch(() => ''))
     if (info) {
       fingerprint = info.fingerprint
       type = info.type
     }
     let hasPublicKey = false
     try {
-      await host.fs.access(`${filePath}.pub`)
+      await fs.access(`${filePath}.pub`)
       hasPublicKey = true
     } catch {
       // No .pub file on disk (e.g. an imported key) — still readable if the
@@ -93,52 +94,52 @@ export async function keyStoreListKeys(storeId: string): Promise<KeyEntry[]> {
 
 export async function keyStoreCreateKey(storeId: string, name: string, keyType: string): Promise<void> {
   const dir = keyStoreDir(storeId)
-  await host.fs.mkdir(dir, { recursive: true })
-  const keyPath = host.path.join(dir, name)
+  await fs.mkdir(dir, { recursive: true })
+  const keyPath = path.join(dir, name)
   const key = generateSshKey(keyType as SshKeyType, name)
-  await host.fs.writeFile(keyPath, key.privateKey)
-  await host.fs.writeFile(`${keyPath}.pub`, key.publicKey)
+  await fs.writeFile(keyPath, key.privateKey)
+  await fs.writeFile(`${keyPath}.pub`, key.publicKey)
   await setKeyPermissions(keyPath)
 }
 
 export async function keyStoreImportKey(storeId: string, name: string, content: string): Promise<void> {
   const dir = keyStoreDir(storeId)
-  await host.fs.mkdir(dir, { recursive: true })
-  const keyPath = host.path.join(dir, name)
-  await host.fs.writeFile(keyPath, content)
+  await fs.mkdir(dir, { recursive: true })
+  const keyPath = path.join(dir, name)
+  await fs.writeFile(keyPath, content)
   await setKeyPermissions(keyPath)
 }
 
 export async function keyStoreDeleteKey(storeId: string, name: string): Promise<void> {
   const dir = keyStoreDir(storeId)
-  const keyPath = host.path.join(dir, name)
-  await host.fs.unlink(keyPath).catch(() => null)
-  await host.fs.unlink(`${keyPath}.pub`).catch(() => null)
+  const keyPath = path.join(dir, name)
+  await fs.unlink(keyPath).catch(() => null)
+  await fs.unlink(`${keyPath}.pub`).catch(() => null)
 }
 
 export async function keyStoreReadPublicKey(storeId: string, name: string): Promise<string> {
-  const keyPath = host.path.join(keyStoreDir(storeId), name)
+  const keyPath = path.join(keyStoreDir(storeId), name)
   try {
-    return await host.fs.readFile(`${keyPath}.pub`, 'utf-8')
+    return await fs.readFile(`${keyPath}.pub`, 'utf-8')
   } catch {
-    return derivePublicKey(await host.fs.readFile(keyPath, 'utf-8'))
+    return derivePublicKey(await fs.readFile(keyPath, 'utf-8'))
   }
 }
 
 export async function keyStoreCopyKeyToWsl(storeId: string, name: string): Promise<void> {
-  const keyPath = host.path.join(keyStoreDir(storeId), name)
-  const content = await host.fs.readFile(keyPath, 'utf-8')
-  await host.exec('mkdir -p ~/.ssh/keys')
-  await host.exec(`cat > ~/.ssh/keys/${name} << 'KEYEOF'\n${content}\nKEYEOF`)
-  await host.exec(`chmod 600 ~/.ssh/keys/${name}`)
+  const keyPath = path.join(keyStoreDir(storeId), name)
+  const content = await fs.readFile(keyPath, 'utf-8')
+  await exec('mkdir -p ~/.ssh/keys')
+  await exec(`cat > ~/.ssh/keys/${name} << 'KEYEOF'\n${content}\nKEYEOF`)
+  await exec(`chmod 600 ~/.ssh/keys/${name}`)
   try {
-    const pub = await host.fs.readFile(`${keyPath}.pub`, 'utf-8')
-    await host.exec(`cat > ~/.ssh/keys/${name}.pub << 'KEYEOF'\n${pub}\nKEYEOF`)
+    const pub = await fs.readFile(`${keyPath}.pub`, 'utf-8')
+    await exec(`cat > ~/.ssh/keys/${name}.pub << 'KEYEOF'\n${pub}\nKEYEOF`)
   } catch {
     /* no pub */
   }
 }
 
 export async function keyStoreRemoveKeyFromWsl(name: string): Promise<void> {
-  await host.exec(`rm -f ~/.ssh/keys/${name} ~/.ssh/keys/${name}.pub`)
+  await exec(`rm -f ~/.ssh/keys/${name} ~/.ssh/keys/${name}.pub`)
 }

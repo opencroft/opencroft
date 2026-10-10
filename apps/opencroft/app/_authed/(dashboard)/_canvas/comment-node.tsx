@@ -30,6 +30,7 @@ export const CommentNode = memo(function CommentNode({ data }: NodeProps) {
             aria-label='Dismiss comment'
           >
             <svg
+              aria-hidden='true'
               width='12'
               height='12'
               viewBox='0 0 24 24'

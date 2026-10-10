@@ -108,6 +108,7 @@ function ServiceEditor({
 
       <Label className='text-[10px] text-muted-foreground'>Ports</Label>
       {service.ports.map((p, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a row has no identity in the saved data and holds no state of its own; its inputs are controlled, so a removal re-renders the rows below in place
         <div key={i} className='flex items-center gap-1'>
           <Input
             value={p.host}
@@ -155,6 +156,7 @@ function ServiceEditor({
 
       <Label className='text-[10px] text-muted-foreground'>Environment</Label>
       {service.env.map((e, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a row has no identity in the saved data and holds no state of its own; its inputs are controlled, so a removal re-renders the rows below in place
         <div key={i} className='flex items-center gap-1'>
           <Input
             value={e.key}
@@ -201,6 +203,7 @@ function ServiceEditor({
 
       <Label className='text-[10px] text-muted-foreground'>Volumes</Label>
       {service.volumes.map((v, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a row has no identity in the saved data and holds no state of its own; its inputs are controlled, so a removal re-renders the rows below in place
         <div key={i} className='flex items-center gap-1'>
           <Input
             value={v.host}
@@ -266,7 +269,7 @@ function ApplicationSettings({
       }
       onLoadingChange(false)
     })
-  }, [id])
+  }, [id, onLoadingChange])
 
   const markDirty = useCallback(() => setDirty(true), [])
 
@@ -345,6 +348,7 @@ function ApplicationSettings({
       <Label className='text-xs'>Services</Label>
       {appData.services.map((s, i) => (
         <ServiceEditor
+          // biome-ignore lint/suspicious/noArrayIndexKey: a service has no identity in the saved data and its editor holds no state of its own; its inputs are controlled, so a removal re-renders the editors below in place
           key={i}
           service={s}
           onChange={(updated) => updateService(i, updated)}

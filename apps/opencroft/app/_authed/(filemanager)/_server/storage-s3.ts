@@ -40,7 +40,7 @@ function createClient(config: S3Config) {
 
 function normalizePath(path: string) {
   const clean = path.replace(/^\/+/, '')
-  return clean && !clean.endsWith('/') ? clean + '/' : clean
+  return clean && !clean.endsWith('/') ? `${clean}/` : clean
 }
 
 export async function listFiles(config: S3Config, path: string): Promise<FileEntry[]> {
@@ -67,7 +67,7 @@ export async function listFiles(config: S3Config, path: string): Promise<FileEnt
     }
     entries.push({
       name,
-      path: '/' + dir.Prefix,
+      path: `/${dir.Prefix}`,
       type: 'directory',
       size: 0,
       modified: '',
@@ -84,7 +84,7 @@ export async function listFiles(config: S3Config, path: string): Promise<FileEnt
     }
     entries.push({
       name,
-      path: '/' + obj.Key,
+      path: `/${obj.Key}`,
       type: 'file',
       size: obj.Size ?? 0,
       modified: obj.LastModified?.toISOString() ?? '',

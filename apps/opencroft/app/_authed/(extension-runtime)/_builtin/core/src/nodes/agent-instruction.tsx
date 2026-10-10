@@ -1,7 +1,7 @@
-import { legacy } from '@opencroft/client'
+import { NodeFrame, OutputHandle } from '@opencroft/client/canvas'
+import { Input, Label, Textarea } from '@opencroft/client/ui'
+import { BookOpen } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-
-const { Input, Label, NodeFrame, OutputHandle, Textarea, icons } = legacy
 
 export interface AgentInstructionData {
   name: string
@@ -18,7 +18,7 @@ export function AgentInstructionNode({
 }) {
   return (
     <NodeFrame
-      icon={icons.BookOpen}
+      icon={BookOpen}
       title={data.name || 'Agent Instruction'}
       selected={selected ?? false}
       output={<OutputHandle type='agent-instruction' id='instruction-out' />}

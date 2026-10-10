@@ -98,7 +98,7 @@ async function resolveAgentConfigs(agentSlugs: Set<string>): Promise<Map<string,
       if (!isAgentNode(node)) {
         continue
       }
-      const nameValue = node.data?.['name']
+      const nameValue = node.data?.name
       const nodeSlug = slug(typeof nameValue === 'string' ? nameValue : '')
       if (!nodeSlug || !agentSlugs.has(nodeSlug)) {
         continue

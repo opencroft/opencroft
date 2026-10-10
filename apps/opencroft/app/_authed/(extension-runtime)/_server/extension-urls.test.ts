@@ -10,8 +10,8 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { type ExtensionUrlKind, extensionUrl, extensionUrlBase } from '@/app/_authed/(extension-runtime)/_extension-id'
-import { extensionScopedExports } from './compiler'
 import { createHost } from './host'
+import { extensionScopedExports } from './host-shims'
 
 const ID = 'acme.widgets'
 const ORIGIN = 'https://instance.example.com'

@@ -11,7 +11,7 @@ import { type SshShell, shell as sshShell } from './ssh'
 export type { SocketPeer } from './session-manager'
 
 // The local pty must NOT inherit the full host process.env — in deployments that can carry
-// DATABASE_URL and other secrets. Only pass through what a shell needs to behave normally, plus a
+// OPENCROFT_DATABASE_URL and other secrets. Only pass through what a shell needs to behave normally, plus a
 // forced sane terminal so xterm.js escape-sequence handling matches what the client expects.
 const ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'TZ']
 

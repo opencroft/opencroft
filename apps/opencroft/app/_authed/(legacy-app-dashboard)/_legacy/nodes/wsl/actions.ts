@@ -39,9 +39,9 @@ export const getWslStats = createServerFn({ method: 'POST' })
     }
 
     return {
-      os: lines['OS'] || 'unknown',
-      cpu: lines['CPU'] || 'unknown',
-      memory: lines['MEMORY'] || 'unknown',
-      storage: lines['STORAGE'] || 'unknown',
+      os: lines.OS || 'unknown',
+      cpu: lines.CPU || 'unknown',
+      memory: lines.MEMORY || 'unknown',
+      storage: lines.STORAGE || 'unknown',
     }
   })

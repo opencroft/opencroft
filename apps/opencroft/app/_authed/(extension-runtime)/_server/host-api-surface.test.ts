@@ -12,7 +12,6 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
 // Statically, and deliberately -- do not make this a dynamic import inside a
 // test. The compiler loads this module on demand to read the API objects, and
@@ -23,9 +22,15 @@ import { fileURLToPath } from 'node:url'
 // test runner is `tsx` too, so this import failing is how that would be found
 // -- which makes it load-bearing for a runtime rather than for the assertions
 // below, and invisible as such to anyone reading only what the tests assert.
-import { extensionHostApi, extensionUiApi } from '@/app/_authed/(extension-runtime)/_client/host'
+import {
+  extensionClientModules,
+  extensionHostApi,
+  extensionUiApi,
+} from '@/app/_authed/(extension-runtime)/_client/host'
 import type { ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 import { buildExtension } from './compiler'
+import { SERVER_MODULES } from './extension-api-modules'
+import { extensionScopedExports } from './host-shims'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-host-api-'))
 const savedDataDir = process.env.OPENCROFT_DATA_DIR
@@ -102,42 +107,105 @@ test('every component on the ui object is importable by name from @ext/ui', asyn
   await buildImportingEveryName('ui-surface', '@ext/ui', Object.keys(extensionUiApi))
 })
 
-const here = path.dirname(fileURLToPath(import.meta.url))
-// _server -> (extension-runtime) -> _authed -> app -> apps/opencroft -> apps -> the repo root.
-const CLIENT_ENTRY = path.resolve(here, '../../../../../..', 'packages/client/src/index.ts')
-
-/**
- * The values `@opencroft/client` declares at its root: components, hooks and
- * functions alike, since each one needs a forwarding line in the shim.
- *
- * Read with a pattern rather than through the type checker, unlike the sibling
- * declarations suite: the names wanted here are the ones that file declares
- * ITSELF, which is exactly what the pattern matches. There is no `export *`
- * hop to follow, because a name re-exported from elsewhere is not something
- * the modern shim forwards.
- */
-async function declaredValueNames(): Promise<string[]> {
-  const source = await fs.readFile(CLIENT_ENTRY, 'utf-8')
-  return [...source.matchAll(/^export declare const (\w+):/gm)].map((match) => match[1])
+// What each module declares is held against these objects by
+// host-api-declarations.test.ts; this half checks the shims serve it.
+function moduleNames(module: keyof typeof extensionClientModules): string[] {
+  return [
+    ...Object.keys(extensionClientModules[module]),
+    ...extensionScopedExports('acme.probe')
+      .filter((entry) => entry.module === module)
+      .map((entry) => entry.name),
+  ]
 }
 
-test('every value the client package declares is importable by name from @opencroft/client', async () => {
-  // The two enumerations this suite exists for, in the one place they are
-  // still two: the modern shim forwards a hand-written list, because the root
-  // of `@opencroft/client` is a curated subset of the UI object rather than
-  // the whole of it. A value declared for extension authors and never
-  // forwarded typechecks everywhere and fails to build for the first
-  // extension that imports it.
-  const names = await declaredValueNames()
+test('every client module serves its names, and the package root serves all of them', async () => {
+  const modules = Object.keys(extensionClientModules) as (keyof typeof extensionClientModules)[]
+  assert.ok(modules.length > 5, `expected the client modules to be read; found ${modules.length}`)
+  for (const module of modules) {
+    const names = moduleNames(module)
+    // A module whose only names are bound by the shim (storage) is still
+    // checked: an empty list would build an empty import and prove nothing.
+    assert.ok(names.length > 0, `@opencroft/client/${module} serves no name`)
+    await buildImportingEveryName(`client-${module}`, `@opencroft/client/${module}`, names)
+  }
+  await buildImportingEveryName('client-root', '@opencroft/client', [...modules.flatMap(moduleNames), 'legacy'])
+})
 
-  // Without this, a pattern that matched nothing would build an empty import
-  // and pass while checking no name at all. A component and a hook are named
-  // so a pattern narrowed back to one kind of declaration fails here.
-  assert.ok(names.length >= 3, `expected the declared values to be read; found ${names.length}`)
-  assert.ok(names.includes('Terminal'), 'Terminal is declared at the client package root and must be found')
-  assert.ok(names.includes('useAppNavigate'), 'useAppNavigate is declared at the client package root and must be found')
+test('a name bound to the extension keeps its shape in its module', async () => {
+  const bundle = await buildProbe(
+    'module-scoped-storage',
+    [
+      "import { createStorage } from '@opencroft/client/storage'",
+      '',
+      "export const probe = createStorage('notes')",
+      '',
+    ].join('\n'),
+  )
+  assert.match(bundle, /createStorage\("local\.module-scoped-storage",/)
+})
 
-  await buildImportingEveryName('client-surface', '@opencroft/client', names)
+test('a module the client package does not have fails the build and names the ones it has', async () => {
+  const dir = path.join(root, 'extensions', 'local.absent-module')
+  await fs.mkdir(path.join(dir, 'src'), { recursive: true })
+  await fs.writeFile(
+    path.join(dir, 'src', 'client.tsx'),
+    "import { NodeFrame } from '@opencroft/client/nodes'\n\nexport const probe = NodeFrame\n",
+  )
+  const manifest: ExtensionManifest = { id: 'local.absent-module', name: 'absent-module', version: '0.0.0' }
+  await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
+
+  const result = await buildExtension('local.absent-module', manifest)
+  assert.equal(result.success, false)
+  assert.match(JSON.stringify(result.errors), /@opencroft\/client\/nodes is not a module of @opencroft\/client.*canvas/)
+})
+
+async function buildServerProbe(slug: string, serverSource: string): Promise<{ success: boolean; bundle: string }> {
+  const id = `local.${slug}`
+  const dir = path.join(root, 'extensions', id)
+  await fs.mkdir(path.join(dir, 'server'), { recursive: true })
+  await fs.writeFile(path.join(dir, 'server', 'index.ts'), serverSource)
+  const manifest: ExtensionManifest = { id, name: slug, version: '0.0.0' }
+  await fs.writeFile(path.join(dir, 'extension.json'), JSON.stringify(manifest))
+  const result = await buildExtension(id, manifest)
+  const bundle = result.success ? await fs.readFile(path.join(dir, 'dist', 'server.js'), 'utf-8') : ''
+  return { success: result.success, bundle }
+}
+
+test('every server module serves its host members, read off the injected host', async () => {
+  // `routes`, `tools` and `lifecycle` declare contracts and serve no member.
+  const serving = Object.entries(SERVER_MODULES).filter(([, names]) => names.length > 0)
+  assert.ok(serving.length > 5, `expected the server modules to be read; found ${serving.length}`)
+  for (const [module, names] of serving) {
+    const list = names.join(', ')
+    const { success, bundle } = await buildServerProbe(
+      `server-${module}`,
+      `import { ${list} } from '@opencroft/server/${module}'\n\nexport const actions = { probe: () => [${list}] }\n`,
+    )
+    assert.ok(success, `@opencroft/server/${module} must build`)
+    for (const name of names) {
+      assert.match(bundle, new RegExp(`\\b${name}\\b`), `${name} is forwarded by @opencroft/server/${module}`)
+    }
+    assert.match(bundle, /__extensionServerApi/)
+  }
+})
+
+test('a name a server module does not serve fails the build', async () => {
+  // The control for the test above: a module that resolved every name it was
+  // asked for would pass it for members that do not exist.
+  const { success } = await buildServerProbe(
+    'server-absent-name',
+    "import { storage } from '@opencroft/server/graph'\n\nexport const actions = { probe: () => storage }\n",
+  )
+  assert.equal(success, false, '`storage` is not a member of the graph module')
+})
+
+test('the server package root serves the whole host as its default export and every member by name', async () => {
+  const names = Object.values(SERVER_MODULES).flat()
+  const { success } = await buildServerProbe(
+    'server-root',
+    `import host, { ${names.join(', ')} } from '@opencroft/server'\n\nexport const actions = { probe: () => [host, ${names.join(', ')}] }\n`,
+  )
+  assert.ok(success, 'the package root must build with every member imported by name')
 })
 
 test('a name @ext/host binds to the extension keeps its own shape', async () => {
