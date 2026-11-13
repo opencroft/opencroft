@@ -10,7 +10,11 @@ import '@opencroft/db/test-env'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { BackgroundTaskOwner, BackgroundTaskService } from '@/app/_authed/(background-tasks)/_server/types'
+import type {
+  BackgroundTaskOwner,
+  BackgroundTaskService,
+  StartInProcessTaskInput,
+} from '@/app/_authed/(background-tasks)/_server/types'
 import { ASYNC_SENTENCE, AWAITABLE_SENTENCE } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { opencroftLocalTools } from './tools-bridge'
@@ -216,4 +220,90 @@ test('the bridged toolset leaves the skill tool to agent-client', async () => {
 
   assert.ok(!names.includes('skill'), 'the registry skill tool must not reach the bridge')
   assert.ok(names.includes('skill_list'), 'the rest of the skill family still does')
+})
+
+// A harness that asks through elicitation of its own has no use for the host's
+// question tool, and two tools of one name would collide in the Custom
+// harness's toolset.
+test('ask_user is left out for a harness that asks itself, and kept for one that does not', async () => {
+  const offered = async (adapterId: string) =>
+    (await opencroftLocalTools({ adapterId })).some((tool) => tool.name === 'ask_user')
+
+  assert.equal(await offered('claude'), false)
+  assert.equal(await offered('native'), false, 'the Custom harness has its own')
+  assert.equal(await offered('copilot'), true)
+})
+
+// A session's ask_user does not wait for the answer: it starts a background
+// task with no time limit and answers at once, so a harness's MCP timeout has
+// nothing to cut. What the task's work does with the answer is agent-client's
+// (askUser) and the service's (delivery) to show.
+async function askThroughSession(args: Record<string, unknown>) {
+  const started: StartInProcessTaskInput[] = []
+  const unexpected = async (): Promise<never> => {
+    throw new Error('not expected in this test')
+  }
+  const service: BackgroundTaskService = {
+    startRunnerTask: unexpected,
+    startInProcessTask: async (input) => {
+      started.push(input)
+      return {
+        taskId: 'task-ask-1',
+        agent: null,
+        kind: input.kind,
+        runner: 'in-process',
+        name: input.name,
+        target: input.target,
+        summary: input.summary,
+        state: 'running',
+        startedAt: new Date(0),
+        timeoutMs: input.timeoutMs,
+      }
+    },
+    get: unexpected,
+    listForOwner: unexpected,
+    listRunning: unexpected,
+    cancel: unexpected,
+    runningSessionKeys: () => new Set(),
+    subscribeRunningSessionKeys: () => () => {},
+  }
+  substituteBackgroundTaskService(service)
+  try {
+    const tool = (await opencroftLocalTools({ sessionId: 'bridge-ask-session', adapterId: 'copilot' })).find(
+      (t) => t.name === 'ask_user',
+    )
+    assert.ok(tool, 'ask_user is offered to a harness that does not ask itself')
+    const result = (await tool.handler(args)) as { content: { text: string }[]; isError?: boolean }
+    return { tool, result, started }
+  } finally {
+    substituteBackgroundTaskService(undefined)
+  }
+}
+
+const QUESTIONS = [{ title: 'Colour', question: 'Which colour?', options: ['Red', 'Blue'] }]
+
+test("a session's ask_user starts a background task with no time limit and answers at once", async () => {
+  const { result, started } = await askThroughSession({ questions: QUESTIONS })
+
+  assert.equal(started.length, 1)
+  const [task] = started
+  assert.equal(task?.timeoutMs, null, 'a question waits as long as the person takes')
+  assert.deepEqual(task?.owner, { agent: null, sessionId: 'bridge-ask-session' }, 'its answer goes to this session')
+  assert.equal(task?.name, 'ask_user')
+  assert.notEqual(result.isError, true)
+  assert.match(result.content[0]?.text ?? '', /task-ask-1/, 'the answer names the task the reply will be about')
+  assert.match(result.content[0]?.text ?? '', /End your turn now/)
+})
+
+test("a session's ask_user tells the agent to end its turn and wait", async () => {
+  const { tool } = await askThroughSession({ questions: QUESTIONS })
+  assert.match(tool.description, /returns at once/)
+  assert.match(tool.description, /end your turn: make no further tool calls/)
+  assert.ok(!('space' in tool.inputSchema), 'the form lands in the session, so there is no space to name')
+})
+
+test("a session's ask_user refuses a malformed batch without starting anything", async () => {
+  const { result, started } = await askThroughSession({ questions: [] })
+  assert.equal(started.length, 0)
+  assert.equal(result.isError, true)
 })

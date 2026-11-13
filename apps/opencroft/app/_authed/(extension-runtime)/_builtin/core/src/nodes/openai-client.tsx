@@ -1,4 +1,4 @@
-import { invoke } from '@opencroft/client/actions'
+import { dispatch } from '@opencroft/client/actions'
 import { NodeFrame, useNodeAccent } from '@opencroft/client/canvas'
 import { Button, Label, Textarea } from '@opencroft/client/ui'
 import { Copy, Play, ScrollText, Sparkles, Square, X } from 'lucide-react'
@@ -69,10 +69,9 @@ function ResponseOverlay({ title, content, onClose }: { title: string; content: 
   )
 }
 
-export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; selected?: boolean }) {
+export function OpenAIClientNode({ id, data, selected }: { id: string; data: OpenAIClientData; selected?: boolean }) {
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<ChatResult | null>(null)
-  const [error, setError] = useState('')
   const [viewerOpen, setViewerOpen] = useState(false)
   const genRef = useRef(0)
   const assistant = useAssistant(data.assistantId)
@@ -85,40 +84,31 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
     }
     const gen = ++genRef.current
     setRunning(true)
-    setError('')
     try {
-      const res = await invoke<ChatResult>('openai.chat', {
-        apiBase: assistant.chatApiBase || 'https://api.openai.com/v1',
-        apiKey: assistant.chatApiKey,
-        model: assistant.chatModel,
-        systemPrompt: data.systemPrompt || '',
-        userPrompt: data.userPrompt,
-        temperature: typeof assistant.temperature === 'number' ? assistant.temperature : 0.7,
-      })
+      const res = (await dispatch(id, 'run')) as ChatResult
       if (gen !== genRef.current) {
         return
       }
       setResult(res)
-    } catch (err) {
-      if (gen !== genRef.current) {
-        return
+    } catch {
+      // Why it failed is the node's error, which the host records and the inspector shows.
+      if (gen === genRef.current) {
+        setResult(null)
+        toast.error('OpenAI request failed', { description: "The node's Errors tab says why." })
       }
-      const msg = (err as Error).message || String(err)
-      setError(msg)
-      toast.error(`OpenAI request failed: ${msg}`)
     } finally {
       if (gen === genRef.current) {
         setRunning(false)
       }
     }
-  }, [canRun, data, assistant])
+  }, [canRun, assistant, id])
 
   const stop = useCallback(() => {
     genRef.current += 1
     setRunning(false)
   }, [])
 
-  const status = error ? 'error' : result ? 'success' : 'neutral'
+  const status = result ? 'success' : 'neutral'
   const preview = result?.content.slice(0, 240) ?? ''
   const truncated = (result?.content.length ?? 0) > 240
 
@@ -168,8 +158,6 @@ export function OpenAIClientNode({ data, selected }: { data: OpenAIClientData; s
                 {result.model} · {result.promptTokens}+{result.completionTokens} tokens
               </div>
             </>
-          ) : error ? (
-            <div className='text-[10px] text-destructive line-clamp-3'>{error}</div>
           ) : (
             <div className='text-[10px] text-muted-foreground italic'>no response yet</div>
           )}

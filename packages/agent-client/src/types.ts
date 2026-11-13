@@ -5,11 +5,16 @@ import type {
   SessionConfigOption,
 } from '@agentclientprotocol/sdk'
 
+import type { Readable, Writable } from 'node:stream'
+
 import type { DeliveredAttachment } from './attachments'
 
 // Re-exported so consumers (agent-chat, hosts) can type the advertised command
 // list and elicitation forms without depending on the protocol SDK directly.
 export type { AvailableCommand, ElicitationContentValue, ElicitationSchema }
+
+/** The model APIs the in-process (Custom) harness can speak (resolve.ts `nativeApi`). */
+export type NativeApi = 'chat-completions' | 'responses' | 'anthropic-messages'
 
 export interface SpawnConfig {
   command: string
@@ -20,7 +25,57 @@ export interface SpawnConfig {
   // it refuses to create itself). Created on the host for a host spawn, and
   // inside the container by the docker-exec wrapper for a container spawn.
   ensureDirs?: string[]
+  // Inherited variables the harness must not see (names, or prefixes ending in
+  // `*`), from the adapter's `scrubEnv`. `env` wins over it. A host spawn
+  // builds its environment with spawnEnvironment (resolve.ts); a container
+  // spawn unsets them inside the container.
+  unsetEnv?: string[]
+  // The selection's shell id, when the harness is started through that shell
+  // rather than here (harness-process.ts); `command` and `args` then run
+  // there.
+  shell?: string
 }
+
+/**
+ * A process the engine talks to over its stdio for as long as it runs: a
+ * harness, a sign-in, a file script. A node `ChildProcess` with piped stdio is
+ * one; a RemoteShell hands back another for a process elsewhere. `'exit'`
+ * comes once; a channel lost under the process reports `'error'` first.
+ */
+export interface HarnessProcess {
+  readonly stdin: Writable
+  readonly stdout: Readable
+  readonly stderr: Readable
+  readonly exitCode: number | null
+  readonly signalCode: string | null
+  kill(): void
+  on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
+  on(event: 'error', listener: (error: Error) => void): unknown
+}
+
+/**
+ * A place to run processes that the host reaches and the engine does not: a
+ * shell on another machine, or inside a container behind one. A selection
+ * names one by id (`AgentSelection.shell`); the host gives the shell for an
+ * id (`ShellResolver`).
+ */
+export interface RemoteShell {
+  // The id a selection names it by. Never a credential: it is in a
+  // connection's identity and in messages.
+  id: string
+  // Starts `argv` there with stdin, stdout and stderr open for the life of the
+  // process. Env values must not travel in the command line.
+  spawn(argv: string[], env: Record<string, string>): Promise<HarnessProcess>
+  // The address a harness there reaches the engine's MCP server at, given the
+  // loopback one this process serves it on.
+  mcpUrl(loopbackUrl: string): string
+  // How a person knows the shell, for messages ("terminal Build server").
+  // Absent: the id is used.
+  describe?(): Promise<string>
+}
+
+/** The host's RemoteShell for a selection's `shell` id; undefined for an id it does not know. */
+export type ShellResolver = (id: string) => RemoteShell | undefined
 
 export interface AgentSelection {
   providerId: string
@@ -31,6 +86,11 @@ export interface AgentSelection {
   // Optional base-URL override (e.g. a custom OpenAI-compatible endpoint).
   // When set, it wins over the provider's table endpoint in buildSpawnConfig.
   baseUrl?: string
+  // Extra request headers for every request the harness makes to the
+  // provider endpoint, merged over its own (a custom `Authorization` replaces
+  // the key's Bearer shorthand). Sent only by harnesses whose adapter declares
+  // `endpointHeaders`; the others have no way to take them.
+  headers?: Record<string, string>
   // The profile's word that its OpenAI-compatible endpoint also serves OpenAI's
   // Responses API. Harnesses that speak only that API (Codex) are offered for a
   // provider without a Responses endpoint of its own only when this is set —
@@ -71,6 +131,18 @@ export interface AgentSelection {
   // Deliberately not restated here beyond that: the rule and its exceptions
   // live in context-window.ts, which is the only place they are applied.
   contextWindow?: number
+  // Whether the model takes images, when it is CONFIGURED, for the Custom
+  // (native) harness: true sends the pictures tools return to the model, false
+  // never does. Unset asks the endpoint (its model list's input modalities),
+  // and a model the endpoint says nothing about is sent none, rather than a
+  // guess the endpoint may refuse. Ignored by ACP agents, which decide for
+  // themselves what their model is shown.
+  imageInput?: boolean
+  // The model API the Custom (native) harness speaks: 'chat-completions',
+  // 'responses' or 'anthropic-messages'. Taken only when the provider offers it
+  // (resolve.ts `nativeApi`); unset, or not offered, is the provider's first.
+  // Ignored by ACP agents, whose adapter fixes the protocol.
+  nativeApi?: NativeApi
   // External session key forwarded via ACP `_meta.sessionKey`. Bridges that
   // route by their own session key (e.g. OpenClaw's ACP bridge → Gateway) use
   // it to bind this session to a specific server-side session/agent; ACP agents
@@ -79,7 +151,14 @@ export interface AgentSelection {
   // When set, the harness subprocess runs inside this Docker container via
   // `docker exec` instead of on the host. `cwd` and the auth/config env vars are
   // forwarded into the container; unset means spawn on the host as before.
+  // Ignored while `shell` is set.
   containerName?: string
+  // When set, the harness runs through the host's shell of this id (a
+  // RemoteShell, from AgentClientOptions.shells), wherever it lands
+  // (another machine, a container), with `cwd` a path there. It wins over
+  // `containerName`. See harnessPlacement (resolve.ts). An id rather than the
+  // shell, so a selection stays plain data.
+  shell?: string
   // Opaque per-caller identity, forwarded verbatim to AgentClientOptions'
   // loadMcpServers so a host can scope its own MCP-server resolution to this
   // caller (e.g. surface a caller's own configured servers in addition to a
@@ -145,6 +224,17 @@ export interface PermissionOpt {
   label: string
   kind: string
 }
+
+// How an ask (elicitation) was settled, so a card can say so rather than call
+// every settled ask answered:
+//  - 'answered'   the reader replied, or the out-of-band step a url ask named
+//                 finished;
+//  - 'declined'   the reader dismissed it without answering;
+//  - 'turn_ended' nobody answered before the turn that asked ended (a Stop, an
+//                 interrupt, or the turn finishing);
+//  - 'withdrawn'  the caller that asked stopped waiting: a host ask stopped or
+//                 timed out, or a reopened session whose asker is gone.
+export type AskOutcome = 'answered' | 'declined' | 'turn_ended' | 'withdrawn'
 
 // A prompt held while a turn is running. ACP allows one prompt-turn at a time
 // per session, so mid-turn messages are queued in the session state and
@@ -306,6 +396,11 @@ export interface SubagentInfo {
   name: string
   task: string
   state?: 'completed' | 'failed' | 'cancelled' | 'disconnected' | string
+  // How many steps the subagent's own log holds: its `agent_message`,
+  // `agent_thought` and `tool_call` entries, one per block its section draws.
+  // Kept by an engine that keeps a log per subagent (`compactLog`); absent
+  // otherwise, and on a record from before such a log existed.
+  steps?: number
 }
 
 /**
@@ -426,7 +521,9 @@ export type ChatEvent =
   // (ACP url mode) asks the reader to visit a link, and usually resolves from
   // the agent's own completion notification rather than a typed answer.
   | { kind: 'ask_user'; requestId: string; message: string; form?: ElicitationSchema; url?: string }
-  | { kind: 'ask_user_resolved'; requestId: string }
+  // `outcome` says how the ask was settled (see AskOutcome). Absent on an event
+  // recorded without one: settled, but how is not known.
+  | { kind: 'ask_user_resolved'; requestId: string; outcome?: AskOutcome }
   | { kind: 'modes'; available: SessionMode[]; current: string }
   | { kind: 'mode_changed'; current: string }
   // Full snapshot of the session's dynamic config options (mode/model/thought
@@ -457,10 +554,22 @@ export type ChatEvent =
   // Nesting follows the spawn tree: a subagent spawned BY a subagent is
   // announced as a `subagent` event inside its parent's `subagent_event`, and
   // its own steps arrive wrapped once per level, outermost first.
-  | { kind: 'subagent_event'; subagentSessionId: string; event: ChatEvent }
+  //
+  // `position` is set on the innermost wrapper by an engine that keeps a log
+  // per subagent (`compactLog`): where the step stands in that subagent's own
+  // log. Several frames name one position when they merged into one entry (the
+  // chunks of a run, a call's updates).
+  | { kind: 'subagent_event'; subagentSessionId: string; event: ChatEvent; position?: number }
   // A background task's full current state — upserted by `asyncTaskId`, same
   // contract as `subagent`.
   | { kind: 'async_task'; task: AsyncTaskInfo }
+  // Where this session's agent context begins, in a transcript that holds
+  // history from before it: everything above was said to an earlier session
+  // the agent no longer has. Emitted once, by a session created over a
+  // recorded conversation (createSession's `history`), after that history.
+  // `sessionId` is the session that begins here; a later session that starts
+  // before anything is said to this one adds no marker of its own.
+  | { kind: 'session_start'; sessionId: string }
   // Agent-pushed session metadata (currently just title); undefined title
   // means the agent didn't set one on this update.
   | { kind: 'session_info'; title?: string }

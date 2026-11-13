@@ -4,12 +4,22 @@
 import assert from 'node:assert/strict'
 import test, { afterEach, beforeEach } from 'node:test'
 
+import { AWAITING_RUN_KEY, NO_ENUMS, OBJECT_TYPE, STRING_TYPE, UNRESOLVED_INPUTS_KEY } from '@opencroft/core/values'
 import type { Edge, Node } from '@xyflow/react'
 
+import {
+  CALL_ACTION,
+  CALL_ACTION_TYPE,
+} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/call-action-shared'
+import {
+  VALUE_NODE,
+  valueNodeExposed,
+  valueNodeOutput,
+} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/value-nodes-shared'
 import type { ExtensionDeclaration } from '@/app/_authed/(extension-runtime)/_client/host'
 import { loadedDeclaration } from '@/app/_authed/(extension-runtime)/_client/loaded-declaration'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { resolveInputContexts, sameContext } from './context-resolver'
+import { liveNodeData, resolveInputContexts, sameContext } from './context-resolver'
 
 const component = () => null
 
@@ -51,11 +61,46 @@ const declaration: ExtensionDeclaration = {
         return handleId === 'relay-out' && upstream ? { via: upstream } : undefined
       },
     },
+    {
+      // A producer whose output has a value only while its run dispatches,
+      // which the canvas never has: it exposes nothing there.
+      type: 'route',
+      name: 'Route',
+      component,
+      handles: [{ id: 'body', role: 'source', handleType: OBJECT_TYPE, runtime: true }],
+      exposeOutput: () => undefined,
+    },
+  ],
+}
+
+// The core Get node as the canvas runs it: its handles follow its data
+// (`declaredHandlesOf`), and its output is the value node's own.
+const coreDeclaration: ExtensionDeclaration = {
+  manifest: {},
+  nodes: [
+    {
+      type: VALUE_NODE.get,
+      name: 'Get',
+      component,
+      handles: [],
+      exposeOutput: (handleId, data) =>
+        valueNodeExposed(VALUE_NODE.get, handleId, data as Record<string, unknown>, NO_ENUMS),
+    },
+    {
+      // As the core client declares it: its handles follow its data, and its
+      // outcome outputs expose nothing on the canvas.
+      type: CALL_ACTION,
+      name: 'Call Action',
+      component,
+      handles: [],
+      exposeOutput: () => undefined,
+    },
   ],
 }
 
 beforeEach(() => {
   extensionRegistry.register(loadedDeclaration(declaration, { id: 'acme.stack', folder: 'acme.stack' }))
+  extensionRegistry.register(loadedDeclaration(coreDeclaration, { id: 'builtin.core', folder: 'builtin.core' }))
 })
 
 afterEach(() => {
@@ -192,6 +237,70 @@ test('contexts compare plain data by content and a live value by identity', () =
   assert.equal(sameContext(context(live), context(new Blob(['a']))), false)
   assert.equal(sameContext(null, context({})), false)
   assert.equal(sameContext(null, null), true)
+})
+
+// Get nodes reading an object: `get-1` reads `user` from what feeds it, and
+// `get-2` reads `age` from `get-1`.
+const getNodes = [
+  node('route-1', 'acme.stack.route'),
+  node('get-1', 'builtin.core.get', { valueType: OBJECT_TYPE, inputs: { path: 'user' } }),
+  node('get-2', 'builtin.core.get', { valueType: 'builtin.core.number', inputs: { path: 'age' } }),
+]
+
+test('an input wired to a run-time output waits for a run', () => {
+  const graph = { nodes: getNodes, edges: [edge('route-1', 'body', 'get-1', 'object')] }
+
+  assert.deepEqual(resolveInputContexts('get-1', graph), {})
+  const data = liveNodeData(getNodes[1], graph)
+  assert.deepEqual(data[UNRESOLVED_INPUTS_KEY], ['object'])
+  assert.deepEqual(data[AWAITING_RUN_KEY], ['object'])
+})
+
+test('an input fed through a value node that waits for a run waits for it too, and its node shows "When it runs"', () => {
+  const graph = {
+    nodes: getNodes,
+    edges: [edge('route-1', 'body', 'get-1', 'object'), edge('get-1', 'value', 'get-2', 'object')],
+  }
+
+  const data = liveNodeData(getNodes[2], graph)
+  assert.deepEqual(data[UNRESOLVED_INPUTS_KEY], ['object'])
+  assert.deepEqual(data[AWAITING_RUN_KEY], ['object'])
+  assert.deepEqual(valueNodeOutput(VALUE_NODE.get, 'value', data, NO_ENUMS), {
+    ok: false,
+    error: 'When it runs',
+    awaitsRun: true,
+  })
+})
+
+test("a Call Action's Result waits for a run, and so does the next call's parameter fed from it", () => {
+  const callNodes = [
+    node('call-1', CALL_ACTION_TYPE, { target: { nodes: ['store-1'] }, action: 'generate', params: [] }),
+    node('get-name', 'builtin.core.get', { valueType: STRING_TYPE, inputs: { path: 'name' } }),
+    node('call-2', CALL_ACTION_TYPE, {
+      target: { nodes: ['store-1'] },
+      action: 'delete',
+      params: [{ name: 'name', type: STRING_TYPE }],
+    }),
+  ]
+  const graph = {
+    nodes: callNodes,
+    edges: [edge('call-1', 'result', 'get-name', 'object'), edge('get-name', 'value', 'call-2', 'param-name')],
+  }
+
+  assert.deepEqual(liveNodeData(callNodes[1], graph)[AWAITING_RUN_KEY], ['object'])
+  assert.deepEqual(liveNodeData(callNodes[2], graph)[AWAITING_RUN_KEY], ['param-name'])
+})
+
+test('an input fed by a source with an error of its own is unresolved and does not wait for a run', () => {
+  // `get-1` has nothing to read from: its own error, with no run involved.
+  const graph = { nodes: getNodes, edges: [edge('get-1', 'value', 'get-2', 'object')] }
+
+  const data = liveNodeData(getNodes[2], graph)
+  assert.deepEqual(data[UNRESOLVED_INPUTS_KEY], ['object'])
+  assert.equal(AWAITING_RUN_KEY in data, false)
+  const output = valueNodeOutput(VALUE_NODE.get, 'value', data, NO_ENUMS)
+  assert.ok(output && !output.ok, 'Get has no value to give')
+  assert.equal(output.awaitsRun, undefined)
 })
 
 test('a source node missing from the page contributes no input', () => {

@@ -2,12 +2,11 @@
 
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, Copy } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
+import { cn } from 'cn'
 
-import { Button } from 'ui/components/ui/button'
 import { NodeCard, NodeCardContent, NodeCardHeader } from 'ui/components/ui/nodes/node-card'
 import type { StatusVariant as IndicatorVariant } from 'ui/components/ui/utils/status-indicator'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/components/ui/tooltip'
 
 // The frame's own status vocabulary, kept as it is because node authors already
 // write against it. The map to the indicator's palette is presentation, so it
@@ -30,11 +29,25 @@ export interface NodeFrameProps {
   extra?: ReactNode
   selected: boolean
   loading?: boolean
-  /** Failures for this node. Any entry turns the whole card destructive. */
-  errors?: string[]
+  /**
+   * The node has errors. The card only shows that it has: the errors themselves
+   * are read where there is room for them, in the node's inspector.
+   */
+  error?: boolean
+  /**
+   * Called when the error icon is pressed. Given, a node in error draws its
+   * icon as a button that opens the errors. The press stops at the button, so
+   * the card's own click handling does not run as well.
+   */
+  onShowErrors?: () => void
+  /** Classes for that button. The canvas passes the ones that keep its drag
+   * and pan gestures from starting on it. */
+  showErrorsClassName?: string
   /** Edge handle slots -- connection points are the canvas's, never the kit's. */
   input?: ReactNode
   output?: ReactNode
+  /** The header's drag area: see `NodeCardHeader`. */
+  dragArea?: ReactNode
   children?: ReactNode
   /** Rendered inside the card, under the body. The canvas puts its stale-handle
    * row here: that row is derived from live graph state, so it cannot cross
@@ -43,60 +56,10 @@ export interface NodeFrameProps {
   /** The node type's accent colour. In the canvas this comes from a context the
    * host owns; here it is a value, so the component can be rendered anywhere. */
   accent?: string
-  /** Notified after an error message has been copied, so the host can confirm
-   * it however it confirms things. The copy itself happens here, so this never
-   * gates the button -- a missing handler costs the toast, not the feature. */
-  onCopyError?: (message: string) => void
-}
-
-function NodeErrorTooltip({
-  errors,
-  onCopyError,
-  children,
-}: {
-  errors: string[]
-  onCopyError?: (message: string) => void
-  children: ReactNode
-}) {
-  const copy = (message: string) => {
-    navigator.clipboard?.writeText(message)
-    onCopyError?.(message)
-  }
-
-  return (
-    <TooltipProvider delay={200}>
-      <Tooltip>
-        <TooltipTrigger render={<div />}>{children}</TooltipTrigger>
-        {/* `nodrag nopan` are the canvas's own opt-out classes. They are inert
-            anywhere else, and without them selecting the error text would drag
-            the node instead. */}
-        <TooltipContent
-          side='top'
-          className='nodrag nopan max-w-sm bg-destructive text-destructive-foreground p-2 pointer-events-auto select-text'
-        >
-          <div className='flex flex-col gap-1'>
-            {errors.map((msg, i) => (
-              <div key={i} className='flex items-start gap-2'>
-                <span className='text-xs whitespace-pre-wrap break-words flex-1 font-mono'>{msg}</span>
-                <Button
-                  variant='ghost'
-                  size='icon'
-                  className='h-5 w-5 shrink-0 text-destructive-foreground hover:bg-destructive-foreground/20 hover:text-destructive-foreground'
-                  onClick={() => copy(msg)}
-                >
-                  <Copy className='h-3 w-3' />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  )
 }
 
 // A whole canvas node: the card, its header, an optional body and footer, and
-// the error presentation over the top of all of it.
+// whether it is in error.
 //
 // What is NOT here is as deliberate as what is. The canvas keeps the accent
 // context, the connection handles and the stale-handle detection, because each
@@ -111,43 +74,54 @@ export function NodeFrame({
   extra,
   selected,
   loading,
-  errors,
+  error = false,
+  onShowErrors,
+  showErrorsClassName,
   input,
   output,
+  dragArea,
   children,
   footer,
   accent = 'var(--muted-foreground)',
-  onCopyError,
 }: NodeFrameProps) {
-  const hasErrors = !!errors && errors.length > 0
-  const displayIcon = hasErrors ? AlertTriangle : icon
-  const iconClassName = hasErrors ? 'text-destructive' : undefined
-  const titleClassName = hasErrors ? 'text-destructive' : undefined
-
-  const card = (
-    <NodeCard selected={selected} loading={loading} accent={accent} error={hasErrors}>
+  return (
+    <NodeCard selected={selected} loading={loading} accent={accent} error={error}>
       <NodeCardHeader
-        icon={displayIcon}
-        iconClassName={iconClassName}
+        icon={error ? <ErrorIcon onShowErrors={onShowErrors} className={showErrorsClassName} /> : icon}
         title={title}
-        titleClassName={titleClassName}
+        titleClassName={error ? 'text-destructive' : undefined}
         subtitle={subtitle}
         status={status ? STATUS_MAP[status] : undefined}
         extra={extra}
         input={input}
         output={output}
+        dragArea={dragArea}
       />
       {children && <NodeCardContent>{children}</NodeCardContent>}
       {footer}
     </NodeCard>
   )
+}
 
-  if (!hasErrors) {
-    return card
+function ErrorIcon({ onShowErrors, className }: { onShowErrors?: () => void; className?: string }) {
+  const icon = <AlertTriangle className='h-4 w-4 text-destructive' />
+  if (!onShowErrors) {
+    return icon
   }
   return (
-    <NodeErrorTooltip errors={errors} onCopyError={onCopyError}>
-      {card}
-    </NodeErrorTooltip>
+    <button
+      type='button'
+      aria-label='Show errors'
+      className={cn(
+        'flex cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        className,
+      )}
+      onClick={(event) => {
+        event.stopPropagation()
+        onShowErrors()
+      }}
+    >
+      {icon}
+    </button>
   )
 }

@@ -1,6 +1,7 @@
 /** The node-action family: discovering the actions a node exposes, and invoking one. */
 
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
+import { problemOf } from '@/app/_authed/(extension-runtime)/_node-errors'
 import {
   dispatchNodeActionImpl,
   getNodeActionDeclaration,
@@ -85,7 +86,19 @@ export const handlers: Record<string, ToolHandler> = {
         // so one that checks it can stop when its task is cancelled.
         run: (actionParams, signal) =>
           dispatchNodeActionImpl({ nodeId, actionId: action, params: actionParams }, caller.agent ?? undefined, signal),
+      }).catch((err: unknown) => {
+        // A failed action is answered as the problem the node records (title,
+        // detail, next step). A refusal before any action ran (no such node or
+        // action) carries none and reaches the caller as its message.
+        const problem = problemOf(err)
+        if (!problem) {
+          throw err
+        }
+        return { failed: problem }
       })
+      if ('failed' in outcome) {
+        return { ...jsonResult({ error: outcome.failed }), isError: true }
+      }
       if ('started' in outcome) {
         return textResult(outcome.started)
       }

@@ -12,14 +12,13 @@ import {
   listNodeActionsImpl,
 } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
 import type { NodeActionDescriptor } from '@/app/_authed/(extension-runtime)/_types'
-import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
+import { requireAdminServerFn } from '@/app/_server/require-session'
 
 // Client-callable wrapper — see node-actions-impl.ts's listNodeActionsImpl for why
 // the plain implementation lives in its own module, separate from this file.
 export const listNodeActions = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((nodeId: string) => nodeId)
   .handler(async ({ data: nodeId }): Promise<NodeActionDescriptor[]> => {
-    await requireSessionServerFn()
     return listNodeActionsImpl(nodeId)
   })
 
@@ -37,8 +36,8 @@ export const listNodeActions = createServerFn({ method: 'POST', strict: { output
 export const dispatchNodeAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { nodeId: string; actionId: string; params?: Record<string, unknown> }) => data)
   .handler(async ({ data }): Promise<unknown> => {
-    await requireSessionServerFn()
-    // Per-node-action admin gate, after the session gate: an action the owning
+    // Per-node-action admin gate, after the session gate every server
+    // function runs (app/start.ts): an action the owning
     // extension declared `admin` in its `nodeActionAccess` is refused for a
     // signed-in non-admin (a real 403). Identity comes from the request, never
     // the payload. The Impl (dispatchNodeActionImpl) stays ungated — internal

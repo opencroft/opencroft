@@ -6,6 +6,7 @@ import { useMemo } from 'react'
 import '@/app/_authed/(dashboard)/_canvas/flow-editor.css'
 import { buildNodeTypes } from '@/app/_authed/(dashboard)/_canvas/node-wrapper'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { newNodeData } from '@/app/_authed/(extension-runtime)/_node-defaults'
 
 interface PreviewPanelProps {
   /** The qualified type of the node to preview. */
@@ -33,7 +34,7 @@ export function PreviewPanel({ previewType, version }: PreviewPanelProps) {
         id: 'preview',
         type: resolved.type,
         position: { x: 0, y: 0 },
-        data: { ...resolved.defaultData },
+        data: newNodeData(resolved.defaultData),
         selected: true,
         draggable: false,
       },
@@ -50,7 +51,10 @@ export function PreviewPanel({ previewType, version }: PreviewPanelProps) {
 
   return (
     <div className='h-full w-full dashboard-mvp-flow'>
-      <ReactFlowProvider>
+      {/* Each compile draws its code from scratch: a node type keeps one
+          component across compiles, so without a new key the node would keep
+          its state, and its error card after a render that threw. */}
+      <ReactFlowProvider key={version}>
         <ReactFlow
           nodes={nodes}
           edges={[]}

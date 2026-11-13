@@ -25,16 +25,7 @@ import {
 import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
 import { defineExtension } from '@/app/_authed/(extension-runtime)/_client/host'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
-import {
-  copyKeyToWsl,
-  createKey,
-  deleteKey,
-  importKey,
-  listKeys,
-  readPublicKey,
-  removeKeyFromWsl,
-} from '@/app/_authed/(legacy-app-dashboard)/_legacy/nodes/key-store/actions'
-import { deleteSecret, getSecrets, setSecret } from '@/app/_authed/(secrets-store)/_server/actions'
+import { getSecrets, setSecret } from '@/app/_authed/(secrets-store)/_server/actions'
 
 // What extension code actually receives as `icons` -- see safe-icons.ts for
 // why this has to be the namespace's source, not something callers opt into.
@@ -76,19 +67,11 @@ export const ui = {
 }
 
 export const actions = {
-  keyStore: {
-    listKeys,
-    createKey,
-    importKey,
-    deleteKey,
-    readPublicKey,
-    copyKeyToWsl,
-    removeKeyFromWsl,
-  },
+  // No delete here: a secret is deleted only through the core extension's
+  // `secretsStore.deleteSecret` action, which refuses one a node still names.
   secretsStore: {
     getSecrets,
     setSecret,
-    deleteSecret,
   },
 }
 

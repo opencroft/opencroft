@@ -35,6 +35,11 @@ export async function installDomEnvironment(): Promise<DomEnvironment> {
   globals.HTMLElement = dom.window.HTMLElement
   globals.Element = dom.window.Element
   globals.Node = dom.window.Node
+  // Browser globals a component reaches without `window.`; the frame pair
+  // exists because of `pretendToBeVisual`.
+  globals.MutationObserver = dom.window.MutationObserver
+  globals.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window)
+  globals.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window)
   // `navigator` is getter-only in Node, so plain assignment throws.
   Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true })
   // Lets React accept `act()` for flushing work.

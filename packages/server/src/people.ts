@@ -1,6 +1,7 @@
 /**
  * `@opencroft/server/people` — the accounts on the instance: the people and
- * agent directories, who a text mentions, and agents' MCP tokens.
+ * agent directories, what each agent is doing, who a text mentions, and
+ * agents' MCP tokens.
  */
 
 /** One person in the user directory. Three fields by design: never an email, role or sign-in state. */
@@ -23,10 +24,40 @@ export interface HostAgent {
   avatarUrl: string | null
 }
 
+/**
+ * What one agent is doing, over all its group-chat threads, read from the
+ * same session states the chat's thread status rings show.
+ */
+export interface HostAgentPresence {
+  agentNodeId: string
+  /**
+   * The first of these that any of its threads is in. `waiting`: a turn is
+   * blocked on a person (a permission request or a question), as the chat's
+   * Waiting. `working`: a turn or its background work is in flight.
+   * `compacting`: threads are active, and every one of them is compacting its
+   * context. `idle`: a thread has a live session and none is active.
+   * `offline`: no thread has a live session.
+   */
+  status: 'idle' | 'working' | 'waiting' | 'compacting' | 'offline'
+  /** Threads with a turn, background work or a compaction in flight. */
+  activeThreads: number
+  /** ISO time of the last event any of its threads' sessions had; null when none ever had one. */
+  lastActiveAt: string | null
+}
+
 /** The agent directory — every Agent node of every space, the agents' counterpart of `HostUsersApi`. */
 export interface HostAgentsApi {
   /** Every agent, ordered by name. */
   list(): Promise<HostAgent[]>
+  /** The presence of every agent `list` gives, in the same order. */
+  presence(): Promise<HostAgentPresence[]>
+  /**
+   * Hear an agent's presence each time its `status` or `activeThreads`
+   * changes, with no polling; `lastActiveAt` alone changing is not a change.
+   * Returns the unsubscribe. A subscription made from the server module ends
+   * when the module is unloaded, whether or not the extension unsubscribed.
+   */
+  subscribePresence(listener: (presence: HostAgentPresence) => void | Promise<void>): () => void
 }
 
 /** One account a text mentions: a person (`kind: 'user'`, `id` their account id) or an agent (`id` its node id). */
@@ -77,7 +108,7 @@ export interface HostMcpTokensApi {
 
 /** The people directory: id, name and avatar of every account. */
 export declare const users: HostUsersApi
-/** The agent directory: id, name and avatar of every agent. */
+/** The agent directory: id, name and avatar of every agent, and what each is doing. */
 export declare const agents: HostAgentsApi
 /** Who a markdown text mentions. */
 export declare const mentions: HostMentionsApi

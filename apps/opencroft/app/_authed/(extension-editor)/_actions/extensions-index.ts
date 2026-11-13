@@ -5,7 +5,6 @@ import { isBuiltinFolder, isLocalFolder } from '@/app/_authed/(extension-runtime
 import { scanExtensionFolders } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { ensureExtensionRows, listExtensionRows } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import { getManifest } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { requireSessionServerFn } from '@/app/_server/require-session'
 
 /**
  * One row of the extensions list: what this instance has, and what to call it.
@@ -59,11 +58,6 @@ export interface ExtensionIndexEntry {
  */
 export const listExtensionsIndex = createServerFn({ strict: { output: false } }).handler(
   async (): Promise<ExtensionIndexEntry[]> => {
-    // A server function is an HTTP endpoint of its own, so the route's own
-    // guard does not cover it — this is what the manifest listing beside it
-    // does, and what tells an unauthenticated caller nothing about what this
-    // instance runs.
-    await requireSessionServerFn()
     // Builtins are part of the product rather than something anyone installs,
     // edits or deletes — this page does not list them.
     const folders = (await scanExtensionFolders()).filter((entry) => !isBuiltinFolder(entry.folder))

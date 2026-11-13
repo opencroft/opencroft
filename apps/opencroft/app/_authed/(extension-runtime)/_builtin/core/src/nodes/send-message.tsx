@@ -31,5 +31,5 @@ export function SendMessageInspector() {
 // ─── Handles ─────────────────────────────────────────────────────────
 
 export const SEND_MESSAGE_HANDLES = [
-  { id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Text' },
+  { id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Text', multiple: true },
 ]

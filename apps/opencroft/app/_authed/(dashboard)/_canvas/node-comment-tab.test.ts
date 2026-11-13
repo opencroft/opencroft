@@ -33,6 +33,7 @@ const win = globalThis.window as unknown as Window & typeof globalThis
 
 const { act, createElement } = await import('react')
 const { createRoot } = await import('react-dom/client')
+const { ReactFlowProvider } = await import('@xyflow/react')
 const { NodeInspector } = await import('./node-inspector')
 const { NodeCommentTab } = await import('./node-comment-tab')
 const { extensionRegistry } = await import('@/app/_authed/(extension-runtime)/_client/registry')
@@ -68,7 +69,10 @@ after(() => dom.cleanup())
 const Empty = () => null
 const Details = () => createElement('p', null, 'details body')
 
-function registerFakeExtension(ownTabs: Array<{ id: string; label: string }>): void {
+function registerFakeExtension(
+  ownTabs: Array<{ id: string; label: string }>,
+  errors?: (node: { id: string }) => Array<{ title: string }>,
+): void {
   const tabs = ownTabs.map((tab) => ({ ...tab, component: Empty }))
   const decl = {
     manifest: { id: 'acme.test' },
@@ -79,12 +83,15 @@ function registerFakeExtension(ownTabs: Array<{ id: string; label: string }>): v
         component: Empty,
         inspector: Details,
         inspectorTabs: tabs.length > 0 ? tabs : undefined,
+        errors,
       },
     ],
   } as unknown as LoadedDeclaration
   extensionRegistry.register(decl)
 }
 
+// Inside a ReactFlow provider, as the canvas renders it: the inspector reads the graph's edges for
+// the node's derived errors.
 function inspectorFor(nodeId: string, data: Record<string, unknown> = {}) {
   const props: InspectorProps = {
     node: { id: nodeId, type: 'acme.test.alpha', position: { x: 0, y: 0 }, data },
@@ -94,7 +101,7 @@ function inspectorFor(nodeId: string, data: Record<string, unknown> = {}) {
     onEditExtension: () => {},
     onExpandedChange: () => {},
   }
-  return createElement(NodeInspector, props)
+  return createElement(ReactFlowProvider, null, createElement(NodeInspector, props))
 }
 
 function tabLabels(container: HTMLElement): string[] {
@@ -133,6 +140,62 @@ test('a node type with no own tabs shows only Details then Comment', async () =>
   const container = await render(inspectorFor('node-2'))
 
   assert.deepEqual(tabLabels(container), ['Details', 'Comment'])
+})
+
+async function openTab(container: HTMLElement, label: string): Promise<void> {
+  const tab = Array.from(container.querySelectorAll('[role="tab"]')).find((t) =>
+    (t.textContent ?? '').startsWith(label),
+  ) as HTMLElement | undefined
+  assert.ok(tab, `a ${label} tab exists`)
+  await act(async () => {
+    tab.click()
+  })
+}
+
+test('a node with stored errors shows an Errors tab with their count right after Details, and the tab lists them', async () => {
+  registerFakeExtension([{ id: 'alpha', label: 'Alpha tab' }])
+  const container = await render(
+    inspectorFor('node-4', {
+      __errors: [
+        { source: 'connection', title: 'Cannot reach the daemon', detail: 'connection refused', code: 'Exit code 1' },
+        'lamp is broken',
+      ],
+    }),
+  )
+
+  const labels = tabLabels(container)
+  assert.deepEqual(
+    labels.map((label) => label.replace(/\d+$/, '')),
+    ['Details', 'Errors', 'Alpha tab', 'Comment'],
+  )
+  assert.match(labels[1], /2$/, 'the Errors tab carries the count')
+
+  await openTab(container, 'Errors')
+  const text = container.textContent ?? ''
+  assert.ok(text.includes('Cannot reach the daemon'))
+  assert.ok(text.includes('connection refused'))
+  assert.ok(text.includes('Exit code 1'))
+  assert.ok(text.includes('lamp is broken'))
+})
+
+test('errors a node type derives from the canvas show in the Errors tab too, and a check that throws shows none', async () => {
+  registerFakeExtension([], (node) => [{ title: `No handler on ${node.id}` }])
+  const container = await render(inspectorFor('node-5'))
+  await openTab(container, 'Errors')
+  assert.ok((container.textContent ?? '').includes('No handler on node-5'))
+
+  extensionRegistry.clear()
+  registerFakeExtension([], () => {
+    throw new Error('broken check')
+  })
+  const original = console.error
+  console.error = () => {}
+  try {
+    const other = await render(inspectorFor('node-6'))
+    assert.deepEqual(tabLabels(other), ['Details', 'Comment'])
+  } finally {
+    console.error = original
+  }
 })
 
 test('selecting the Comment tab shows the textarea holding the node comment', async () => {

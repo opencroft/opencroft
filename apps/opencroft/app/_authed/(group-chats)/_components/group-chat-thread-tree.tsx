@@ -4,7 +4,7 @@ import { ChatList, type ChatListNode } from 'ui/chat/chat-list'
 
 import type { FolderOpenById } from '@/app/_authed/(group-chats)/_lib/folder-open-cache'
 import type { ThreadRowStateById } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
-import { layoutToNodes } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
+import { layoutToNodes, threadLeaves } from '@/app/_authed/(group-chats)/_lib/thread-tree-layout'
 import type { GroupChatThreadEntry, ThreadLayout } from '@/app/_authed/(group-chats)/_server/actions'
 
 interface GroupChatThreadTreeProps {
@@ -60,7 +60,7 @@ export function GroupChatThreadTree({
 }: GroupChatThreadTreeProps) {
   return (
     <ChatList
-      nodes={layoutToNodes(layout, threads, stateById, folderOpen)}
+      nodes={layoutToNodes(layout, threadLeaves(threads, stateById), folderOpen)}
       activeId={activeId}
       onSelect={onSelect}
       onRename={onRename}

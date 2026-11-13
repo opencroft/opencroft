@@ -23,7 +23,7 @@ import {
 // Which screen of the user-administration flow is showing. Local state, not
 // URL state: the add and edit flows are transient (a half-filled form is not
 // an address anyone can return to), so the section keeps the one address
-// /settings?section=users and switching sections resets to the list.
+// /administration?section=users and switching sections resets to the list.
 type View = { kind: 'list' } | { kind: 'new' } | { kind: 'edit'; userId: string }
 
 function formatDate(value: string | Date | null): string | undefined {

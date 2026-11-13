@@ -1,7 +1,8 @@
 'use client'
 
 import { PanelBottom, PanelLeft, PanelRight } from 'lucide-react'
-import { type ReactNode, useEffect, useRef } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { PanelImperativeHandle } from 'react-resizable-panels'
 
 import { Button } from 'ui/components/ui/button'
@@ -69,16 +70,28 @@ function DockSideSwitch({ dock, onDockChange }: { dock: DockSide; onDockChange: 
 }
 
 export interface DockPanelProps {
-  /** Which edge the panel occupies. */
+  /** Whether the panel is shown. On by default. The surface stays mounted
+   *  whichever way this goes, and when the panel moves between edges: a caller
+   *  that shows and hides its panel through this prop, rather than by
+   *  rendering the DockPanel or not, keeps the surface's state (a canvas, a
+   *  scroll position) across both. The panel's content stays mounted while
+   *  the panel moves between edges, and is mounted afresh when it is shown
+   *  again. */
+  open?: boolean
+  /** Which edge the panel occupies, while it is shown. */
   dock: DockSide
   /** Reports the edge chosen in the switch. The value is the caller's, and so
    *  is any persistence of it. Omitted when the caller drives the position
    *  through its own control -- no switch is drawn then. */
   onDockChange?: (side: DockSide) => void
   /** The panel's share of the surface as a percentage, for a caller that
-   *  remembers one. Applied once per arrangement rather than continuously, so
-   *  it can arrive late -- which it will, since a caller that renders on the
-   *  server can only read a per-browser store after mounting. */
+   *  remembers one. The panel opens at it, on every edge, and a size that
+   *  arrives after the panel opened is applied once -- which it will be, since
+   *  a caller that renders on the server can only read a per-browser store
+   *  after mounting. Not applied continuously. Without it the panel opens at
+   *  the default size each time it opens or changes edges, since each edge
+   *  has a panel of its own; a caller that wants a dragged size kept passes
+   *  it back here from `onSizeChange`. */
   size?: number
   /** The panel's share of the surface, reported when a drag ENDS rather than
    *  on every pointer move, so writing it straight to a store is safe. */
@@ -111,6 +124,7 @@ export interface DockPanelProps {
  * guess what a server-rendered caller should show before it can read anything.
  */
 export function DockPanel({
+  open = true,
   dock,
   onDockChange,
   size,
@@ -123,51 +137,24 @@ export function DockPanel({
   className,
 }: DockPanelProps) {
   const orientation = dock === 'bottom' ? 'vertical' : 'horizontal'
-  const panelRef = useRef<PanelImperativeHandle | null>(null)
-  const restoredFor = useRef<string | null>(null)
-
-  // A remembered size is applied to the panel rather than passed as its default
-  // size, because a default is spent when the group first lays out and the
-  // value is not there yet at that point.
-  //
-  // Once per arrangement, deliberately: a caller that feeds the size it was
-  // just told straight back would otherwise resize the panel under the pointer
-  // mid-drag. A share of the surface carries from one arrangement to the next --
-  // a third of the width and a third of the height are the same instruction --
-  // so moving between the sides and the bottom keeps it rather than resetting.
-  useEffect(() => {
-    if (size === undefined || restoredFor.current === orientation) {
-      return
-    }
-    // Nothing to resize yet: leave the arrangement unmarked so a later render
-    // tries again. Marking it here would spend the single attempt this effect
-    // gets on a panel whose handle is not attached, and nothing would say so.
-    const panel = panelRef.current
-    if (!panel) {
-      return
-    }
-    // Marked BEFORE the resize, because resizing reports a new layout and a
-    // caller that stores what it is told feeds that value straight back here.
-    restoredFor.current = orientation
-    // A PERCENTAGE STRING, NEVER THE BARE NUMBER. `resize` reads a number as
-    // PIXELS and an unsuffixed string as a percentage, while the layout this
-    // number was measured from is a percentage -- so handing it back unchanged
-    // asks for 34 pixels where the caller meant 34% of the surface. That is
-    // under any sane minimum, so the panel lands on its minimum every time and
-    // a remembered width looks exactly like one that was never stored.
-    panel.resize(`${size}%`)
-  }, [size, orientation])
-
   const panelFirst = dock === 'left'
+  // Made after mounting rather than during the first render: there is no
+  // document on the server, and the first render in the browser hydrates
+  // what the server drew. A panel shown from the start draws its content from
+  // the commit after.
+  const [content, setContent] = useState<HTMLElement | null>(null)
+  useEffect(() => setContent(createContentElement()), [])
+  const adoptContent = useCallback(
+    (slot: HTMLDivElement | null) => {
+      if (slot && content) {
+        slot.appendChild(content)
+      }
+    },
+    [content],
+  )
 
-  const docked = (
-    <ResizablePanel
-      id={PANEL_ID}
-      panelRef={panelRef}
-      defaultSize={PANEL_DEFAULT_SIZE}
-      minSize={PANEL_MIN_SIZE}
-      className='flex min-h-0 min-w-0 flex-col'
-    >
+  const contentChildren = (
+    <>
       {showHeader ? (
         <div className='flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1'>
           {/* A string is dressed as the panel's own caption; a node is placed as
@@ -182,11 +169,12 @@ export function DockPanel({
         </div>
       ) : null}
       <div className='flex min-h-0 flex-1 flex-col'>{panel}</div>
-    </ResizablePanel>
+    </>
   )
 
   const body = (
     <ResizablePanel
+      key={BODY_ID}
       id={BODY_ID}
       minSize={BODY_MIN_SIZE}
       className='flex min-h-0 min-w-0 flex-col'
@@ -195,28 +183,105 @@ export function DockPanel({
     </ResizablePanel>
   )
 
-  // Keyed on orientation so moving to or from the bottom re-lays the group out
-  // from scratch. Left and right are a reorder, which the stable panel ids
-  // handle on their own; horizontal to vertical is a different arrangement.
+  // One group in every arrangement, so the surface is the same element when
+  // the panel opens, closes or changes edges. The surface is also never MOVED
+  // among the group's children: the docked panel and its handle are keyed by
+  // edge, so a change of edge takes one pair out and puts another in around
+  // the surface. React re-runs a moved element's effects in a development
+  // build under StrictMode, which for a canvas means loading it again.
+  //
+  // What the panel shows is drawn once, into an element of its own that each
+  // docked panel adopts (`adoptContent`), so it is not remounted by the change
+  // of panel either. A panel opens at the remembered size: each one is a new
+  // panel, and its default size is the size it is given.
+  const docked = open ? (
+    <DockedPanel key={`panel-${dock}`} size={size} adoptContent={adoptContent} />
+  ) : null
+  const handle = open ? <ResizableHandle key={`handle-${dock}`} withHandle className='z-10' /> : null
   return (
-    <ResizablePanelGroup
-      key={orientation}
-      orientation={orientation}
-      className={cn('min-h-0', className)}
-      onLayoutChanged={
-        onSizeChange
-          ? (layout) => {
-              const next = layout[PANEL_ID]
-              if (typeof next === 'number') {
-                onSizeChange(next)
+    <>
+      <ResizablePanelGroup
+        orientation={orientation}
+        className={cn('min-h-0', className)}
+        onLayoutChanged={
+          onSizeChange
+            ? (layout) => {
+                const next = layout[PANEL_ID]
+                if (typeof next === 'number') {
+                  onSizeChange(next)
+                }
               }
-            }
-          : undefined
-      }
+            : undefined
+        }
+      >
+        {panelFirst ? docked : null}
+        {panelFirst ? handle : null}
+        {body}
+        {panelFirst ? null : handle}
+        {panelFirst ? null : docked}
+      </ResizablePanelGroup>
+      {open && content ? createPortal(contentChildren, content) : null}
+    </>
+  )
+}
+
+function createContentElement() {
+  const element = document.createElement('div')
+  element.className = 'flex min-h-0 flex-1 flex-col'
+  return element
+}
+
+/**
+ * The docked panel. The panel and the handle stack above the surface and the
+ * panel is opaque, so a surface that draws past its own box -- a canvas
+ * reaching under the panel -- is covered by them rather than drawn over them,
+ * on either side.
+ */
+function DockedPanel({
+  size,
+  adoptContent,
+}: {
+  size?: number
+  adoptContent: (slot: HTMLDivElement | null) => void
+}) {
+  // A PERCENTAGE STRING, NEVER THE BARE NUMBER, here and in `resize` below:
+  // both read a number as PIXELS and an unsuffixed string as a percentage,
+  // while the layout this number was measured from is a percentage -- so
+  // handing it back unchanged asks for 34 pixels where the caller meant 34% of
+  // the surface. That is under any sane minimum, so the panel lands on its
+  // minimum every time and a remembered width looks exactly like one that was
+  // never stored.
+  const [opensAt] = useState(size)
+  const panelRef = useRef<PanelImperativeHandle | null>(null)
+  const sized = useRef(opensAt !== undefined)
+
+  // A remembered size that arrives after the panel opened -- a caller that
+  // renders on the server can only read a per-browser store after mounting --
+  // is applied once, by resizing. Only once, deliberately: a caller that feeds
+  // the size it was just told straight back would otherwise resize the panel
+  // under the pointer mid-drag. Not in the commit that opens the panel, which
+  // takes its default size instead: the group has no layout for the panel
+  // until it has laid itself out with it, and `resize` throws before then.
+  useEffect(() => {
+    const panel = panelRef.current
+    if (sized.current || size === undefined || !panel) {
+      return
+    }
+    // Marked BEFORE the resize, because resizing reports a new layout and a
+    // caller that stores what it is told feeds that value straight back here.
+    sized.current = true
+    panel.resize(`${size}%`)
+  }, [size])
+
+  return (
+    <ResizablePanel
+      id={PANEL_ID}
+      panelRef={panelRef}
+      defaultSize={opensAt === undefined ? PANEL_DEFAULT_SIZE : `${opensAt}%`}
+      minSize={PANEL_MIN_SIZE}
+      className='relative z-10 flex min-h-0 min-w-0 flex-col bg-background'
     >
-      {panelFirst ? docked : body}
-      <ResizableHandle withHandle />
-      {panelFirst ? body : docked}
-    </ResizablePanelGroup>
+      <div ref={adoptContent} className='flex min-h-0 flex-1 flex-col' />
+    </ResizablePanel>
   )
 }

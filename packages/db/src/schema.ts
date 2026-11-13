@@ -59,10 +59,36 @@ export const secret = pgTable(
     storeId: text().notNull(),
     key: text().notNull(),
     value: text().notNull(),
+    /** How the value was made (`SecretRecipe` as JSON), never a part of it; null on a row stored without one. */
+    recipe: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex('Secret_storeId_key_key').on(t.storeId, t.key), index('Secret_storeId_idx').on(t.storeId)],
+)
+
+/**
+ * The SSH keypairs a Key Store node holds, keyed by the store node's id and the key's name. The
+ * private half is encrypted under OPENCROFT_KEYSTORE_SECRET, which is never stored here; the rest
+ * is what the store shows without it.
+ */
+export const sshKey = pgTable(
+  'SshKey',
+  {
+    id: text().primaryKey().notNull().$defaultFn(uuid),
+    storeId: text().notNull(),
+    name: text().notNull(),
+    privateKeyEncrypted: text().notNull(),
+    /** One authorized_keys line; null when the private half could not be parsed to derive it. */
+    publicKey: text(),
+    /** As `ssh-keygen -l` names it (`ED25519`, `RSA`, `ECDSA`), or `unknown`. */
+    keyType: text().notNull(),
+    /** `SHA256:…`, or empty when the private half could not be parsed. */
+    fingerprint: text().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('SshKey_storeId_name_key').on(t.storeId, t.name)],
 )
 
 // A random preset icon, for the rows no code path names an icon for: an old
@@ -1053,32 +1079,55 @@ export const agentQueueEntry = pgTable(
 //
 // `position` is assigned by the writer rather than derived from a timestamp:
 // events within one streaming turn land in the same millisecond by the dozen,
-// and their ORDER is the whole content of a transcript. It is also what the cap
-// is applied along -- a session left running for weeks would otherwise grow
-// this table without bound, so the oldest rows past the cap are dropped as new
-// ones arrive.
+// and their ORDER is the whole content of a transcript. It is also what the
+// history settings trim along, oldest turns first, when they are set.
 //
 // The event itself is stored as JSON rather than in columns per kind. It is
 // read back straight into the same union it left as -- by the engine, and by
 // the search index derived from it (TranscriptMessage below) -- so a
 // schema here would be a second definition of a shape that already has one,
 // kept in step by hand.
+//
+// A session's transcript is several logs under one key: the session's own
+// (`subagentId` empty) and one per subagent it ran, each numbered from its own
+// start. A row is the log's entry at that position and is rewritten in place
+// as the entry grows (a reply's text, a tool call's updates), so `kind` is the
+// one column derived from the event, and never changes on a rewrite. The
+// table's fill factor (set in its migration) leaves room for those rewrites.
 export const agentSessionEvent = pgTable(
   'AgentSessionEvent',
   {
     sessionKey: text().notNull(),
+    subagentId: text().notNull().default(''),
     position: integer().notNull(),
     event: jsonb().notNull(),
+    kind: text().generatedAlwaysAs((): SQL => sql`(${agentSessionEvent.event} ->> 'kind')`),
     createdAt: createdAt(),
   },
-  // The pair is the identity, which makes an append idempotent: a retried
-  // write cannot land the same event at the same position twice.
-  (t) => [primaryKey({ columns: [t.sessionKey, t.position] })],
+  // The triple is the identity, which makes a write idempotent: a retried
+  // write lands the same entry at the same position again.
+  (t) => [
+    primaryKey({ columns: [t.sessionKey, t.subagentId, t.position] }),
+    index('AgentSessionEvent_kind_idx').on(t.sessionKey, t.subagentId, t.kind, t.position),
+  ],
 )
 
+// The keys whose AgentSessionEvent rows may still be in the layout recorded
+// before the logs were compacted: one row per event, a subagent's steps
+// wrapped in the session's own log. Filled once, by the migration that made
+// it, with every key that had rows then; whatever was recorded after is in the
+// compacted layout already. The event store rewrites a key's rows into that
+// layout before it next reads them, or in its background sweep, and removes
+// the key here in the same transaction.
+export const agentSessionLegacyLog = pgTable('AgentSessionLegacyLog', {
+  sessionKey: text().primaryKey(),
+})
+
 // The searchable messages of a recorded transcript, derived from
-// AgentSessionEvent and kept after it: the event cap trims the events, never
-// these, so a thread is searchable over its whole history.
+// AgentSessionEvent and kept beside it: what clears or rewrites the events
+// for a conversation that lives on (a replay, an edit's kept history) leaves
+// these, so a thread is searchable over its whole history. Only the history
+// settings' trimming and retiring the key remove them.
 //
 // DERIVED BECAUSE THE EVENTS CANNOT BE SEARCHED AS THEY ARE: a reply is
 // recorded as one row per streaming chunk, a few characters each, so a word is
@@ -1131,6 +1180,9 @@ export const transcriptMessage = pgTable(
 export const transcriptMessageCursor = pgTable('TranscriptMessageCursor', {
   sessionKey: text().primaryKey(),
   resumeFrom: integer().notNull(),
+  // How much of the reply text recorded at `resumeFrom` the written rows
+  // already hold: a reply's entry keeps growing after part of it is written.
+  resumeChars: integer().notNull().default(0),
   turn: integer(),
   openPosition: integer(),
   openSegment: integer().notNull(),
@@ -1245,6 +1297,7 @@ export const backgroundTask = pgTable(
 export const schema = {
   setting,
   secret,
+  sshKey,
   space,
   extension,
   spaceApp,
@@ -1282,6 +1335,7 @@ export type TranscriptMessageCursor = typeof transcriptMessageCursor.$inferSelec
 export type ChatAttachment = typeof chatAttachment.$inferSelect
 export type Setting = typeof setting.$inferSelect
 export type Secret = typeof secret.$inferSelect
+export type SshKey = typeof sshKey.$inferSelect
 export type Space = typeof space.$inferSelect
 export type SpaceSlugAlias = typeof spaceSlugAlias.$inferSelect
 export type McpAuditLog = typeof mcpAuditLog.$inferSelect

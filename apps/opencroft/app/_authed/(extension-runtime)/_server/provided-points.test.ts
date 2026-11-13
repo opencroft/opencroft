@@ -1,6 +1,6 @@
 // What a client bundle declares -- its provider points, whether it has
-// settings pages -- is read off the built bundle itself, and the browser
-// imports a bundle only where that is shown. A wrong answer in one direction
+// settings pages, its node types' default data -- is read off the built bundle
+// itself, and the browser imports a bundle only where that is shown. A wrong answer in one direction
 // hides a panel, so these build real bundles and pin both halves: what is
 // read, and that every doubt reads as "not known".
 import assert from 'node:assert/strict'
@@ -9,9 +9,11 @@ import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
-import { buildExtension } from './compiler'
-import { PROVIDED_POINTS_FILE } from './paths'
-import { bundleDeclares, probeBundleDeclares } from './provided-points'
+import { NUMBER_TYPE, STRING_TYPE } from '@opencroft/core/values'
+
+import { buildExtension, buildExtensionAt } from './compiler'
+import { builtinSourceRoot, PROVIDED_POINTS_FILE } from './paths'
+import { bundleDeclares, nodeTypeDefaults, probeBundleDeclares } from './provided-points'
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-provided-points-'))
 const savedDataDir = process.env.OPENCROFT_DATA_DIR
@@ -198,6 +200,106 @@ test('a record that lacks a field is not used, and is read again', async () => {
   assert.deepEqual(await bundleDeclares(id), NOT_KNOWN, 'a partial record must not answer for the bundle')
 
   assert.deepEqual(await readAgain(id), { providedPoints: [], hasSettingsPages: true })
+})
+
+// ── node defaults ────────────────────────────────────────────────────
+
+const NODES_SOURCE = `
+import { defineExtension, React } from '@ext/host'
+
+const Gauge = () => null
+
+export default defineExtension({
+  manifest: { name: 'nodes' },
+  nodes: [
+    { type: 'gauge', name: 'Gauge', component: Gauge, defaultData: { title: 'Gauge', ranges: [{ from: 0, to: 10 }], unit: null } },
+    { typeId: 'dial', name: 'Dial', component: Gauge, defaultData: { on: true } },
+    { type: 'plain', name: 'Plain', component: Gauge },
+    { type: 'hosted', name: 'Hosted', component: Gauge, defaultData: { kind: React.Children } },
+    { type: 'dated', name: 'Dated', component: Gauge, defaultData: { at: new Date(0) } },
+  ],
+})
+`
+
+test('a build records each node type’s default data, which a node created on the server starts with', async () => {
+  const { id, manifest } = await makeExtension(NODES_SOURCE)
+  await build(id, manifest)
+
+  assert.deepEqual(await nodeTypeDefaults(`${id}.gauge`), {
+    title: 'Gauge',
+    ranges: [{ from: 0, to: 10 }],
+    unit: null,
+  })
+  assert.deepEqual(await nodeTypeDefaults(`${id}.dial`), { on: true }, 'a type declared by the deprecated typeId')
+  assert.equal(await nodeTypeDefaults(`${id}.plain`), undefined, 'a type that declares none')
+  assert.equal(await nodeTypeDefaults(`${id}.missing`), undefined, 'a type the bundle does not declare')
+})
+
+test('default data that is not plain data is not applied, and the rest of the bundle is still read', async () => {
+  const { id, manifest } = await makeExtension(NODES_SOURCE)
+  await build(id, manifest)
+
+  assert.equal(await nodeTypeDefaults(`${id}.hosted`), undefined, 'a host value')
+  assert.equal(await nodeTypeDefaults(`${id}.dated`), undefined, 'a class instance')
+  assert.deepEqual(await bundleDeclares(id), { providedPoints: [], hasSettingsPages: false })
+})
+
+test('a creation waits for a bundle with no record of its defaults to be read', async () => {
+  const { id, dir, manifest } = await makeExtension(NODES_SOURCE)
+  await build(id, manifest)
+  // The served bundle's own record, as one written before defaults were read.
+  const record = path.join(dir, 'dist', PROVIDED_POINTS_FILE)
+  const { nodeDefaults: _dropped, ...partial } = JSON.parse(await fs.readFile(record, 'utf-8'))
+  await fs.writeFile(record, JSON.stringify(partial))
+
+  assert.deepEqual(await nodeTypeDefaults(`${id}.dial`), { on: true })
+})
+
+test('parallel creations and a listing share one reading of a bundle with no record', async () => {
+  const { id, dir } = await makeExtension(NODES_SOURCE)
+  // A served bundle that logs each time it is evaluated, with no record yet.
+  const dist = path.join(dir, 'dist')
+  await fs.mkdir(dist, { recursive: true })
+  await fs.writeFile(
+    path.join(dist, 'client.js'),
+    `import { appendFileSync } from 'node:fs'
+appendFileSync(new URL('./readings.log', import.meta.url), 'read\\n')
+export default { nodes: [{ type: 'dial', defaultData: { on: true } }] }
+`,
+  )
+
+  const [listed, ...created] = await Promise.all([
+    bundleDeclares(id),
+    ...Array.from({ length: 4 }, () => nodeTypeDefaults(`${id}.dial`)),
+  ])
+
+  assert.deepEqual(listed, NOT_KNOWN, 'a listing does not wait for the reading')
+  assert.deepEqual(created, Array(4).fill({ on: true }))
+  assert.equal(await fs.readFile(path.join(dist, 'readings.log'), 'utf-8'), 'read\n', 'the bundle was evaluated once')
+})
+
+// A host module's exports are stubs while a bundle is read, so a default built
+// from one (a type constant from `@opencroft/client/values`) is not plain data.
+test('every node type of the builtin core bundle declares defaults the server reads', async () => {
+  const sourceDir = path.join(builtinSourceRoot(), 'core')
+  const manifest = JSON.parse(await fs.readFile(path.join(sourceDir, 'extension.json'), 'utf-8'))
+  const distDir = path.join(root, 'builtin-core-dist')
+  const result = await buildExtensionAt({ extensionId: 'builtin.core', sourceDir, distDir }, manifest)
+  assert.ok(result.success, JSON.stringify(result.errors))
+
+  const { defaultsNotRead, nodeDefaults, reason } = await probeBundleDeclares(path.join(distDir, 'client.js'))
+
+  assert.equal(reason, undefined)
+  assert.equal(defaultsNotRead, undefined)
+  assert.deepEqual(nodeDefaults?.value, { valueType: STRING_TYPE, value: '' })
+  assert.deepEqual(nodeDefaults?.convert, { valueType: NUMBER_TYPE })
+})
+
+test('a type of an extension with no built bundle has no defaults', async () => {
+  const { id } = await makeExtension(NODES_SOURCE)
+
+  assert.equal(await nodeTypeDefaults(`${id}.gauge`), undefined)
+  assert.equal(await nodeTypeDefaults('not-a-type'), undefined)
 })
 
 test('a bundle that is not built is not known', async () => {

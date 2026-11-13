@@ -1,4 +1,4 @@
-import { isTerminalToolStatus } from './fold'
+import { isSnapshotEvent, isTerminalToolStatus } from './fold'
 import type { ChatEvent } from './types'
 
 // Index of each 'user' event in `events` — each starts a new turn/exchange, so
@@ -334,5 +334,206 @@ export function pageBeforeByRecords(events: ChatEvent[], beforeIndex: number, re
     startIndex,
     hasMore: startIndex > 0,
     header: headerAbove(events, startIndex),
+  }
+}
+
+/**
+ * A log read by position range rather than held as one array: a log the
+ * engine holds only the tail of, with the rest kept by the host, or a log
+ * read straight from the host's store. Positions are the log's own.
+ */
+export interface LogReader {
+  /** One past the newest entry's position. */
+  end: number
+  /**
+   * The entries from `from` (or the first one the log still has, if later) up
+   * to `to`, contiguous: `start` is the position of `events[0]`.
+   */
+  read(from: number, to: number): Promise<{ start: number; events: ChatEvent[] }>
+  /** The position of the newest `user` entry below `position`, or null for none. */
+  turnStartBefore(position: number): Promise<number | null>
+}
+
+/**
+ * The entry a log holds where its store has none: an empty queue snapshot,
+ * which draws nothing and says what every stored queue snapshot says once a
+ * session is reopened (see restorableEvents). Only what lets positions stay
+ * aligned across a missing row.
+ */
+export const MISSING_ENTRY: ChatEvent = { kind: 'queue', items: [] }
+
+/**
+ * Rows read by position as a contiguous run from the first of them up to
+ * `to`, a position without a row filled with MISSING_ENTRY. Rows come in
+ * position order.
+ */
+export function contiguous(rows: readonly { position: number; event: ChatEvent }[], to: number): {
+  start: number
+  events: ChatEvent[]
+} {
+  if (rows.length === 0) {
+    return { start: to, events: [] }
+  }
+  const start = rows[0].position
+  const events: ChatEvent[] = []
+  for (const row of rows) {
+    while (start + events.length < row.position) {
+      events.push(MISSING_ENTRY)
+    }
+    events.push(row.event)
+  }
+  while (start + events.length < to) {
+    events.push(MISSING_ENTRY)
+  }
+  return { start, events }
+}
+
+// The smallest read worth making for a page: a page of records is rarely more
+// than a few dozen entries, and a read cut at a turn start is longer still.
+const MIN_PAGE_SPAN = 256
+
+/**
+ * A window ending at `end` from a reader, cut by `cut` over the entries read:
+ * read back from a turn start far enough below `end`, and further while `cut`
+ * reaches the bottom of what was read and older entries remain. Starting at a
+ * turn start keeps every cut the window functions make inside one read: no
+ * record and no turn crosses one.
+ */
+async function windowFromReader<W extends { events: ChatEvent[]; startIndex: number; hasMore: boolean }>(
+  reader: LogReader,
+  end: number,
+  span: number,
+  cut: (events: ChatEvent[]) => W,
+  shift: (window: W, by: number) => W,
+): Promise<W> {
+  for (let reach = Math.max(span, MIN_PAGE_SPAN); ; reach *= 4) {
+    const from = end - reach <= 0 ? 0 : ((await reader.turnStartBefore(end - reach + 1)) ?? 0)
+    const read = await reader.read(from, end)
+    const window = cut(read.events)
+    if (window.startIndex > 0 || from === 0) {
+      return shift({ ...window, hasMore: window.startIndex > 0 }, read.start)
+    }
+  }
+}
+
+function shiftRecords(window: RecordsWindow, by: number): RecordsWindow {
+  return {
+    ...window,
+    startIndex: window.startIndex + by,
+    ...(window.header ? { header: { index: window.header.index + by, event: window.header.event } } : {}),
+  }
+}
+
+/**
+ * The records window of a log a reader serves: the tail without `beforeIndex`,
+ * else the page above it — what tailByRecords and pageBeforeByRecords give
+ * for a log held whole, with the reader's positions.
+ */
+export async function recordsWindowFromReader(
+  reader: LogReader,
+  opts: { beforeIndex?: number; records: number },
+): Promise<RecordsWindow> {
+  const end = Math.max(0, Math.min(opts.beforeIndex ?? reader.end, reader.end))
+  if (opts.records <= 0 || end === 0) {
+    return { events: [], startIndex: end, hasMore: end > 0 }
+  }
+  return windowFromReader(
+    reader,
+    end,
+    opts.records * 16,
+    (events) => pageBeforeByRecords(events, events.length, opts.records),
+    shiftRecords,
+  )
+}
+
+/** The same for whole turns: tailByTurns and pageBeforeByTurns over a reader. */
+export async function turnsWindowFromReader(
+  reader: LogReader,
+  opts: { beforeIndex?: number; turns: number },
+): Promise<EventsWindow> {
+  const end = Math.max(0, Math.min(opts.beforeIndex ?? reader.end, reader.end))
+  if (opts.turns <= 0 || end === 0) {
+    return { events: [], startIndex: end, hasMore: end > 0 }
+  }
+  return windowFromReader(
+    reader,
+    end,
+    opts.turns * 64,
+    (events) => pageBeforeByTurns(events, events.length, opts.turns),
+    (window, by) => ({ ...window, startIndex: window.startIndex + by }),
+  )
+}
+
+/**
+ * The turn holding `index`: from the `user` entry that opens it (the first of
+ * a run of them) up to the next turn's, and whether it is the log's last. Null
+ * for an index outside the log or before its first turn.
+ */
+export async function turnAtFromReader(
+  reader: LogReader,
+  index: number,
+): Promise<{ startIndex: number; events: ChatEvent[]; last: boolean } | null> {
+  if (index < 0 || index >= reader.end) {
+    return null
+  }
+  let start = await reader.turnStartBefore(index + 1)
+  // Back to the first of the run of `user` entries a prompt can arrive as.
+  while (start !== null && start > 0) {
+    const previous = await reader.read(start - 1, start)
+    if (previous.events[0]?.kind !== 'user') {
+      break
+    }
+    start -= 1
+  }
+  if (start === null) {
+    return null
+  }
+  for (let reach = MIN_PAGE_SPAN; ; reach *= 4) {
+    const to = Math.min(start + reach, reader.end)
+    const read = await reader.read(start, to)
+    const next = nextTurnStart(read.events)
+    if (next !== null) {
+      return { startIndex: read.start, events: read.events.slice(0, next), last: false }
+    }
+    if (to === reader.end) {
+      return { startIndex: read.start, events: read.events, last: true }
+    }
+  }
+}
+
+// The offset of the first `user` entry that follows anything else, the start
+// of the turn after the one `events` opens with; null if it holds none.
+// Snapshots can land between a prompt's entries, so they end nothing.
+function nextTurnStart(events: ChatEvent[]): number | null {
+  let pastPrompt = false
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i]
+    if (event.kind === 'user') {
+      if (pastPrompt) {
+        return i
+      }
+    } else if (!isSnapshotEvent(event)) {
+      pastPrompt = true
+    }
+  }
+  return null
+}
+
+/** A log held whole, as a reader: what a log with nothing kept elsewhere is. */
+export function arrayLogReader(events: readonly ChatEvent[], start = 0): LogReader {
+  return {
+    end: start + events.length,
+    read: async (from, to) => {
+      const first = Math.max(from, start)
+      return { start: first, events: events.slice(first - start, Math.max(first, to) - start) }
+    },
+    turnStartBefore: async (position) => {
+      for (let i = Math.min(position, start + events.length) - 1; i >= start; i--) {
+        if (events[i - start].kind === 'user') {
+          return i
+        }
+      }
+      return null
+    },
   }
 }

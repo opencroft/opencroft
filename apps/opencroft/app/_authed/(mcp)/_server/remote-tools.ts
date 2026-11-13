@@ -6,6 +6,8 @@
 
 import path from 'node:path'
 
+import { agentRefusalOf } from '@opencroft/terminal'
+
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
 import { isAppAddress, unresolvedAppTarget } from '@/app/_authed/(apps)/_server/app-address'
 import { resolveAppHandleContext } from '@/app/_authed/(apps)/_server/runtime'
@@ -371,9 +373,22 @@ async function claimForWrite(args: Record<string, unknown>, caller: ToolCallerCo
   }
 }
 
+/**
+ * The terminal context an agent's remote tool runs on, refused when its source marked it as not
+ * for agents (`TerminalContext.agentRefusal`). Every remote tool resolves its target here.
+ */
 export async function resolveTerminalContext(
   args: Record<string, unknown>,
 ): Promise<{ ctx: Record<string, unknown>; slug: string }> {
+  const resolved = await targetContext(args)
+  const refusal = agentRefusalOf(resolved.ctx)
+  if (refusal) {
+    fail(-32602, refusal)
+  }
+  return resolved
+}
+
+async function targetContext(args: Record<string, unknown>): Promise<{ ctx: Record<string, unknown>; slug: string }> {
   const target = args.target as string | undefined
   if (!target) {
     fail(-32602, 'Missing required param: target')
@@ -873,13 +888,16 @@ export function parseCountedRead(output: string, filePath: string): string {
 // string, however it's encoded, ends up in that process's argv for its whole lifetime, readable
 // by `ps`/`pgrep` to anyone else on the same host; a value handed to the backend as `env` never
 // touches argv at all (see buildEnvInjection in packages/terminal/src/server/exec-util.ts).
+//
+// Names resolve from any Secrets Store on the instance, as the tools' descriptions say: the agent
+// names them, and no node or App is there to scope them to.
 export async function resolveSecretsEnv(names: string[] | undefined): Promise<Record<string, string> | undefined> {
   if (!names || names.length === 0) {
     return undefined
   }
   const env: Record<string, string> = {}
   for (const name of names) {
-    const value = await secrets.resolve(name)
+    const value = await secrets.resolveOnInstance(name)
     if (value === null) {
       fail(-32602, `Secret "${name}" not found in any Secrets Store`)
     }

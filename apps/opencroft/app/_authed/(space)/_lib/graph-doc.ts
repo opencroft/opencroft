@@ -14,10 +14,15 @@
 
 import * as Y from 'yjs'
 
+import { parentsFirst } from '@/app/_authed/(extension-runtime)/_frame-tree'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 
-/** Bumped whenever the doc shape above changes incompatibly. */
-export const GRAPH_DOC_SCHEMA_VERSION = 1
+/**
+ * Bumped whenever the doc shape above, or what its nodes mean, changes
+ * incompatibly: 2 holds frame members as children (`parentId`, positions
+ * relative to the frame; see `_frame-tree.ts`).
+ */
+export const GRAPH_DOC_SCHEMA_VERSION = 2
 
 // `$` keeps it out of the names React Flow and extensions give their fields.
 const SEQ = '$seq'
@@ -90,30 +95,39 @@ export function readGraphFromDoc(doc: Y.Doc): GraphData {
  * order their arrays list them in.
  */
 export function sameGraphContent(a: GraphData, b: GraphData): boolean {
-  const sameSet = (x: Element[], y: Element[]) => {
+  const sameSet = (x: Element[], y: Element[], same: typeof sameNode) => {
     const byIdX = new Map(x.map((e) => [e.id, e]))
-    return x.length === y.length && byIdX.size === x.length && y.every((e) => jsonEqual(byIdX.get(e.id), e))
+    return x.length === y.length && byIdX.size === x.length && y.every((e) => same(byIdX.get(e.id), e))
   }
-  return sameSet(a.nodes, b.nodes) && sameSet(a.edges, b.edges)
+  return sameSet(a.nodes, b.nodes, sameNode) && sameSet(a.edges, b.edges, sameEdge)
 }
 
 /** Ids of the nodes and edges added, removed or changed between two graphs. */
 export function changedElementIds(before: GraphData, after: GraphData): { nodeIds: string[]; edgeIds: string[] } {
-  const changed = (x: Element[], y: Element[]) => {
+  const changed = (x: Element[], y: Element[], same: typeof sameNode) => {
     const was = byId(x)
     const now = byId(y)
     const ids = new Set<string>()
     for (const id of new Set([...was.keys(), ...now.keys()])) {
-      if (!jsonEqual(was.get(id), now.get(id))) {
+      if (!same(was.get(id), now.get(id))) {
         ids.add(id)
       }
     }
     return [...ids]
   }
-  return { nodeIds: changed(before.nodes, after.nodes), edgeIds: changed(before.edges, after.edges) }
+  return {
+    nodeIds: changed(before.nodes, after.nodes, sameNode),
+    edgeIds: changed(before.edges, after.edges, sameEdge),
+  }
 }
 
-/** Structural equality of two JSON values; object key order is ignored. */
+/**
+ * Equality of two JSON values as the doc stores a value: whole, with an
+ * object's keys in their order, so a value whose keys only moved is a change
+ * and is written. Rows a user put in order, such as an environment's
+ * variables, are kept as an object in that order. Undefined fields are
+ * ignored, as JSON drops them.
+ */
 export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) {
     return true
@@ -124,9 +138,42 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) || Array.isArray(b)) {
     return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => jsonEqual(v, b[i]))
   }
-  const ak = Object.keys(a).filter((k) => (a as Element)[k] !== undefined)
-  const bk = Object.keys(b).filter((k) => (b as Element)[k] !== undefined)
-  return ak.length === bk.length && ak.every((k) => jsonEqual((a as Element)[k], (b as Element)[k]))
+  const ak = definedKeys(a as Element)
+  const bk = definedKeys(b as Element)
+  return ak.length === bk.length && ak.every((k, i) => k === bk[i] && jsonEqual((a as Element)[k], (b as Element)[k]))
+}
+
+/**
+ * Whether two nodes hold the same fields as the doc stores them. A node's
+ * fields and its data keys are Y.Map keys, which keep no order, so their order
+ * is ignored; each value under them compares by `jsonEqual`.
+ */
+export function sameNode(a: Element | undefined, b: Element | undefined): boolean {
+  return sameFields(a, b, NESTED_NODE_FIELD)
+}
+
+/** Whether two edges hold the same fields, as `sameNode` compares nodes. */
+export function sameEdge(a: Element | undefined, b: Element | undefined): boolean {
+  return sameFields(a, b, null)
+}
+
+function sameFields(a: Element | undefined, b: Element | undefined, nestedField: string | null): boolean {
+  if (a === undefined || b === undefined) {
+    return a === b
+  }
+  const ak = definedKeys(a)
+  return (
+    ak.length === definedKeys(b).length &&
+    ak.every((k) => {
+      const x = a[k]
+      const y = b[k]
+      return k === nestedField && isPlainObject(x) && isPlainObject(y) ? sameFields(x, y, null) : jsonEqual(x, y)
+    })
+  )
+}
+
+function definedKeys(value: Element): string[] {
+  return Object.keys(value).filter((k) => value[k] !== undefined)
 }
 
 function applyElements(
@@ -221,29 +268,6 @@ function readElements(map: Y.Map<ElementMap>): Element[] {
   }
   rows.sort((a, b) => a.seq - b.seq || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   return rows.map((r) => r.element)
-}
-
-function parentsFirst(nodes: Element[]): Element[] {
-  const byId = new Map(nodes.map((n) => [n.id as string, n]))
-  const placed = new Set<string>()
-  const out: Element[] = []
-  const place = (node: Element, chain: Set<string>) => {
-    const id = node.id as string
-    if (placed.has(id) || chain.has(id)) {
-      return
-    }
-    chain.add(id)
-    const parent = typeof node.parentId === 'string' ? byId.get(node.parentId) : undefined
-    if (parent) {
-      place(parent, chain)
-    }
-    placed.add(id)
-    out.push(node)
-  }
-  for (const node of nodes) {
-    place(node, new Set())
-  }
-  return out
 }
 
 function maxSeq(map: Y.Map<ElementMap>): number {

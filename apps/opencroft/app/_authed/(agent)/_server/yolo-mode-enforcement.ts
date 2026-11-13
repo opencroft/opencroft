@@ -1,46 +1,83 @@
+import type { BypassRoute } from 'agent-client/harness-adapters'
+import { bypassRouteOf } from 'agent-client/resolve'
 import { modeIdForCanonical, mostSupervisedModeId } from 'agent-client/session-modes'
 
-import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { agentClient, subscribeEngineEvents } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { isYoloMode, subscribeYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 
 /**
- * YOLO mode forces every session into its bypass permission mode and holds it
- * there. Turning YOLO off puts each session back where it was.
+ * YOLO forces every session into its bypass and holds it there. Turning YOLO
+ * off puts each session back where it was.
+ *
+ * How a session reaches bypass is its adapter's declaration (bypassRouteOf):
+ * its Bypass mode, or one config option set to a value with the mode left
+ * alone (Copilot's `allow_all`). Both go through this one path, and the setting
+ * the route holds is the one a session may not change while YOLO is on.
  *
  * The MCP half of YOLO (approving tool calls without asking) lives in
- * resolvePermission and needs nothing here — it is read per request. The mode
- * half does need state, because forcing bypass destroys the information needed
- * to undo it: without remembering, "off" would have to guess a mode to return
- * to, and guessing `manual` would silently demote someone who was deliberately
- * in plan.
+ * resolvePermission and needs nothing here — it is read per request. This half
+ * does need state, because forcing bypass destroys the information needed to
+ * undo it: without remembering, "off" would have to guess what to return to,
+ * and guessing `manual` would silently demote someone who was deliberately in
+ * plan.
  *
  * Held in memory, matching YOLO's own runtime override — neither survives a
- * restart, and a remembered mode that outlived the YOLO state that caused it
- * would be worse than forgetting: it would rewrite a mode the user has since
- * chosen for themselves.
+ * restart, and a remembered setting that outlived the YOLO state that caused
+ * it would be worse than forgetting: it would rewrite a choice the user has
+ * since made for themselves.
  */
-const modeBeforeYolo = new Map<string, string>()
+type HeldSetting = { kind: 'mode'; modeId: string } | { kind: 'config-option'; optionId: string; value: string }
+
+const beforeYolo = new Map<string, HeldSetting>()
+
+function routeOf(sessionId: string): BypassRoute {
+  return bypassRouteOf(agentClient.listSessions().find((session) => session.id === sessionId)?.adapterId ?? '')
+}
+
+function configValue(sessionId: string, optionId: string): string | undefined {
+  const option = agentClient.sessionConfigOptions(sessionId)?.find((entry) => entry.id === optionId)
+  return option ? String(option.currentValue) : undefined
+}
 
 /**
- * True when the session's mode is currently locked. Callers that change modes
- * consult this so a refusal is a deliberate answer rather than a request the
- * agent quietly reverts a moment later.
+ * True when YOLO holds this config option of this session: its mode option
+ * where bypass is a mode, the declared option where it is a config option.
+ * Callers that change options consult this so a refusal is a deliberate answer
+ * rather than a request the enforcement quietly reverts a moment later.
  */
-export function modeLockedByYolo(): boolean {
-  return isYoloMode()
+export function configLockedByYolo(sessionId: string, configId: string): boolean {
+  if (!isYoloMode()) {
+    return false
+  }
+  const route = routeOf(sessionId)
+  return configId === (route.kind === 'config-option' ? route.optionId : 'mode')
 }
 
 /**
  * Put one session into bypass and remember where it was.
  *
- * A session whose agent does not offer bypass is left alone. That is a real
- * case rather than a defensive branch — Claude Code advertises
- * `bypassPermissions` only when its own ALLOW_BYPASS holds — and the honest
- * outcome is to leave the mode as it is: the MCP half of YOLO still applies,
- * and pretending otherwise would mean either an error nobody can act on or a
- * silent switch to a mode that is not the one requested.
+ * A session that does not offer its route (no Bypass mode, or no such option)
+ * is left alone. That is a real case rather than a defensive branch — Claude
+ * Code advertises `bypassPermissions` only when its own ALLOW_BYPASS holds —
+ * and the honest outcome is to leave the session as it is: the MCP half of
+ * YOLO still applies, and pretending otherwise would mean either an error
+ * nobody can act on or a silent switch to something that was not requested.
  */
-export async function forceBypassMode(sessionId: string): Promise<void> {
+export async function forceBypass(sessionId: string): Promise<void> {
+  const route = routeOf(sessionId)
+  if (route.kind === 'config-option') {
+    const current = configValue(sessionId, route.optionId)
+    if (current === undefined || current === route.value) {
+      return
+    }
+    // Recorded before the switch, and only the FIRST time: a second call while
+    // already forced must not overwrite the remembered value with the forced one.
+    if (!beforeYolo.has(sessionId)) {
+      beforeYolo.set(sessionId, { kind: 'config-option', optionId: route.optionId, value: current })
+    }
+    await agentClient.setConfigOption(sessionId, route.optionId, route.value)
+    return
+  }
   const modes = agentClient.sessionModes(sessionId)
   if (!modes) {
     return
@@ -49,22 +86,40 @@ export async function forceBypassMode(sessionId: string): Promise<void> {
   if (!bypassId || modes.current === bypassId) {
     return
   }
-  // Recorded before the switch, and only the FIRST time: a second call while
-  // already forced must not overwrite the remembered mode with `bypass` itself.
-  if (!modeBeforeYolo.has(sessionId)) {
-    modeBeforeYolo.set(sessionId, modes.current)
+  if (!beforeYolo.has(sessionId)) {
+    beforeYolo.set(sessionId, { kind: 'mode', modeId: modes.current })
   }
   await agentClient.setMode(sessionId, bypassId)
 }
 
-async function restoreMode(sessionId: string): Promise<void> {
-  const previous = modeBeforeYolo.get(sessionId)
+async function restore(sessionId: string): Promise<void> {
+  const previous = beforeYolo.get(sessionId)
   if (!previous) {
     return
   }
-  modeBeforeYolo.delete(sessionId)
+  beforeYolo.delete(sessionId)
+  if (previous.kind === 'config-option') {
+    const current = configValue(sessionId, previous.optionId)
+    if (current === undefined || current === previous.value) {
+      return
+    }
+    try {
+      await agentClient.setConfigOption(sessionId, previous.optionId, previous.value)
+    } catch (error) {
+      // The dangerous direction, as for a mode below: the session keeps
+      // skipping approvals with YOLO off, and the entry is already dropped.
+      // The remembered value is the only supervised one known for an option
+      // of the agent's own, so there is nothing to fall back to but saying so.
+      console.error(
+        'Failed to restore approvals after YOLO was disabled; session may still skip them',
+        sessionId,
+        error,
+      )
+    }
+    return
+  }
   const modes = agentClient.sessionModes(sessionId)
-  if (!modes || modes.current === previous) {
+  if (!modes || modes.current === previous.modeId) {
     return
   }
   // Still advertised? A session that resumed against a different model may no
@@ -74,7 +129,7 @@ async function restoreMode(sessionId: string): Promise<void> {
   // not every agent has one (Codex's most supervised preset is Accept Edits),
   // and a session without it would otherwise have no fallback at all.
   const supervised = mostSupervisedModeId(modes.adapterId, modes.available)
-  const target = modes.available.some((mode) => mode.id === previous) ? previous : supervised
+  const target = modes.available.some((mode) => mode.id === previous.modeId) ? previous.modeId : supervised
   if (!target) {
     return
   }
@@ -107,7 +162,7 @@ async function applyToAllSessions(enabled: boolean): Promise<void> {
   const sessions = agentClient.listSessions()
   await Promise.all(
     sessions.map((session) =>
-      (enabled ? forceBypassMode(session.id) : restoreMode(session.id)).catch((error: unknown) => {
+      (enabled ? forceBypass(session.id) : restore(session.id)).catch((error: unknown) => {
         // One agent refusing the switch must not stop the rest — and a session
         // mid-turn is the ordinary reason for it.
         console.error('Failed to apply YOLO mode to session', session.id, error)
@@ -119,7 +174,7 @@ async function applyToAllSessions(enabled: boolean): Promise<void> {
 let installed = false
 
 /**
- * Start applying YOLO to session modes. Idempotent, and called from the session
+ * Start applying YOLO to sessions. Idempotent, and called from the session
  * open path rather than at import time so nothing subscribes in a process that
  * never opens a session.
  */
@@ -130,5 +185,19 @@ export function installYoloModeEnforcement(): void {
   installed = true
   subscribeYoloMode((enabled) => {
     void applyToAllSessions(enabled)
+  })
+  // A route through a config option is held only as long as the agent keeps
+  // it: the mode stays the user's to change, and Copilot turns `allow_all` off
+  // when it leaves autopilot. So every change to a session's options while
+  // YOLO is on is followed by holding it again, whoever made the change. A
+  // forced value the agent echoes back finds it already held, so this does
+  // not feed itself. The mode route needs no such pass: its mode is locked.
+  subscribeEngineEvents((sessionId, event) => {
+    if (event.kind !== 'config_options' || !isYoloMode() || routeOf(sessionId).kind !== 'config-option') {
+      return
+    }
+    forceBypass(sessionId).catch((error: unknown) => {
+      console.error('Failed to hold YOLO approvals for session', sessionId, error)
+    })
   })
 }

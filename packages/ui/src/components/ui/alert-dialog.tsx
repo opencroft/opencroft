@@ -1,10 +1,9 @@
-"use client"
-
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
 import { cn } from "cn"
 
-import { Button } from "ui/components/ui/button"
+import { Button } from "./button"
+import { ScrollArea } from "ui/components/ui/layout/scroll-area"
 
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
@@ -38,6 +37,9 @@ function AlertDialogOverlay({
   )
 }
 
+// The content is a column no taller than the viewport, less a margin. Long content goes in
+// AlertDialogBody, the one part that shrinks and scrolls, so the header and the buttons stay in view.
+// Content outside a body scrolls with the whole dialog, so the buttons are still reachable.
 function AlertDialogContent({
   className,
   size = "default",
@@ -52,7 +54,7 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-6 rounded-xl bg-popover p-6 text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-full -translate-x-1/2 -translate-y-1/2 flex-col gap-6 overflow-y-auto rounded-xl bg-popover p-6 text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}
@@ -72,6 +74,23 @@ function AlertDialogHeader({
         "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
         className
       )}
+      {...props}
+    />
+  )
+}
+
+// Bleeds into the content's horizontal padding, so the scrollbar sits at the dialog's edge and the
+// body's own content keeps the content's inset.
+function AlertDialogBody({
+  className,
+  innerClassName,
+  ...props
+}: React.ComponentProps<typeof ScrollArea>) {
+  return (
+    <ScrollArea
+      data-slot="alert-dialog-body"
+      className={cn("-mx-6 min-h-0", className)}
+      innerClassName={cn("px-6", innerClassName)}
       {...props}
     />
   )
@@ -174,6 +193,7 @@ function AlertDialogCancel({
 export {
   AlertDialog,
   AlertDialogAction,
+  AlertDialogBody,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,

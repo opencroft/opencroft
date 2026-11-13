@@ -3,7 +3,7 @@
 import { type ReactNode } from 'react'
 import { Hash } from 'lucide-react'
 
-import { AgentCommandBar } from 'agent-chat/components/agent-command-bar'
+import { AgentCommandBar, type AgentCommandBarComposer } from 'agent-chat/components/agent-command-bar'
 import { AgentPicker, type AgentRef } from 'ui/components/ui/group-chat/agent-picker'
 import { cn } from 'cn'
 
@@ -32,21 +32,16 @@ export interface StartThreadComposerProps {
   agents: AgentRef[]
   selectedAgentNodeId: string | null
   onSelectAgent: (nodeId: string) => void
-  // The first message, which is also the thread's opening turn. Controlled.
+  // The first message, which is also the thread's opening turn: the host's
+  // composer, passed straight to the command bar. Its send is the start of the
+  // thread, called with the message trimmed, and empty when the thread is
+  // being started without one.
   //
-  // NOTE the clear-on-send contract inherited from the command bar:
-  // `onValueChange('')` fires BEFORE `onSubmit`, so the composer is empty the
-  // instant the message is handed over, and a host whose start can fail is the
-  // one that puts the text back. See agent-command-bar for why that trade is
-  // made that way round.
-  value: string
-  // Passed straight to the command bar: bump it whenever the host puts text
-  // back. A host that restores in the same tick as the clear (a refusal it
-  // decides before any await) leaves `value` at the text it already held, so
-  // without a revision the bar sees no change and stays empty. See the bar's
-  // `shouldResyncBuffer`.
-  valueRevision?: number
-  onValueChange: (value: string) => void
+  // NOTE the clear-on-send contract inherited from the command bar: the
+  // composer is empty the instant the message is handed over, and a host whose
+  // start can fail is the one that puts the text back. See agent-command-bar
+  // for why that trade is made that way round.
+  composer: AgentCommandBarComposer
   // An optional NAME for the thread, which the server slugifies into the
   // readable part of the session key ("Code review" -> code-review). An empty
   // value means an ad-hoc, unnamed thread -- the host already treats a blank
@@ -57,25 +52,15 @@ export interface StartThreadComposerProps {
   // title of its own, so with nowhere to report one the feature cannot work
   // and must not be offered.
   onTitleChange?: (value: string) => void
-  // Reports that the user asked to start the thread, carrying the message as
-  // the command bar handed it over: trimmed, and empty when the thread is
-  // being started without one. Validates nothing.
-  //
-  // A PARAMETER rather than something the host reads back off `value`, because
-  // of the clear-on-send contract above: by the time this runs the host has
-  // already been told the composer is empty. A bare report was enough while a
-  // host could keep its own copy of the last non-empty value -- and that copy
-  // is exactly what stops being safe once an empty submit is possible, since
-  // it would resend text the person had deleted.
-  onSubmit: (message: string) => void
   // Offer starting the thread with NOTHING typed. Default false.
   //
-  // With it, send stays available on an empty composer and `onSubmit` fires
-  // with `value` empty. The thread and its session exist from that press, and
-  // the agent is configured -- model, reasoning effort, permission mode -- in
-  // the thread's own composer before a word is written. That is the whole
-  // reason it is worth a press: a harness advertises those settings only for a
-  // session that exists, so before one there is nothing to configure.
+  // With it, send stays available on an empty composer, and pressing it sends
+  // an empty message through the composer. The thread and its session exist
+  // from that press, and the agent is configured -- model, reasoning effort,
+  // permission mode -- in the thread's own composer before a word is written.
+  // That is the whole reason it is worth a press: a harness advertises those
+  // settings only for a session that exists, so before one there is nothing
+  // to configure.
   //
   // The HOST's, because only the host knows whether its start accepts an empty
   // first message. The wording is not: this composer knows what starting one
@@ -88,7 +73,6 @@ export interface StartThreadComposerProps {
   // Clears `error`. Without it no dismiss control is offered -- the composer
   // does not own the message, so it cannot clear what it did not set.
   onDismissError?: () => void
-  placeholder?: string
   // Host content in the action row's readout cluster -- the run of controls
   // and readouts that follows the leading slot, and where a composer with a
   // session draws its context ring. Named for what a host puts there rather
@@ -146,17 +130,13 @@ export function StartThreadComposer({
   agents,
   selectedAgentNodeId,
   onSelectAgent,
-  value,
-  valueRevision,
-  onValueChange,
+  composer,
   title,
   onTitleChange,
-  onSubmit,
   allowEmptyStart = false,
   submitting,
   error,
   onDismissError,
-  placeholder,
   attachmentControls,
   emptyState,
   className,
@@ -194,7 +174,7 @@ export function StartThreadComposer({
     // The title sits ABOVE the command bar rather than inside it: the bar knows
     // nothing about threads, and it should not learn. Conditional in a fixed
     // position, so the bar below keeps its place among the children and its
-    // textarea is never remounted -- the same structural rule the bar keeps for
+    // text is never remounted -- the same structural rule the bar keeps for
     // its own queued strip and error line.
     <div className={cn('flex min-w-0 flex-1 flex-col gap-1', className)}>
       {canName ? (
@@ -212,14 +192,7 @@ export function StartThreadComposer({
       ) : null}
 
       <AgentCommandBar
-        value={value}
-        valueRevision={valueRevision}
-        onValueChange={onValueChange}
-        // The command bar hands over the trimmed text and this passes it
-        // straight on -- see `onSubmit` for why it is not left to the host to
-        // remember.
-        onSend={onSubmit}
-        placeholder={placeholder ?? 'Message…'}
+        composer={composer}
         sending={submitting}
         startIcon={false}
         approval={false}

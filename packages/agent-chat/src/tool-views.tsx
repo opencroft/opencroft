@@ -30,17 +30,49 @@ export interface ToolViewResult {
   output?: unknown
 }
 
+// Where a call stands, as its card says it: 'running' (announced or in
+// progress, with or without output so far), or settled as 'completed',
+// 'failed' or 'cancelled' (stopped before it finished, see statusAtTurnEnd in
+// agent-client/fold).
+export type ToolCallState = 'running' | 'completed' | 'failed' | 'cancelled'
+
+// A folded tool status as a ToolCallState: any status that is not settled is
+// still running.
+export function toolCallState(status: string | undefined): ToolCallState {
+  return status === 'completed' || status === 'failed' || status === 'cancelled' ? status : 'running'
+}
+
 export interface ToolViewProps {
   tool: string
   args: Record<string, unknown>
   requestId: string
   mode: ToolViewMode
-  // Undefined for a call that hasn't produced output yet.
+  // Undefined for a call that hasn't produced output yet. A running call can
+  // have one: the output so far, which `state` says is not final.
   result?: ToolViewResult
+  // Where the call stands. Absent from a host that does not say: a view then
+  // reads a call with a result as settled, failed when the result is an error.
+  state?: ToolCallState
   // The file changes the call reported, when it reported any (see ToolDiff).
   // A view of a file-changing tool reads these before its own arguments: a
   // harness may leave the changed text out of the arguments.
   diffs?: ToolDiff[]
+}
+
+// The word a tool card's header puts beside a call that settled without
+// completing, and what its output row says while the call has no output. A
+// host that draws its own tool cards words them the same.
+export const TOOL_STATE_WORDS: Readonly<Record<ToolCallState, { label?: string; noOutput: string }>> = {
+  running: { noOutput: 'running…' },
+  completed: { noOutput: 'No output' },
+  failed: { label: 'failed', noOutput: 'No output' },
+  cancelled: { label: 'stopped', noOutput: 'Stopped before it finished' },
+}
+
+// Where a view's call stands: the host's `state`, or, from a host that does
+// not say, read from the result as ToolViewProps describes.
+export function toolViewState({ state, result }: Pick<ToolViewProps, 'state' | 'result'>): ToolCallState {
+  return state ?? (result ? (result.isError ? 'failed' : 'completed') : 'running')
 }
 
 export interface ToolViewSpec {
@@ -92,6 +124,7 @@ export function toolViewProps(message: ToolMessage, mode: ToolViewMode): ToolVie
     requestId: message.toolCallId,
     mode,
     result,
+    state: toolCallState(message.status),
     ...(message.diffs ? { diffs: message.diffs } : {}),
   }
 }

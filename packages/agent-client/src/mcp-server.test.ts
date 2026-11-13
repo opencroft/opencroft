@@ -94,6 +94,53 @@ test('a host that resolves no callers at all still gets a caller object, never u
 
 const skillBody = async (name: string) => `body of ${name}`
 
+test("a client dropping a tool call's request aborts the handler's signal", { timeout: 10_000 }, async () => {
+  // What a client that gives up on a call does (Copilot at its MCP request
+  // timeout): it closes the request and sends a cancel as a request of its
+  // own. Only the first can reach the handler, whose request has its own
+  // transport, so that is what this does.
+  let started: () => void = () => {}
+  const running = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let aborted: () => void = () => {}
+  const abortSeen = new Promise<void>((resolve) => {
+    aborted = resolve
+  })
+  const tools: LocalTool[] = [
+    {
+      name: 'wait',
+      description: 'waits until its caller gives up',
+      inputSchema: {},
+      handler: (_args, context) =>
+        new Promise((resolve) => {
+          assert.ok(context?.signal, 'the handler gets a signal')
+          context.signal.addEventListener('abort', () => {
+            aborted()
+            resolve({ content: [{ type: 'text', text: 'gave up' }] })
+          })
+          started()
+        }),
+    },
+  ]
+  const handle = createMcpServer({ name: `abort-${crypto.randomUUID()}`, tools, skills: [] })
+  const client = new AbortController()
+  try {
+    const call = fetch(await handle.ensureUrl(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'wait', arguments: {} } }),
+      signal: client.signal,
+    })
+    await running
+    client.abort()
+    await assert.rejects(call)
+    await abortSeen
+  } finally {
+    await handle.close()
+  }
+})
+
 test('an image block a tool returns reaches the MCP client unchanged', async () => {
   // What lets an agent behind this server SEE a picture a tool fetched: the
   // block has to arrive as an image, with its bytes and type intact, not be

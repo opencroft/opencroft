@@ -3,6 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Worker } from 'node:worker_threads'
 
+import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { type ClientHostApi, loadClientHostApi } from '@/app/_authed/(extension-runtime)/_server/client-host-api'
 import { extDistDir, PROVIDED_POINTS_FILE } from '@/app/_authed/(extension-runtime)/_server/paths'
 import { statMaybe } from '@/app/_authed/(extension-runtime)/_server/source-mtime'
@@ -13,7 +14,10 @@ import type { BundleDeclares } from '@/app/_authed/(extension-runtime)/_types'
  * its declaration's `provides` (apps, right-sidebar panels, markdown
  * resolvers, ...) -- and whether it declares settings pages, so the browser
  * imports a bundle only where one of them is shown or used, instead of every
- * bundle on every page.
+ * bundle on every page. Also each node type's `defaultData`, so a node created
+ * on the server (the graph's createNodes, a server extension's createNode)
+ * starts with the data the palette gives it: the bundle is the one place an
+ * extension declares them.
  *
  * Read off the built bundle itself, the same `client.js` the browser imports:
  * it is evaluated once in a worker thread where the host, React and the common
@@ -109,6 +113,42 @@ globalThis.__extHost = {
     ]),
   ),
 }
+// Declared defaults as plain data, or undefined when they hold anything JSON
+// does not carry as it is (a host value, a function, a class instance): what
+// is recorded must be what the browser's palette gives a new node.
+function plainData(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'object' || stubs.has(value)) return undefined
+  if (Array.isArray(value)) {
+    const items = value.map(plainData)
+    return items.includes(undefined) ? undefined : items
+  }
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) return undefined
+  const plain = {}
+  for (const [key, item] of Object.entries(value)) {
+    const read = plainData(item)
+    if (read === undefined) return undefined
+    plain[key] = read
+  }
+  return plain
+}
+// Each node type's \`defaultData\`, by the bare type it declares, and the types
+// whose defaults are not plain data.
+function nodeDefaults(nodes) {
+  const defaults = {}
+  const notRead = []
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    if (!node || typeof node !== 'object' || node.defaultData === undefined) continue
+    const type = typeof node.type === 'string' ? node.type : node.typeId
+    if (typeof type !== 'string') continue
+    const data = plainData(node.defaultData)
+    if (data && typeof data === 'object' && !Array.isArray(data)) defaults[type] = data
+    else notRead.push(type)
+  }
+  return { defaults, notRead }
+}
 async function read() {
   const module = await import(workerData.url)
   const declaration = module.default ?? module.extension
@@ -130,10 +170,16 @@ async function read() {
   if (!Array.isArray(settings)) {
     throw new Error('its settings is not an array')
   }
+  const { defaults, notRead } = nodeDefaults(declaration.nodes)
   if (enumeratedStub) {
     throw new Error('it enumerates a host value while it loads')
   }
-  return { providedPoints: points.sort(), hasSettingsPages: settings.length > 0 }
+  return {
+    providedPoints: points.sort(),
+    hasSettingsPages: settings.length > 0,
+    nodeDefaults: defaults,
+    ...(notRead.length > 0 ? { defaultsNotRead: notRead } : {}),
+  }
 }
 read().then(
   (declares) => parentPort.postMessage(declares),
@@ -141,17 +187,25 @@ read().then(
     parentPort.postMessage({
       providedPoints: null,
       hasSettingsPages: null,
+      nodeDefaults: null,
       reason: String((error && error.message) || error),
     }),
 )
 `
 
+/** Each node type's declared `defaultData`, by the bare type its bundle declares. */
+export type NodeDefaults = Record<string, Record<string, unknown>>
+
 interface ProbeAnswer extends BundleDeclares {
+  /** Null when the declaration could not be read. */
+  nodeDefaults: NodeDefaults | null
+  /** The types whose declared defaults are not plain data, so are not in `nodeDefaults`. */
+  defaultsNotRead?: string[]
   reason?: string
 }
 
 function notKnown(reason: string): ProbeAnswer {
-  return { providedPoints: null, hasSettingsPages: null, reason }
+  return { providedPoints: null, hasSettingsPages: null, nodeDefaults: null, reason }
 }
 
 /** Evaluates `bundleFile` in a worker and reads what its declaration shows; null fields where that cannot be told. */
@@ -214,20 +268,26 @@ function runProbe(
 interface BundleDeclaresRecord extends BundleDeclares {
   /** The `client.js` mtime the answer was read from. */
   bundle: number
+  nodeDefaults: NodeDefaults | null
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 // A record missing a field, such as one written before the field was read, is
 // not a record: the bundle is read again.
 function isRecord(value: unknown): value is BundleDeclaresRecord {
-  if (!value || typeof value !== 'object') {
+  if (!isObject(value)) {
     return false
   }
-  const { bundle, providedPoints, hasSettingsPages } = value as Record<string, unknown>
+  const { bundle, providedPoints, hasSettingsPages, nodeDefaults } = value
   return (
     typeof bundle === 'number' &&
     (providedPoints === null ||
       (Array.isArray(providedPoints) && providedPoints.every((point) => typeof point === 'string'))) &&
-    (hasSettingsPages === null || typeof hasSettingsPages === 'boolean')
+    (hasSettingsPages === null || typeof hasSettingsPages === 'boolean') &&
+    (nodeDefaults === null || (isObject(nodeDefaults) && Object.values(nodeDefaults).every(isObject)))
   )
 }
 
@@ -256,14 +316,20 @@ export async function recordBundleDeclares(distDir: string): Promise<void> {
   if (before === 0) {
     return
   }
-  const { reason, ...declares } = await probeBundleDeclares(bundleFile)
+  const { reason, defaultsNotRead, ...declares } = await probeBundleDeclares(bundleFile)
   // Replaced while it was read: the answer may be about either build.
   if ((await statMaybe(bundleFile)) !== before) {
     return
   }
+  const extension = path.basename(path.dirname(distDir))
   if (reason !== undefined) {
     console.warn(
-      `[ext] ${path.basename(path.dirname(distDir))}: provider points not read (${reason}); its bundle loads wherever any point is used`,
+      `[ext] ${extension}: provider points not read (${reason}); its bundle loads wherever any point is used, and a node created outside the palette gets no defaults`,
+    )
+  }
+  if (defaultsNotRead !== undefined) {
+    console.warn(
+      `[ext] ${extension}: the defaultData of ${defaultsNotRead.join(', ')} is not plain data, so a node of that type created outside the palette gets no defaults`,
     )
   }
   writeCount += 1
@@ -279,20 +345,25 @@ export async function recordBundleDeclares(distDir: string): Promise<void> {
   }
 }
 
-// One reading at a time, in the background: they are only ever needed for a
-// bundle built before its points were recorded, and a listing does not wait.
-const refreshing = new Set<string>()
-let refreshQueue: Promise<void> = Promise.resolve()
+// Readings of a bundle built before its record was written. One at a time,
+// since each evaluates a whole bundle in its own worker, and one per bundle: a
+// listing or a creation that finds a reading of its bundle queued or running
+// shares it.
+const readings = new Map<string, Promise<void>>()
+let readingQueue: Promise<void> = Promise.resolve()
 
-function refreshInBackground(distDir: string): void {
-  if (refreshing.has(distDir)) {
-    return
+function readUnrecorded(distDir: string): Promise<void> {
+  const pending = readings.get(distDir)
+  if (pending) {
+    return pending
   }
-  refreshing.add(distDir)
-  refreshQueue = refreshQueue
+  const reading = readingQueue
     .then(() => recordBundleDeclares(distDir))
     .catch((error: unknown) => console.error(`[ext] ${distDir}: provider points not read`, error))
-    .finally(() => refreshing.delete(distDir))
+    .finally(() => readings.delete(distDir))
+  readings.set(distDir, reading)
+  readingQueue = reading
+  return reading
 }
 
 const NOT_KNOWN: BundleDeclares = { providedPoints: null, hasSettingsPages: null }
@@ -304,13 +375,42 @@ const NOT_KNOWN: BundleDeclares = { providedPoints: null, hasSettingsPages: null
  */
 export async function bundleDeclares(extensionId: string): Promise<BundleDeclares> {
   const distDir = extDistDir(extensionId)
-  const [record, bundle] = await Promise.all([readRecord(distDir), statMaybe(path.join(distDir, 'client.js'))])
-  if (bundle === 0) {
-    return NOT_KNOWN
-  }
-  if (record?.bundle === bundle) {
+  const { record, bundle } = await servedRecord(distDir)
+  if (record) {
     return { providedPoints: record.providedPoints, hasSettingsPages: record.hasSettingsPages }
   }
-  refreshInBackground(distDir)
+  if (bundle) {
+    void readUnrecorded(distDir)
+  }
   return NOT_KNOWN
+}
+
+// The record of the `client.js` served from `distDir` now, if one was read
+// from that exact file, and whether there is a bundle at all.
+async function servedRecord(distDir: string): Promise<{ record: BundleDeclaresRecord | null; bundle: boolean }> {
+  const [record, bundle] = await Promise.all([readRecord(distDir), statMaybe(path.join(distDir, 'client.js'))])
+  return { record: bundle !== 0 && record?.bundle === bundle ? record : null, bundle: bundle !== 0 }
+}
+
+/**
+ * The `defaultData` the served client bundle of a node type's extension
+ * declares for it: what the palette gives a new node of that type. Unlike a
+ * listing, a creation waits for a bundle with no record to be read, so the
+ * node it stores is the one the palette would make. Undefined for a type that
+ * declares none, an extension with no client bundle, and a bundle that could
+ * not be read (which the reading logs).
+ */
+export async function nodeTypeDefaults(type: string): Promise<Record<string, unknown> | undefined> {
+  const parsed = parseType(type)
+  if (!parsed) {
+    return undefined
+  }
+  const distDir = extDistDir(parsed.extensionId)
+  let { record, bundle } = await servedRecord(distDir)
+  if (!record && bundle) {
+    await readUnrecorded(distDir)
+    record = (await servedRecord(distDir)).record
+  }
+  const defaults = record?.nodeDefaults
+  return defaults && Object.hasOwn(defaults, parsed.bare) ? defaults[parsed.bare] : undefined
 }

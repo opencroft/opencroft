@@ -39,6 +39,7 @@ import {
   toContextUsage,
 } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
 import { findExtensionHandle, type NodeMetadata } from '@/app/_authed/(extension-runtime)/_types'
+import { wiredEdgesOf } from '@/app/_authed/(extension-runtime)/_wired-edges'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import {
   type AttributedSender,
@@ -174,7 +175,7 @@ async function persistToDownstreamLogs(
   // Across every graph of the space: a stream edge connects nodes on one
   // canvas, but which canvas that is is not the dispatcher's concern.
   const spaceGraphs = [...space.graphs.values()]
-  const edges = spaceGraphs.flatMap((g) => g.graph.edges) as unknown as GraphEdgeLike[]
+  const edges = spaceGraphs.flatMap((g) => wiredEdgesOf<GraphEdgeLike>(g.graph))
   const nodes = spaceGraphs.flatMap((g) => g.graph.nodes) as unknown as GraphNodeLike[]
   for (const edge of edges) {
     if (edge.source !== sourceNodeId || edge.sourceHandle !== sourceHandleId) {
@@ -224,7 +225,7 @@ async function dispatchToHandleAction(
   // Across every graph of the space: a stream edge connects nodes on one
   // canvas, but which canvas that is is not the dispatcher's concern.
   const spaceGraphs = [...space.graphs.values()]
-  const edges = spaceGraphs.flatMap((g) => g.graph.edges) as unknown as GraphEdgeLike[]
+  const edges = spaceGraphs.flatMap((g) => wiredEdgesOf<GraphEdgeLike>(g.graph))
   const nodes = spaceGraphs.flatMap((g) => g.graph.nodes) as unknown as GraphNodeLike[]
   const outgoing = edges.filter((e) => e.source === sourceNodeId && e.sourceHandle === sourceHandleId)
   if (outgoing.length === 0) {
@@ -312,7 +313,7 @@ async function persistToDownstreamSendMessages(
   // Across every graph of the space: a stream edge connects nodes on one
   // canvas, but which canvas that is is not the dispatcher's concern.
   const spaceGraphs = [...space.graphs.values()]
-  const edges = spaceGraphs.flatMap((g) => g.graph.edges) as unknown as GraphEdgeLike[]
+  const edges = spaceGraphs.flatMap((g) => wiredEdgesOf<GraphEdgeLike>(g.graph))
   const nodes = spaceGraphs.flatMap((g) => g.graph.nodes) as unknown as GraphNodeLike[]
   for (const edge of edges) {
     if (edge.source !== sourceNodeId || edge.sourceHandle !== sourceHandleId) {

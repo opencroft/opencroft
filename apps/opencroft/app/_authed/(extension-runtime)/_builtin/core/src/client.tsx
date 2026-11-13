@@ -1,6 +1,7 @@
 import type { AppComponentProps } from '@opencroft/client/app'
 import { GraphCanvas } from '@opencroft/client/canvas'
 import { defineExtension } from '@opencroft/client/extension'
+import type { ReactNode } from 'react'
 
 // The Graph App's client half is ONE host component: the same canvas surface
 // the space's own page draws, pointed at this instance's graph. No defensive
@@ -12,17 +13,20 @@ function GraphAppView({ instanceId }: AppComponentProps) {
 import { linkResolver, mentionResolver, terminalResolver } from './markdown-resolvers'
 import { AgentInspector, AgentNode, AgentProfileTab } from './nodes/agent'
 import { AgentSpeechRecognitionTab } from './nodes/agent-asr'
-import { AgentInstructionInspector, AgentInstructionNode } from './nodes/agent-instruction'
+import { AgentInstructionsTab } from './nodes/agent-instructions'
 import { AgentMcpTab } from './nodes/agent-mcp'
 import { AgentSkillsTab } from './nodes/agent-skills'
 import { AgentSpeechTab } from './nodes/agent-speech'
 import { AgentTokensTab } from './nodes/agent-tokens'
 import { AGENT_TOOL_HANDLES, AgentToolInspector, AgentToolNode, agentToolExposeOutput } from './nodes/agent-tool'
 import { API_ROUTE_HANDLES, ApiRouteInspector, ApiRouteNode, apiRouteExposeOutput } from './nodes/api-route'
+import { CallActionNode } from './nodes/call-action-node'
+import { callActionHandles } from './nodes/call-action-shared'
 import { EVENT_HANDLES, EventInspector, EventNode, eventExposeOutput } from './nodes/event'
 import { KeyStoreInspector, KeyStoreNode } from './nodes/key-store'
 import { LocalhostFilesTab, LocalhostInspector, LocalhostNode, LocalhostTerminalTab } from './nodes/localhost'
 import { LOG_HANDLES, LogInspector, LogNode } from './nodes/log'
+import { MarkdownWindowInspector, MarkdownWindowNode } from './nodes/markdown'
 import { OpenAIAssistantInspector, OpenAIAssistantNode } from './nodes/openai-assistant'
 import { OpenAIClientInspector, OpenAIClientNode } from './nodes/openai-client'
 import { PROMPT_HANDLES, PromptInspector, PromptNode, promptExposeOutput } from './nodes/prompt'
@@ -31,6 +35,9 @@ import { SecretsStoreInspector, SecretsStoreNode } from './nodes/secrets-store'
 import { randomSectionColor, SectionInspector, SectionNode } from './nodes/section'
 import { SEND_MESSAGE_HANDLES, SendMessageInspector, SendMessageNode } from './nodes/send-message'
 import { type ServerData, ServerFilesTab, ServerInspector, ServerNode, ServerTerminalTab } from './nodes/server'
+import { SubgraphInspector, SubgraphNode } from './nodes/subgraph'
+import { portValueOf } from './nodes/subgraph-shared'
+import { SwitchNode } from './nodes/switch-node'
 import { TerminalWindowInspector, TerminalWindowNode } from './nodes/terminal'
 import {
   TERMINAL_ROUTER_HANDLES,
@@ -45,8 +52,23 @@ import {
   TextGenerationNode,
   textGenerationExposeOutput,
 } from './nodes/text-generation'
+import {
+  ConvertNode,
+  FormatNode,
+  GetNode,
+  MathExpressionNode,
+  RegexReplaceNode,
+  RegexSearchNode,
+  SelectNode,
+  TextCompareNode,
+  ValueNode,
+  ValueNodeInspector,
+  valueNodeExposeOutput,
+  valueNodeTypeHandles,
+} from './nodes/value-nodes'
+import { VALUE_NODE, type ValueNodeType } from './nodes/value-nodes-shared'
 import { type WslData, WslFilesTab, WslInspector, WslNode, WslTerminalTab } from './nodes/wsl'
-import { AGENT_HANDLES, AGENT_INSTRUCTION_HANDLES, SCRIPT_CONSUMER, TERMINAL_CONSUMER, TERMINAL_SOURCE } from './shared'
+import { SCRIPT_CONSUMER, TERMINAL_CONSUMER, TERMINAL_SOURCE } from './shared'
 
 export default defineExtension({
   manifest: {
@@ -59,7 +81,10 @@ export default defineExtension({
     { id: 'filesystem-target', label: 'Filesystem Target', color: 'oklch(0.7 0.17 140)' },
     { id: 'text-stream', label: 'Text Stream', color: 'oklch(0.75 0.17 100)' },
     { id: 'execution-context', label: 'Execution Context', color: 'oklch(0.65 0.24 25)' },
-    { id: 'agent-instruction', label: 'Agent Instruction', color: 'oklch(0.72 0.16 180)' },
+    { id: 'string', label: 'Text', color: 'oklch(0.72 0.17 350)' },
+    { id: 'number', label: 'Number', color: 'oklch(0.7 0.15 250)' },
+    { id: 'boolean', label: 'Boolean', color: 'oklch(0.78 0.15 70)' },
+    { id: 'object', label: 'Object', color: 'oklch(0.72 0.14 215)' },
   ],
   // The HOST-registered Graph App: metadata and parameters live in
   // extension.json (the server reads provides from the manifest), the server
@@ -174,7 +199,7 @@ export default defineExtension({
           component: ServerFilesTab,
         },
       ],
-      exposeOutput: (handleId: string, data: unknown) => {
+      exposeOutput: (handleId: string, data: unknown, _type: string, nodeId: string) => {
         const d = data as ServerData
         if (!d.address) {
           return undefined
@@ -186,6 +211,7 @@ export default defineExtension({
             port: d.port,
             username: d.username,
             password: d.password,
+            credentialsScope: nodeId,
             keyPath: d.keyPath,
           }
         }
@@ -249,13 +275,25 @@ export default defineExtension({
       inspector: TerminalWindowInspector,
     },
     {
+      type: 'markdown',
+      name: 'Markdown',
+      category: 'Windows',
+      icon: 'FileText',
+      accent: 'oklch(0.7 0.17 240)',
+      handles: [],
+      defaultData: { title: 'Markdown', text: '' },
+      component: MarkdownWindowNode,
+      inspector: MarkdownWindowInspector,
+      inspectorFullHeight: true,
+    },
+    {
       type: 'script-bash',
       name: 'Bash Script',
       category: 'Scripts',
       icon: 'TerminalSquare',
       accent: 'oklch(0.7 0.18 60)',
       handles: SCRIPT_CONSUMER,
-      defaultData: { script: '', language: 'bash', env: '', secrets: '' },
+      defaultData: { script: '', language: 'bash', env: {} },
       component: makeBashNode().component,
       inspector: makeBashNode().inspector,
       inspectorTabs: [
@@ -283,7 +321,7 @@ export default defineExtension({
       icon: 'Code',
       accent: 'oklch(0.6 0.18 260)',
       handles: SCRIPT_CONSUMER,
-      defaultData: { script: '', language: 'python', env: '', secrets: '' },
+      defaultData: { script: '', language: 'python', env: {} },
       component: makePythonNode().component,
       inspector: makePythonNode().inspector,
       inspectorTabs: [
@@ -311,7 +349,7 @@ export default defineExtension({
       icon: 'Braces',
       accent: 'oklch(0.65 0.2 150)',
       handles: SCRIPT_CONSUMER,
-      defaultData: { script: '', language: 'node', env: '', secrets: '' },
+      defaultData: { script: '', language: 'node', env: {} },
       component: makeNodeJsNode().component,
       inspector: makeNodeJsNode().inspector,
       inspectorTabs: [
@@ -338,7 +376,7 @@ export default defineExtension({
       category: 'AI',
       icon: 'User',
       accent: 'oklch(0.65 0.24 25)',
-      handles: AGENT_HANDLES,
+      handles: [],
       defaultData: { name: '' },
       component: AgentNode,
       inspector: AgentInspector,
@@ -349,6 +387,13 @@ export default defineExtension({
           icon: 'Bot',
           fullHeight: true,
           component: AgentProfileTab,
+        },
+        {
+          id: 'instructions',
+          label: 'Instructions',
+          icon: 'ScrollText',
+          fullHeight: true,
+          component: AgentInstructionsTab,
         },
         {
           id: 'tts',
@@ -380,17 +425,6 @@ export default defineExtension({
           component: AgentSkillsTab,
         },
       ],
-    },
-    {
-      type: 'agent-instruction',
-      name: 'Agent Instruction',
-      category: 'AI',
-      icon: 'BookOpen',
-      accent: 'oklch(0.72 0.16 180)',
-      handles: AGENT_INSTRUCTION_HANDLES,
-      defaultData: { name: '', instruction: '' },
-      component: AgentInstructionNode,
-      inspector: AgentInstructionInspector,
     },
     {
       type: 'openai-client',
@@ -525,5 +559,128 @@ export default defineExtension({
       component: SectionNode,
       inspector: SectionInspector,
     },
+    {
+      type: 'subgraph',
+      name: 'Subgraph',
+      category: 'Organization',
+      icon: 'Workflow',
+      accent: 'oklch(0.6 0.15 250)',
+      // Its handles are its ports, from its data: see `subgraphHandles`.
+      handles: [],
+      defaultData: { name: 'Subgraph', ports: { inputs: [], outputs: [] } },
+      component: SubgraphNode,
+      inspector: SubgraphInspector,
+      // An input port's typed value, to the nodes it feeds inside while nothing outside feeds it.
+      exposeOutput: (handleId: string, data: unknown) => portValueOf(data, handleId),
+    },
+    // The type ids are written out, not taken from `@opencroft/client/values`:
+    // defaults must be plain data when the server reads this bundle, where a
+    // host module's exports are stubs. provided-points.test.ts checks them
+    // against the constants.
+    {
+      type: 'value',
+      ...valueNode(
+        VALUE_NODE.value,
+        'Value',
+        'Values',
+        'Pi',
+        { valueType: 'builtin.core.string', value: '' },
+        ValueNode,
+      ),
+    },
+    {
+      type: 'convert',
+      ...valueNode(
+        VALUE_NODE.convert,
+        'Convert',
+        'Values',
+        'ArrowRightLeft',
+        { valueType: 'builtin.core.number' },
+        ConvertNode,
+      ),
+    },
+    {
+      type: 'format',
+      ...valueNode(VALUE_NODE.format, 'Format', 'Text', 'Braces', { template: '{name}' }, FormatNode),
+    },
+    {
+      type: 'text-compare',
+      ...valueNode(VALUE_NODE.textCompare, 'Text Compare', 'Text', 'CaseSensitive', { op: 'is' }, TextCompareNode),
+    },
+    {
+      type: 'regex-search',
+      ...valueNode(
+        VALUE_NODE.regexSearch,
+        'Regex Search',
+        'Text',
+        'Regex',
+        { pattern: '(?<word>\\w+)' },
+        RegexSearchNode,
+      ),
+    },
+    {
+      type: 'regex-replace',
+      ...valueNode(VALUE_NODE.regexReplace, 'Regex Replace', 'Text', 'Replace', { pattern: '\\s+' }, RegexReplaceNode),
+    },
+    {
+      type: 'math-expression',
+      ...valueNode(
+        VALUE_NODE.mathExpression,
+        'Math Expression',
+        'Math',
+        'Calculator',
+        { expression: 'a + b' },
+        MathExpressionNode,
+      ),
+    },
+    {
+      type: 'get',
+      ...valueNode(VALUE_NODE.get, 'Get', 'Values', 'TextSearch', {}, GetNode),
+    },
+    {
+      type: 'select',
+      ...valueNode(VALUE_NODE.select, 'Select', 'Logic', 'GitFork', {}, SelectNode),
+    },
+    {
+      type: 'switch',
+      ...valueNode(VALUE_NODE.switch, 'Switch', 'Logic', 'Split', {}, SwitchNode),
+    },
+    {
+      type: 'call-action',
+      name: 'Call Action',
+      category: 'Logic',
+      icon: 'Zap',
+      accent: 'oklch(0.7 0.15 250)',
+      // Its parameter inputs follow its data: see `callActionHandles`.
+      handles: callActionHandles({}),
+      defaultData: {},
+      component: CallActionNode,
+      // Its outputs are its outcome, which only a run has: what they feed
+      // reads When it runs on the canvas.
+      exposeOutput: () => undefined,
+    },
   ],
 })
+
+// A value node's declaration, beside its literal `type`. Switch exposes no
+// value: it routes execution (its `handle` action, on the server).
+function valueNode(
+  type: ValueNodeType,
+  name: string,
+  category: string,
+  icon: string,
+  defaultData: Record<string, unknown>,
+  component: (props: { id: string; data: Record<string, unknown>; selected?: boolean }) => ReactNode,
+) {
+  return {
+    name,
+    category,
+    icon,
+    accent: 'oklch(0.7 0.15 250)',
+    handles: valueNodeTypeHandles(type),
+    defaultData,
+    component,
+    inspector: ValueNodeInspector,
+    ...(type === VALUE_NODE.switch ? {} : { exposeOutput: valueNodeExposeOutput(type) }),
+  }
+}

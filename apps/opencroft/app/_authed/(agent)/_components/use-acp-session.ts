@@ -7,8 +7,8 @@ import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { AgentChatEdit } from 'agent-chat/session'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
-import { compactionView, isTerminalToolStatus } from 'agent-client/fold'
-import { DEFAULT_PRESENCE } from 'agent-client/presence'
+import { compactionView, isTerminalToolStatus, statusAtTurnEnd } from 'agent-client/fold'
+import { DEFAULT_PRESENCE, effectivePresence } from 'agent-client/presence'
 import type { TurnEdit } from 'agent-client/queue-tags'
 import type {
   AsyncTaskInfo,
@@ -27,6 +27,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
 import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
+import { useSubagentSections, withSections } from '@/app/_authed/(agent)/_components/use-subagent-sections'
 import {
   type AcpStreamEvent,
   type AuthoredChatEvent,
@@ -38,6 +39,7 @@ import { attachmentSrc } from '@/app/_authed/(agent)/_lib/attachment-src'
 import { headerFromWindow, userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import type { ChatMessage, ChatPart } from '@/app/_authed/(agent)/_lib/messages'
 import { READER_ORIGIN, type WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
+import { subagentStepOf } from '@/app/_authed/(agent)/_lib/subagent-frames'
 import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
 import { useReconnect } from '@/app/_authed/(agent)/_lib/use-reconnect'
 import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
@@ -50,6 +52,7 @@ import {
   ensureLocalSession,
   forgetLocalSession,
   getSessionHistoryPageLocal,
+  getSubagentHistoryPageLocal,
   promptLocal,
   removeQueuedLocal,
   respondLocal,
@@ -219,9 +222,11 @@ export interface AcpSession {
   // The session's agent-advertised slash commands — the latest
   // 'available_commands' snapshot. Feeds the composer's autocomplete.
   commands: AvailableCommand[]
-  // How often this session reads what is waiting for it — the latest
-  // 'presence' snapshot. Realtime until the server says otherwise, which is
-  // also what a session that has never been told anything else reads at.
+  // How often this session reads what is waiting for it: the latest
+  // 'presence' snapshot (Realtime until the server says otherwise), as the
+  // session actually reads at it. On an agent that cannot steer, Realtime
+  // reads as Online (see agent-client's effectivePresence), so this is never
+  // a cadence the presence selector does not offer.
   presence: Presence
   // Whether this session's agent takes mid-turn input (adapter/connection
   // capability, resolved server-side). The presence selector reads it to
@@ -299,10 +304,13 @@ function continuesPart(last: ChatPart | undefined, kind: 'text' | 'thinking', me
 // Fold one conversation event (text/thinking/tool_call/tool_update) into a
 // parts array with its own tool-correlation map. Shared by the parent
 // transcript and every subagent's nested transcript, so both group text the
-// same way and correlate tool updates within their own scope.
+// same way and correlate tool updates within their own scope. `open` holds
+// every call not settled yet, across all scopes, for the turn's end to close
+// (statusAtTurnEnd).
 function foldConversationPart(
   parts: ChatPart[],
   tools: Map<string, ToolPart>,
+  open: Set<ToolPart>,
   event: Extract<ChatEvent, { kind: 'user' | 'agent_message' | 'agent_thought' | 'tool_call' | 'tool_update' }>,
 ): void {
   switch (event.kind) {
@@ -331,11 +339,15 @@ function foldConversationPart(
         id: event.toolCallId,
         name: event.title,
         args: event.input,
+        status: event.status,
         ...(event.name ? { toolName: event.name } : {}),
         ...(event.diffs ? { diffs: event.diffs } : {}),
       }
       parts.push(part)
       tools.set(event.toolCallId, part)
+      if (!isTerminalToolStatus(part.status)) {
+        open.add(part)
+      }
       break
     }
     case 'tool_update': {
@@ -352,8 +364,16 @@ function foldConversationPart(
         if (event.diffs) {
           part.diffs = event.diffs
         }
-        if (event.output !== undefined || isTerminalToolStatus(event.status)) {
-          part.result = { text: toolText(event.output), isError: event.status === 'failed' }
+        part.status = event.status ?? part.status
+        const settled = isTerminalToolStatus(part.status)
+        // A settling update without output keeps the output streamed before
+        // it, and a call that never printed anything has an empty result.
+        if (event.output !== undefined || settled) {
+          const text = event.output !== undefined ? toolText(event.output) : (part.result?.text ?? '')
+          part.result = { text, isError: part.status === 'failed' }
+        }
+        if (settled) {
+          open.delete(part)
         }
       }
       break
@@ -437,16 +457,22 @@ function mergeTokenAccounts(base: UsageTokens | undefined, live: UsageTokens | u
   }
 }
 
+// An event as this hook holds it. `localId` names an event that has no place
+// in the log (a snapshot-prefix event) for as long as it is held, so a
+// message it starts has an id no logged event can take.
+export type HeldChatEvent = AuthoredChatEvent & { localId?: number }
+
 // Reduce the agent-client event log into the message shape AgentChat renders,
-// plus the set of still-pending approval / elicitation prompts. `baseIndex` is
-// the absolute (server-side) index of `events[0]` — each created message is
-// stamped with `baseIndex + <its event's position>` as a stable id, so a
-// "load older" prepend (which shifts every existing event's position within
-// `events`, but not its absolute index) never changes an already-rendered
-// message's id. See ChatMessage.id.
-export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
+// plus the set of still-pending approval / elicitation prompts. Each created
+// message is stamped with the log index of the event that started it
+// (`logIndex`) as a stable id, so a "load older" prepend (which shifts every
+// existing event's place within `events`, but not its index in the log) never
+// changes an already-rendered message's id. See ChatMessage.id. An event
+// without one is numbered by its `localId`, else as `baseIndex` plus its place.
+export function fold(events: HeldChatEvent[], baseIndex = 0): Folded {
   const messages: ChatMessage[] = []
   const tools = new Map<string, ToolPart>()
+  const openTools = new Set<ToolPart>()
   const permissions = new Map<string, PendingPermission>()
   const asks = new Map<string, PendingAsk>()
   let assistant: ChatMessage | null = null
@@ -495,6 +521,11 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
     part.name = info.name || part.name
     part.task = info.task || part.task
     part.state = info.state
+    // Present when the subagent keeps a log of its own: its steps are not in
+    // this one, and the section loads them when it is expanded.
+    if (info.steps !== undefined) {
+      part.steps = info.steps
+    }
   }
   // One step of a subagent's own transcript, folded into its nested parts. A
   // subagent it spawned arrives as a step too (see ChatEvent), and lands as a
@@ -520,7 +551,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
       child.kind === 'tool_call' ||
       child.kind === 'tool_update'
     ) {
-      foldConversationPart(entry.part.parts, entry.tools, child)
+      foldConversationPart(entry.part.parts, entry.tools, openTools, child)
     }
   }
   // Background tasks by asyncTaskId — last state wins, surfaced as a list.
@@ -532,7 +563,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   const taskParts = new Map<string, AsyncTaskPart>()
 
   events.forEach((event, offset) => {
-    const id = baseIndex + offset
+    const id = event.logIndex ?? event.localId ?? baseIndex + offset
     switch (event.kind) {
       case 'user': {
         assistant = null
@@ -556,19 +587,19 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
         break
       }
       case 'agent_message': {
-        foldConversationPart(ensureAssistant(id).parts, tools, event)
+        foldConversationPart(ensureAssistant(id).parts, tools, openTools, event)
         break
       }
       case 'agent_thought': {
-        foldConversationPart(ensureAssistant(id).parts, tools, event)
+        foldConversationPart(ensureAssistant(id).parts, tools, openTools, event)
         break
       }
       case 'tool_call': {
-        foldConversationPart(ensureAssistant(id).parts, tools, event)
+        foldConversationPart(ensureAssistant(id).parts, tools, openTools, event)
         break
       }
       case 'tool_update': {
-        foldConversationPart(ensureAssistant(id).parts, tools, event)
+        foldConversationPart(ensureAssistant(id).parts, tools, openTools, event)
         break
       }
       case 'subagent': {
@@ -644,6 +675,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
             : undefined
         if (existing) {
           existing.args = view.input
+          existing.status = view.status
           if (result) {
             existing.result = result
           }
@@ -654,6 +686,7 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
             id: view.id,
             name: view.title,
             args: view.input,
+            status: view.status,
             ...(result ? { result } : {}),
           }
           message.parts.push(part)
@@ -663,6 +696,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
       }
       case 'notice': {
         ensureAssistant(id).parts.push({ type: 'notice', ...event.notice })
+        break
+      }
+      case 'session_start': {
+        ensureAssistant(id).parts.push({ type: 'context-start', sessionId: event.sessionId })
         break
       }
       case 'permission_request': {
@@ -720,6 +757,10 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
       case 'turn_end': {
         assistant = null
         waiting = false
+        for (const part of openTools) {
+          part.status = statusAtTurnEnd(part.status)
+        }
+        openTools.clear()
         // Token accounting for this event does NOT happen here -- see
         // AgentUsage's own doc comment for why fold() (replayed on every
         // reopen and prepend, over whatever window happens to be loaded) is
@@ -777,6 +818,14 @@ export function fold(events: AuthoredChatEvent[], baseIndex: number): Folded {
   }
 }
 
+// What a subagent's section draws from its own log's entries: the parts of
+// that log folded as the session's is. A subagent that has ended closes the
+// calls it left open the way a turn's end closes the session's.
+export function foldSectionSteps(events: AuthoredChatEvent[], terminal: boolean): ChatPart[] {
+  const log: AuthoredChatEvent[] = terminal ? [...events, { kind: 'turn_end', stopReason: '' }] : events
+  return fold(log).messages.flatMap((message) => message.parts)
+}
+
 /**
  * How a fork into a NEW conversation reaches the server.
  *
@@ -822,7 +871,7 @@ export function useAcpSession(
   const tabKeyRef = useRef(tabKey)
   tabKeyRef.current = tabKey
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [events, setEvents] = useState<AuthoredChatEvent[]>([])
+  const [events, setEvents] = useState<HeldChatEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [localWaiting, setLocalWaiting] = useState(false)
   const [canFork, setCanFork] = useState(false)
@@ -863,11 +912,6 @@ export function useAcpSession(
   // instead of one React state update (and one fold() re-run) per stored event.
   const historyBufferRef = useRef<AuthoredChatEvent[]>([])
   const replayingHistoryRef = useRef(true)
-  // Absolute (server-side) index of `events[0]` — see fold()'s doc comment.
-  // Set from the stream's history_end payload on every (re)connect; decremented
-  // as older pages are prepended by loadMoreHistory. Live-appended events don't
-  // move events[0], so they never touch this.
-  const baseIndexRef = useRef(0)
   // Re-establishing this tab's connection: the session went (an unload, a
   // restart), the stream failed for good, or opening failed. Each is answered
   // the same way -- ask for the tab's session again and stream what that gives --
@@ -928,6 +972,14 @@ export function useAcpSession(
       return page ?? { events: [], startIndex: beforeIndex, hasMore: false }
     }, []),
   })
+  // The sections of subagents that keep a log of their own, loaded as they
+  // are expanded (see use-subagent-sections).
+  const subagentSections = useSubagentSections(
+    useCallback(async (subagentSessionId: string, beforeIndex?: number) => {
+      const id = sessionIdRef.current
+      return id ? getSubagentHistoryPageLocal({ data: { sessionId: id, subagentSessionId, beforeIndex } }) : null
+    }, []),
+  )
   // The question of the turn the loaded window starts inside, when that turn
   // is only partly loaded — its `user` event sits above what we hold.
   //
@@ -1075,6 +1127,8 @@ export function useAcpSession(
     if (!sessionId) {
       return
     }
+    // Sections loaded from another session's subagent logs are not this one's.
+    subagentSections.reset()
     const streamedConversation = sessionConversationRef.current
     const eventSource = new EventSource(`/api/acp/stream?sessionId=${encodeURIComponent(sessionId)}`)
     // subscribe replays a bounded tail of the session's history on every
@@ -1108,16 +1162,19 @@ export function useAcpSession(
       if (event.kind === HISTORY_END_KIND) {
         replayingHistoryRef.current = false
         reconnect.connected()
-        // NUMBERING, not paging, and the two differ by the snapshot prefix.
-        // The replay opens with however many live-state events the engine had
-        // to prepend (see HistoryEndEvent.snapshotPrefix); they hold no
-        // position in the log, so numbering from `startIndex` would put every
-        // real event that many slots too high — and an edit or a fork naming a
-        // turn by its position would reach a different one, or nothing. Moving
-        // the origin back by the prefix gives the first LOGGED event exactly
-        // `startIndex`, which is the number the server answers to.
-        baseIndexRef.current = event.startIndex - (event.snapshotPrefix ?? 0)
-        setEvents(historyBufferRef.current)
+        // Every logged event came with its index. The replay opens with
+        // however many live-state events the engine had to prepend (see
+        // HistoryEndEvent.snapshotPrefix), which hold no position in the log;
+        // each is numbered below every index instead, so a message one starts
+        // (a running subagent's, a task's) has an id of its own.
+        setEvents(
+          historyBufferRef.current.map((held, offset) =>
+            held.logIndex === undefined ? { ...held, localId: -1 - offset } : held,
+          ),
+        )
+        // What a section loaded over the previous connection missed while it
+        // was down is not coming; it is fetched again.
+        subagentSections.refetch()
         setLoading(false)
         setSettledConversation(streamedConversation)
         // The replayed history is a bounded tail (see acp.stream.ts), not
@@ -1127,6 +1184,13 @@ export function useAcpSession(
         // Set unconditionally: a fresh connect re-sends a fresh tail, so a
         // header from a previous connection must not linger.
         setHistoryHeader(headerFromWindow(event.header, tabKeyRef.current))
+        return
+      }
+      // A subagent's step in a log of its own belongs to its section, which
+      // takes it if it has been asked for; it is never part of this history.
+      const step = subagentStepOf(event)
+      if (step) {
+        subagentSections.applyStep(step)
         return
       }
       if (replayingHistoryRef.current) {
@@ -1165,9 +1229,30 @@ export function useAcpSession(
       }
     }
     return () => eventSource.close()
-  }, [sessionId, paginatedHistory.reset, reconnect.schedule, reconnect.connected])
+  }, [
+    sessionId,
+    paginatedHistory.reset,
+    reconnect.schedule,
+    reconnect.connected,
+    subagentSections.reset,
+    subagentSections.refetch,
+    subagentSections.applyStep,
+  ])
 
-  const folded = useMemo(() => fold(events, baseIndexRef.current), [events])
+  const foldedLog = useMemo(() => fold(events), [events])
+  const { sections, expand: expandSection, loadOlder: loadOlderInSection } = subagentSections
+  const folded = useMemo(
+    () => ({
+      ...foldedLog,
+      messages: withSections(
+        foldedLog.messages,
+        sections,
+        { expand: expandSection, loadOlder: loadOlderInSection },
+        foldSectionSteps,
+      ),
+    }),
+    [foldedLog, sections, expandSection, loadOlderInSection],
+  )
 
   // The single seam where a message leaves the client — it runs for every
   // message, including ones the server will queue rather than deliver right
@@ -1469,7 +1554,7 @@ export function useAcpSession(
       if (!value || !sessionId) {
         return
       }
-      if (canSteer && folded.presence.kind === 'realtime') {
+      if (effectivePresence(folded.presence, canSteer).kind === 'realtime') {
         deliver(value, { queue: 'wait', origin: READER_ORIGIN })
         return
       }
@@ -1491,10 +1576,10 @@ export function useAcpSession(
     if (!page || page.events.length === 0) {
       return
     }
-    // The page abuts what we already hold, so the array stays contiguous and
-    // `baseIndexRef` moves by exactly the number of events prepended.
-    baseIndexRef.current -= page.events.length
-    setEvents((prev) => [...page.events, ...prev])
+    // The page abuts what we already hold, so the array stays contiguous; each
+    // event is numbered by where the page stands in the log.
+    const indexed = page.events.map((event, offset) => ({ ...event, logIndex: page.startIndex + offset }))
+    setEvents((prev) => [...indexed, ...prev])
     // The topmost partly-loaded turn has changed: either it's an older turn
     // now, or this page reached far enough up that the question is inside the
     // slice and no separate header is needed.
@@ -1669,7 +1754,7 @@ export function useAcpSession(
       queueAuthors: folded.queueAuthors,
       configOptions: folded.configOptions,
       commands: folded.commands,
-      presence: folded.presence,
+      presence: effectivePresence(folded.presence, canSteer),
       canSteer,
       canAttachImages,
       usage,

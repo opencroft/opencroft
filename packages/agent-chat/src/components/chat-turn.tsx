@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, Loader2, Maximize2, Minimize2, Pencil, Square, TerminalSquare, X } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Copy, Ellipsis, GitFork, Loader2, Maximize2, Minimize2, Pencil, Reply, Square, TerminalSquare, X } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { Fragment, useState } from 'react'
 // Both of these import types back from this file, and a type import is erased,
@@ -9,7 +9,7 @@ import { type AuthorRun, authorRuns } from './author-runs'
 import { detailEntryKeys, withHeader } from './detail-entries'
 import { Markdown } from './markdown'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
-import { MessageContextMenu } from './message-context-menu'
+import { SelectableMessage, useMessageActions } from './message-selection-bar'
 
 import { SelectionBadge } from './selection-badge'
 
@@ -71,7 +71,9 @@ export type DetailItem =
   // nothing whose phrasing contains an argument, which is every file tool.
   // Absent when the agent named no tool. `diffs` are the file changes the call
   // reported, passed through to the host's tool view (oldText null: the before
-  // side was not reported); absent when it reported none. Spelled out here
+  // side was not reported); absent when it reported none. `result` is the
+  // output so far, and `state` where the call stands: a running call can
+  // already have output, and a stopped one may have none. Spelled out here
   // rather than imported, so this component takes nothing from the client.
   | {
       kind: 'tool'
@@ -80,6 +82,7 @@ export type DetailItem =
       toolName?: string
       args: unknown
       result?: { text: string; isError?: boolean }
+      state?: 'running' | 'completed' | 'failed' | 'cancelled'
       diffs?: { path: string; oldText: string | null; newText: string }[]
     }
   // A subagent the turn spawned, drawn as a nested, bordered block: its name
@@ -88,7 +91,25 @@ export type DetailItem =
   // inside. `id` is the subagent's session id — its React key and identity.
   // The host pre-renders the nested items to DetailItem so this component never
   // learns the wire shape a subagent's transcript arrives in.
-  | { kind: 'subagent'; id: string; name: string; task: string; state?: string; items: DetailItem[] }
+  //
+  // A host may load a section's items only once the reader expands it. Then
+  // `steps` is the count the header shows (the subagent's own, known before its
+  // items are), `onExpand` is the cue to load them, `loading` is true while a
+  // load is out, and `onLoadOlder`, present while older items exist above
+  // `items`, loads those. All four absent: `items` is the whole transcript and
+  // the header counts it.
+  | {
+      kind: 'subagent'
+      id: string
+      name: string
+      task: string
+      state?: string
+      items: DetailItem[]
+      steps?: number
+      onExpand?: () => void
+      loading?: boolean
+      onLoadOlder?: () => void
+    }
   // A background task the harness reported under the turn (a detached job, a
   // loop), drawn as a single row in the same bordered family as a subagent.
   // Unlike a subagent it has no transcript — the fields ARE the whole of it.
@@ -493,24 +514,27 @@ export function ChatUserMessage({
             <div className='flex min-w-0 flex-col gap-1.5'>
               {run.parts.map((part, partIndex) => {
                 const handsOver = isLastRun && partIndex === run.parts.length - 1
-                // The turn's menu rides the message that ends it, and offers
-                // only what this conversation can do: edit and fork when the
-                // host can serve them, copy whenever there are words.
+                // Every message's menu copies its words and replies with them;
+                // the message that ends the turn also carries the turn's edit
+                // and fork, when the host can serve them. A message with none
+                // of these -- pictures with no words, mid-turn or with no edit
+                // or fork offered -- gets no menu rather than an empty one.
+                const partEdit = handsOver ? onEdit : undefined
+                const partFork = handsOver ? onFork : undefined
                 const turnMenu =
-                  handsOver && (onEdit || onFork) ? (
+                  part.text || partEdit || partFork ? (
                     <MessageMenu
                       editDisabled={editDisabled}
                       forkDisabled={forkDisabled}
-                      onEdit={onEdit}
-                      onFork={onFork}
-                      copyText={part.text}
+                      onEdit={partEdit}
+                      onFork={partFork}
+                      text={part.text}
                     />
-                  ) : null
+                  ) : undefined
                 return (
-                  // The turn's actions — edit, copy, fork — belong to the
-                  // message that ends it, and live in that message's own
-                  // header; remove belongs to a message and so is asked for
-                  // per part, here as everywhere else.
+                  // A message's actions live in its own header; remove belongs
+                  // to a message still waiting and so is asked for per part,
+                  // here as everywhere else.
                   <MessageRow key={part.id ?? partIndex} onRemove={removeFor(part)}>
                     {handsOver && sticky ? (
                       // The last message is the one that hands over: its full
@@ -604,26 +628,31 @@ function MessageRow({
   )
 }
 
-// The turn's action menu, rendered in the bubble header where the send time
-// used to sit: edit, copy the words, fork the conversation here. The trigger is
-// always visible, not hover-revealed: a control that only appears under a
-// pointer is invisible to a touch screen, which is exactly the surface a
-// message menu is most useful on. Copy is never disabled: reading your own
-// words back is not a turn-scoped act, and a menu where every item greys out
-// because the agent is busy would take the one useful thing away with the rest.
+// A message's action menu, in its header: what acts on the whole message.
+// Copy the words and Reply with them for every message, the user's and the
+// agent's; edit and fork the conversation here on the message that ends the
+// user's turn. A selection inside a message gets the selection bar instead.
+// The trigger is always visible, not hover-revealed: a control that only
+// appears under a pointer is invisible to a touch screen, which is exactly the
+// surface a message menu is most useful on. Copy and Reply are never disabled:
+// reading words back or quoting them is not a turn-scoped act, and a menu where
+// every item greys out because the agent is busy would take the useful things
+// away with the rest.
 function MessageMenu({
   onEdit,
   editDisabled,
   onFork,
   forkDisabled,
-  copyText,
+  text,
 }: {
   onEdit?: () => void
   editDisabled?: boolean
   onFork?: () => void
   forkDisabled?: boolean
-  copyText?: UserText
+  // The message's own markdown source: what Copy Text copies and Reply quotes.
+  text?: string
 }) {
+  const { onReply } = useMessageActions()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -647,10 +676,16 @@ function MessageMenu({
             Edit
           </DropdownMenuItem>
         )}
-        {copyText && (
-          <DropdownMenuItem onClick={() => void navigator.clipboard.writeText(copyText)}>
+        {text && (
+          <DropdownMenuItem onClick={() => void navigator.clipboard.writeText(text)}>
             <Copy className='size-3.5' />
             Copy Text
+          </DropdownMenuItem>
+        )}
+        {text && onReply && (
+          <DropdownMenuItem onClick={() => onReply(text)}>
+            <Reply className='size-3.5' />
+            Reply
           </DropdownMenuItem>
         )}
         {onFork && (
@@ -671,14 +706,14 @@ function MessageMenu({
 // object with the same header. That is what lets one component render both
 // instead of two that drift apart.
 //
-// The whole bubble carries the message's context menu, the preview form
-// included: it is the same message, and a right-click on the pinned header
-// should not fall through to the browser's own menu.
+// The whole bubble is the message's selectable text, the preview form
+// included: it is the same message, and text selected in the pinned header
+// gets the same selection bar.
 function UserMessageBubble(props: UserMessageBubbleProps) {
   return (
-    <MessageContextMenu text={props.part.text}>
+    <SelectableMessage>
       <UserMessageBox {...props} />
-    </MessageContextMenu>
+    </SelectableMessage>
   )
 }
 
@@ -689,9 +724,10 @@ interface UserMessageBubbleProps {
   // than a state of the first, so neither one's height ever depends on how far
   // the slide has gone.
   preview?: boolean
-  // The turn's action menu (edit / copy / fork), rendered in the header's right
-  // slot. Omitted for the preview form, which is a clamped look at a message
-  // whose real, interactive self is somewhere else.
+  // The message's action menu (copy, reply, and edit / fork on the message
+  // that ends the turn), rendered in the header's right slot. Omitted for the
+  // preview form, which is a clamped look at a message whose real, interactive
+  // self is somewhere else, and for a message the menu would have nothing for.
   menu?: ReactNode
 }
 
@@ -805,7 +841,7 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
           )}
         </div>
       ) : null}
-      <Markdown text={part.text} className={preview ? 'line-clamp-3' : undefined} />
+      <Markdown text={part.text} lineBreaks className={preview ? 'line-clamp-3' : undefined} />
     </div>
   )
 }
@@ -908,15 +944,15 @@ export function ChatAssistantText({
   )
 }
 
-// One of the agent's messages, with the message's context menu. Every place a
-// turn renders the agent's words goes through this -- the expanded chain, the
-// collapsed view and a subagent's transcript -- so a message offers the same
-// menu however much of its turn is showing.
+// One of the agent's messages, as selectable text. Every place a turn renders
+// the agent's words goes through this -- the expanded chain, the collapsed view
+// and a subagent's transcript -- so text selected in any of them gets the same
+// selection bar however much of its turn is showing.
 function AgentMessageText({ text }: { text: string }) {
   return (
-    <MessageContextMenu text={text}>
+    <SelectableMessage>
       <Markdown text={text} />
-    </MessageContextMenu>
+    </SelectableMessage>
   )
 }
 
@@ -924,10 +960,12 @@ function toolDotVariant(item: DetailItem): ChainDotVariant {
   if (item.kind === 'notice') {
     return item.severity === 'error' ? 'destructive' : 'default'
   }
-  if (item.kind !== 'tool' || !item.result) {
+  if (item.kind !== 'tool') {
     return 'default'
   }
-  return item.result.isError ? 'destructive' : 'success'
+  // A host that gives no state: a call with a result reads as settled.
+  const state = item.state ?? (item.result ? (item.result.isError ? 'failed' : 'completed') : 'running')
+  return state === 'failed' ? 'destructive' : state === 'completed' ? 'success' : 'default'
 }
 
 // A subagent's nested transcript, in a bordered block under the parent turn.
@@ -952,6 +990,7 @@ function SubagentBlock({
   // only: expanding is a manual, one-way action from here, so a block the
   // reader opened to watch must not snap shut when its subagent completes.
   const [open, setOpen] = useState(false)
+  const steps = item.steps ?? item.items.length
   const badge = live ? 'running' : item.state
   const badgeClass = live
     ? 'bg-primary/10 text-primary animate-pulse'
@@ -967,7 +1006,12 @@ function SubagentBlock({
           touch, and the header row carries nothing else pressable. */}
       <button
         type='button'
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          if (!open) {
+            item.onExpand?.()
+          }
+          setOpen(!open)
+        }}
         className='flex w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent/40'
         title={open ? 'Collapse subagent' : 'Expand subagent'}
       >
@@ -977,20 +1021,24 @@ function SubagentBlock({
             pushed to the right: the step count and the status badge. */}
         <span className='truncate text-xs font-medium text-foreground'>{item.name || 'Subagent'}</span>
         {live ? <TypingDots className='shrink-0' variant='primary' size='sm' /> : null}
-        {item.items.length > 0 ? (
+        {steps > 0 ? (
           <span className='ml-auto shrink-0 text-[10px] text-muted-foreground'>
-            {item.items.length} step{item.items.length === 1 ? '' : 's'}
+            {steps} step{steps === 1 ? '' : 's'}
           </span>
         ) : null}
         <span
-          className={`${item.items.length > 0 ? '' : 'ml-auto '}shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}
+          className={`${steps > 0 ? '' : 'ml-auto '}shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}
         >
           {badge}
         </span>
       </button>
       {open && item.task ? <div className='px-3 pb-2 text-xs text-muted-foreground'>{item.task}</div> : null}
-      {open && item.items.length > 0 ? (
+      {open && (item.items.length > 0 || item.loading) ? (
         <div className='flex flex-col gap-2 border-t border-border/40 px-3 py-2'>
+          {item.onLoadOlder ? <ChatLoadOlderButton loading={item.loading ?? false} onLoadOlder={item.onLoadOlder} /> : null}
+          {item.loading && item.items.length === 0 ? (
+            <div className='text-xs text-muted-foreground'>Loading…</div>
+          ) : null}
           {item.items.map((child, i) => {
             if (child.kind === 'assistant-text') {
               // biome-ignore lint/suspicious/noArrayIndexKey: text and thinking entries carry no id and their text may repeat; the host rebuilds this list whole
@@ -1134,7 +1182,7 @@ export function ChatTurnDetails({
   // Offered for any turn with something to hide. `> 1` alone missed the turn
   // whose single item is a subagent — the largest block a turn can carry, and
   // the one the reader most wants to fold away.
-  const toggle =
+  const detailsToggle =
     items.length > 1 || items.some((item) => item.kind === 'subagent') ? (
       <ChatDetailsToggle
         collapsed={collapsed}
@@ -1144,6 +1192,19 @@ export function ChatTurnDetails({
           onCollapseChange?.(next)
         }}
       />
+    ) : null
+  // The agent's reply is the turn's last message: the header's menu copies it
+  // and replies with it, as a user message's menu does with that message.
+  const reply = [...items].reverse().find(
+    (item): item is Extract<DetailItem, { kind: 'assistant-text' }> =>
+      item.kind === 'assistant-text' && item.text.trim() !== '',
+  )
+  const toggle =
+    reply || detailsToggle ? (
+      <span className='flex shrink-0 items-center gap-1'>
+        {reply ? <MessageMenu text={reply.text} /> : null}
+        {detailsToggle}
+      </span>
     ) : null
 
   const renderEntry = (

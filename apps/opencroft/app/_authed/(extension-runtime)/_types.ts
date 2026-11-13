@@ -2,6 +2,7 @@
 // client — contains no runtime imports of Node-only or React APIs.
 
 import type { ExecutionMode } from '@opencroft/core'
+import type { AcceptedTypes, EnumCasesField, InlineValueFields, ValueOption } from '@opencroft/core/values'
 
 /** Generic node data — all node data objects extend this. */
 export type NodeData = Record<string, unknown>
@@ -14,7 +15,15 @@ export interface ResolvedContext<V = unknown> {
   value: V
 }
 
-export interface ExtensionHandle {
+/**
+ * A handle a node declares. A target handle of a primitive type
+ * (`builtin.core.string`, `.number`, `.boolean`) also declares what may be
+ * typed into it (`InlineValueFields`), and may take several value types
+ * (`AcceptedTypes`): every handle a node's handles are read as carries the
+ * type it has now as its `handleType`, and one of an enum type that enum's
+ * `cases` (see `declaredHandlesOf`).
+ */
+export interface ExtensionHandle extends InlineValueFields, AcceptedTypes, EnumCasesField {
   id: string
   /**
    * What a connection on this handle carries. Declared bare for one of the
@@ -28,6 +37,17 @@ export interface ExtensionHandle {
   label?: string
   /** When true, `id` is treated as a prefix matching dynamically-rendered handle ids (e.g. per-instance outputs). */
   dynamic?: boolean
+  /**
+   * For a target handle: it takes any number of edges. Without it a target
+   * handle takes one, and connecting another replaces it.
+   */
+  multiple?: boolean
+  /**
+   * For a source handle: it has a value only while its node's run dispatches
+   * (a request's body, an event's payload), from `exposeOutput`'s `run`, and
+   * nothing otherwise. What it feeds shows "When it runs" meanwhile.
+   */
+  runtime?: boolean
   /** For `text-stream` target handles: the node action to dispatch when an inbound
    *  stream completes, receiving the accumulated text as `ctx.params.text`. Lets a
    *  node consume a text-stream server-side (like the Log node) without core knowing
@@ -43,7 +63,7 @@ export interface ExtensionHandle {
 
 /** Resolve a runtime handle id against a node's static handle declarations, supporting prefix-matched dynamic handles. */
 export function findExtensionHandle(
-  handles: ExtensionHandle[],
+  handles: readonly ExtensionHandle[],
   handleId: string,
   role: 'source' | 'target',
 ): ExtensionHandle | undefined {
@@ -64,6 +84,12 @@ export interface ExtensionHandleType {
   label: string
   color: string
   description?: string
+  /**
+   * For an enum: its cases, in the order Switch and the dropdown list them.
+   * A value is one case's `value` (`[A-Za-z0-9_.-]{1,64}`, unique in the
+   * enum), which is its identity; the label can change freely.
+   */
+  cases?: ValueOption[]
 }
 
 /** @deprecated Renamed `ExtensionHandleType`. */

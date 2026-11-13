@@ -18,6 +18,17 @@ export function rpcErrorParts(error: unknown): { code?: number; message: string;
   }
 }
 
+// ACP's "resource not found" (the SDK's RequestError.resourceNotFound).
+const RESOURCE_NOT_FOUND = -32002
+
+// Whether the agent answered that it does not have what was asked for: for a
+// `session/resume` or `session/load`, a session id it holds no record of. That
+// is the agent's settled answer about its own store, not a failure of the
+// attempt, so asking again gets the same answer.
+export function isResourceNotFound(error: unknown): boolean {
+  return rpcErrorParts(error).code === RESOURCE_NOT_FOUND
+}
+
 // What a JSON-RPC error's `data` says in words, when it says anything.
 //
 // The message alone is often the generic half. The ACP SDK answers a plain

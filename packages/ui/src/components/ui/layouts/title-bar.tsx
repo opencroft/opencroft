@@ -1,3 +1,4 @@
+import { cn } from 'cn'
 import { ArrowLeft, ArrowRight, Copy, Ellipsis, ExternalLink, PanelLeft } from 'lucide-react'
 import {
   type ComponentProps,
@@ -11,8 +12,6 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-
-import { BackButton } from '../utils/back-button'
 import { Button } from 'ui/components/ui/button'
 import {
   DropdownMenu,
@@ -22,8 +21,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
+
+import { BackButton } from '../utils/back-button'
 import { TitleDragHandle } from './title-drag-handle'
-import { cn } from 'cn'
 
 /**
  * Where a control that stands in for the browser's own shows. `installed`:
@@ -39,9 +39,10 @@ export interface TitleBarProps extends Omit<ComponentProps<'header'>, 'title'> {
   /**
    * A smaller mark drawn instead of `brand` on a phone, since a truncated
    * wordmark is not a smaller one. "Phone" is the viewport under 768px, the
-   * same line the app's useIsMobile draws, not the bar's own width.
+   * same line the app's useIsMobile draws, not the bar's own width. `false`
+   * draws no mark at all on a phone, leaving the bar's room to the context.
    */
-  brandCompact?: ReactNode
+  brandCompact?: ReactNode | false
   /** Where the page is: one or more switchers, side by side. Follows the brand. */
   context?: ReactNode
   /** A heading for a surface that needs one, such as a nested screen. */
@@ -64,6 +65,8 @@ export interface TitleBarProps extends Omit<ComponentProps<'header'>, 'title'> {
   historyButtons?: TitleBarShown
   /** Shows the sidebar button. */
   onMenu?: () => void
+  /** Classes for the sidebar button, such as hiding it at a breakpoint. */
+  menuClassName?: string
   /** Shows the back button, for a surface nested inside another. */
   onBack?: () => void
   /** The page's actions, usually TitleBarActions. A page deeper in the tree sends them through TitleBarPortal instead. */
@@ -102,8 +105,7 @@ const WINDOW_CONTROLS =
 // buttons are right from the first paint, server-rendered included, with no
 // script reading the mode after hydration and shifting the bar.
 const HISTORY_SHOWN: Record<TitleBarShown, string> = {
-  installed:
-    'hidden [@media(display-mode:standalone)]:flex [@media(display-mode:window-controls-overlay)]:flex',
+  installed: 'hidden [@media(display-mode:standalone)]:flex [@media(display-mode:window-controls-overlay)]:flex',
   always: 'flex',
 }
 
@@ -141,7 +143,9 @@ export function TitleBarActions({ children }: { children: ReactNode }) {
     <>
       <div className='hidden shrink-0 items-center gap-1 @2xl/title-bar:flex'>{children}</div>
       <DropdownMenu>
-        <DropdownMenuTrigger render={<TitleBarIconButton aria-label='More actions' className='@2xl/title-bar:hidden' />}>
+        <DropdownMenuTrigger
+          render={<TitleBarIconButton aria-label='More actions' className='@2xl/title-bar:hidden' />}
+        >
           <Ellipsis />
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end'>
@@ -189,6 +193,8 @@ export type TitleBarOpenFailure = 'unreadable' | 'not-a-link' | 'blocked'
 export interface TitleBarPageLinksProps {
   /** When the items show. Default `installed`: see TitleBarShown. */
   shown?: TitleBarShown
+  /** The separator under the items, for a menu that goes on below them. Default true. */
+  separator?: boolean
   /** Called once a copy settles: true when the page's address is on the clipboard. */
   onCopied?: (copied: boolean) => void
   /** Called when Open link from clipboard opens nothing, with the reason. */
@@ -237,6 +243,7 @@ function loadPage(path: string) {
  */
 export function TitleBarPageLinks({
   shown = 'installed',
+  separator = true,
   onCopied,
   onOpenFailed,
   onNavigate = loadPage,
@@ -291,7 +298,7 @@ export function TitleBarPageLinks({
           Open link from clipboard
         </DropdownMenuItem>
       </DropdownMenuGroup>
-      <DropdownMenuSeparator />
+      {separator && <DropdownMenuSeparator />}
     </>
   )
 }
@@ -356,6 +363,7 @@ export function TitleBar({
   canGoForward = true,
   historyButtons = 'installed',
   onMenu,
+  menuClassName,
   onBack,
   actions,
   trailing,
@@ -410,13 +418,15 @@ export function TitleBar({
             </div>
           )}
           {onMenu && (
-            <TitleBarIconButton aria-label='Open sidebar' onClick={onMenu}>
+            <TitleBarIconButton aria-label='Open sidebar' onClick={onMenu} className={menuClassName}>
               <PanelLeft />
             </TitleBarIconButton>
           )}
           {onBack && <BackButton onClick={onBack} className='pointer-coarse:size-10' />}
 
-          {brand && <div className={cn(BRAND, brandCompact && 'hidden md:flex')}>{brand}</div>}
+          {brand && (
+            <div className={cn(BRAND, (brandCompact || brandCompact === false) && 'hidden md:flex')}>{brand}</div>
+          )}
           {brandCompact && <div className={cn(BRAND, 'md:hidden')}>{brandCompact}</div>}
           {/* The row's free width is the bar's one drag handle: the context and the
               title take only what they need, and the handle takes the rest. */}

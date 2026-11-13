@@ -24,8 +24,16 @@ export interface ResolvedAuthor {
  * and without one at the top of it.
  *
  * Absent on every kind but `user`, and absent there too when nothing resolved.
+ *
+ * `logIndex` is where the event stands in the session's own log, as the
+ * stream frame carried it (agent-client's subscriber position) or a window's
+ * place gives it (`startIndex` plus the offset): what the chat names a block
+ * by, and what an edit or a fork names a turn by. Several frames carry one
+ * index when they merged into one entry. Absent for a snapshot-prefix event, a
+ * snapshot that changed nothing, and a subagent's step, whose place is in the
+ * subagent's own log.
  */
-export type AuthoredChatEvent = ChatEvent & { authors?: Record<string, ResolvedAuthor> }
+export type AuthoredChatEvent = ChatEvent & { authors?: Record<string, ResolvedAuthor>; logIndex?: number }
 
 /**
  * A page of older history, resolved the same way the live stream is.

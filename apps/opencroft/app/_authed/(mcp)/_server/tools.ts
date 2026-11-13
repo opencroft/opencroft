@@ -19,6 +19,10 @@ import { hostAppCall } from '@/app/_authed/(apps)/_server/host-apps'
 import type { AgentToolData } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-tool-shared'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { definitions as actionDefinitions, handlers as actionHandlers } from '@/app/_authed/(mcp)/_server/action-tools'
+import {
+  definitions as agentInstructionDefinitions,
+  handlers as agentInstructionHandlers,
+} from '@/app/_authed/(mcp)/_server/agent-instruction-tools'
 import { definitions as appDefinitions, handlers as appHandlers } from '@/app/_authed/(mcp)/_server/app-tools'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { definitions as chatDefinitions, handlers as chatHandlers } from '@/app/_authed/(mcp)/_server/chat-tools'
@@ -168,6 +172,9 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'group_chat_turns',
   'group_chat_turn',
   'group_chat_compact_status',
+  // An agent's instruction texts: one agent's markdown from its node and its
+  // place's settings row, never a page of a credential store.
+  'agent_instructions_read',
   'artifact_list',
   // Configuration read. Secret values are redacted by the handler itself, so
   // this returns names and shapes rather than credentials.
@@ -201,6 +208,8 @@ export const READ_ONLY_APP_ACTIONS: ReadonlySet<string> = new Set([
   'graph.findNodes',
   'graph.getNodes',
   'graph.listEdges',
+  // The installed extensions' node types: reads manifests, writes nothing.
+  'graph.listNodeTypes',
 ])
 
 /**
@@ -257,6 +266,7 @@ const declaredTools: DeclaredTool[] = [
   ...appDefinitions,
   ...taskDefinitions,
   ...mcpServerDefinitions,
+  ...agentInstructionDefinitions,
 
   // ── Skills ───────────────────────────────────────────────────────────────
   ...skillToolDefinitions,
@@ -512,6 +522,7 @@ const handlers: Record<string, ToolHandler> = {
   ...appHandlers,
   ...taskHandlers,
   ...mcpServerHandlers,
+  ...agentInstructionHandlers,
 
   // ── Skills ──────────────────────────────────────────────────────────────
   ...skillToolHandlers,

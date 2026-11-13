@@ -1,9 +1,7 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { cn } from 'cn'
-import { ArrowLeft } from 'lucide-react'
-import { Button } from 'ui/button'
-import { Flex } from 'ui/layout/flex'
-import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
+import { createFileRoute } from '@tanstack/react-router'
+import { ChartColumn, LayoutGrid, SlidersHorizontal } from 'lucide-react'
+import { TitleBarTitle } from 'ui/layouts/title-bar'
+import { type SettingsSection, SettingsShell } from 'ui/settings/settings-shell'
 
 import { SpaceApps } from '@/app/_authed/(apps)/_components/space-apps'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
@@ -12,12 +10,13 @@ import { SpaceUsageSettings } from '@/app/_authed/(space)/_components/space-usag
 import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
+import { isSplitView } from '@/app/_shell/screen-stack'
 
 export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
   // The page's whole UI state rides in the URL: which section is open, and —
-  // within Apps — which tab. Defaults (General, Installed) are carried as
-  // absence, so the bare address stays clean and every state is linkable; an
-  // app's own settings page links back to ?section=apps this way.
+  // within Apps — which tab. No section is the menu on a phone and General
+  // from md up; the Installed tab is carried as absence. Every state is
+  // linkable; an app's own settings page links back to ?section=apps this way.
   validateSearch: (search: Record<string, unknown>): { section?: SectionId; tab?: 'add' } => ({
     section: SECTIONS.some((entry) => entry.id === search.section) ? (search.section as SectionId) : undefined,
     tab: search.tab === 'add' ? 'add' : undefined,
@@ -39,80 +38,66 @@ export const Route = createFileRoute('/_authed/(space)/space_/$slug/settings')({
   component: SpaceSettingsPage,
 })
 
-// Categories in a panel down the LEFT, not tabs across the top: General
-// (identity and the danger zone), Apps, and Usage today, with room for more.
+// Categories in the kit's settings menu, as the instance settings have them:
+// General (identity and the danger zone), Apps, and Usage today, with room
+// for more.
 const SECTIONS = [
-  { id: 'general', label: 'General' },
-  { id: 'apps', label: 'Apps' },
-  { id: 'usage', label: 'Usage' },
-] as const
+  { id: 'general', label: 'General', icon: SlidersHorizontal },
+  { id: 'apps', label: 'Apps', icon: LayoutGrid },
+  { id: 'usage', label: 'Usage', icon: ChartColumn },
+] as const satisfies readonly SettingsSection[]
 
 type SectionId = (typeof SECTIONS)[number]['id']
 
 function SpaceSettingsPage() {
   const { space, apps, instances } = Route.useLoaderData()
-  const { section = 'general', tab = 'installed' } = Route.useSearch()
+  const { section, tab = 'installed' } = Route.useSearch()
   const navigate = Route.useNavigate()
+  const value = section ?? 'general'
+  const label = SECTIONS.find((entry) => entry.id === value)?.label
+  // Apart from the menu (a phone) a section is an entry over it, so Back
+  // returns to the menu; beside it, choosing another replaces the entry, so
+  // Back leaves the page. The whole search is replaced: a section's state
+  // (the Apps tab) stays with it.
+  const openSection = (id: string) => {
+    if (id !== section) {
+      navigate({ search: { section: id as SectionId }, replace: isSplitView() })
+    }
+  }
+  // On a phone an open section is a screen of its own over the menu, named in
+  // the title bar, whose Back returns to the menu (the shell's screen stack).
   return (
-    <ScrollPage>
-      <ScrollHeader>
-        <Flex row withGaps align='center' className='w-full'>
-          <Link to='/spaces'>
-            <Button variant='ghost' size='icon'>
-              <ArrowLeft />
-            </Button>
-          </Link>
-          <h1 className='text-lg font-semibold'>{space.name} — settings</h1>
-        </Flex>
-      </ScrollHeader>
-      <ScrollContent className='p-4'>
-        <div className='mx-auto flex w-full max-w-4xl gap-8'>
-          <nav aria-label='Settings sections' className='w-44 shrink-0'>
-            <Flex withGaps className='w-full gap-1'>
-              {SECTIONS.map((entry) => (
-                <Button
-                  key={entry.id}
-                  // The whole search is replaced: switching sections drops
-                  // the other section's state (the Apps tab), and the
-                  // default section is carried as no param at all.
-                  render={
-                    <Link
-                      to='/space/$slug/settings'
-                      params={{ slug: space.slug }}
-                      search={entry.id === 'general' ? {} : { section: entry.id }}
-                    />
-                  }
-                  nativeButton={false}
-                  variant='ghost'
-                  className={cn('w-full justify-start', section === entry.id && 'bg-muted font-medium')}
-                >
-                  {entry.label}
-                </Button>
-              ))}
-            </Flex>
-          </nav>
-          <div className='min-w-0 flex-1'>
-            {section === 'general' ? (
-              <SpaceGeneralSettings space={space} />
-            ) : section === 'usage' ? (
-              <SpaceUsageSettings spaceSlug={space.slug} />
-            ) : (
-              <SpaceApps
-                spaceSlug={space.slug}
-                apps={apps}
-                instances={instances}
-                tab={tab}
-                onTabChange={(next) =>
-                  navigate({
-                    search: (prev) => ({ ...prev, tab: next === 'add' ? 'add' : undefined }),
-                    replace: true,
-                  })
-                }
-              />
-            )}
-          </div>
-        </div>
-      </ScrollContent>
-    </ScrollPage>
+    <SettingsShell sections={[...SECTIONS]} value={value} onValueChange={openSection} isOpened={!!section}>
+      <TitleBarTitle>
+        {section ? (
+          <>
+            <span className='md:hidden'>{label}</span>
+            <span className='max-md:hidden'>Settings</span>
+          </>
+        ) : (
+          'Settings'
+        )}
+      </TitleBarTitle>
+      <div className='mx-auto w-full max-w-4xl'>
+        {value === 'general' ? (
+          <SpaceGeneralSettings space={space} />
+        ) : value === 'usage' ? (
+          <SpaceUsageSettings spaceSlug={space.slug} />
+        ) : (
+          <SpaceApps
+            spaceSlug={space.slug}
+            apps={apps}
+            instances={instances}
+            tab={tab}
+            onTabChange={(next) =>
+              navigate({
+                search: (prev) => ({ ...prev, tab: next === 'add' ? 'add' : undefined }),
+                replace: true,
+              })
+            }
+          />
+        )}
+      </div>
+    </SettingsShell>
   )
 }

@@ -1,11 +1,14 @@
-// Moving around Settings goes through history: opening Settings, choosing a
-// section, choosing a tab and going back to the menu are each one entry, so
-// Back and Forward retrace them in order.
+// Moving around a sections page (Settings, Administration) goes through
+// history the way the screen stack reads it. Where the menu and a section are
+// apart (a phone), opening a section or going back to the menu is an entry of
+// its own, so Back returns to the menu; where they sit side by side, choosing
+// another section replaces the entry, so Back leaves the page. A tab changes
+// in place, replacing the entry.
 //
 // The router below stands in for the generated one: the same route ids on the
-// way down to /settings and the same two search params, none of the real
-// components. The hook reads its search by route id, so the ids are what has
-// to match; the components are what this test leaves out.
+// way down to /settings and /administration and the same two search params,
+// none of the real components. The hook reads its search by route id, so the
+// ids are what has to match; the components are what this test leaves out.
 
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
@@ -40,18 +43,26 @@ const { createRoot } = await import('react-dom/client')
 const { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } = await import(
   '@tanstack/react-router'
 )
-const { useSettingsLocation } = await import('@/app/_authed/(settings)/_lib/settings-location')
+const { useSettingsLocation, validateSectionSearch } = await import('@/app/_authed/(settings)/_lib/settings-location')
+type SectionsPagePath = import('@/app/_authed/(settings)/_lib/settings-location').SectionsPagePath
 
 after(() => dom.cleanup())
 
 type SettingsLocation = ReturnType<typeof useSettingsLocation>
 
-const nonEmpty = (value: unknown) => (typeof value === 'string' && value ? value : undefined)
+// Whether the window is wide enough for the menu and a section to sit side
+// by side; jsdom has no media queries of its own.
+function setSideBySide(sideBySide: boolean) {
+  win.matchMedia = (media: string) => ({ matches: sideBySide, media }) as MediaQueryList
+}
 
-async function mountSettings() {
+async function mountSettings(page: SectionsPagePath) {
   let current: SettingsLocation | undefined
   function Probe() {
-    current = useSettingsLocation()
+    current = useSettingsLocation(page)
+    return null
+  }
+  function OtherPage() {
     return null
   }
 
@@ -61,17 +72,16 @@ async function mountSettings() {
   const routeTree = rootRoute.addChildren([
     createRoute({ getParentRoute: () => rootRoute, path: '/' }),
     authed.addChildren([
-      group.addChildren([
-        createRoute({
-          getParentRoute: () => group,
-          path: 'settings',
-          validateSearch: (search: Record<string, unknown>) => ({
-            section: nonEmpty(search.section),
-            tab: nonEmpty(search.tab),
+      group.addChildren(
+        (['/settings', '/administration'] as const).map((path) =>
+          createRoute({
+            getParentRoute: () => group,
+            path: path.slice(1),
+            validateSearch: validateSectionSearch,
+            component: path === page ? Probe : OtherPage,
           }),
-          component: Probe,
-        }),
-      ]),
+        ),
+      ),
     ]),
   ])
   const history = createMemoryHistory({ initialEntries: ['/'] })
@@ -109,39 +119,56 @@ async function mountSettings() {
   }
 }
 
-test('every move inside Settings is an entry that Back and Forward retrace', async () => {
-  const view = await mountSettings()
+test('apart, a section is an entry over the menu and its tabs change in place', async () => {
+  setSideBySide(false)
+  const view = await mountSettings('/administration')
   try {
-    await view.step(() => view.router.navigate({ to: '/settings' }))
+    await view.step(() => view.router.navigate({ to: '/administration' }))
     await view.step(() => view.location().openSection('agents'))
     await view.step(() => view.location().openTab('audit'))
-    await view.step(() => view.location().openSection('backup'))
 
-    const forwardPath = ['/', '/settings', '/settings?section=agents', '/settings?section=agents&tab=audit']
-    assert.equal(view.href(), '/settings?section=backup', 'the tab does not carry over to another section')
-    assert.equal(view.entries(), forwardPath.length + 1, 'each move added one entry')
+    assert.equal(view.href(), '/administration?section=agents&tab=audit')
+    assert.equal(view.entries(), 3, 'the section added an entry and the tab did not')
 
-    for (const expected of forwardPath.toReversed()) {
-      await view.step(() => view.router.history.back())
-      assert.equal(view.href(), expected)
-    }
-    assert.equal(view.href(), '/', 'Back leaves Settings for the page it was opened from')
+    await view.step(() => view.router.history.back())
+    assert.equal(view.href(), '/administration', 'Back returns to the menu')
+    await view.step(() => view.router.history.back())
+    assert.equal(view.href(), '/', 'Back leaves the page for the page it was opened from')
 
     await view.step(() => view.router.history.forward())
     await view.step(() => view.router.history.forward())
-    assert.equal(view.href(), '/settings?section=agents')
     assert.deepEqual(
       { section: view.location().section, tab: view.location().tab },
-      { section: 'agents', tab: undefined },
-      'the page reads the section Forward arrived at',
+      { section: 'agents', tab: 'audit' },
+      'the page reads the section and tab Forward arrived at',
     )
   } finally {
     await view.unmount()
   }
 })
 
-test('going back to the menu is an entry of its own', async () => {
-  const view = await mountSettings()
+test('side by side, choosing sections replaces the entry so Back leaves the page', async () => {
+  setSideBySide(true)
+  const view = await mountSettings('/administration')
+  try {
+    await view.step(() => view.router.navigate({ to: '/administration' }))
+    await view.step(() => view.location().openSection('agents'))
+    await view.step(() => view.location().openTab('audit'))
+    await view.step(() => view.location().openSection('backup'))
+
+    assert.equal(view.href(), '/administration?section=backup', 'the tab does not carry over to another section')
+    assert.equal(view.entries(), 2, 'the page is one entry however many sections were chosen')
+
+    await view.step(() => view.router.history.back())
+    assert.equal(view.href(), '/')
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('apart, going back to the menu is an entry of its own', async () => {
+  setSideBySide(false)
+  const view = await mountSettings('/settings')
   try {
     await view.step(() => view.router.navigate({ to: '/settings' }))
     await view.step(() => view.location().openSection('account'))
@@ -157,16 +184,17 @@ test('going back to the menu is an entry of its own', async () => {
 })
 
 test('choosing the section or tab already open adds no entry', async () => {
-  const view = await mountSettings()
+  setSideBySide(false)
+  const view = await mountSettings('/administration')
   try {
-    await view.step(() => view.router.navigate({ to: '/settings' }))
+    await view.step(() => view.router.navigate({ to: '/administration' }))
     await view.step(() => view.location().openSection('agents'))
     await view.step(() => view.location().openTab('audit'))
     const before = view.entries()
 
     await view.step(() => view.location().openTab('audit'))
     await view.step(() => view.location().openSection('agents'))
-    assert.equal(view.href(), '/settings?section=agents&tab=audit', 'the open section keeps its tab')
+    assert.equal(view.href(), '/administration?section=agents&tab=audit', 'the open section keeps its tab')
     assert.equal(view.entries(), before)
   } finally {
     await view.unmount()

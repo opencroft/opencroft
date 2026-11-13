@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 
 import { streamOwnSessionActivity } from '@/app/_authed/(agent)/_server/session-activity'
+import { streamOwnGroupChatChanges } from '@/app/_authed/(group-chats)/_server/model'
 import { requireSession } from '@/app/_server/require-session'
 import type { SSEEvent } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
@@ -46,6 +47,15 @@ export const Route = createFileRoute('/_authed/(sse)/api/sse')({
               }
             })
 
+            const stopChatChanges = streamOwnGroupChatChanges(request, (groupChatId) => {
+              const event: SSEEvent = { type: 'group_chat_changed', groupChatId }
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+              } catch {
+                stopChatChanges()
+              }
+            })
+
             const keepalive = setInterval(() => {
               try {
                 controller.enqueue(encoder.encode(': keepalive\n\n'))
@@ -53,6 +63,7 @@ export const Route = createFileRoute('/_authed/(sse)/api/sse')({
                 clearInterval(keepalive)
                 unsubscribe()
                 stopActivity()
+                stopChatChanges()
               }
             }, 30_000)
 
@@ -60,6 +71,7 @@ export const Route = createFileRoute('/_authed/(sse)/api/sse')({
               clearInterval(keepalive)
               unsubscribe()
               stopActivity()
+              stopChatChanges()
               try {
                 controller.close()
               } catch {}

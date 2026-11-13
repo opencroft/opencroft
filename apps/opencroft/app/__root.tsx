@@ -71,6 +71,12 @@ import appCss from '@/app/globals.css?url'
 //                                    external MCP client needs and has no
 //                                    cookie for. An MCP token opens nothing
 //                                    else: no /api route reads a bearer.
+//   /agent-mcp                      the agent engine's own MCP server, for a
+//                                    harness the engine started through a
+//                                    terminal elsewhere. Relayed marked as
+//                                    from outside, so the engine serves it
+//                                    only on the session token it gave that
+//                                    harness and refuses everything else.
 //
 // STILL DELIBERATELY OPEN — not caution, a different question:
 //
@@ -82,7 +88,10 @@ import appCss from '@/app/globals.css?url'
 //                                    webhook target for whatever external
 //                                    caller its owner configured. Session-
 //                                    gating it would mean no external service
-//                                    could ever reach one again.
+//                                    could ever reach one again. A route
+//                                    that should not be public requires a
+//                                    header secret of its own instead
+//                                    (_server/api-route-access.ts).
 //   /api/ext/<extensionId>/http/*    an extension's own declared HTTP handler.
 //                                    Its own file says what it is for:
 //                                    "proxies, webhooks, SSE all work" — same

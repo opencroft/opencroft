@@ -3,7 +3,7 @@
 // Knows nothing about what a document holds; its owner decides that.
 
 import { collabDoc, collabDocUpdate, type DB, db } from '@opencroft/db'
-import { and, eq, lt } from 'drizzle-orm'
+import { and, eq, lt, sql } from 'drizzle-orm'
 import * as Y from 'yjs'
 
 /** A database handle or an open transaction on it. */
@@ -107,6 +107,11 @@ export async function createCollabDoc(
 
 export async function deleteCollabDoc(name: string): Promise<void> {
   await db.delete(collabDoc).where(eq(collabDoc.name, name))
+}
+
+/** Deletes every stored document whose name starts with `prefix`. */
+export async function deleteCollabDocsStartingWith(prefix: string): Promise<void> {
+  await db.delete(collabDoc).where(sql`starts_with(${collabDoc.name}, ${prefix})`)
 }
 
 /** Names of every stored document. */

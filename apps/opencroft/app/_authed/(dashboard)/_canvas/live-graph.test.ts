@@ -49,11 +49,14 @@ interface Tab {
   /** The graph as of the latest change this tab did not write. */
   seen: () => GraphData
   stale: () => boolean
+  /** Whether the tab was last told it is the layout writer. */
+  writer: () => boolean
 }
 
 function openTab(docName: string, { lineage = LINEAGE, initial = EMPTY } = {}): Tab {
   let seen = initial
   let stale = false
+  let writer = false
   const live = new LiveGraph({
     session: { docName, lineage },
     initial,
@@ -64,9 +67,12 @@ function openTab(docName: string, { lineage = LINEAGE, initial = EMPTY } = {}): 
     onStale: () => {
       stale = true
     },
+    onLayoutWriterChange: (now) => {
+      writer = now
+    },
   })
   opened.push(live)
-  return { live, seen: () => seen, stale: () => stale }
+  return { live, seen: () => seen, stale: () => stale, writer: () => writer }
 }
 
 async function until(condition: () => boolean, what: string): Promise<void> {
@@ -103,7 +109,13 @@ test('undo in one tab reverts its own step only, and the other tab sees it', asy
   a.live.write({ nodes: [...view.nodes, node('from-a')], edges: [] }, view)
   await until(() => ids(b.seen()).includes('from-a'), "tab b to see tab a's node")
 
-  assert.deepEqual(a.live.undo(), { applied: true, keptNodeIds: [] })
+  const undone = a.live.undo()
+  assert.deepEqual({ applied: undone?.applied, keptNodeIds: undone?.keptNodeIds }, { applied: true, keptNodeIds: [] })
+  assert.deepEqual(
+    [ids(undone?.before ?? EMPTY), ids(undone?.after ?? EMPTY)],
+    [['from-a', 'from-b'], ['from-b']],
+    'the step comes with the graph before it and after it',
+  )
   assert.deepEqual(ids(a.seen()), ['from-b'])
   await until(() => !ids(b.seen()).includes('from-a'), "tab b to see tab a's undo")
   assert.deepEqual(ids(b.seen()), ['from-b'])
@@ -160,6 +172,70 @@ test('a write from a view that has not taken in a remote change leaves that chan
   const merged = agent.seen()
   assert.deepEqual(ids(merged), ['agent-made', 'n1'])
   assert.equal(labelIn(merged, 'n1'), 'renamed by the agent')
+})
+
+test('an untracked write reaches the other tab and is no step of the undo history', async () => {
+  const name = `graph:${crypto.randomUUID()}`
+  const a = openTab(name)
+  const b = openTab(name)
+  const first: GraphData = { nodes: [node('n1')], edges: [] }
+  a.live.write(first, EMPTY)
+  await until(() => ids(b.seen()).includes('n1'), 'the first node to land')
+
+  const laidOut = { ...(nodeIn(first, 'n1') as Node), position: { x: 40, y: 80 } }
+  a.live.write({ nodes: [laidOut], edges: [] }, first, { untracked: true })
+  await until(() => (nodeIn(b.seen(), 'n1')?.position as { x: number } | undefined)?.x === 40, 'the layout to land')
+
+  // The one step is the tracked write; undoing it removes the node, and
+  // nothing is left to undo after it.
+  assert.equal(a.live.undo()?.applied, true)
+  await until(() => !ids(b.seen()).includes('n1'), "tab b to see tab a's undo")
+  assert.equal(a.live.undo(), null)
+})
+
+test('an undo leaves what an untracked write set since', async () => {
+  const name = `graph:${crypto.randomUUID()}`
+  const a = openTab(name)
+  const b = openTab(name)
+  const first: GraphData = { nodes: [node('n1')], edges: [] }
+  a.live.write(first, EMPTY)
+  await until(() => ids(b.seen()).includes('n1'), 'the first node to land')
+  const dragged: GraphData = { nodes: [{ ...(nodeIn(first, 'n1') as Node), position: { x: 300, y: 0 } }], edges: [] }
+  a.live.write(dragged, first)
+  await until(() => (nodeIn(b.seen(), 'n1')?.position as { x: number } | undefined)?.x === 300, 'the drag to land')
+  a.live.write({ nodes: [{ ...(nodeIn(first, 'n1') as Node), position: { x: 10, y: 40 } }], edges: [] }, dragged, {
+    untracked: true,
+  })
+  await until(() => (nodeIn(b.seen(), 'n1')?.position as { x: number } | undefined)?.x === 10, 'the layout to land')
+
+  a.live.undo()
+  assert.deepEqual(nodeIn(b.seen(), 'n1')?.position, { x: 10, y: 40 })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.deepEqual(nodeIn(b.seen(), 'n1')?.position, { x: 10, y: 40 })
+})
+
+test('of the tabs standing as candidates, exactly one is the layout writer, and another takes over when it stands down', async () => {
+  const name = `graph:${crypto.randomUUID()}`
+  const a = openTab(name)
+  const b = openTab(name)
+  const c = openTab(name)
+  // A tab that does not stand is never elected.
+  a.live.setLayoutCandidate(true)
+  b.live.setLayoutCandidate(true)
+  c.live.setLayoutCandidate(false)
+  const tabs = [a, b]
+  await until(
+    () => tabs.filter((t) => t.live.isLayoutWriter()).length === 1 && tabs.some((t) => t.writer()),
+    'one writer to be elected',
+  )
+  // Every tab elects from the same presence, so none disagrees for long.
+  await until(() => [a, b, c].filter((t) => t.writer()).length === 1, 'every tab to agree')
+  assert.equal(c.writer(), false)
+
+  const elected = a.writer() ? a : b
+  const other = elected === a ? b : a
+  elected.live.setLayoutCandidate(false)
+  await until(() => other.writer() && !elected.writer(), 'the other candidate to take over')
 })
 
 test('a tab holding another lineage of the document is told to start over', async () => {

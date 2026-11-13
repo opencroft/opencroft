@@ -232,6 +232,12 @@ export function SearchFindBar({ mode, nodes, focusTick, onFocusNode, onFocusChan
               {result.entry.subtitle}
             </span>
           </div>
+          {/* A node on another level: where it is, under its name. */}
+          {result.entry.path && (
+            <div data-find-path='' className='truncate pl-6 text-[11px] leading-tight text-muted-foreground'>
+              {result.entry.path}
+            </div>
+          )}
           {result.match && (
             <div className='pl-6 font-mono text-[11px] leading-tight'>
               <span className='text-muted-foreground'>{result.match.path}: </span>

@@ -105,6 +105,11 @@ test('the tab icon, an app icon and the manifest reach their routes when a brows
 // Its own process GROUP, killed whole at the end: Nitro's dev worker is a
 // process of its own under the probe, and one left behind keeps holding the
 // probe's database.
+//
+// No deadline of its own: how long the dev server takes to come up depends on
+// the host's load, and the probe waits for it (see there). A probe that never
+// answers is stopped by the runner's per-file limit, which kills every process
+// the file started.
 async function runProbe(requests: ProbeRequest[]): Promise<ProbeResult[]> {
   const port = await freePort()
   const probe = new URL('./attachment-routing.probe.ts', import.meta.url).pathname
@@ -129,11 +134,9 @@ async function runProbe(requests: ProbeRequest[]): Promise<ProbeResult[]> {
       // Already gone.
     }
   }
-  const timer = setTimeout(killGroup, 60_000)
   try {
     await new Promise<void>((resolve) => child.once('close', () => resolve()))
   } finally {
-    clearTimeout(timer)
     killGroup()
   }
   const line = stdout.split('\n').find((l) => l.startsWith('PROBE '))

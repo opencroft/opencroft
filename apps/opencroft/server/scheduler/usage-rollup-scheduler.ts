@@ -1,14 +1,16 @@
 // Host wiring for the daily usage rollup. @opencroft/usage-rollup stays
-// host-agnostic (it takes containerNames + an execInContainer function
-// as plain arguments); this file is the one place that knows how to resolve
-// those from the space graph and how to deliver the result into a group-chat
-// thread, same split as registerThreadDeliveryResolver's own header explains
-// for send-message node delivery.
+// host-agnostic (it takes places + an execIn function as plain arguments);
+// this file is the one place that knows how to resolve those from the space
+// graph -- each agent's terminal, the place its harness runs and keeps its
+// transcripts -- and how to deliver the result into a group-chat thread,
+// same split as registerThreadDeliveryResolver's own header explains for
+// send-message node delivery.
 
 import { terminalExecResult } from '@opencroft/terminal/server'
 import { getUsageRollupConfig, runUsageRollupTick, setUsageRollupConfig } from '@opencroft/usage-rollup'
 
-import { agentNodeContainerName, isAgentNode } from '@/app/_authed/(agent)/_shared/agent-node-shape'
+import { isAgentNode } from '@/app/_authed/(agent)/_shared/agent-node-shape'
+import { resolveTerminalTarget } from '@/app/_authed/(extension-runtime)/_server/host'
 import { sendMessageInThreadAsAgent } from '@/app/_authed/(group-chats)/_server/model'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
@@ -20,9 +22,10 @@ interface GraphNode {
   data?: Record<string, unknown>
 }
 
-function collectAgentContainerNames(): string[] {
+// The distinct terminals agents run through, as their targets.
+function collectAgentTerminals(): string[] {
   const registry = getSpacesRegistry()
-  const names = new Set<string>()
+  const targets = new Set<string>()
   for (const summary of registry.list()) {
     const space = registry.getBySlug(summary.slug)
     if (!space) {
@@ -30,20 +33,17 @@ function collectAgentContainerNames(): string[] {
     }
     const spaceNodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes)
     for (const node of spaceNodes as unknown as GraphNode[]) {
-      if (!isAgentNode(node)) {
-        continue
-      }
-      const containerName = agentNodeContainerName(node)
-      if (containerName) {
-        names.add(containerName)
+      const terminal = node.data?.terminal
+      if (isAgentNode(node) && typeof terminal === 'string' && terminal.trim()) {
+        targets.add(terminal.trim())
       }
     }
   }
-  return Array.from(names)
+  return Array.from(targets)
 }
 
-async function execInContainer(containerName: string, command: string): Promise<string> {
-  const result = await terminalExecResult({ type: 'docker-exec', containerId: containerName }, command, {
+async function execInTerminal(target: string, command: string): Promise<string> {
+  const result = await terminalExecResult(await resolveTerminalTarget(target), command, {
     timeoutMs: EXEC_TIMEOUT_MS,
   })
   if (result.exitCode !== 0) {
@@ -56,11 +56,11 @@ async function execInContainer(containerName: string, command: string): Promise<
 
 async function tick(): Promise<void> {
   await getSpacesRegistry().ensureLoaded()
-  const containerNames = collectAgentContainerNames()
-  if (containerNames.length === 0) {
+  const places = collectAgentTerminals()
+  if (places.length === 0) {
     return
   }
-  const result = await runUsageRollupTick({ containerNames, execInContainer })
+  const result = await runUsageRollupTick({ places, execIn: execInTerminal })
   if (!result.pendingDelivery) {
     return
   }

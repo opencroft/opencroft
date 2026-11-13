@@ -1,9 +1,8 @@
 'use client'
 
 import type { AvailableCommand } from 'agent-client/types'
-import { useEffect, useRef } from 'react'
 
-import { cn } from 'cn'
+import { ComposerSuggestions } from './composer-suggestions'
 
 /**
  * How a command is typed into the composer. A name the agent already spells
@@ -82,46 +81,17 @@ export interface CommandAutocompleteProps {
 
 /**
  * The command popup: a list of agent-advertised commands over the
- * composer. Pure presentation — which commands, which is active and what
- * selecting does are the composer's; this draws them and reports clicks.
+ * composer, each row shown the way it is typed. Pure presentation — which
+ * commands, which is active and what selecting does are the composer's.
  */
 export function CommandAutocomplete({ items, activeIndex, onSelect, onHover }: CommandAutocompleteProps) {
-  const activeRef = useRef<HTMLButtonElement | null>(null)
-  // Keep the keyboard-active row visible as arrows move it; 'nearest' so mouse
-  // scrolling isn't yanked back when the index hasn't left the viewport.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeIndex is the trigger, not an input -- the body reads the ref it moves
-  useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex])
-
-  if (items.length === 0) {
-    return null
-  }
   return (
-    <div
-      role='listbox'
-      aria-label='Commands'
-      className='absolute inset-x-0 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md'
-    >
-      {items.map((command, index) => (
-        <button
-          key={command.name}
-          ref={index === activeIndex ? activeRef : undefined}
-          type='button'
-          role='option'
-          aria-selected={index === activeIndex}
-          // Mousedown, and prevented, so choosing a command never blurs the
-          // composer — the reader is mid-typing and the caret must stay put.
-          onMouseDown={(event) => {
-            event.preventDefault()
-            onSelect(command)
-          }}
-          onMouseEnter={() => onHover(index)}
-          className={cn(
-            'flex w-full min-w-0 items-baseline gap-2 rounded-sm px-2 py-1 text-left text-sm',
-            index === activeIndex && 'bg-accent text-accent-foreground',
-          )}
-        >
+    <ComposerSuggestions
+      label='Commands'
+      items={items}
+      itemKey={(command) => command.name}
+      renderItem={(command) => (
+        <>
           <span className='shrink-0 font-mono'>{commandInvocation(command)}</span>
           {command.input?.hint ? (
             <span className='shrink-0 font-mono text-xs text-muted-foreground'>{command.input.hint}</span>
@@ -129,8 +99,11 @@ export function CommandAutocomplete({ items, activeIndex, onSelect, onHover }: C
           {command.description ? (
             <span className='min-w-0 flex-1 truncate text-xs text-muted-foreground'>{command.description}</span>
           ) : null}
-        </button>
-      ))}
-    </div>
+        </>
+      )}
+      activeIndex={activeIndex}
+      onSelect={onSelect}
+      onHover={onHover}
+    />
   )
 }

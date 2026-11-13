@@ -9,6 +9,8 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { eq } from 'drizzle-orm'
+
 process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
   import.meta.dirname,
   '..',
@@ -27,9 +29,11 @@ const { db, groupChatMember, groupChatThread, space, transcriptMessage } = await
 const model = await import('./model')
 const view = await import('./read-model')
 const { queueStore } = await import('@/app/_authed/(agent)/_server/queue-store')
+const { writePersistedSession, writePersistedUsage } = await import('@/app/_authed/(agent)/_server/acp-session-store')
 const { ensureAuth } = await import('@opencroft/auth/server')
 const { readStoredAgentAvatar } = await import('@/app/_server/agent-avatar')
 const { avatarResponse } = await import('@/app/_server/user-avatar')
+const { changeUsername, currentUsername } = await import('@/app/_server/usernames')
 
 // A stored picture, as an agent node holds one: a data URL.
 const AGENT_C_AVATAR = `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString('base64')}`
@@ -97,6 +101,43 @@ test('the list resolves member names and avatars, and counts threads', async () 
   const person = entry.members.find((m) => m.kind === 'user')
   assert.ok(person, 'the creator is a member and must be present')
   assert.equal(person.name, 'Owner Person', 'the user id must be resolved to the account name')
+})
+
+test('members carry the handle they go by now, a derived one where they had none, and null once gone, even with a handle on record', async () => {
+  const owner = await makeUser('view-handles@example.test', 'Handle Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'handles')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-b' })
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-c' })
+  // Inserted directly: addMember refuses a node that is not in the graph, so a
+  // member that no longer resolves only arises by deletion.
+  await db
+    .insert(groupChatMember)
+    .values({ groupChatId: chat.id, principalType: 'agent', agentNodeId: 'agent-handle-gone' })
+  // It went by a handle before its node was deleted, and that row stays.
+  assert.deepEqual(await changeUsername({ kind: 'agent', id: 'agent-handle-gone' }, 'agent.gone'), { ok: true })
+  assert.deepEqual(await changeUsername({ kind: 'user', id: owner.id }, 'handle.owner'), { ok: true })
+  assert.deepEqual(await changeUsername({ kind: 'agent', id: 'agent-c' }, 'agent.cee'), { ok: true })
+  // Renamed once more, so the retired handle is still on record and must not
+  // be the one handed out.
+  assert.deepEqual(await changeUsername({ kind: 'agent', id: 'agent-c' }, 'agent.cee.two'), { ok: true })
+  assert.equal(await currentUsername({ kind: 'agent', id: 'agent-b' }), null, 'agent-b starts without a handle')
+
+  const handles = (members: { id: string; username: string | null }[]) =>
+    Object.fromEntries(members.map((member) => [member.id, member.username]))
+  // agent-b's handle is derived from its directory name, "Agent B".
+  const expected = {
+    [owner.id]: 'handle.owner',
+    'agent-b': 'agent.agent.b',
+    'agent-c': 'agent.cee.two',
+    'agent-handle-gone': null,
+  }
+
+  const detail = await view.getGroupChatDetailView(reqAs(owner), chat.id)
+  assert.deepEqual(handles(detail.members), expected)
+  assert.equal(await currentUsername({ kind: 'agent', id: 'agent-b' }), 'agent.agent.b', 'the derived handle is kept')
+  const entry = (await view.listGroupChatsForUserView(reqAs(owner))).find((c) => c.id === chat.id)
+  assert.ok(entry)
+  assert.deepEqual(handles(entry.members), expected)
 })
 
 test('a thread list read returns one list, and the chat counts its archive', async () => {
@@ -452,4 +493,114 @@ test('both the list and the detail view carry the name and the topic, kept apart
   const renamedDetail = await view.getGroupChatDetailView(reqAs(owner), chat.id)
   assert.equal(renamedDetail.name, 'Release train 2')
   assert.equal(renamedDetail.topic, 'Ship without regressions')
+})
+
+test("a space's own chat carries its space on the list, and a chat that is no space's carries none", async () => {
+  const owner = await makeUser('view-spaces@example.test', 'Space Owner')
+  const spaceChat = await model.createGroupChat(reqAs(owner), 'Space chat', undefined, { slug: 'test-space' })
+  const plainChat = await model.createGroupChat(reqAs(owner), 'Plain chat')
+  const [testSpace] = await db.select({ id: space.id }).from(space).where(eq(space.slug, 'test-space'))
+  assert.ok(testSpace)
+
+  const list = await view.listGroupChatsForUserView(reqAs(owner))
+  assert.deepEqual(list.find((c) => c.id === spaceChat.id)?.space, { id: testSpace.id, name: 'Test Space' })
+  const plain = list.find((c) => c.id === plainChat.id)
+  assert.ok(plain)
+  assert.equal(plain.space, undefined)
+})
+
+test('Recent reads the threads the caller can open, in the order asked, and leaves out deleted, unknown and foreign ones', async () => {
+  const owner = await makeUser('view-recent@example.test', 'Recent Owner')
+  const stranger = await makeUser('view-recent-stranger@example.test', 'Recent Stranger')
+  const chat = await model.createGroupChat(reqAs(owner), 'Recent chat')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const foreignChat = await model.createGroupChat(reqAs(stranger), 'Not shared')
+  await model.addMember(reqAs(stranger), foreignChat.id, { kind: 'agent', agentNodeId: 'agent-b' })
+
+  const insertThread = async (groupChatId: string, agentNodeId: string, slug: string, title: string) => {
+    const [row] = await db
+      .insert(groupChatThread)
+      .values({
+        groupChatId,
+        agentNodeId,
+        sessionKey: `group-chat:${groupChatId}:${agentNodeId}:${slug}`,
+        title,
+        createdByUserId: owner.id,
+      })
+      .returning({ id: groupChatThread.id })
+    assert.ok(row)
+    return row.id
+  }
+  const first = await insertThread(chat.id, 'agent-a', 'recent-1', 'First')
+  const second = await insertThread(chat.id, 'agent-a', 'recent-2', 'Second')
+  const deleted = await insertThread(chat.id, 'agent-a', 'recent-3', 'Deleted')
+  const foreign = await insertThread(foreignChat.id, 'agent-b', 'recent-4', 'Foreign')
+  await model.deleteThread(reqAs(owner), deleted)
+
+  const recent = await view.resolveRecentThreadsView(reqAs(owner), [second, deleted, 'no-such-thread', foreign, first])
+  assert.deepEqual(
+    recent.map((thread) => ({
+      id: thread.id,
+      title: thread.title,
+      chat: thread.groupChatName,
+      agent: thread.agent.name,
+    })),
+    [
+      { id: second, title: 'Second', chat: 'Recent chat', agent: 'Agent A' },
+      { id: first, title: 'First', chat: 'Recent chat', agent: 'Agent A' },
+    ],
+  )
+  assert.ok(recent.every((thread) => thread.groupChatId === chat.id))
+
+  // The member of the other chat reads its thread, so leaving it out above
+  // was the membership, not the thread.
+  const theirs = await view.resolveRecentThreadsView(reqAs(stranger), [foreign, first])
+  assert.deepEqual(
+    theirs.map((thread) => thread.id),
+    [foreign],
+  )
+})
+
+test('Recent carries what a thread row shows: the session key, the draft flag and the stored context reading', async () => {
+  const owner = await makeUser('view-recent-row@example.test', 'Recent Row Owner')
+  const chat = await model.createGroupChat(reqAs(owner), 'Recent row chat')
+  await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
+  const insertThread = async (slug: string, draft: string | null) => {
+    const sessionKey = `group-chat:${chat.id}:agent-a:${slug}`
+    const [row] = await db
+      .insert(groupChatThread)
+      .values({
+        groupChatId: chat.id,
+        agentNodeId: 'agent-a',
+        sessionKey,
+        title: slug,
+        draft,
+        createdByUserId: owner.id,
+      })
+      .returning({ id: groupChatThread.id })
+    assert.ok(row)
+    return { id: row.id, sessionKey }
+  }
+  const drafted = await insertThread('recent-row-drafted', 'half a message')
+  const blank = await insertThread('recent-row-blank', '   ')
+  const clean = await insertThread('recent-row-clean', null)
+  // The drafted thread's session went offline after a turn that held 1234 tokens.
+  await writePersistedSession(drafted.sessionKey, 'recent-row-session', true)
+  await writePersistedUsage('recent-row-session', { used: 1234 })
+
+  const recent = await view.resolveRecentThreadsView(reqAs(owner), [drafted.id, blank.id, clean.id])
+  assert.deepEqual(
+    recent.map((thread) => ({
+      id: thread.id,
+      sessionKey: thread.sessionKey,
+      hasDraft: thread.hasDraft,
+      usedTokens: thread.lastContextUsage?.usedTokens ?? null,
+      lastKnown: typeof thread.lastContextUsage?.asOf === 'number',
+    })),
+    [
+      { id: drafted.id, sessionKey: drafted.sessionKey, hasDraft: true, usedTokens: 1234, lastKnown: true },
+      { id: blank.id, sessionKey: blank.sessionKey, hasDraft: false, usedTokens: null, lastKnown: false },
+      { id: clean.id, sessionKey: clean.sessionKey, hasDraft: false, usedTokens: null, lastKnown: false },
+    ],
+  )
 })

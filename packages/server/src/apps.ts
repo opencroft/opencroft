@@ -7,6 +7,8 @@
  */
 import type { HostAgentGroupChatsApi, HostGroupChatsApi, HostPersonGroupChatsApi } from './chat'
 import type { HostUser } from './people'
+import type { HostDirectoryChange, HostSpacesApi } from './spaces'
+import type { HostUsageApi } from './usage'
 
 /** One added App instance, as reported to the providing extension. */
 export interface HostAppInstance {
@@ -25,12 +27,53 @@ export interface HostAppInstance {
   dataDir: string
 }
 
+/**
+ * One added App instance of any extension, as a directory shows it: where it
+ * is and how it is drawn. Never its parameters or its data directory, which
+ * stay its own extension's (`listInstances`).
+ */
+export interface HostAppDirectoryEntry {
+  /** `<spaceSlug>.<slug>`: what `app_call` and `callAppAction` take, and `/space/<spaceSlug>/app/<slug>` in the app. */
+  address: string
+  instanceId: string
+  /** The App it is an instance of, qualified: `<owner>.<extension>.<type>`. */
+  type: string
+  /** The instance's own name, not the App's title. */
+  name: string
+  /** Unique in its space; a rename moves it, and with it the address. */
+  slug: string
+  spaceSlug: string
+  /** Lucide icon name its App declares (`AppEntry.icon`); absent when it declares none or its extension is not installed. */
+  icon?: string
+  /** CSS colour its App declares (`AppEntry.accent`); absent when it declares none. */
+  accent?: string
+}
+
 export interface HostAppsApi {
   /** The calling extension's added App instances, oldest first; optionally one App's only, named by its bare type. */
   listInstances(type?: string): Promise<HostAppInstance[]>
+  /**
+   * Every added App instance the viewer may see, of every extension, oldest
+   * first; with `space`, one space's only (an unknown or unseen space lists
+   * nothing). The viewer is the one `spaces.list` sees as
+   * (`@opencroft/server/spaces`): the apps are those of its spaces. Read from
+   * the stored instances, so it asks no App anything.
+   */
+  directory(options?: { space?: string }): Promise<HostAppDirectoryEntry[]>
+  /**
+   * Hear every change that can change what `directory` answers: an app added,
+   * removed, renamed, moved or retyped, any change to a space (its apps'
+   * addresses ride on its slug), or a grant that moved which spaces the
+   * viewer sees. Read `directory` again to learn what changed. Returns the
+   * unsubscribe, as `spaces.subscribe`.
+   */
+  subscribe(listener: (change: HostDirectoryChange) => void | Promise<void>): () => void
 }
 
-/** The calling extension's own added App instances. */
+/**
+ * The calling extension's own added App instances; `directory` as the
+ * extension's own system identity.
+ */
 export declare const apps: HostAppsApi
 
 /** One added instance of an App, as handed to every lifecycle hook. */
@@ -80,6 +123,20 @@ export interface AppActionContext extends AppInstanceContext {
    * unusable once it ends.
    */
   groupChats: HostGroupChatsApi | HostAgentGroupChatsApi | HostPersonGroupChatsApi
+  /**
+   * The spaces whoever this call is on behalf of may see: the calling person
+   * or agent, else the extension's own system identity. Bound by the host for
+   * this one call and unusable once it ends.
+   */
+  spaces: HostSpacesApi
+  /** `apps`, with `directory` seeing what `spaces` sees. Bound like it. */
+  apps: HostAppsApi
+  /**
+   * Spend summaries over the chats of whoever this call is on behalf of: the
+   * calling person or agent, else the extension's own system identity. Bound
+   * like `spaces`.
+   */
+  usage: HostUsageApi
   /**
    * Present when the action runs as a background task, and aborted when that
    * task is cancelled or times out. The host cannot stop a handler itself: one

@@ -74,6 +74,14 @@ test('a remote change replaces the nodes it changed and leaves the tab its copy 
   assert.deepEqual(merged[1].data, { label: 'typing' })
 })
 
+test("a remote change that only reorders a value's keys reaches the tab", () => {
+  const before = graph([node('a', { data: { env: { A: '1', B: '2' } } })])
+  const after = graph([node('a', { data: { env: { B: '2', A: '1' } } })])
+  const current = [node('a', { data: { env: { A: '1', B: '2' } } })]
+  const merged = mergeRemoteNodes(before, after, current)
+  assert.deepEqual(Object.keys((merged[0].data as { env: object }).env), ['B', 'A'])
+})
+
 test('a node being dragged here keeps its local position through a remote change to it', () => {
   const before = graph([node('a')])
   const after = graph([node('a', { position: { x: 50, y: 0 } })])
@@ -95,6 +103,40 @@ test('a remote removal removes, and a node added here but not written yet stays'
   assert.deepEqual(
     mergeRemoteNodes(before, after, current).map((n) => n.id),
     ['a', 'mine-new', 'comment-a'],
+  )
+})
+
+test('a node removed here but not written yet stays removed through a remote change to it, and the write removes it', () => {
+  const before = graph([node('a'), node('store', { data: { secretKeys: ['KEY'] } })])
+  const after = graph([node('a'), node('store', { data: { secretKeys: [] } })])
+  const merged = mergeRemoteNodes(before, after, [node('a')])
+  assert.deepEqual(
+    merged.map((n) => n.id),
+    ['a'],
+  )
+  // The write that follows is taken against the graph the merge was derived from.
+  assert.deepEqual(
+    liveGraphOf(merged, [], after).nodes.map((n) => n.id),
+    ['a'],
+  )
+})
+
+test('a node removed here but not written yet stays removed through a remote change to another node', () => {
+  const before = graph([node('a'), node('b')])
+  const after = graph([node('a', { position: { x: 50, y: 0 } }), node('b')])
+  assert.deepEqual(
+    mergeRemoteNodes(before, after, [node('a')]).map((n) => n.id),
+    ['a'],
+  )
+})
+
+test('an edge removed here but not written yet stays removed through a remote change to it', () => {
+  const edge = (id: string, extra: Partial<Edge> = {}): Edge => ({ id, source: 'a', target: 'b', ...extra })
+  const before = graph([], [edge('e1'), edge('e2')])
+  const after = graph([], [edge('e1'), edge('e2', { targetHandle: 'other' })])
+  assert.deepEqual(
+    mergeRemoteEdges(before, after, [edge('e1')]).map((e) => e.id),
+    ['e1'],
   )
 })
 

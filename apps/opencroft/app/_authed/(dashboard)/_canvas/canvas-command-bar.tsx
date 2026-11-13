@@ -18,4 +18,10 @@ export interface CommandNodeEntry {
   data: Record<string, unknown>
   icon: LucideIcon
   accent: string
+  /**
+   * Where the node is, given for a node off the open level: the subgraphs it
+   * lies in, outermost first (`Sub1 / Sub2`), or the graph's name for the top
+   * level. Focusing the node opens its level.
+   */
+  path?: string
 }

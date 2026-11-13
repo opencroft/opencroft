@@ -6,7 +6,7 @@ import path from 'node:path'
 
 import type { InstallAuth } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
 import { remoteFailure, runGit, withGitAuth } from '@/app/_authed/(extension-runtime)/_server/git-exec'
-import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
+import { secrets } from '@/server/secrets'
 
 const GIT_BUFFER = 64 * 1024 * 1024
 
@@ -15,7 +15,11 @@ export interface ResolvedAuth {
   token: string
 }
 
-/** The credential an InstallAuth points at, or null for none. */
+/**
+ * The credential an InstallAuth points at, or null for none. Read from the
+ * store itself, not through a server function: an install over MCP carries a
+ * token rather than a session, which the server-function session gate refuses.
+ */
 export async function resolveAuth(auth?: InstallAuth): Promise<ResolvedAuth | null> {
   if (!auth) {
     return null
@@ -23,8 +27,8 @@ export async function resolveAuth(auth?: InstallAuth): Promise<ResolvedAuth | nu
   const tokenKey = auth.tokenKey ?? 'token'
   const usernameKey = auth.usernameKey ?? 'username'
   const [token, username] = await Promise.all([
-    getSecretValue({ data: { storeId: auth.storeId, key: tokenKey } }),
-    getSecretValue({ data: { storeId: auth.storeId, key: usernameKey } }),
+    secrets.get(auth.storeId, tokenKey),
+    secrets.get(auth.storeId, usernameKey),
   ])
   if (!token) {
     throw new Error(`Secret ${auth.storeId}/${tokenKey} not found or empty`)

@@ -1,8 +1,8 @@
+import { SecretValueField, SecretValueTable } from '@opencroft/client/secrets'
 import { Input, Label, ScrollArea } from '@opencroft/client/ui'
 import type { ChangeEvent } from 'react'
 
 import type { AgentData } from './agent'
-import { KeyValueEditor } from './key-value-editor'
 
 // Speech-recognition (speech-to-text) profile of an agent: an OpenAI-compatible
 // transcription endpoint (`<base>/audio/transcriptions`). Consumers (e.g. audio
@@ -28,22 +28,18 @@ export function AgentSpeechRecognitionTab({
             placeholder='http://localhost:8881/v1'
           />
         </div>
-        <div className='flex flex-col gap-1'>
-          <Label>API Key</Label>
-          {/* Not a login: the browser is told so, or it offers saved passwords here. */}
-          <Input
-            type='password'
-            autoComplete='one-time-code'
-            value={data.asrApiKey ?? ''}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ asrApiKey: e.target.value })}
-            placeholder='not-needed'
-          />
-        </div>
-        <KeyValueEditor
+        <SecretValueField
+          label='API Key'
+          value={data.asrApiKey}
+          onChange={(asrApiKey) => updateData({ asrApiKey })}
+          placeholder='not-needed'
+        />
+        <SecretValueTable
           label='Request headers (optional)'
-          entries={data.asrHeaders ?? []}
+          nameLabel='Header'
+          namePlaceholder='Header-Name'
+          entries={data.asrHeaders}
           onChange={(asrHeaders) => updateData({ asrHeaders })}
-          valuePlaceholder='value or secret:NAME'
         />
         <div className='flex flex-col gap-1'>
           <Label>Model</Label>

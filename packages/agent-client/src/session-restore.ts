@@ -88,6 +88,8 @@ export interface RestoredSessionState {
  *    engine that has never heard of the request id and silently does nothing.
  *    The request stays in the transcript — it was asked, and that is true — but
  *    it is marked answered-by-nobody rather than drawn as still waiting.
+ *    `pendingAsks` names the exception: questions still pending in THIS
+ *    process, whose answer still reaches whoever raised them. Those stay open.
  *
  * Everything else is carried verbatim. A tool call left `in_progress` by a
  * restart stays `in_progress`: that is what happened, the reader can see the
@@ -111,7 +113,10 @@ export interface RestoredSessionState {
  * So an event that must not be RESTORED is emptied rather than removed, and a
  * closure that must be ADDED goes at the end where it shifts nothing.
  */
-export function restorableEvents(events: readonly ChatEvent[]): ChatEvent[] {
+export function restorableEvents(
+  events: readonly ChatEvent[],
+  pendingAsks: ReadonlySet<string> = new Set(),
+): ChatEvent[] {
   const restored: ChatEvent[] = []
   const openPermissions = new Set<string>()
   const openAsks = new Set<string>()
@@ -145,7 +150,10 @@ export function restorableEvents(events: readonly ChatEvent[]): ChatEvent[] {
     restored.push({ kind: 'permission_resolved', requestId })
   }
   for (const requestId of openAsks) {
-    restored.push({ kind: 'ask_user_resolved', requestId })
+    if (pendingAsks.has(requestId)) {
+      continue
+    }
+    restored.push({ kind: 'ask_user_resolved', requestId, outcome: 'withdrawn' })
   }
   return restored
 }
@@ -156,9 +164,13 @@ export function restorableEvents(events: readonly ChatEvent[]): ChatEvent[] {
  * Entity kinds (`compaction`, `subagent`, `async_task`) are upserted by their
  * own id, exactly as the live path does: each event carries the entity's full
  * merged state, so the last one seen per id is the answer. The scalar kinds are
- * plain overwrites.
+ * plain overwrites. `subagentLogs` are the subagents' own logs, by subagent
+ * session id, for a log that keeps them apart.
  */
-export function foldRestoredState(events: readonly ChatEvent[]): RestoredSessionState {
+export function foldRestoredState(
+  events: readonly ChatEvent[],
+  subagentLogs: ReadonlyMap<string, readonly ChatEvent[]> = new Map(),
+): RestoredSessionState {
   const state: RestoredSessionState = {
     modes: null,
     configOptions: [],
@@ -229,6 +241,16 @@ export function foldRestoredState(events: readonly ChatEvent[]): RestoredSession
         break
       default:
         break
+    }
+  }
+  // Where each subagent keeps its steps in a log of its own, one it spawned is
+  // announced in that log rather than nested in the session's.
+  for (const [parentId, log] of subagentLogs) {
+    for (const event of log) {
+      if (event.kind === 'subagent') {
+        state.subagents.set(event.subagent.subagentSessionId, { ...event.subagent })
+        state.subagentParents.set(event.subagent.subagentSessionId, parentId)
+      }
     }
   }
   return state

@@ -5,6 +5,8 @@ import { Wrench } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 
 import type { AgentToolData } from './agent-tool-shared'
+import { RunOutputRows } from './run-output-rows'
+import { RUN_OUTPUTS } from './run-outputs'
 
 // How a caller waits for the tool. The host reads `data.execution` when it
 // lists and dispatches the tool; the handler behind it is the same either way.
@@ -39,7 +41,9 @@ export function AgentToolNode({ data, selected }: { data: AgentToolData; selecte
           )}
         </div>
       }
-    />
+    >
+      <RunOutputRows type='agent-tool' />
+    </NodeFrame>
   )
 }
 
@@ -130,6 +134,7 @@ export function AgentToolInspector({
 
 export const AGENT_TOOL_HANDLES = [
   { id: 'exec-out', handleType: 'execution-context', role: 'source' as const, label: 'Handler' },
+  ...RUN_OUTPUTS['agent-tool'],
 ]
 
 export function agentToolExposeOutput(

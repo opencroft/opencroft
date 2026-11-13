@@ -1,10 +1,10 @@
-// The audit/YOLO/sleep/live-session surface is admin-only, and this holds the
-// property that a NEW server function added to the file tomorrow is gated even
-// if whoever adds it does nothing to gate it: every `createServerFn` in the
-// file must carry the shared `adminOnly` middleware. This file is where a hole
-// once lived — three endpoints (`updateYoloMode`, `clearAuditLog`,
-// `listAuditEntries`) were bare `createServerFn`s with no authorization at all:
-// the pair that removes the approval gate and erases the record it was removed.
+// The audit/YOLO/sleep/live-session surface is admin-only, and so is each
+// surface listed in SURFACES below. This holds the property that a NEW server
+// function added to one of those files tomorrow is gated even if whoever adds
+// it does nothing to gate it: every `createServerFn` in the file must carry the
+// shared `adminOnly` middleware. The audit file matters most: `updateYoloMode`
+// removes the approval gate, `clearAuditLog` erases the record that it was
+// removed, and `listAuditEntries` reads that record.
 //
 // This is a source check, not a runtime one, on purpose. A `createServerFn` is
 // an RPC endpoint that only executes inside the server runtime's request
@@ -20,7 +20,17 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
-const source = readFileSync(join(import.meta.dirname, 'audit-actions.ts'), 'utf-8')
+// Each admin-only surface, with how many endpoints it has today. The instance
+// keys surface answers where the keys come from and the key file's warning,
+// which only an administrator is shown. The extension registries surface is
+// instance configuration whose credential picks name Secrets Stores anywhere.
+// The backup surface reads, restores and resets the whole instance.
+const SURFACES = [
+  { file: 'audit-actions.ts', endpoints: 8 },
+  { file: 'instance-keys-actions.ts', endpoints: 2 },
+  { file: 'extension-registries-actions.ts', endpoints: 5 },
+  { file: 'backup-actions.ts', endpoints: 9 },
+]
 
 // Each `export const NAME = createServerFn(...)` starts one endpoint's builder
 // chain; the chain runs until the next top-level `export const` (or EOF). The
@@ -35,24 +45,29 @@ function endpointChains(code: string): { name: string; chain: string }[] {
   })
 }
 
-test('every server function on this admin surface is gated by the adminOnly middleware', () => {
-  const chains = endpointChains(source)
+for (const surface of SURFACES) {
+  test(`every server function in ${surface.file} is gated by the adminOnly middleware`, () => {
+    const chains = endpointChains(readFileSync(join(import.meta.dirname, surface.file), 'utf-8'))
 
-  // Guard against a vacuous pass: if the file were renamed, emptied, or its
-  // declaration shape changed so nothing matched, "all gated" would be trivially
-  // true over an empty set. The surface has eight endpoints today; a change to
-  // that count is a prompt to re-read this test, not to silently pass.
-  assert.ok(chains.length >= 8, `expected the audit surface's server functions to be found, saw ${chains.length}`)
+    // Guard against a vacuous pass: if the file were renamed, emptied, or its
+    // declaration shape changed so nothing matched, "all gated" would be trivially
+    // true over an empty set. A change to the count is a prompt to re-read this
+    // test, not to silently pass.
+    assert.ok(
+      chains.length >= surface.endpoints,
+      `expected ${surface.file}'s server functions to be found, saw ${chains.length}`,
+    )
 
-  const ungated = chains.filter(({ chain }) => {
-    const handlerAt = chain.indexOf('.handler(')
-    const gateAt = chain.indexOf('.middleware([adminOnly])')
-    return gateAt === -1 || (handlerAt !== -1 && gateAt > handlerAt)
+    const ungated = chains.filter(({ chain }) => {
+      const handlerAt = chain.indexOf('.handler(')
+      const gateAt = chain.indexOf('.middleware([adminOnly])')
+      return gateAt === -1 || (handlerAt !== -1 && gateAt > handlerAt)
+    })
+
+    assert.deepEqual(
+      ungated.map((c) => c.name),
+      [],
+      'these server functions reach their handler with no admin gate — attach .middleware([adminOnly])',
+    )
   })
-
-  assert.deepEqual(
-    ungated.map((c) => c.name),
-    [],
-    'these server functions reach their handler with no admin gate — attach .middleware([adminOnly])',
-  )
-})
+}

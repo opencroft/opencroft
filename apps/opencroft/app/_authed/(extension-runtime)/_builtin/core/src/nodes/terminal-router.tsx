@@ -5,10 +5,16 @@ import {
   NodeFrame,
   OutputHandle,
   useInspectorIntent,
-  useReactFlow,
   useUpdateNodeInternals,
 } from '@opencroft/client/canvas'
-import { Terminal, type TerminalConfig, TerminalList, TerminalRef, TerminalSelector } from '@opencroft/client/terminal'
+import {
+  connectionFromContext,
+  Terminal,
+  type TerminalConfig,
+  TerminalList,
+  TerminalRef,
+  TerminalSelector,
+} from '@opencroft/client/terminal'
 import {
   Button,
   Empty,
@@ -28,8 +34,13 @@ import { Split } from 'lucide-react'
 import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
-import { connectionFromContext } from './terminal'
-import { routeHandleId, routeOutput, type TerminalRoute, type TerminalRouterData } from './terminal-router-shared'
+import {
+  routeHandleId,
+  routeOutput,
+  type TerminalRoute,
+  type TerminalRouteResolution,
+  type TerminalRouterData,
+} from './terminal-router-shared'
 
 export const TERMINAL_ROUTER_HANDLES: ExtensionHandle[] = [
   { id: 'route-', handleType: 'terminal-context', role: 'source', label: 'Terminal', dynamic: true },
@@ -47,17 +58,15 @@ export function TerminalRouterNode({
   selected?: boolean
 }) {
   const routes = data.routes ?? []
-  const rf = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
 
-  // The same gesture as a Server node's Terminal pin: select the node and open
-  // its inspector's Terminal tab, here on the route that was clicked.
+  // The same gesture as a Server node's Terminal pin: open the node's
+  // inspector on its Terminal tab, here on the route that was clicked.
   const openTerminal = useCallback(
     (routeId: string) => {
-      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
       inspectorIntent.open(id, 'terminal', routeId)
     },
-    [id, rf],
+    [id],
   )
   const handleKey = routes.map((route) => route.id).join(',')
 
@@ -118,7 +127,13 @@ export function TerminalRouterInspector({
     // new output would carry nothing until a reload.
     let context: unknown
     try {
-      context = await invoke('terminalRouter.resolve', target)
+      const resolution = (await invoke('terminalRouter.resolve', target)) as TerminalRouteResolution
+      if ('refused' in resolution) {
+        toast.error(resolution.refused)
+        setAdding(false)
+        return
+      }
+      context = resolution.context
     } catch (err) {
       toast.error(`Terminal ${target} does not resolve: ${err instanceof Error ? err.message : String(err)}`)
     }

@@ -61,6 +61,20 @@ test('entries without a usable id are dropped, and the rest come back sorted', a
   )
 })
 
+test('image input is read from the input modalities the endpoint reports, and left unknown without them', async () => {
+  respondWith([
+    { id: 'a-vision', architecture: { input_modalities: ['text', 'image', 'file'] } },
+    { id: 'b-text', architecture: { input_modalities: ['text'] } },
+    { id: 'c-silent', architecture: { tokenizer: 'Other' } },
+    { id: 'd-plain' },
+  ])
+  const models = await listOpenAiModels('https://example.test/v1')
+  assert.deepEqual(
+    models.map((m) => m.imageInput),
+    [true, false, undefined, undefined],
+  )
+})
+
 test('an unreachable endpoint reports nothing rather than failing the caller', async () => {
   respondWith([], false)
   assert.deepEqual(await discoverModels('https://example.test/v1'), [])

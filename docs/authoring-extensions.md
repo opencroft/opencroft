@@ -86,11 +86,15 @@ only in the client.
   `icon`, `inputSchema` (JSON Schema, shown to agents by `list_actions`) and
   `execution` (`sync`, `awaitable` or `async`; see `ExecutionMode` in
   `@opencroft/core`). The handler is in the server module's `nodeActions`.
+- A target handle takes one edge: connecting another, on the canvas or with
+  `connectNodes`, replaces it. A target handle that collects several edges
+  declares `multiple: true`, in `extension.json` and in `src/client.tsx`
+  alike. Source handles take any number.
 - A target handle may name a node action as `streamAction` (run when a text
   stream into the handle completes, with `{ text }` as its parameters) or
   `streamChunkAction` (run on every chunk, with the chunk as its parameters).
 - `provides.apps` entries are `AppEntry` (`@opencroft/core`): `type`, `title`,
-  `description`, `icon`, the `parameters` asked for when a person adds the App,
+  `description`, `icon`, `accent`, the `parameters` asked for when a person adds the App,
   `actions` (`AppActionMeta`: what agents call with `app_call`), `handles`
   (context sources each instance exposes) and `fullPageRoutes`.
 - `provides.mcpTools` entries are `McpToolMeta` (`@opencroft/server/tools`).
@@ -162,13 +166,23 @@ export default defineExtension({
   and connects like every other node.
 - `inspector` is the node's panel in the inspector; `inspectorTabs` splits it
   into tabs. Both get `ExtensionInspectorProps<D>`: `nodeId`, `data` and
-  `updateData(patch)`.
+  `updateData(patch)`. The inspector wraps each in a scroll area unless it
+  asks to fill the panel instead (`inspectorFullHeight`, or a tab's
+  `fullHeight`), as an editor or a terminal does.
 - `useNodeContext(nodeId, handleId)` reads what is wired into a target handle
   on the open canvas. A node offers a value on its source handle with
   `exposeOutput(handleId, data, type, nodeId, contexts)`.
 - Graph data stores the qualified type; every callback the host hands the
   extension (`exposeOutput`, a context-menu item's `type`, a node action's
   `ctx.type`) gets the bare one.
+- A **frame** holds other nodes by area instead of by edges. Declare it with
+  `category: 'Organization'` (in the manifest too) and draw it with
+  `CanvasFrame`: the canvas then creates it 400 × 300 behind the other nodes,
+  makes it resizable and moves what it holds along with it. A node is inside a
+  frame when its top-left corner lies in the frame's area. A node action reads
+  the frames holding its node with `ctx.containingNodes(type)`; a component or
+  inspector reads the same answer from the open canvas with
+  `useContainingNodes(nodeId, type)`.
 
 ### Provider points
 
@@ -243,6 +257,8 @@ export const routes: ExtensionRoutes = {
 | `actionAccess` | `admin` for each action only admins may run from the browser | `ActionAccessMap` in `actions` |
 | `nodeActions` | node actions by bare node type, then action id; each gets a `NodeActionContext` | `NodeActions` in `actions` |
 | `nodeActionAccess` | the same policy for node actions | `NodeActionAccessMap` in `actions` |
+| `nodeDataValidators` | what is wrong with a node's data, by bare node type | `NodeDataValidators` in `graph` |
+| `nodeChecks` | what is wrong with a node given its data and wiring, by bare node type | `NodeChecks` in `graph` |
 | `exposeOutput` | the value a node's source handle carries, for server-side readers of the graph | `ExposeOutput` in `actions` |
 | `routes` | HTTP handlers at `/api/ext/<extension id>/http/<path>` (`routeUrl(path)`) | `ExtensionRoutes` in `routes` |
 | `tools` | the handlers of the manifest's `provides.mcpTools`, by name | `ExtensionToolHandler` in `tools` |
@@ -265,6 +281,63 @@ an abort `signal` when the run can be cancelled.
 - **To feed Log and send-message nodes**, declare a source handle of type
   `builtin.core.text-stream` and broadcast `{ text, final }` on it; on
   `final: true` the accumulated text is delivered downstream.
+- **Data validation:** a node type's validator gets the node's data and
+  returns a `NodeDataProblem` per thing wrong with it: a title, the field's
+  dot path (`path`), and the detail and next step where known. It is
+  synchronous, reads the data alone, and reads a missing field as its
+  default. The graph actions (`createNodes`, `updateNodes`,
+  `writeNodeProperty`, `editNodeProperty`) refuse a write that introduces a
+  problem. A problem the node already had (same `path` and `title`, and the
+  value at `path` unchanged) does not refuse a write, so keep the value out
+  of the title and put it in the detail. Every node's current problems are
+  stored as its errors under the source `data`, so the card, the Errors tab
+  and an agent reading the node show them. The graph's reads (`getNodes`,
+  `findNodes`) run the validators themselves without storing anything, so
+  they show the current problems on a graph nobody has opened or written
+  since its data was stored. Canvas edits are stored and then shown, not refused; stored data
+  is never rewritten. Keep the rule in a host-free module when the inspector
+  also marks the field with it.
+
+  ```ts
+  export const nodeDataValidators = {
+    gauge: (data: GaugeData) =>
+      typeof data.value === 'number' && data.value < 0
+        ? [{ path: 'value', title: 'Value is negative', next: 'Set Value to 0 or more.' }]
+        : [],
+  } satisfies NodeDataValidators
+  ```
+- **Node checks:** a node type's check gets the node (`id`, `data`) and the
+  edges that start or end at it, and returns a `NodeError` per thing wrong
+  with it, such as a required output left unconnected. It is synchronous and
+  never refuses a write, since a graph is wired one edge at a time. Every
+  node's current findings are stored as its errors under the source `check`
+  whenever the graph changes, and the graph's reads run the checks
+  themselves, so the card, the Errors tab and an agent reading the node show
+  the same list. A client node definition's `errors` is deprecated: it shows
+  its findings on the open canvas only, so agents never see them. Move what
+  it finds into a check.
+
+  ```ts
+  export const nodeChecks = {
+    gauge: (node, edges) =>
+      edges.some((e) => e.target === node.id && e.targetHandle === 'reading')
+        ? []
+        : [{ title: 'No reading connected', next: 'Connect a sensor to the Reading input.' }],
+  } satisfies NodeChecks
+  ```
+
+  A check that needs nodes on other graphs takes the third argument,
+  `instance`: `instance.nodesOfType('gauge')` gives every node of one of the
+  extension's own types, by bare type, on every graph of the instance, each
+  with its `data`, its graph's address and its edges, as frozen copies. The
+  graph being checked is read as it is being written. What a check reads
+  there is recorded, so a change to those nodes on another graph (to their
+  data or to the edges at them), the deletion of a graph holding them, or a
+  new address for one (the graph renamed or transferred, or its space
+  renamed), checks its graph again. The check stays
+  pure: its findings follow from what it is told, in a stable order (sort by
+  the other node's graph and id), so checking a graph again over the same
+  instance writes nothing.
 - **Access:** `actionAccess` and `nodeActionAccess` guard the browser's entry
   points only. An agent's `call` and a graph run reach node actions without
   them.
@@ -285,7 +358,7 @@ modules; the package roots re-export them all.
 | `extension` | `defineExtension` and the declaration types, the provider points, `extensionId`, `urlBase`, `assetUrl`, `routeUrl`, `absoluteUrl` |
 | `actions` | `invoke` (own server actions), `dispatch` (node actions), `callAppAction` |
 | `storage` | `createStorage`: the extension's key-value store, shared with its server half |
-| `canvas` | node definitions and props, handle pins, `NodeFrame` and `NodeCard*`, `useNodeContext`, the inspector intent, context menus, xyflow hooks, command modes, `useOverlay`, `GraphCanvas` |
+| `canvas` | node definitions and props, handle pins, `NodeFrame` and `NodeCard*`, `CanvasFrame` and `useContainingNodes`, `useNodeContext`, the inspector intent, context menus, xyflow hooks, command modes, `useOverlay`, `GraphCanvas` |
 | `graph` | `NodeRef`, `describeGraphRefs`, `subscribeGraphRefs` |
 | `streams` | `getStream`, `subscribe`, `broadcast`; the server's `events` arrive on `getStream(extensionId, 'events')` |
 | `chat` | `ChatDock`, `EmbeddedAgentChat`, `ChatSelector`, the selection that rides along with a message, the agent-chat provider points |
@@ -303,11 +376,111 @@ modules; the package roots re-export them all.
 | `system` | `fs`, `os`, `path`, `exec`, `execFile`, `crypto` |
 | `storage` | `storage`, `cacheDir`, `dataDir` |
 | `settings`, `secrets`, `graph`, `events`, `collab` | the member of that name |
-| `apps` | `apps.listInstances` and the App server contract |
+| `apps` | `apps.listInstances`, `apps.directory`, `apps.subscribe` and the App server contract |
+| `spaces` | `spaces.list`, `spaces.subscribe` |
 | `chat` | `groupChats`, `sendMessage` |
+| `usage` | `usage.summary`: spend by agent, thread, chat or day |
 | `people` | `users`, `agents`, `mentions`, `mcpTokens` |
 | `terminal` | `terminal`, `ssh`, `execContext` |
 | `routes`, `tools`, `lifecycle` | the types of those exports |
+
+### Spaces and apps: who sees what
+
+`spaces.list()` and `apps.directory({ space? })` list spaces and the App
+instances in them, metadata only: an app comes with its address
+(`<space>.<slug>`), instance id, qualified type, name, slug, space, and its
+App's `icon` and `accent`, never its parameters or data directory. Imported
+from their modules they see as the extension's own system identity, which is
+in a space only once someone grants it into that space's chat (the chat's
+members dialog, or `ctx.groupChats.grantExtension` in an App action a person
+called). An App action's `ctx.spaces` / `ctx.apps` and a session route's
+`context.spaces` / `context.apps` see what the caller sees, and stop working
+once the call ends.
+
+`spaces.subscribe(listener)` and `apps.subscribe(listener)` are called on
+every change that can change that listing's answer: a space or an app added,
+removed, renamed, moved or otherwise changed, or a grant into or out of a
+space's chat. The change says what kind of thing changed and how
+(`{ subject, change }`), never which one; read the listing again to learn
+that. To tell the extension's client, pass it on with `events.broadcast`.
+
+### Agent presence
+
+`agents.presence()` gives every agent `agents.list()` gives, in the same
+order, with what it is doing over all its group-chat threads:
+`{ agentNodeId, status, activeThreads, lastActiveAt }`. It is read from the
+same session states the chat's thread status rings show. `status` is the
+first of these that any of its threads is in: `waiting` while a turn is
+blocked on a person (the chat's Waiting), `working` while a turn or its
+background work is in flight, `compacting` while every active thread is
+compacting its context, `idle` while a thread has a live session and none is
+active, and `offline` when none has a live session. `activeThreads` counts
+the threads with a turn, background work or a compaction in flight, and
+`lastActiveAt` is the ISO time of the last event any of them had, or null.
+
+`agents.subscribePresence(listener)` is called with an agent's row each time
+its `status` or `activeThreads` changes, a turn starting or ending for
+instance; `lastActiveAt` moving alone is not a change.
+
+### Thread activity
+
+`groupChats.activity({ chat?, since?, limit?, cursor?, includeArchived? })`
+lists the threads of the chats the reader is a member of, most recently
+active first, as the same rows `groupChats.thread(ref)` gives: the thread's
+`ref`, `chat`, `agent`, `title` and `folder`, and what its session is doing.
+Metadata only, never the transcript. The reader is the extension's own
+system identity (the chats it was granted into), the calling agent in an
+action an agent called, and the PERSON in an action a signed-in person
+called. `status` is read from the same session states the chat's thread
+status rings show, in the words `agents.presence()` uses: `working`,
+`waiting` (a turn blocked on a person), `compacting`, `idle` (a live
+session, a queued message included), `offline` (no live session) or
+`archived`. `contextUsage` is the figure the context
+ring shows, with `asOf` for a session not loaded now, and `lastTurnAt` the
+ISO time of the session's last event. Archived threads are left out unless
+`includeArchived`; `since` keeps the threads active at or after it; pages
+hold 100 threads by default and at most 500, and `nextCursor` reads the next.
+
+`groupChats.subscribeActivity(listener)` is called with a thread's row each
+time its `status` or live context reading changes, or a new thread appears,
+for the threads of chats the reader is a member of at that moment.
+
+### Spend summaries
+
+`usage.summary({ scope, since, until?, groupBy })` sums what the agents'
+sessions in group-chat threads spent, numbers only. `scope` is one of
+`{ space }` (a space's slug: the spend made in that space's chat),
+`{ chat }` (a chat's id or slug) or `{ agent }` (an agent's node id), and only
+ever covers the threads of chats the reader is a member of. The reader is the
+extension's own system identity when imported from `@opencroft/server/usage`,
+and the calling agent or person in an App action's `ctx.usage`. `since` and
+`until` are ISO times: turns that ended at or after `since` and before
+`until`. `groupBy` is `agent` (the row's `key` is the agent's node id),
+`thread` (the thread's `ref`), `chat` (the chat's `ref`) or `day` (a UTC day,
+`YYYY-MM-DD`). Each row is
+`{ key, tokens: { input, output, cacheRead, cacheWrite, total }, cost, pricedTurns, turns }`:
+by day oldest first, otherwise most tokens first. `cost` is
+`{ amount, currency }` summed over the `pricedTurns` turns that carried one,
+and null when none did or they were priced in more than one currency.
+Archived threads count; deleted ones do not. A `chat` the reader is not in
+refuses with "Not available".
+
+### Subscriptions end with the module
+
+The returned unsubscribe ends a subscription early. A subscription made from
+the server module (`spaces.subscribe`, `apps.subscribe`,
+`agents.subscribePresence`, `groupChats.subscribeActivity`) ends when the
+host unloads the module, on a recompile, an update or a removal, whether or
+not `unload` unsubscribed. One
+made through an App action's `ctx` or a session route's `context` ends when
+that call ends.
+
+A space's chat is the group chat at the space's own address, and it stays
+that space's through a rename of either. `groupChats.list()` says so on each
+chat with `space`, the space's slug; a chat made on its own has none. A
+handle of an App (`graph.listHandles`) and an App reference
+(`describeGraphRefs`) carry the instance's `slug` and `address`, so a link to
+`/space/<space>/app/<slug>` needs no guessing from the name.
 
 `@opencroft/core` holds the contracts both halves share (`AppEntry`,
 `ExecutionMode`, …). The packages are declarations: the host injects each

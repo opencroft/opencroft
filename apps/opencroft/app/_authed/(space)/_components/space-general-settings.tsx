@@ -63,7 +63,12 @@ export function SpaceGeneralSettings({ space }: Props) {
         return
       }
       // The slug moved with the name -- this page's own address changed.
-      await router.navigate({ to: '/space/$slug/settings', params: { slug: result.space.slug } })
+      await router.navigate({
+        to: '/space/$slug/settings',
+        params: { slug: result.space.slug },
+        search: { section: 'general' },
+        replace: true,
+      })
       router.invalidate()
     } finally {
       setRenaming(false)

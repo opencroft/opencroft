@@ -3,28 +3,16 @@ import { useEffect } from 'react'
 import { preloadIcons } from 'ui/media/named-icon'
 
 import { useFullPageAppRoute } from '@/app/_authed/(apps)/_components/full-page-route'
+import { MarkdownMentionsHost } from '@/app/_authed/(extension-runtime)/_client/markdown-mentions'
 import { MarkdownResolversHost } from '@/app/_authed/(extension-runtime)/_client/markdown-resolvers'
 import { listDeclaredIconNames } from '@/app/_authed/(extension-runtime)/_server/actions'
+import { isAdminOnlyPath } from '@/app/_authed/(settings)/_lib/administration-sections'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { SSEProvider } from '@/app/_authed/(sse)/_components/sse-provider'
 import { AppShell } from '@/app/_shell/app-shell'
 import { SponsorPrompt } from '@/app/_shell/sponsor-prompt'
 import { ThemePreferenceSync } from '@/app/_shell/theme-preference'
 import { getAuthState } from '@/app/(auth)/_server/session'
-
-// Path prefixes reachable only by an administrator. Checked here rather than
-// per-route so a route added under one of these prefixes later is guarded by
-// default. This is the UX redirect, not the security
-// boundary: a `createServerFn` is a callable endpoint of its own regardless of
-// which page links to it, so every admin-only server function checks
-// `requireAdminUser` (packages/auth/server.ts) independently. Losing this list
-// would show the wrong page; losing that check would let the action through.
-//
-// `/settings/tokens` was here until token management moved into the Account
-// screen. No such route exists any more, so the entry guarded
-// nothing — and a guard covering a route that does not exist quietly reads as
-// protection that is actually absent.
-const ADMIN_ONLY_PREFIXES = ['/settings/users']
 
 export const Route = createFileRoute('/_authed')({
   // The page-navigation gate. See __root.tsx for what this does NOT cover —
@@ -49,8 +37,16 @@ export const Route = createFileRoute('/_authed')({
       // dumping everyone on the root.
       throw redirect({ to: '/login', search: { redirect: location.href } })
     }
-    if (!isAdmin && ADMIN_ONLY_PREFIXES.some((prefix) => location.pathname.startsWith(prefix))) {
-      throw redirect({ to: '/settings' })
+    // The administration page, and anything added under it later, is checked
+    // here rather than per route, so it is guarded by default. This is the UX
+    // redirect, not the security boundary: a `createServerFn` is a callable
+    // endpoint of its own regardless of which page links to it, so every
+    // admin-only server function checks `requireAdminUser`
+    // (packages/auth/server.ts) independently. Losing this check would show
+    // the wrong page; losing that one would let the action through.
+    if (!isAdmin && isAdminOnlyPath(location.pathname)) {
+      // Their own settings, rather than a page they are refused on.
+      throw redirect({ to: '/settings', replace: true })
     }
     // Handed down as route context so anything that shows or hides an
     // administrator-only affordance reads the SAME fact this redirect just
@@ -88,6 +84,7 @@ function AuthedLayout() {
   return (
     <SSEProvider>
       <MarkdownResolversHost />
+      <MarkdownMentionsHost />
       <ThemePreferenceSync />
       <AppShell spaces={spaces} chrome={!fullPage}>
         <Outlet />

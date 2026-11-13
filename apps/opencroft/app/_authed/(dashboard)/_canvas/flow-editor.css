@@ -30,6 +30,27 @@
   box-shadow: none;
 }
 
+/* A one-finger drag over an unselected node pans the canvas (routeCanvasTouch),
+   so nothing inside it may scroll natively. touch-action is resolved only up to
+   the nearest scroll container, so it is set on every element, not the node. The
+   browser reads it when the finger lands, before any listener runs, so it holds
+   where the router's preventDefault cannot: a touchmove that arrives with
+   `cancelable` false. */
+.dashboard-mvp-flow .react-flow__node:not(.selected) * {
+  touch-action: none;
+}
+
+/* A kit ScrollArea's scrollbar drags its thumb by pointer events, which
+   routeCanvasTouch does not cancel when it hands a finger to the canvas, so on
+   an unselected node one drag would both pan the canvas and scroll the content.
+   Where a touchscreen is present the bar takes no pointer while its node is
+   unselected: a tap on it selects the node, and the next drag scrolls. */
+@media (any-pointer: coarse) {
+  .dashboard-mvp-flow .react-flow__node:not(.selected) [data-slot='scroll-area-scrollbar'] {
+    pointer-events: none;
+  }
+}
+
 .dashboard-mvp-flow .react-flow__handle {
   border-radius: 999px;
   transition: transform 120ms ease;
@@ -62,12 +83,6 @@
 }
 
 .dashboard-mvp-flow .react-flow__node-terminal {
-  height: 100%;
-}
-
-.dashboard-mvp-flow .react-flow__node-section {
-  /* biome-ignore lint/complexity/noImportantStyles: React Flow sets the node wrapper's z-index as an inline style, which only !important can beat */
-  z-index: -1 !important;
   height: 100%;
 }
 

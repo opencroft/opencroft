@@ -48,7 +48,8 @@ export function instanceKeyFile(): string {
 
 /**
  * What an operator is told while any key comes from the file: once per start in
- * the log, and on the setup and backup pages.
+ * the log, and behind the line across the top of the setup page and of an
+ * administrator's settings.
  */
 export function keyFileNotice(file: string): string {
   return (

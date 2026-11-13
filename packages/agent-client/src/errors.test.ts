@@ -3,7 +3,15 @@ import test from 'node:test'
 
 import { RequestError } from '@agentclientprotocol/sdk'
 
-import { rpcErrorDetail, rpcErrorParts } from './errors'
+import { isResourceNotFound, rpcErrorDetail, rpcErrorParts } from './errors'
+
+test('only an ACP resource-not-found reads as the agent not having the session', () => {
+  assert.equal(isResourceNotFound(RequestError.resourceNotFound('session-1')), true)
+  // The same words from a handler that threw them are a failure of the call,
+  // which a later attempt may get past.
+  assert.equal(isResourceNotFound(RequestError.internalError({ details: 'Session not found' })), false)
+  assert.equal(isResourceNotFound(new Error('Resource not found: session-1')), false)
+})
 
 test('a JSON-RPC error gives up its code and data, and anything else only its message', () => {
   const refused = RequestError.internalError({ details: 'Session not found' })

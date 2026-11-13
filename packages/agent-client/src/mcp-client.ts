@@ -54,16 +54,6 @@ function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_')
 }
 
-interface CallToolContent {
-  type: string
-  text?: string
-}
-
-function flattenResult(content: CallToolContent[]): string {
-  const parts = content.map((block) => (block.type === 'text' ? (block.text ?? '') : JSON.stringify(block)))
-  return parts.join('\n')
-}
-
 export interface McpToolset {
   tools: ToolSet
   closeAll: () => Promise<void>
@@ -76,7 +66,9 @@ export interface ConnectMcpOptions {
 
 // Connect to each server, list its tools, and expose them as AI SDK dynamic
 // tools. Per-server failures don't abort the toolset — they're reported and the
-// server is skipped.
+// server is skipped. A call answers with the server's own result envelope
+// (`content`, `isError`), for the caller to turn into what its model is given
+// (see tool-result.ts).
 export async function connectMcpToolset(servers: AcpMcpServer[], opts: ConnectMcpOptions = {}): Promise<McpToolset> {
   const tools: ToolSet = {}
   const clients: Client[] = []
@@ -102,7 +94,7 @@ export async function connectMcpToolset(servers: AcpMcpServer[], opts: ConnectMc
               undefined,
               { timeout: MCP_CALL_TIMEOUT },
             )
-            return flattenResult((result.content ?? []) as CallToolContent[])
+            return { content: result.content ?? [], ...(result.isError === true ? { isError: true } : {}) }
           },
         })
       }

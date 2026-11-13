@@ -13,11 +13,11 @@ beforeEach(() => {
 })
 
 test('nothing stored reads as nothing toggled', () => {
-  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'chat-1', 'active')), {})
+  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'chat-1.active')), {})
 })
 
 test('a toggle is stored per folder and read back', () => {
-  const key = folderOpenKey('alice', 'chat-1', 'active')
+  const key = folderOpenKey('alice', 'chat-1.active')
   writeFolderOpen(key, 'folder-a', false)
   writeFolderOpen(key, 'folder-b', true)
   writeFolderOpen(key, 'folder-a', true)
@@ -25,16 +25,17 @@ test('a toggle is stored per folder and read back', () => {
 })
 
 test("one person's toggle is not another's, nor another chat's or list's", () => {
-  writeFolderOpen(folderOpenKey('alice', 'chat-1', 'active'), 'folder-a', false)
-  assert.deepEqual(readFolderOpen(folderOpenKey('bob', 'chat-1', 'active')), {})
-  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'chat-2', 'active')), {})
-  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'chat-1', 'archive')), {})
+  writeFolderOpen(folderOpenKey('alice', 'chat-1.active'), 'folder-a', false)
+  assert.deepEqual(readFolderOpen(folderOpenKey('bob', 'chat-1.active')), {})
+  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'chat-2.active')), {})
+  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'chat-1.archive')), {})
+  assert.deepEqual(readFolderOpen(folderOpenKey('alice', 'recent')), {})
 })
 
 // A snapshot that is a new object on every read makes useSyncExternalStore
 // re-render without end.
 test('the same stored value reads back as the same object until it changes', () => {
-  const key = folderOpenKey('alice', 'chat-1', 'active')
+  const key = folderOpenKey('alice', 'chat-1.active')
   writeFolderOpen(key, 'folder-a', false)
   const first = readFolderOpen(key)
   assert.equal(readFolderOpen(key), first)
@@ -43,7 +44,7 @@ test('the same stored value reads back as the same object until it changes', () 
 })
 
 test('an unreadable entry reads as nothing toggled, and only boolean values are kept', () => {
-  const key = folderOpenKey('alice', 'chat-1', 'active')
+  const key = folderOpenKey('alice', 'chat-1.active')
   window.localStorage.setItem(key, '{not json')
   assert.deepEqual(readFolderOpen(key), {})
   window.localStorage.setItem(key, '[true]')

@@ -1,4 +1,12 @@
-import type { ChatEvent, CompactionState, ElicitationSchema, PermissionOpt, SessionNotice, ToolDiff } from './types'
+import type {
+  AskOutcome,
+  ChatEvent,
+  CompactionState,
+  ElicitationSchema,
+  PermissionOpt,
+  SessionNotice,
+  ToolDiff,
+} from './types'
 
 export type ChatMessage =
   | { id: string; kind: 'user'; text: string }
@@ -33,9 +41,13 @@ export type ChatMessage =
       form?: ElicitationSchema
       url?: string
       resolved: boolean
+      // How it was settled, once resolved and when the event said (AskOutcome).
+      outcome?: AskOutcome
     }
   | ({ id: string; kind: 'notice' } & SessionNotice)
   | { id: string; kind: 'error'; text: string }
+  // Where the session's agent context begins (the `session_start` event).
+  | { id: string; kind: 'session_start' }
 
 type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
 type TextMessage = Extract<ChatMessage, { kind: 'assistant' | 'thought' }>
@@ -46,14 +58,25 @@ type TextMessage = Extract<ChatMessage, { kind: 'assistant' | 'thought' }>
 // the tool-call lifecycle, so renderers and the pagination cut rule share one
 // definition instead of each hardcoding the status strings.
 //
-// 'cancelled' is not an ACP tool-call status — it comes from the compaction
+// 'cancelled' is not an ACP tool-call status. It comes from the compaction
 // lifecycle, which folds into a tool-shaped message below and closes with it
-// when a compaction is abandoned at a turn boundary. Real tool calls never
-// carry it, so listing it here changes nothing for them.
+// when a compaction is abandoned at a turn boundary, from a harness adapter
+// that reads a command as aborted (settleCompletedCall), and from
+// statusAtTurnEnd below.
 const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
 export function isTerminalToolStatus(status: string | undefined): boolean {
   return status !== undefined && TERMINAL_TOOL_STATUSES.has(status)
+}
+
+// How a tool call reads once the turn that ran it has ended. A call still open
+// then gets no further update: its turn is over (a Stop, an interrupt, a
+// harness that dropped it), and nothing is running it. It reads as
+// 'cancelled' rather than as still running, so no card spins for it, after a
+// reopen included. Only the reading changes: the recorded events stay as the
+// harness sent them. Every fold of a transcript applies this at `turn_end`.
+export function statusAtTurnEnd(status: string): string {
+  return isTerminalToolStatus(status) ? status : 'cancelled'
 }
 
 // Events carrying "last value wins" session state rather than a step in the
@@ -127,6 +150,18 @@ type AskMessage = Extract<ChatMessage, { kind: 'ask' }>
  */
 export const COMPACTION_TITLE = 'Compact conversation'
 
+const COMPACTION_ROW_PREFIX = 'compaction:'
+
+/**
+ * Whether a folded row is a compaction that took effect: a point the agent's
+ * context restarts from, the same as a new session's start. Takes the row's id
+ * and status as compactionView gives them. A compaction that failed or was
+ * cancelled left the context as it was.
+ */
+export function isCompletedCompaction(rowId: string, status: string): boolean {
+  return rowId.startsWith(COMPACTION_ROW_PREFIX) && status === 'completed'
+}
+
 export function compactionView(compaction: CompactionState): {
   id: string
   title: string
@@ -149,7 +184,7 @@ export function compactionView(compaction: CompactionState): {
     input.durationMs = compaction.durationMs
   }
   return {
-    id: `compaction:${compaction.compactionId}`,
+    id: `${COMPACTION_ROW_PREFIX}${compaction.compactionId}`,
     title: COMPACTION_TITLE,
     status: compaction.status,
     input,
@@ -161,6 +196,8 @@ export function compactionView(compaction: CompactionState): {
 export function foldEvents(events: ChatEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const tools = new Map<string, ToolMessage>()
+  // Calls announced and not yet settled, closed at `turn_end` (statusAtTurnEnd).
+  const openTools = new Set<ToolMessage>()
   const permissions = new Map<string, PermissionMessage>()
   const asks = new Map<string, AskMessage>()
   let counter = 0
@@ -242,6 +279,9 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
         }
         tools.set(event.toolCallId, message)
         messages.push(message)
+        if (!isTerminalToolStatus(message.status)) {
+          openTools.add(message)
+        }
         break
       }
       case 'tool_update': {
@@ -253,6 +293,9 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
           message.output = event.output ?? message.output
           if (event.diffs) {
             message.diffs = event.diffs
+          }
+          if (isTerminalToolStatus(message.status)) {
+            openTools.delete(message)
           }
         }
         break
@@ -323,6 +366,9 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
         const message = asks.get(event.requestId)
         if (message) {
           message.resolved = true
+          if (event.outcome) {
+            message.outcome = event.outcome
+          }
         }
         break
       }
@@ -334,8 +380,16 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
         messages.push({ id: nextId(), kind: 'error', text: event.message })
         break
       }
+      case 'session_start': {
+        messages.push({ id: nextId(), kind: 'session_start' })
+        break
+      }
       case 'turn_end': {
         openBlocks.clear()
+        for (const message of openTools) {
+          message.status = statusAtTurnEnd(message.status)
+        }
+        openTools.clear()
         break
       }
       default:

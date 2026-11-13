@@ -11,10 +11,15 @@ export interface CodeBlockProps {
    * The fence's info string or a bare language name (`ts`, `bash`, `json`).
    * Its first word labels the block, over the code; without one the block has
    * no label. Aliases are resolved for the colours; anything unrecognised
-   * renders as plain text.
+   * renders as plain text. A `title=` or `filename=` in it (`ts title="app.ts"`)
+   * names the file the block downloads as; without one it is `snippet.<ext>`
+   * from the language, or `snippet.txt`.
    */
   language?: string
-  /** Offer the copy control, on by default. */
+  /**
+   * Offer the copy and download controls, on by default. Every block also has
+   * a wrap-lines toggle, whatever this says.
+   */
   copyable?: boolean
   /** Added to the block's wrapper, for the layout your surface needs. */
   className?: string

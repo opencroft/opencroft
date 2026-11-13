@@ -33,6 +33,7 @@ import {
   setPresenceLocalImpl,
   stopLocalImpl,
   stopLocalSessionProcessImpl,
+  subagentHistoryPageImpl,
 } from '@/app/_authed/(agent)/_server/acp-impl'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import type { StoredAttachment } from '@/app/_authed/(agent)/_server/attachment-store'
@@ -273,6 +274,17 @@ export const getSessionHistoryPageLocal = createServerFn({ method: 'GET', strict
   .handler(async ({ data }): Promise<AuthoredRecordsWindow | null> => {
     await requireSessionAccess(data.sessionId)
     return sessionHistoryPageImpl(data.sessionId, data.beforeIndex, HISTORY_PAGE_RECORDS)
+  })
+
+// A subagent section's steps, from that subagent's own log: its newest
+// records when the section is expanded (no `beforeIndex`), then the page
+// above a previous window's `startIndex` for its "load older". Positions are
+// the subagent log's. Null when the session or the subagent is not held.
+export const getSubagentHistoryPageLocal = createServerFn({ method: 'GET', strict: { output: false } })
+  .inputValidator((data: { sessionId: string; subagentSessionId: string; beforeIndex?: number }) => data)
+  .handler(async ({ data }): Promise<AuthoredRecordsWindow | null> => {
+    await requireSessionAccess(data.sessionId)
+    return subagentHistoryPageImpl(data.sessionId, data.subagentSessionId, data.beforeIndex, HISTORY_PAGE_RECORDS)
   })
 
 // The log index of a recorded turn, for opening the conversation at it. The

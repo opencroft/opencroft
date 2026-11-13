@@ -6,6 +6,7 @@
 // in extension-action-impl.ts instead.
 import type { MentionedAccount } from '@opencroft/client'
 import { createServerFn } from '@tanstack/react-start'
+import type { MentionCandidate } from 'agent-chat/components/mention-autocomplete'
 
 import {
   getActionAccess,
@@ -23,8 +24,8 @@ import {
   type TerminalSourceTarget,
 } from '@/app/_authed/(extension-runtime)/_server/terminal-sources'
 import type { ExtensionClientInfo } from '@/app/_authed/(extension-runtime)/_types'
-import { mentionedAccountsByUsername } from '@/app/_server/account-directory'
-import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/require-session'
+import { mentionableAccounts, mentionedAccountsByUsername } from '@/app/_server/account-directory'
+import { requireAdminServerFn } from '@/app/_server/require-session'
 
 // Client-callable wrapper — used when the caller is genuinely client-side code (see
 // _client/host.ts) or a plain HTTP route handler, both of which need the real
@@ -32,8 +33,8 @@ import { requireAdminServerFn, requireSessionServerFn } from '@/app/_server/requ
 export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { extensionId: string; actionName: string; args: unknown[] }) => data)
   .handler(async ({ data }): Promise<unknown> => {
-    await requireSessionServerFn()
-    // Per-action authorization: an action the extension declared `admin` is
+    // Per-action authorization, after the session gate every server function
+    // runs (app/start.ts): an action the extension declared `admin` is
     // refused for a signed-in non-admin here, at the request-facing entry —
     // the only layer with a request to identify the caller from. Identity is
     // derived from the request, never taken from `data`, so a caller cannot
@@ -45,19 +46,16 @@ export const invokeExtensionAction = createServerFn({ method: 'POST', strict: { 
   })
 
 export const listExtensionClients = createServerFn().handler(async (): Promise<ExtensionClientInfo[]> => {
-  await requireSessionServerFn()
   return listExtensionClientsImpl()
 })
 
 export const listDeclaredIconNames = createServerFn().handler(async (): Promise<string[]> => {
-  await requireSessionServerFn()
   return listDeclaredIconNamesImpl()
 })
 
 export const rebuildExtension = createServerFn({ method: 'POST' })
   .inputValidator((extensionId: string) => extensionId)
   .handler(async ({ data: extensionId }): Promise<void> => {
-    await requireSessionServerFn()
     await ensureExtensionBuilt(extensionId)
   })
 
@@ -69,7 +67,6 @@ export const rebuildExtension = createServerFn({ method: 'POST' })
 export const listTerminalSources = createServerFn({ strict: { output: false } })
   .inputValidator((data: { spaceSlug?: string }) => data)
   .handler(async ({ data }): Promise<TerminalSourceInfo[]> => {
-    await requireSessionServerFn()
     return listTerminalSourcesImpl(data.spaceSlug)
   })
 
@@ -77,7 +74,6 @@ export const listTerminalSources = createServerFn({ strict: { output: false } })
 export const listTerminalSourceTargets = createServerFn({ strict: { output: false } })
   .inputValidator((data: { id: string }) => data)
   .handler(async ({ data }): Promise<TerminalSourceTarget[]> => {
-    await requireSessionServerFn()
     return listTerminalSourceTargetsImpl(String(data.id))
   })
 
@@ -90,7 +86,6 @@ export const listTerminalSourceTargets = createServerFn({ strict: { output: fals
 export const registryListingOf = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((extensionId: string) => extensionId)
   .handler(async ({ data: extensionId }): Promise<{ registryName: string } | null> => {
-    await requireSessionServerFn()
     const listed = await findRegistryExtension(String(extensionId))
     return listed ? { registryName: listed.registryName } : null
   })
@@ -99,14 +94,17 @@ export const registryListingOf = createServerFn({ method: 'POST', strict: { outp
 export const describeGraphRefs = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { ids: string[] }) => data)
   .handler(async ({ data }): Promise<Record<string, GraphRefInfo | null>> => {
-    await requireSessionServerFn()
     return describeGraphRefsImpl(Array.isArray(data.ids) ? data.ids.map(String) : [])
   })
+
+/** Every person and agent a mention can name, for the markdown editor's `@` list. */
+export const listMentionableAccounts = createServerFn().handler(async (): Promise<MentionCandidate[]> => {
+  return mentionableAccounts()
+})
 
 /** The accounts holding these usernames, for the mention chip; one no account holds is absent. */
 export const describeMentionedAccounts = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { usernames: string[] }) => data)
   .handler(async ({ data }): Promise<Record<string, MentionedAccount>> => {
-    await requireSessionServerFn()
     return mentionedAccountsByUsername(Array.isArray(data.usernames) ? data.usernames.map(String) : [])
   })

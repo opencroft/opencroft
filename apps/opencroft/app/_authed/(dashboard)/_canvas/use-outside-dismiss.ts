@@ -1,5 +1,7 @@
 import { type RefObject, useEffect } from 'react'
 
+import { isCanvasMenuTouchTarget } from '@/app/_authed/(dashboard)/_canvas/canvas-touch-guard'
+
 // Dismiss a floating element (context menu, popover) when an interaction
 // STARTS outside it -- and only then.
 //
@@ -23,10 +25,15 @@ import { type RefObject, useEffect } from 'react'
 //
 // Registered in the capture phase so a `stopPropagation` anywhere in the
 // tree cannot hide an outside press from the dismiss decision.
+//
+// A press on any canvas menu (`data-canvas-menu`) counts as inside: a
+// submenu is drawn in a portal, outside the element it opens from, and
+// choosing from it must not close that element first.
 export function useOutsideDismiss(ref: RefObject<HTMLElement | null>, onDismiss: () => void): void {
   useEffect(() => {
     const handle = (e: PointerEvent) => {
-      if (ref.current && !(e.target instanceof Node && ref.current.contains(e.target))) {
+      const inside = (e.target instanceof Node && ref.current?.contains(e.target)) || isCanvasMenuTouchTarget(e.target)
+      if (ref.current && !inside) {
         onDismiss()
       }
     }

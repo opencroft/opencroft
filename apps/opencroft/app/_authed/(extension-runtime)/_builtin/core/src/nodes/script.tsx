@@ -1,39 +1,25 @@
 import { dispatch } from '@opencroft/client/actions'
-import {
-  InputHandle,
-  inspectorIntent,
-  NodeFrame,
-  OutputHandle,
-  useGraphNodes,
-  useNodeContext,
-  useReactFlow,
-} from '@opencroft/client/canvas'
+import { InputHandle, inspectorIntent, NodeFrame, OutputHandle, useNodeContext } from '@opencroft/client/canvas'
 import { CodeEditor, type CodeEditorLanguage } from '@opencroft/client/code'
-import { extensionId } from '@opencroft/client/extension'
 import { getStream, type Stream, type TextChunk } from '@opencroft/client/streams'
-import {
-  Badge,
-  Button,
-  Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Textarea,
-} from '@opencroft/client/ui'
-import { Code, Hexagon, Pencil, Play, ScrollText, TerminalSquare, X } from 'lucide-react'
-import { type ChangeEvent, useCallback, useMemo, useState } from 'react'
+import { Button, EnvironmentTable, type EnvironmentVariable, Label } from '@opencroft/client/ui'
+import { Code, Hexagon, Pencil, Play, ScrollText, TerminalSquare } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
+import { environmentPatch, envNameProblem, readEnvironment } from './script-environment'
+import { isScriptLanguage, type ScriptLanguage } from './script-language'
 import { type ScriptResult, setScriptResult, useScriptResult } from './script-output-store'
-import { storedType } from './stored-type'
+import { useSecretKeys } from './secrets'
 
+// Stored data is whatever its creator wrote, so every field may be missing,
+// and `language` may hold a value no script node runs.
 export interface ScriptData {
-  script: string
-  language: 'bash' | 'python' | 'node'
-  env: string
-  secrets: string
+  script?: string
+  language?: unknown
+  // The stored form is script-environment.ts's to describe; read it only through readEnvironment.
+  env?: unknown
+  secrets?: unknown
 }
 
 interface TerminalContext {
@@ -45,9 +31,9 @@ const LANG_CONFIG = {
   bash: { icon: TerminalSquare, accent: 'oklch(0.7 0.18 60)', label: 'Bash' },
   python: { icon: Code, accent: 'oklch(0.6 0.18 260)', label: 'Python' },
   node: { icon: Hexagon, accent: 'oklch(0.65 0.2 150)', label: 'Node.js' },
-} as const
+} as const satisfies Record<ScriptLanguage, unknown>
 
-function editorLanguage(language: ScriptData['language']): CodeEditorLanguage {
+function editorLanguage(language: ScriptLanguage): CodeEditorLanguage {
   if (language === 'python') {
     return 'python'
   }
@@ -57,33 +43,42 @@ function editorLanguage(language: ScriptData['language']): CodeEditorLanguage {
   return 'shell'
 }
 
+// What the node shows itself as: the language its data names, or its type's
+// when the data names none it runs (which the node's errors report).
+function shownLanguage(data: ScriptData, typeLanguage: ScriptLanguage): ScriptLanguage {
+  return isScriptLanguage(data.language) ? data.language : typeLanguage
+}
+
+/** The props every script node view gets beside its own: the language its type is created with. */
+interface OfType {
+  typeLanguage: ScriptLanguage
+}
+
 // ═════════════════════════════════════════════════════════════════════
 // Script node
 // ═════════════════════════════════════════════════════════════════════
 
-function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; selected?: boolean }) {
-  const lang = LANG_CONFIG[data.language]
+function ScriptNode({
+  id,
+  data,
+  selected,
+  typeLanguage,
+}: { id: string; data: ScriptData; selected?: boolean } & OfType) {
+  const lang = LANG_CONFIG[shownLanguage(data, typeLanguage)]
+  const script = data.script ?? ''
   const ctx = useNodeContext<TerminalContext>(id, 'ctx-in')
-  const { setNodes } = useReactFlow()
   const result = useScriptResult(id)
   const [running, setRunning] = useState(false)
 
-  const errors = (data as ScriptData & { __errors?: string[] }).__errors
-
-  const focus = useCallback(() => {
-    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
-  }, [id, setNodes])
-
   const openTab = useCallback(
     (tab: string) => {
-      focus()
       inspectorIntent.open(id, tab)
     },
-    [id, focus],
+    [id],
   )
 
   const run = useCallback(async () => {
-    if (!data.script.trim()) {
+    if (!script.trim()) {
       return
     }
     setRunning(true)
@@ -96,7 +91,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
     } finally {
       setRunning(false)
     }
-  }, [id, data.script])
+  }, [id, script])
 
   return (
     <NodeFrame
@@ -105,7 +100,6 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
       subtitle={ctx?.value ? `on ${ctx.value.type}` : 'local'}
       selected={selected ?? false}
       loading={running}
-      errors={errors}
       input={<InputHandle type='execution-context' id='exec-in' />}
       extra={
         <div className='flex items-center gap-1'>
@@ -122,7 +116,7 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
             size='sm'
             className='nodrag nopan h-5 text-[10px] px-1.5'
             onClick={run}
-            disabled={running || !data.script.trim()}
+            disabled={running || !script.trim()}
           >
             <Play className='h-2.5 w-2.5 shrink-0' />
           </Button>
@@ -157,168 +151,68 @@ function ScriptNode({ id, data, selected }: { id: string; data: ScriptData; sele
   )
 }
 
-// ═════════════════════════════════════════════════════════════════════
-// SecretsPicker — reused from Application inspector
-// ═════════════════════════════════════════════════════════════════════
-
-interface SecretsStoreNodeData {
-  secretKeys?: string[]
-}
-
-function SecretsPicker({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  const nodes = useGraphNodes()
-
-  const availableKeys = useMemo(() => {
-    const keys = new Set<string>()
-    for (const n of nodes as { type?: string; data?: SecretsStoreNodeData }[]) {
-      if (n.type !== storedType(extensionId, 'core-secrets-store')) continue
-      for (const key of n.data?.secretKeys ?? []) {
-        keys.add(key)
-      }
-    }
-    return [...keys].sort()
-  }, [nodes])
-
-  const selected = useMemo(
-    () =>
-      value
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [value],
-  )
-
-  const remaining = useMemo(() => availableKeys.filter((k) => !selected.includes(k)), [availableKeys, selected])
-
-  const remove = useCallback(
-    (name: string) => {
-      onChange(selected.filter((s) => s !== name).join('\n'))
-    },
-    [onChange, selected],
-  )
-
-  const add = useCallback(
-    (name: string) => {
-      if (!name || selected.includes(name)) return
-      onChange([...selected, name].join('\n'))
-    },
-    [onChange, selected],
-  )
-
-  const stale = selected.filter((s) => !availableKeys.includes(s))
-
+// The node's Environment: the kit's table over the stored field, offering the
+// keys of the Secrets Stores on this graph.
+function EnvironmentField({ data, updateData }: Pick<ScriptViewProps, 'data' | 'updateData'>) {
+  const secretNames = useSecretKeys()
+  const { env, secrets } = data
+  const variables = useMemo(() => readEnvironment({ env, secrets }), [env, secrets])
   return (
-    <div className='flex flex-col gap-1.5'>
-      {selected.length > 0 ? (
-        <div className='flex flex-wrap gap-1'>
-          {selected.map((name) => {
-            const missing = stale.includes(name)
-            return (
-              <Badge
-                key={name}
-                variant={missing ? 'destructive' : 'secondary'}
-                className='gap-1 font-mono text-[10px] pr-1'
-                title={missing ? 'Not found in any Secrets Store' : ''}
-              >
-                <span>{name}</span>
-                <button type='button' onClick={() => remove(name)} className='hover:opacity-70'>
-                  <X className='h-3 w-3' />
-                </button>
-              </Badge>
-            )
-          })}
-        </div>
-      ) : null}
-      {remaining.length > 0 ? (
-        <Select
-          value=''
-          onValueChange={(v) => {
-            if (v !== null) {
-              add(v)
-            }
-          }}
-        >
-          <SelectTrigger className='h-7 text-xs'>
-            <SelectValue placeholder='Add secret…' />
-          </SelectTrigger>
-          <SelectContent>
-            {remaining.map((k) => (
-              <SelectItem key={k} value={k} className='font-mono text-xs'>
-                {k}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : availableKeys.length === 0 ? (
-        <p className='text-[10px] text-muted-foreground italic'>
-          No Secrets Stores in this graph. Add a Secrets Store node and define keys to pick from.
-        </p>
-      ) : (
-        <p className='text-[10px] text-muted-foreground italic'>
-          All available secrets ({availableKeys.length}) selected.
-        </p>
-      )}
-    </div>
+    <EnvironmentTable
+      variables={variables}
+      secrets={secretNames}
+      onChange={(next: EnvironmentVariable[]) => updateData(environmentPatch(next))}
+      validateName={envNameProblem}
+      noSecretsMessage='No Secrets Stores in this graph. Add a Secrets Store node and define keys to pick from.'
+    />
   )
 }
 
-function ScriptInspector({
-  data,
-  updateData,
-}: {
+interface ScriptViewProps extends OfType {
   nodeId: string
   data: ScriptData
   updateData: (p: Partial<ScriptData>) => void
-}) {
+}
+
+function ScriptInspector({ data, updateData, typeLanguage }: ScriptViewProps) {
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1 text-xs text-muted-foreground'>
-        <span>Language: {LANG_CONFIG[data.language].label}</span>
+        {isScriptLanguage(data.language) ? (
+          <span>Language: {LANG_CONFIG[data.language].label}</span>
+        ) : (
+          <div className='flex items-center gap-2'>
+            <span className='text-destructive'>
+              Language: {data.language === undefined ? 'not set' : JSON.stringify(data.language)}
+            </span>
+            <Button variant='outline' size='sm' onClick={() => updateData({ language: typeLanguage })}>
+              Set to {LANG_CONFIG[typeLanguage].label}
+            </Button>
+          </div>
+        )}
         <span className='italic'>Open the Editor tab to edit code.</span>
       </div>
       <div className='flex flex-col gap-1'>
-        <Label>Environment (one per line, KEY=VALUE)</Label>
-        <Textarea
-          value={data.env ?? ''}
-          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ env: e.target.value })}
-          placeholder={'NODE_ENV=production\nDEBUG=false'}
-          className='font-mono text-xs min-h-[60px]'
-        />
-      </div>
-      <div className='flex flex-col gap-1'>
-        <Label>Secrets</Label>
-        <SecretsPicker value={data.secrets ?? ''} onChange={(next: string) => updateData({ secrets: next })} />
+        <Label>Environment</Label>
+        <EnvironmentField data={data} updateData={updateData} />
       </div>
     </div>
   )
 }
 
-export function ScriptCodeEditorTab({
-  data,
-  updateData,
-}: {
-  nodeId: string
-  data: ScriptData
-  updateData: (p: Partial<ScriptData>) => void
-}) {
+function ScriptCodeEditorTab({ data, updateData, typeLanguage }: ScriptViewProps) {
   return (
     <div className='h-full w-full overflow-hidden'>
       <CodeEditor
         value={data.script ?? ''}
-        language={editorLanguage(data.language)}
+        language={editorLanguage(shownLanguage(data, typeLanguage))}
         onChange={(next: string) => updateData({ script: next })}
       />
     </div>
   )
 }
 
-export function ScriptOutputTab({
-  nodeId,
-}: {
-  nodeId: string
-  data: ScriptData
-  updateData: (p: Partial<ScriptData>) => void
-}) {
+function ScriptOutputTab({ nodeId }: { nodeId: string }) {
   const result = useScriptResult(nodeId)
   if (!result) {
     return <div className='p-3 text-xs text-muted-foreground italic'>Run the script to see output here.</div>
@@ -336,31 +230,31 @@ export function ScriptOutputTab({
   )
 }
 
-export function makeBashNode() {
+type ViewProps = Omit<ScriptViewProps, 'typeLanguage'>
+
+// One script node type's views, each told the language that type is created
+// with, which it shows when the node's data names none it runs.
+function scriptNodeViews(typeLanguage: ScriptLanguage) {
   return {
-    component: ScriptNode,
-    inspector: ScriptInspector,
-    editorTab: ScriptCodeEditorTab,
+    component: (props: { id: string; data: ScriptData; selected?: boolean }) => (
+      <ScriptNode {...props} typeLanguage={typeLanguage} />
+    ),
+    inspector: (props: ViewProps) => <ScriptInspector {...props} typeLanguage={typeLanguage} />,
+    editorTab: (props: ViewProps) => <ScriptCodeEditorTab {...props} typeLanguage={typeLanguage} />,
     outputTab: ScriptOutputTab,
   }
+}
+
+export function makeBashNode() {
+  return scriptNodeViews('bash')
 }
 
 export function makePythonNode() {
-  return {
-    component: ScriptNode,
-    inspector: ScriptInspector,
-    editorTab: ScriptCodeEditorTab,
-    outputTab: ScriptOutputTab,
-  }
+  return scriptNodeViews('python')
 }
 
 export function makeNodeJsNode() {
-  return {
-    component: ScriptNode,
-    inspector: ScriptInspector,
-    editorTab: ScriptCodeEditorTab,
-    outputTab: ScriptOutputTab,
-  }
+  return scriptNodeViews('node')
 }
 
 export function scriptExposeOutput(

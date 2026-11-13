@@ -73,7 +73,13 @@ await registry.create(slug, slug, {
       style: { width: 500, height: 500 },
       data: {},
     },
-    { id: GAUGE, type: qualifyType(FOLDER, 'gauge'), position: { x: 10, y: 10 }, data: {} },
+    {
+      id: GAUGE,
+      type: qualifyType(FOLDER, 'gauge'),
+      parentId: `panel-${suffix}`,
+      position: { x: 10, y: 10 },
+      data: {},
+    },
   ],
   edges: [],
 })

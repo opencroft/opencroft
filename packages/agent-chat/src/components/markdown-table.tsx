@@ -44,6 +44,13 @@ export interface MarkdownTableEditing {
    */
   selection: MarkdownTableSelection | null
   onCommand: (command: MarkdownTableCommand) => void
+  /**
+   * Whether a right-click or long press on a cell opens the row and column
+   * actions for it; on unless set to `false`. Off, the browser's own menu
+   * opens there, for a host that offers the actions elsewhere. The grips
+   * offer them either way.
+   */
+  cellMenu?: boolean
 }
 
 export interface MarkdownTableProps extends ComponentProps<'table'> {
@@ -63,8 +70,9 @@ export interface MarkdownTableProps extends ComponentProps<'table'> {
 
 // The frame is the spoiler's box. The table scrolls sideways inside it, so a
 // wide table never widens the page; it hugs a narrow table instead of
-// stretching it across the column.
-const FRAME = 'w-fit max-w-full overflow-x-auto rounded-md border'
+// stretching it across the column. It is spaced as a paragraph is, from the
+// surrounding prose scale, so a table keeps the text's rhythm.
+const FRAME = 'my-[var(--prose-block-space,0.5rem)] w-fit max-w-full overflow-x-auto rounded-md border'
 
 // The table and its cells, styled from the frame so the same look lands on
 // whichever table is inside it -- the rendered one, or the one an editor owns.
@@ -91,10 +99,11 @@ function keepDragOnTheRows(event: PointerEvent<HTMLElement>) {
  * scrolls it and keeps selecting the row it is on.
  *
  * Given `editing` it is the same table made editable, for an editor: a strip
- * above the columns and one beside the rows. The rows and columns of the
+ * above the columns and one beside the rows, drawn over whatever is there
+ * rather than taking room of their own. The rows and columns of the
  * selection get a grip each (press for its menu, drag with a mouse to move it)
  * and a `+` on either side; the rest get none. A right-click or long press on
- * any cell opens the same actions for that cell.
+ * any cell opens the same actions for that cell, unless `cellMenu` is off.
  */
 export function MarkdownTable({ table, editing, children, ...props }: MarkdownTableProps) {
   const content = table ?? <table {...props}>{children}</table>
@@ -107,7 +116,7 @@ export function MarkdownTable({ table, editing, children, ...props }: MarkdownTa
   }
   // An editor's table is left to the editor, which owns its selection.
   return (
-    <div className={cn('my-2', FRAME, LOOK)} onPointerDown={table == null ? keepDragOnTheRows : undefined}>
+    <div className={cn(FRAME, LOOK)} onPointerDown={table == null ? keepDragOnTheRows : undefined}>
       {content}
     </div>
   )

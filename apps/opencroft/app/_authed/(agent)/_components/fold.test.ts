@@ -356,6 +356,40 @@ test('an empty plan clears it, and the next plan replaces it', () => {
   assert.deepEqual(fold(replanned, 0).plan, [{ content: 'fresh plan', status: 'in_progress', priority: 'high' }])
 })
 
+// Three command calls as harnesses report them: live output arriving with no
+// status (Copilot) or `in_progress` (OpenCode), a call settled with no output,
+// and a call a Stop left with no update before its turn ended.
+test('a tool card is running while output streams, says how it settled, and reads stopped once its turn ended', () => {
+  const toolItems = (events: ChatEvent[]) =>
+    buildBlocks(fold(events, 0).messages)
+      .flatMap((block) => (block.kind === 'details' ? block.items : []))
+      .flatMap((item) => (item.kind === 'tool' ? [{ id: item.id, state: item.state, result: item.result }] : []))
+  const turn: ChatEvent[] = [
+    { kind: 'user', text: 'run them' },
+    { kind: 'tool_call', toolCallId: 'live', title: 'for i in 1 2', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'live', output: 'line 1\n' },
+    { kind: 'tool_call', toolCallId: 'quiet', title: 'true', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'quiet', status: 'completed' },
+    { kind: 'tool_call', toolCallId: 'sleep', title: 'sleep 120', status: 'pending' },
+  ]
+  assert.deepEqual(toolItems(turn), [
+    { id: 'live', state: 'running', result: { text: 'line 1\n', isError: false } },
+    { id: 'quiet', state: 'completed', result: { text: '', isError: false } },
+    { id: 'sleep', state: 'running', result: undefined },
+  ])
+  const settled: ChatEvent[] = [
+    ...turn,
+    { kind: 'tool_update', toolCallId: 'live', status: 'failed' },
+    { kind: 'turn_end', stopReason: 'cancelled' },
+  ]
+  assert.deepEqual(toolItems(settled), [
+    // The failure kept the output streamed before it.
+    { id: 'live', state: 'failed', result: { text: 'line 1\n', isError: true } },
+    { id: 'quiet', state: 'completed', result: { text: '', isError: false } },
+    { id: 'sleep', state: 'cancelled', result: undefined },
+  ])
+})
+
 test('a notice draws as a notice item in its turn, between the text around it rather than merged into it', () => {
   const events: ChatEvent[] = [
     { kind: 'user', text: 'go' },
@@ -370,4 +404,101 @@ test('a notice draws as a notice item in its turn, between the text around it ra
     { kind: 'notice', severity: 'error', title: 'Hook blocked the turn', description: 'Policy says no.' },
     { kind: 'assistant-text', text: 'Stopped.' },
   ])
+})
+
+// ── where the agent's context begins ──────────────────────────────────────
+
+const shape = (blocks: ReturnType<typeof buildBlocks>) =>
+  blocks.map((block) => (block.kind === 'context-start' ? `${block.id} (${block.reason})` : block.id))
+
+test('a new session draws a rule below the history it carries, and each restart keeps its own', () => {
+  const events: ChatEvent[] = [
+    ...turn('q0', 'a0'),
+    { kind: 'turn_end', stopReason: 'end_turn' },
+    { kind: 'session_start', sessionId: 'session-b' },
+    ...turn('q1', 'a1'),
+    { kind: 'turn_end', stopReason: 'end_turn' },
+    { kind: 'session_start', sessionId: 'session-c' },
+    ...turn('q2', 'a2'),
+  ]
+  assert.deepEqual(shape(buildBlocks(fold(events, 0).messages)), [
+    'u:0',
+    't:0',
+    'c:session-b (new-session)',
+    'u:4',
+    't:4',
+    'c:session-c (new-session)',
+    'u:8',
+    't:8',
+  ])
+})
+
+test('rules with nothing between them draw as one, the last', () => {
+  const events: ChatEvent[] = [
+    ...turn('q0', 'a0'),
+    { kind: 'turn_end', stopReason: 'end_turn' },
+    { kind: 'session_start', sessionId: 'session-b' },
+    { kind: 'session_start', sessionId: 'session-c' },
+    { kind: 'turn_end', stopReason: 'replayed' },
+    { kind: 'session_start', sessionId: 'session-d' },
+    ...turn('q1', 'a1'),
+  ]
+  assert.deepEqual(shape(buildBlocks(fold(events, 0).messages)), [
+    'u:0',
+    't:0',
+    'c:session-d (new-session)',
+    'u:7',
+    't:7',
+  ])
+})
+
+test('a compaction and a new session each keep their rule when replies fall between them', () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'go' },
+    { kind: 'compaction', compaction: { compactionId: 'k1', status: 'completed' } },
+    { kind: 'agent_message', text: 'after' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+    { kind: 'session_start', sessionId: 'session-b' },
+    ...turn('q1', 'a1'),
+  ]
+  assert.deepEqual(shape(buildBlocks(fold(events, 0).messages)), [
+    'u:0',
+    't:0',
+    'c:compaction:k1 (compaction)',
+    't:0@c:compaction:k1',
+    'c:session-b (new-session)',
+    'u:5',
+    't:5',
+  ])
+})
+
+test('a completed compaction draws a rule below its own row, splitting the turn it ran in', () => {
+  const compaction = (status: string): ChatEvent => ({ kind: 'compaction', compaction: { compactionId: 'k1', status } })
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'go' },
+    { kind: 'agent_message', text: 'before' },
+    compaction('in_progress'),
+    compaction('completed'),
+    { kind: 'agent_message', text: 'after' },
+  ]
+  const blocks = buildBlocks(fold(events, 0).messages)
+  assert.deepEqual(shape(blocks), ['u:0', 't:0', 'c:compaction:k1 (compaction)', 't:0@c:compaction:k1'])
+  const [, above, , below] = blocks
+  assert.ok(above?.kind === 'details' && below?.kind === 'details')
+  assert.deepEqual(
+    above.items.map((item) => item.kind),
+    ['assistant-text', 'tool'],
+    'the compaction row stays with the replies it summarised',
+  )
+  assert.deepEqual(below.items, [{ kind: 'assistant-text', text: 'after' }])
+})
+
+test('a compaction that is running, failed or cancelled draws no rule: the context is as it was', () => {
+  for (const status of ['in_progress', 'failed', 'cancelled']) {
+    const events: ChatEvent[] = [
+      { kind: 'user', text: 'go' },
+      { kind: 'compaction', compaction: { compactionId: 'k1', status } },
+    ]
+    assert.deepEqual(shape(buildBlocks(fold(events, 0).messages)), ['u:0', 't:0'], status)
+  }
 })

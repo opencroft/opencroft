@@ -17,11 +17,17 @@
 //   3. Neither -> the same "Unsupported handler language" error producers
 //      have always returned, scoped to that one target.
 
+import { nodeName } from '@opencroft/core/values'
+
+import { resolveEnvironment } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/script-environment'
 import { CORE_EXTENSION_ID, parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { inCallFrame } from '@/app/_authed/(extension-runtime)/_server/call-stack'
 import { invokeExtensionActionImpl } from '@/app/_authed/(extension-runtime)/_server/extension-action-impl'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
 import { dispatchNodeActionImpl } from '@/app/_authed/(extension-runtime)/_server/node-actions-impl'
+import { withRunEvent } from '@/app/_authed/(extension-runtime)/_server/run-scope'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { wiredEdgesOf } from '@/app/_authed/(extension-runtime)/_wired-edges'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { secrets } from '@/server/secrets'
 
@@ -89,30 +95,6 @@ export function unsupportedHandlerError(language: string | undefined): string {
   return `Unsupported handler language: ${language ?? 'none'}. Only Bash, Python and Node.js scripts support ExecutionContext.`
 }
 
-/** Parse a script node's `env` field: one `KEY=VALUE` pair per line. */
-export function parseEnvBlock(text: string | undefined): Record<string, string> {
-  const env: Record<string, string> = {}
-  const lines = (text ?? '')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  for (const line of lines) {
-    const eq = line.indexOf('=')
-    if (eq > 0) {
-      env[line.slice(0, eq).trim()] = line.slice(eq + 1)
-    }
-  }
-  return env
-}
-
-/** Parse a script node's `secrets` field: one Secrets Store key name per line. */
-export function parseNameLines(text: string | undefined): string[] {
-  return (text ?? '')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Graph lookup
 // ═══════════════════════════════════════════════════════════════════
@@ -132,7 +114,7 @@ async function findSpaceWithNode(
   return {
     slug: ref.space.slug,
     nodes: graphs.flatMap((g) => g.graph.nodes) as unknown as ExecDispatchNode[],
-    edges: graphs.flatMap((g) => g.graph.edges) as unknown as ExecDispatchEdge[],
+    edges: graphs.flatMap((g) => wiredEdgesOf<ExecDispatchEdge>(g.graph)),
   }
 }
 
@@ -155,16 +137,15 @@ async function hasHandleAction(type: string | undefined): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════════
 
 async function resolveEnv(node: ExecDispatchNode): Promise<{ env: Record<string, string>; error?: string }> {
-  const data = node.data ?? {}
-  const env = parseEnvBlock(data.env as string | undefined)
-  for (const name of parseNameLines(data.secrets as string | undefined)) {
-    const value = await secrets.resolve(name)
-    if (value === null) {
-      return { env, error: `secret "${name}" not found in any Secrets Store.` }
+  // Secrets resolve from the Secrets Stores on the node's own graph, so a missing name is
+  // reported naming the graph.
+  try {
+    return {
+      env: await resolveEnvironment(node.data ?? {}, (stored) => secrets.resolveValue(stored, { nodeId: node.id })),
     }
-    env[name] = value
+  } catch (err) {
+    return { env: {}, error: `${err instanceof Error ? err.message : String(err)}.` }
   }
-  return { env }
 }
 
 async function dispatchToTarget(
@@ -175,11 +156,16 @@ async function dispatchToTarget(
 ): Promise<ExecDispatchResult> {
   if (await hasHandleAction(node.type)) {
     try {
-      const result = (await dispatchNodeActionImpl({
-        nodeId: node.id,
-        actionId: 'handle',
-        params: event as Record<string, unknown>,
-      })) as ExecDispatchResult | undefined
+      // Entered on the run's call stack, so an execution edge back into a
+      // node still handling this run is refused rather than recursing.
+      const frame = { owner: node.id, action: 'handle', label: nodeName(node.data, undefined, node.id) }
+      const result = (await inCallFrame(frame, () =>
+        dispatchNodeActionImpl({
+          nodeId: node.id,
+          actionId: 'handle',
+          params: event as Record<string, unknown>,
+        }),
+      )) as ExecDispatchResult | undefined
       return result ?? {}
     } catch (err) {
       return { status: 500, error: err instanceof Error ? err.message : String(err) }
@@ -234,6 +220,8 @@ export interface ExecDispatchParams {
   sourceNodeId: string
   sourceHandleId: string
   event: unknown
+  /** What the source's run-time outputs answer from while its targets run: `event` unless given (a Call Action's outcome). */
+  run?: unknown
 }
 
 /** No connected target at all — producers turn this into their own
@@ -267,14 +255,20 @@ export async function dispatchExecutionContext(params: ExecDispatchParams): Prom
     logStream.broadcast({ text: `[exec-dispatch] primary target: ${primaryEdge.target}\n`, final: false })
   }
 
-  const settled = await Promise.allSettled(
-    connectedEdges.map(async (edge) => {
-      const node = nodesById.get(edge.target)
-      const result = node
-        ? await dispatchToTarget(found.slug, node, found.edges, event)
-        : { status: 500, error: `Handler node not found: ${edge.target}` }
-      return { edge, result }
-    }),
+  // Inside the run scope, with this source's event (or the run value it
+  // passed) in it: each target resolves its inputs with the run's values, and
+  // so does every dispatch it starts.
+  const run = Object.hasOwn(params, 'run') ? params.run : event
+  const settled = await withRunEvent(sourceNodeId, run, () =>
+    Promise.allSettled(
+      connectedEdges.map(async (edge) => {
+        const node = nodesById.get(edge.target)
+        const result = node
+          ? await dispatchToTarget(found.slug, node, found.edges, event)
+          : { status: 500, error: `Handler node not found: ${edge.target}` }
+        return { edge, result }
+      }),
+    ),
   )
 
   const targets: ExecDispatchTargetOutcome[] = settled.map((outcome, i) => {

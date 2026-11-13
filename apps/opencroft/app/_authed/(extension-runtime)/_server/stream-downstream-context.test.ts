@@ -78,7 +78,7 @@ test('a completed stream dispatches a downstream text-generation.run with no req
     errors.find((e) => /\[stream→builtin\.core\.text-generation\.run\] dispatch failed/.test(e)) ?? ''
   assert.match(
     streamFailure,
-    /No assistant selected/,
+    /No AI Assistant selected/,
     `expected the downstream dispatch to fail on the fixture's missing assistant, not an auth refusal. Got: ${streamFailure}`,
   )
 })

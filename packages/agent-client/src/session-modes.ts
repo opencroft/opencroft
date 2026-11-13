@@ -137,10 +137,51 @@ const CODEX_MODE_SYNONYMS: SynonymRegistration<CanonicalModeId> = {
   auto: ['agent'],
   bypass: ['agent-full-access'],
 }
+/**
+ * OpenCode advertises its primary agents as modes: `build` (its default) and
+ * `plan`, which needs no entry. `build` is per adapter for the same reason as
+ * Codex's `agent`: another agent could use the word for anything.
+ *
+ * `build` is Auto: it asks about some things and allows the rest, where Bypass
+ * never asks. Its default ruleset (opencode-ai 1.18.35, src/agent/agent.ts) is
+ * `"*": "allow"`, with `ask` only for paths outside the project
+ * (`external_directory`), the same tool call repeated three times
+ * (`doom_loop`) and reading `.env` files. MCP tool calls are checked under the
+ * tool's own name with the pattern `*` (src/session/tools.ts), which no default
+ * rule names, so they fall to `"*"` and run without asking. A project's own
+ * OpenCode permission config can make any of these ask.
+ */
+const OPENCODE_MODE_SYNONYMS: SynonymRegistration<CanonicalModeId> = { auto: ['build'] }
+/**
+ * Copilot CLI 1.0.95 names its three modes by URL (`…/session-modes#agent`
+ * and so on), and carries approvals in a separate `allow_all` config option,
+ * which is left as Copilot's own control rather than folded into these. Read
+ * by what each mode does with `allow_all` off, as measured over ACP:
+ *
+ * - `agent` asks before a shell command, a file edit and any MCP tool not
+ *   annotated read-only. That is Manual Edits.
+ * - `plan` plans, and still asks before running anything. That is Plan, with
+ *   its approval gate intact rather than nothing executing.
+ *
+ * `autopilot` is left unclassified and shows under Copilot's own name. It
+ * turns `allow_all` on as it is entered, but what it is for is working on
+ * until the task is done, which none of ours describes; Copilot's bypass is
+ * `allow_all` itself (its adapter's `bypass`).
+ *
+ * Both Copilot adapters drive the same binary and differ only in billing.
+ */
+const COPILOT_MODE_URL = 'https://agentclientprotocol.com/protocol/session-modes#'
+const COPILOT_MODE_SYNONYMS: SynonymRegistration<CanonicalModeId> = {
+  'manual-edits': [`${COPILOT_MODE_URL}agent`],
+  plan: [`${COPILOT_MODE_URL}plan`],
+}
 const ADAPTER_MODE_SYNONYMS: Record<string, SynonymRegistration<CanonicalModeId>> = {
   claude: CLAUDE_MODE_SYNONYMS,
   'claude-subscription': CLAUDE_MODE_SYNONYMS,
   codex: CODEX_MODE_SYNONYMS,
+  opencode: OPENCODE_MODE_SYNONYMS,
+  copilot: COPILOT_MODE_SYNONYMS,
+  'copilot-subscription': COPILOT_MODE_SYNONYMS,
 }
 
 /**
@@ -227,6 +268,22 @@ export function modeIdForCanonical(
   canonical: CanonicalModeId,
 ): string | undefined {
   return modes.find((mode) => canonicalModeOf(adapterId, mode) === canonical)?.id
+}
+
+/**
+ * The wire id this session would use for a requested mode, or undefined when
+ * it offers nothing that matches. The request is the session's own id when it
+ * offers one; otherwise it is read as one of ours (or a spelling registered
+ * for this adapter or every agent) and resolved against what the session
+ * advertised, so a request written in one agent's spelling still reaches an
+ * agent that spells the same mode differently.
+ */
+export function offeredModeId(adapterId: string, modes: SessionMode[], requested: string): string | undefined {
+  if (modes.some((mode) => mode.id === requested)) {
+    return requested
+  }
+  const canonical = canonicalModeId(adapterId, requested)
+  return canonical ? modeIdForCanonical(adapterId, modes, canonical) : undefined
 }
 
 /**

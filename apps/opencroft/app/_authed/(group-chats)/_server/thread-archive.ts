@@ -2,6 +2,7 @@ import { db, groupChatThread } from '@opencroft/db'
 import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import { clearQueueLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
+import { announceGroupChatChange } from '@/app/_authed/(group-chats)/_server/chat-changes'
 import {
   folderNameByThreadId,
   readThreadLayout,
@@ -75,4 +76,5 @@ export async function moveThreadBetweenLists(thread: ArchivableThread, archived:
   const folder = folderNameByThreadId((await readThreadLayout(thread.groupChatId, from)).layout).get(thread.id) ?? null
   await updateThreadLayout(thread.groupChatId, to, (layout) => withThreadPlaced(layout, thread.id, folder))
   await updateThreadLayout(thread.groupChatId, from, (layout) => withoutThread(layout, thread.id))
+  announceGroupChatChange({ groupChatId: thread.groupChatId })
 }

@@ -58,6 +58,8 @@ test('a target on an App whose App names no handles carries no labels, and an un
   const refs = await describeGraphRefsImpl([onApp, unknown])
   assert.equal(refs[onApp]?.kind, 'app')
   assert.equal(refs[onApp]?.spaceSlug, slug)
+  assert.equal(refs[onApp]?.slug, 'default')
+  assert.equal(refs[onApp]?.address, `${slug}.default`)
   assert.equal(refs[onApp]?.handleLabels, undefined)
   assert.equal(refs[unknown], null)
 })

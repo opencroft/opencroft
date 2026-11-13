@@ -1,5 +1,6 @@
 'use client'
 
+import type { ValueOption } from '@opencroft/core/values'
 import { Box, type LucideIcon } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { iconComponent } from 'ui/media/named-icon'
@@ -9,6 +10,7 @@ import type {
   ExtensionComponentProps,
   ExtensionInspectorProps,
   LoadedExtensionDeclaration,
+  LoadedNodeDefinition,
   NodeContextMenuItem,
   SettingsPageDefinition,
 } from '@/app/_authed/(extension-runtime)/_client/host'
@@ -43,6 +45,7 @@ export interface ResolvedNode {
   defaultData: Record<string, unknown>
   component: ComponentType<ExtensionComponentProps>
   inspector?: ComponentType<ExtensionInspectorProps>
+  inspectorFullHeight?: boolean
 
   inspectorTabs?: Array<{
     id: string
@@ -62,6 +65,9 @@ export interface ResolvedNode {
     nodeId: string,
     contexts: Record<string, ResolvedContext>,
   ) => unknown
+
+  /** The declaring extension's canvas-derived errors (see `NodeDefinition.errors`). */
+  errors?: LoadedNodeDefinition['errors']
 }
 
 /**
@@ -149,10 +155,12 @@ class ExtensionRegistry {
       defaultData: { ...((node.defaultData as Record<string, unknown>) ?? {}) },
       component: node.component,
       inspector: node.inspector,
+      inspectorFullHeight: node.inspectorFullHeight,
       inspectorTabs: node.inspectorTabs,
       contextMenuItems: node.contextMenuItems,
       exposeOutput:
         exposeOutput && ((handleId, data, nodeId, contexts) => exposeOutput(handleId, data, bare, nodeId, contexts)),
+      errors: node.errors,
     }
   }
 
@@ -180,6 +188,14 @@ class ExtensionRegistry {
   getHandleType(id: string): ExtensionHandleType | undefined {
     return this.handleTypes.get(id)
   }
+
+  /** Every declared enum: each handle type that declares `cases`. */
+  enumHandleTypes(): ExtensionHandleType[] {
+    return [...this.handleTypes.values()].filter((handleType) => Array.isArray(handleType.cases))
+  }
+
+  /** The cases of a declared enum, by its qualified id (`EnumCasesOf`); bound, so it can be passed on. */
+  enumCasesOf = (type: string): readonly ValueOption[] | undefined => this.handleTypes.get(type)?.cases
 
   clear(): void {
     this.byExtensionId.clear()

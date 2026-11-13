@@ -10,6 +10,9 @@
 // nobody has in memory). Anything else that moved them would need a report of
 // its own here, or pushed readers would miss it.
 
+import { agentSessionEvent, db } from '@opencroft/db'
+import { desc, inArray } from 'drizzle-orm'
+
 import { agentClient, subscribeEngineActivity } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import type { SessionActivitySets } from '@/app/_authed/(agent)/_shared/session-status'
 import { backgroundWorkSessionKeys } from '@/app/_authed/(background-tasks)/_server/background-work'
@@ -31,6 +34,41 @@ export function sessionActivitySets(): SessionActivitySets {
     compacting: new Set(agentClient.compactingSessionKeys()),
     alive: new Set(agentClient.aliveSessionKeys()),
   }
+}
+
+/**
+ * When each of `sessionKeys` last did anything, ms since epoch: its last
+ * recorded event and, for a session alive now, the engine's own time of its
+ * last event, which the record trails by a write. A session with neither is
+ * absent.
+ */
+export async function lastSessionActivity(sessionKeys: readonly string[]): Promise<Map<string, number>> {
+  const wanted = new Set(sessionKeys)
+  const latest = new Map<string, number>()
+  const note = (sessionKey: string, at: number) => {
+    if (wanted.has(sessionKey) && at > (latest.get(sessionKey) ?? Number.NEGATIVE_INFINITY)) {
+      latest.set(sessionKey, at)
+    }
+  }
+  if (wanted.size > 0) {
+    const recorded = await db
+      .selectDistinctOn([agentSessionEvent.sessionKey], {
+        sessionKey: agentSessionEvent.sessionKey,
+        createdAt: agentSessionEvent.createdAt,
+      })
+      .from(agentSessionEvent)
+      .where(inArray(agentSessionEvent.sessionKey, [...wanted]))
+      .orderBy(agentSessionEvent.sessionKey, desc(agentSessionEvent.position))
+    for (const row of recorded) {
+      note(row.sessionKey, row.createdAt.getTime())
+    }
+  }
+  for (const session of agentClient.listSessions()) {
+    if (session.sessionKey) {
+      note(session.sessionKey, session.lastActivityAt)
+    }
+  }
+  return latest
 }
 
 /**

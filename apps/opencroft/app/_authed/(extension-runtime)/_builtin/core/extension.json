@@ -17,6 +17,7 @@
     {
       "type": "localhost",
       "name": "Localhost",
+      "description": "A shell on the machine this instance runs on, as a terminal context.",
       "category": "Infrastructure",
       "icon": "Monitor",
       "handles": [{ "id": "terminal", "handleType": "terminal-context", "role": "source", "label": "Terminal" }]
@@ -24,6 +25,7 @@
     {
       "type": "wsl",
       "name": "WSL",
+      "description": "A shell in a Windows Subsystem for Linux distro, as a terminal context.",
       "category": "Infrastructure",
       "icon": "SquareTerminal",
       "handles": [{ "id": "terminal", "handleType": "terminal-context", "role": "source", "label": "Terminal" }]
@@ -31,6 +33,7 @@
     {
       "type": "server",
       "name": "Server",
+      "description": "A remote host reached over SSH (password or a Key Store key), as a terminal context.",
       "category": "Infrastructure",
       "icon": "Server",
       "handles": [{ "id": "terminal", "handleType": "terminal-context", "role": "source", "label": "Terminal" }],
@@ -39,7 +42,7 @@
           "id": "setKey",
           "label": "Set SSH Key",
           "icon": "KeyRound",
-          "description": "Assign a Key Store key to this server (key reference is \"<keyStoreNodeId>:<keyName>\"). With install=true, also append the key's public half to the remote's authorized_keys using the server's current credentials.",
+          "description": "Assign a Key Store key to this server (key reference is \"<keyStoreNodeId>:<keyName>\"). A reference to a Key Store or key that does not exist is refused, naming what is missing. With install=true, also append the key's public half to the remote's authorized_keys using the server's current credentials.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -64,6 +67,7 @@
     {
       "type": "terminal-router",
       "name": "Terminal Router",
+      "description": "Re-exposes terminals chosen from any space, one output per route; an App in the router's space can pick a route as its Terminal. Data: `routes`, each `{ id, target }` with `target` a \"node-id/handle-id\" terminal. A route's target is a terminal, never another router's route: a write adding one is refused.",
       "category": "Infrastructure",
       "icon": "Split",
       "handles": [
@@ -73,6 +77,7 @@
     {
       "type": "core-key-store",
       "name": "Key Store",
+      "description": "Holds SSH keypairs for Server nodes and other extensions; no action returns a private key.",
       "category": "Storage",
       "icon": "KeyRound",
       "actions": [
@@ -80,15 +85,57 @@
           "id": "generate",
           "label": "Generate Key",
           "icon": "Plus",
-          "description": "Generate a new SSH keypair in this Key Store. Returns the key name and type — never private key material.",
+          "description": "Generate a new SSH keypair in this Key Store under a new name. A name the store already holds is refused, never replaced (use rotate for that). Returns the key name, type and fingerprint — never private key material.",
           "inputSchema": {
             "type": "object",
             "properties": {
-              "name": { "type": "string", "description": "Name for the new key" },
+              "name": {
+                "type": "string",
+                "description": "Name for the new key: letters, digits, \".\", \"_\" and \"-\", not starting with \".\" and not ending in \".pub\""
+              },
               "keyType": {
                 "type": "string",
                 "enum": ["ed25519", "rsa", "ecdsa"],
                 "description": "Key algorithm (default: ed25519)"
+              }
+            },
+            "required": ["name"]
+          }
+        },
+        {
+          "id": "import",
+          "label": "Import Key",
+          "icon": "Upload",
+          "description": "Store an existing SSH private key in this Key Store under a new name. The key is in OpenSSH format (-----BEGIN OPENSSH PRIVATE KEY-----) without a passphrase; a traditional PEM RSA or EC key (-----BEGIN RSA PRIVATE KEY----- / -----BEGIN EC PRIVATE KEY-----) also works. A key the SSH client cannot connect with, such as a PKCS#8 key (-----BEGIN PRIVATE KEY----- or -----BEGIN ENCRYPTED PRIVATE KEY-----) or any key with a passphrase, is refused before anything is stored, and the refusal says how to convert it: `ssh-keygen -p -f <key>` rewrites an RSA or EC key, with a passphrase or without, or an OpenSSH key with a passphrase, in OpenSSH format (leave the new passphrase empty); ssh-keygen cannot read a PKCS#8 Ed25519 key, with a passphrase or without, so convert that one another way or generate a new key in the store. A name the store already holds is refused, never replaced. Write-only: the key is stored encrypted and never returned; the answer is the name, type and fingerprint. The private key travels as a parameter of this call, so it is in the transcript or log of whoever makes the call: send it only from where that is acceptable. OpenCroft's own MCP audit log stores the call with the key redacted.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Name for the key: letters, digits, \".\", \"_\" and \"-\", not starting with \".\" and not ending in \".pub\""
+              },
+              "privateKey": {
+                "type": "string",
+                "writeOnly": true,
+                "description": "The private key, in full, from its -----BEGIN line to its -----END line"
+              }
+            },
+            "required": ["name", "privateKey"]
+          }
+        },
+        {
+          "id": "rotate",
+          "label": "Rotate Key",
+          "icon": "RefreshCw",
+          "description": "Replace a key's keypair with a new one under the same name, so every \"<keyStoreNodeId>:<keyName>\" reference stays valid. The old keypair is gone: a host that only trusts the old public key refuses the new one until the new public key is installed there (a Server's setKey with install=true does that). Returns the name, type, fingerprint, the new public key, and usedBy: the nodes that name the key. Never private key material.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Name of the key to rotate" },
+              "keyType": {
+                "type": "string",
+                "enum": ["ed25519", "rsa", "ecdsa"],
+                "description": "Key algorithm for the new keypair (default: the current key's type)"
               }
             },
             "required": ["name"]
@@ -102,13 +149,30 @@
           "inputSchema": { "type": "object", "properties": {} }
         },
         {
+          "id": "readPublicKey",
+          "label": "Read Public Key",
+          "icon": "Copy",
+          "description": "Return a key's public half (one authorized_keys line), to install it on a host. Never the private key.",
+          "inputSchema": {
+            "type": "object",
+            "properties": { "name": { "type": "string", "description": "Name of the key" } },
+            "required": ["name"]
+          }
+        },
+        {
           "id": "delete",
           "label": "Delete Key",
           "icon": "Trash2",
-          "description": "Delete a key (and its public key) from this store.",
+          "description": "Delete a key (and its public key) from this store. A name the store does not hold is refused. Refused, naming them, while a node on this instance holds the key's reference \"<keyStoreNodeId>:<keyName>\" as a value (a Server's keyPath): those nodes would fail at their next SSH connection. A node that names the key some other way is not seen. Pass allowUnclean to delete it anyway and leave the reference dangling.",
           "inputSchema": {
             "type": "object",
-            "properties": { "name": { "type": "string", "description": "Name of the key to delete" } },
+            "properties": {
+              "name": { "type": "string", "description": "Name of the key to delete" },
+              "allowUnclean": {
+                "type": "boolean",
+                "description": "Delete even while nodes still reference the key (default: false)"
+              }
+            },
             "required": ["name"]
           }
         }
@@ -117,6 +181,7 @@
     {
       "type": "core-secrets-store",
       "name": "Secrets Store",
+      "description": "Holds named secrets that node fields reference as secret:<NAME>; no action returns a value. A value a person has is typed into the store's inspector by that person; an agent only generates one or refers to a secret by name.",
       "category": "Storage",
       "icon": "ShieldCheck",
       "actions": [
@@ -150,7 +215,7 @@
           "id": "delete",
           "label": "Delete Secret",
           "icon": "Trash2",
-          "description": "Delete a secret from this store by name. Refused, naming the nodes, while any node still references it — through a `secrets` field, an `apiKeySecret` field, or a `secret:NAME` value anywhere in its data. Those nodes resolve the name at their next deploy, run or session start, and a container already running keeps the value it resolved at startup, so the break would not surface until then. A node type that names a secret some other way is not seen, so no refusal means nothing matched those three conventions rather than nothing references the name. Pass allowUnclean to delete it anyway and leave the reference dangling.",
+          "description": "Delete a secret from this store by name. Refused, naming them, while a node on this graph still references it — through a `secrets` field, an `apiKeySecret` field, or a `secret:NAME` value anywhere in its data — or an App of this space holds `secret:NAME` as a parameter. Those resolve the name at their next deploy, run or session start, and a container already running keeps the value it resolved at startup, so the break would not surface until then. A node type that names a secret some other way is not seen, so no refusal means nothing matched those three conventions rather than nothing references the name. Pass allowUnclean to delete it anyway and leave the reference dangling.",
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -168,18 +233,28 @@
     {
       "type": "terminal",
       "name": "Terminal Window",
+      "description": "An interactive terminal on the canvas, opened on the connected terminal context.",
       "category": "Windows",
       "icon": "TerminalSquare",
       "handles": [{ "id": "ssh-in", "handleType": "terminal-context", "role": "target", "label": "Terminal" }]
     },
     {
+      "type": "markdown",
+      "name": "Markdown",
+      "description": "A window on the canvas that renders a markdown document, the way the chat renders markdown; resized smaller than the document, it scrolls. Data: `text`, the markdown source (GFM: headings, lists, code, tables, links), and `title`, the window's title. The window has no close button; the node is deleted like any other.",
+      "category": "Windows",
+      "icon": "FileText",
+      "handles": []
+    },
+    {
       "type": "script-bash",
       "name": "Bash Script",
+      "description": "Runs a Bash script in the connected terminal context; its output streams as text. Data: `script`, `language` and `env`, an object of variable name to typed value or \"secret:NAME\" (a key of a Secrets Store on this graph, resolved when the script runs). A node holding `env` as KEY=VALUE lines beside `secrets` (one key name per line, each injected under its own name) runs as written; its next edit in the inspector stores the object.",
       "category": "Scripts",
       "icon": "TerminalSquare",
       "handles": [
         { "id": "ctx-in", "handleType": "terminal-context", "role": "target", "label": "Target" },
-        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler" },
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler", "multiple": true },
         { "id": "stdout-out", "handleType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
@@ -194,11 +269,12 @@
     {
       "type": "script-python",
       "name": "Python Script",
+      "description": "Runs a Python script in the connected terminal context; its output streams as text. Data: `script`, `language` and `env`, an object of variable name to typed value or \"secret:NAME\" (a key of a Secrets Store on this graph, resolved when the script runs). A node holding `env` as KEY=VALUE lines beside `secrets` (one key name per line, each injected under its own name) runs as written; its next edit in the inspector stores the object.",
       "category": "Scripts",
       "icon": "Code",
       "handles": [
         { "id": "ctx-in", "handleType": "terminal-context", "role": "target", "label": "Target" },
-        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler" },
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler", "multiple": true },
         { "id": "stdout-out", "handleType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
@@ -213,11 +289,12 @@
     {
       "type": "script-node",
       "name": "Node.js Script",
+      "description": "Runs a Node.js script in the connected terminal context; its output streams as text. Data: `script`, `language` and `env`, an object of variable name to typed value or \"secret:NAME\" (a key of a Secrets Store on this graph, resolved when the script runs). A node holding `env` as KEY=VALUE lines beside `secrets` (one key name per line, each injected under its own name) runs as written; its next edit in the inspector stores the object.",
       "category": "Scripts",
       "icon": "Braces",
       "handles": [
         { "id": "ctx-in", "handleType": "terminal-context", "role": "target", "label": "Target" },
-        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler" },
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Handler", "multiple": true },
         { "id": "stdout-out", "handleType": "text-stream", "role": "source", "label": "Output" }
       ],
       "actions": [
@@ -232,9 +309,12 @@
     {
       "type": "send-message",
       "name": "Send Message",
+      "description": "Posts the text it receives into a group-chat thread.",
       "category": "Integration",
       "icon": "Send",
-      "handles": [{ "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Text" }],
+      "handles": [
+        { "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Text", "multiple": true }
+      ],
       "actions": [
         {
           "id": "send",
@@ -263,16 +343,30 @@
     {
       "type": "api-route",
       "name": "API Route",
+      "description": "An HTTP route on this instance, served at /api/route<path>, whose requests are handled by the connected script. A path belongs to one route on the whole instance, in any space (`/users/:id` and `/users/:name` are the same path): a write giving a route a path another route has is refused, naming that route when it is in the same space and saying \"a route in another space\" otherwise. Where two routes have one path anyway (a canvas edit or paste), the one that was serving it keeps it and both carry an error under source `path`; when neither was serving it first, every request to it gets 409. Of two different paths that both match a request (`/users/me`, `/users/:id`), the one with a literal segment first wins. Data: `path` (\"/users/:id\"), `methods` ([\"GET\", \"POST\"]), and optionally `authHeader` and `authToken`. With `authToken` set the route is protected: a request must carry the header `authHeader` names (default `Authorization`, where the value follows `Bearer `; any other header carries the value as is) or it gets 401, and the handler never sees that header. Set `authToken` to `secret:<NAME>` (a Secrets Store key, resolved per request); a typed value works but reads back as [redacted]. Empty or absent `authToken` leaves the route open to anyone who can reach the instance. While a request is handled, its value outputs carry it (`runtime: true`): `body`, the JSON body when it is an object; `text`, the body when it is not JSON; `query`, `params` and `headers`, objects (header names in lower case, the protecting header left out); `method`. Outside a request they have no value.",
       "category": "Integration",
       "icon": "Route",
-      "handles": [{ "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" }]
+      "handles": [
+        { "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" },
+        { "id": "body", "handleType": "object", "role": "source", "label": "Body", "runtime": true },
+        { "id": "text", "handleType": "string", "role": "source", "label": "Text", "runtime": true },
+        { "id": "query", "handleType": "object", "role": "source", "label": "Query", "runtime": true },
+        { "id": "params", "handleType": "object", "role": "source", "label": "Params", "runtime": true },
+        { "id": "headers", "handleType": "object", "role": "source", "label": "Headers", "runtime": true },
+        { "id": "method", "handleType": "string", "role": "source", "label": "Method", "runtime": true }
+      ]
     },
     {
       "type": "event",
       "name": "Event",
+      "description": "Fires the connected handler on a schedule, or on demand. While it fires, its value outputs carry the fire (`runtime: true`): `payload`, an object (the `run` action's parameters; `{}` for a scheduled fire), and `firedAt`, epoch milliseconds. Outside a fire they have no value.",
       "category": "Integration",
       "icon": "AlarmClock",
-      "handles": [{ "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" }],
+      "handles": [
+        { "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" },
+        { "id": "payload", "handleType": "object", "role": "source", "label": "Payload", "runtime": true },
+        { "id": "firedAt", "handleType": "number", "role": "source", "label": "Fired at", "runtime": true }
+      ],
       "actions": [
         { "id": "run", "label": "Run", "icon": "Play", "description": "Fire the connected handler immediately." }
       ]
@@ -280,6 +374,7 @@
     {
       "type": "prompt",
       "name": "Prompt",
+      "description": "Sends text typed on the canvas to the connected nodes.",
       "category": "Text",
       "icon": "MessageCircle",
       "handles": [{ "id": "text-out", "handleType": "text-stream", "role": "source", "label": "Text" }]
@@ -287,46 +382,247 @@
     {
       "type": "text-generation",
       "name": "Text Generation",
+      "description": "Sends the text it receives to a model as a prompt and streams the reply on.",
       "category": "Text",
       "icon": "Sparkles",
       "handles": [
-        { "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Prompt", "streamAction": "run" },
+        {
+          "id": "text-in",
+          "handleType": "text-stream",
+          "role": "target",
+          "label": "Prompt",
+          "streamAction": "run",
+          "multiple": true
+        },
         { "id": "text-out", "handleType": "text-stream", "role": "source", "label": "Text" }
       ]
     },
     {
       "type": "log",
       "name": "Log",
+      "description": "Shows the text it receives.",
       "category": "Text",
       "icon": "ScrollText",
-      "handles": [{ "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Text" }]
+      "handles": [{ "id": "text-in", "handleType": "text-stream", "role": "target", "label": "Text", "multiple": true }]
     },
     {
       "type": "agent",
       "name": "Agent",
+      "description": "An AI agent, with its harness, model and settings.",
       "category": "AI",
       "icon": "User",
-      "handles": [
-        { "id": "instructions-in", "handleType": "agent-instruction", "role": "target", "label": "Instructions" }
-      ]
-    },
-    {
-      "type": "agent-instruction",
-      "name": "Agent Instruction",
-      "category": "AI",
-      "icon": "BookOpen",
-      "handles": [{ "id": "instruction-out", "handleType": "agent-instruction", "role": "source", "label": "Agent" }]
+      "handles": []
     },
     {
       "type": "agent-tool",
       "name": "Agent Tool",
+      "description": "A tool agents can call, with a name, description and input schema; the connected script handles each call. While a call is handled, its `args` output carries the call's arguments as an object (`runtime: true`); outside a call it has no value.",
       "category": "Integration",
       "icon": "Wrench",
-      "handles": [{ "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" }]
+      "handles": [
+        { "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Handler" },
+        { "id": "args", "handleType": "object", "role": "source", "label": "Arguments", "runtime": true }
+      ]
     },
-    { "type": "openai-client", "name": "OpenAI Client", "category": "Text", "icon": "Sparkles" },
-    { "type": "openai-assistant", "name": "AI Assistant", "category": "AI", "icon": "UserRound" },
-    { "type": "section", "name": "Section", "category": "Organization", "icon": "Boxes" }
+    {
+      "type": "openai-client",
+      "name": "OpenAI Client",
+      "description": "Runs one chat request with a system and user prompt against an AI Assistant's endpoint and model.",
+      "category": "Text",
+      "icon": "Sparkles",
+      "actions": [
+        {
+          "id": "run",
+          "label": "Run",
+          "icon": "Play",
+          "description": "Send the node's system and user prompt to its AI Assistant's model and return the reply."
+        }
+      ]
+    },
+    {
+      "type": "openai-assistant",
+      "name": "AI Assistant",
+      "description": "An OpenAI-compatible chat endpoint, key and model that OpenAI Client nodes use.",
+      "category": "AI",
+      "icon": "UserRound"
+    },
+    {
+      "type": "section",
+      "name": "Section",
+      "description": "A frame that groups the nodes placed inside its area.",
+      "category": "Organization",
+      "icon": "Boxes"
+    },
+    {
+      "type": "subgraph",
+      "name": "Subgraph",
+      "description": "A node that opens as a canvas of its own. The nodes inside it carry `parentId` set to it (or to a frame inside it), and their positions are on its canvas. Data: `name`, and `ports: { inputs: [{ id, label, handleType, multiple? }], outputs: [{ id, label, handleType }] }`, the order of its handles. An input port `p` is the target handle `in-p` outside and the source handle `in-p` inside; an output port is the reverse with `out-p`. `handleType` is the qualified type of what the port carries. Removing a port removes its edges; a port's id never changes. Deleting a subgraph deletes everything inside it.",
+      "category": "Organization",
+      "icon": "Workflow"
+    },
+    {
+      "type": "value",
+      "name": "Value",
+      "description": "A value set on its card, on its `value` output, which has the Value's type. Data: `valueType`, `builtin.core.string` (default), `builtin.core.number`, `builtin.core.boolean`, or an enum's qualified type (a handle type listNodeTypes gives `cases`); and `value`, a text, a finite number, true or false, or one of the enum's case values, of that type. With no `value`, it outputs the type's default: an empty text, 0, false or the enum's first case. Nothing is converted: a `value` of another type than `valueType` is the node's error and leaves the output empty, so write both together when changing the type. Edges from `value` stay when the type changes; an input that does not take the new type shows \"wired from the wrong type\".",
+      "category": "Values",
+      "icon": "Pi",
+      "handles": [{ "id": "value", "handleType": "string", "role": "source", "label": "Value" }]
+    },
+    {
+      "type": "convert",
+      "name": "Convert",
+      "description": "Converts the value on its `value` input to `valueType` and outputs it on its `value` output, which has that type. Data: `valueType`, `builtin.core.string`, `builtin.core.number` (default) or `builtin.core.boolean`. The input takes a text, a number or a boolean, and has the type connected into it (`data.inputTypes.value`; text before anything was). To text: as Format writes it (`42`, `0.5`, `true`). To a number: a text that is a decimal number (`42`, `-0.5`, `1e3`), true as 1 and false as 0. To a boolean: `true` or `1` as true and `false` or `0` as false, from a text or a number. A value already of the type is itself. Anything else is the node's error and leaves the output empty. Edges from the output stay when `valueType` changes; an input that does not take the new type shows \"wired from the wrong type\".",
+      "category": "Values",
+      "icon": "ArrowRightLeft",
+      "handles": [
+        {
+          "id": "value",
+          "handleType": "string",
+          "role": "target",
+          "label": "Value",
+          "accepts": ["string", "number", "boolean"]
+        },
+        { "id": "value", "handleType": "number", "role": "source", "label": "Number" }
+      ]
+    },
+    {
+      "type": "format",
+      "name": "Format",
+      "description": "Fills a template with its inputs and outputs the text. Data: `template`, such as `{name}_{n:03}.png`: `{name}` is a placeholder, `{name:format}` formats it (`0N` pads a number with zeros to N digits, `.Nf` gives N decimals, `YYYY-MM-DD HH:mm:ss` formats a date given as epoch milliseconds or an ISO string), and `{{` `}}` are literal braces. Each distinct placeholder is a text input `arg-<name>`, in order of first appearance; a number or a boolean wired into one is formatted before it becomes text. A placeholder with no value, or a template that does not parse, is the node's error and leaves the output empty.",
+      "category": "Text",
+      "icon": "Braces",
+      "handles": [
+        { "id": "arg-", "handleType": "string", "role": "target", "label": "Placeholder", "dynamic": true },
+        { "id": "text", "handleType": "string", "role": "source", "label": "Text" }
+      ]
+    },
+    {
+      "type": "text-compare",
+      "name": "Text Compare",
+      "description": "Compares the text on `a` with the text on `b` and outputs true or false on `result`. Data: `op`, one of `is`, `is-not`, `contains`, `starts-with`, `ends-with` (default `is`), and `ignoreCase`, false by default. A number or a boolean wired into `a` or `b` reads as its text. Both texts are compared in Unicode NFC, and ignoring case lowercases both the locale-independent way, so `Straße` does not match `STRASSE`. An empty `b` is contained in, starts and ends every text, and `is` with an empty `b` tests for an empty text. For \"does not contain\", take the False side of a Switch, or `!r` in a Math Expression.",
+      "category": "Text",
+      "icon": "CaseSensitive",
+      "handles": [
+        { "id": "a", "handleType": "string", "role": "target", "label": "A", "default": "" },
+        { "id": "b", "handleType": "string", "role": "target", "label": "B", "default": "" },
+        { "id": "result", "handleType": "boolean", "role": "source", "label": "Result" }
+      ]
+    },
+    {
+      "type": "regex-search",
+      "name": "Regex Search",
+      "description": "Finds the first match of `pattern` in the text on `text`. Data: `pattern`, a regular expression in RE2 syntax, at most 1000 characters: no backreferences and no lookaround, so matching takes time linear in the text; inline flags `(?i)`, `(?m)` and `(?s)`; `ignoreCase`, false by default. Outputs: `matched`, true or false; `match`, the text of the first match; then one text output per capture group, in the order of the groups: `group-<name>` for a named group `(?<name>…)`, `group-<n>` for a numbered one. A named group keeps its output when groups are added before it; a numbered one's moves. With no match, `matched` is false and `match` and every group are empty texts, as is a group that took no part in the match. A pattern that is empty, does not compile or has more than 32 groups is the node's error and leaves the outputs empty.",
+      "category": "Text",
+      "icon": "Regex",
+      "handles": [
+        { "id": "text", "handleType": "string", "role": "target", "label": "Text", "default": "" },
+        { "id": "matched", "handleType": "boolean", "role": "source", "label": "Matched" },
+        { "id": "match", "handleType": "string", "role": "source", "label": "Match" },
+        { "id": "group-", "handleType": "string", "role": "source", "label": "Group", "dynamic": true }
+      ]
+    },
+    {
+      "type": "regex-replace",
+      "name": "Regex Replace",
+      "description": "Replaces the matches of `pattern` in the text on `text` with `replacement`, and outputs the result on `text` and how many matches it replaced on `count`. Data: `pattern`, in RE2 syntax as Regex Search's; `ignoreCase`, false by default; `all`, true by default (every match), false for the first only. In `replacement`, `$1` to `$99` and `$<name>` stand for a capture group, `$&` for the whole match and `$$` for a dollar sign; any other `$` is itself. With no match, `text` is the input unchanged and `count` is 0. A reference to a group the pattern does not have, or a pattern that does not compile, is the node's error and leaves the outputs empty.",
+      "category": "Text",
+      "icon": "Replace",
+      "handles": [
+        { "id": "text", "handleType": "string", "role": "target", "label": "Text", "default": "" },
+        { "id": "replacement", "handleType": "string", "role": "target", "label": "Replacement", "default": "" },
+        { "id": "text", "handleType": "string", "role": "source", "label": "Text" },
+        { "id": "count", "handleType": "number", "role": "source", "label": "Count" }
+      ]
+    },
+    {
+      "type": "math-expression",
+      "name": "Math Expression",
+      "description": "Computes `expression` from its inputs. Data: `expression`, such as `a * 2 + 1`, `x > 2` or `ready && !blocked`: numbers, `pi` and `e`, `true` and `false`, `+ - * / % ^`, parentheses, `< <= > >= == !=`, `&& || !`, `cond ? a : b`, and `abs min max round floor ceil sqrt pow clamp log exp sin cos tan`. Each variable is an input `var-<name>`, in order of first appearance, typed by where it stands: a number (default 0) as an operand of arithmetic or of `< <= > >=`, or an argument of a function; a boolean (default false) as an operand of `&&`, `||` or `!`, or the condition before `?`. Variables that `==` or `!=` compare with each other, or that are the two branches of one `? :`, share one type, in the type group `var-<the first of them>`. A group that only `==`, `!=`, `? :` or the whole expression decides takes a number or a boolean and has the type connected into it (`data.inputTypes.var-<name>`; a number before anything was), and while one of its variables is wired the others take only that type. Nothing converts: a variable used as both types, or a value of the wrong type for its operator (`true + 1`), is a parse error naming its position. The `result` output has the expression's type, a number or a boolean. `&&`, `||` and `? :` evaluate their right side only when needed, so `b != 0 && a / b > 1` is false for `b` = 0. A parse error, or an evaluation error (division by zero, a result that is not finite), is the node's error and leaves the output empty.",
+      "category": "Math",
+      "icon": "Calculator",
+      "handles": [
+        { "id": "var-", "handleType": "number", "role": "target", "label": "Variable", "dynamic": true, "default": 0 },
+        { "id": "result", "handleType": "number", "role": "source", "label": "Result" }
+      ]
+    },
+    {
+      "type": "get",
+      "name": "Get",
+      "description": "Reads the value at `path` in the object on `object` and outputs it on `value`. `path` is dot-separated, a segment of digits indexing a list: `user.name`, `items.0.id`; the empty path is the object itself. Only the object's own fields are read (`__proto__`, `prototype` and `constructor` are refused), and a key that holds a dot cannot be reached. Data: `valueType`, `builtin.core.string` (default), `builtin.core.number`, `builtin.core.boolean` or `builtin.core.object`, the type of `value` and `fallback`. A value of another type is the node's error, nothing is converted (`\"42\"` read as a number is an error: read it as a text, then Convert it to a number). When the path is not in the object, `value` is `fallback` if it has a value, else nothing. Fed from a run-time output (a request's body), it has a value only while that run dispatches.",
+      "category": "Values",
+      "icon": "TextSearch",
+      "handles": [
+        { "id": "object", "handleType": "object", "role": "target", "label": "Object", "inline": false },
+        { "id": "path", "handleType": "string", "role": "target", "label": "Path", "default": "" },
+        { "id": "fallback", "handleType": "string", "role": "target", "label": "Fallback" },
+        { "id": "value", "handleType": "string", "role": "source", "label": "Value" }
+      ]
+    },
+    {
+      "type": "select",
+      "name": "Select",
+      "description": "Outputs its `true` input on `value` while `condition` is true, else its `false` input. `true` and `false` take a text, a number, a boolean or an object and share one type, the type group `value`: the first value connected into either sets it (`data.inputTypes.value`), and while one of them is wired the other takes only that type. `value` has that type. With nothing connected into either, Select is a text Select. The type stays when the edges are removed, and follows the source when the source's type changes. Object inputs take no typed value: wire them.",
+      "category": "Logic",
+      "icon": "GitFork",
+      "handles": [
+        { "id": "condition", "handleType": "boolean", "role": "target", "label": "Condition", "default": false },
+        {
+          "id": "true",
+          "handleType": "string",
+          "role": "target",
+          "label": "True",
+          "accepts": ["string", "number", "boolean", "object"],
+          "typeGroup": "value"
+        },
+        {
+          "id": "false",
+          "handleType": "string",
+          "role": "target",
+          "label": "False",
+          "accepts": ["string", "number", "boolean", "object"],
+          "typeGroup": "value"
+        },
+        { "id": "value", "handleType": "string", "role": "source", "label": "Value" }
+      ]
+    },
+    {
+      "type": "switch",
+      "name": "Switch",
+      "description": "Routes the execution wired into `exec-in` (from an API Route, an Event or another Switch) on to one output, by `condition`, and answers with what that output's target answered. `condition` takes a boolean or a text, and has the type connected into it last (`data.inputTypes.condition`; a boolean before anything was), kept when the edge is removed and following the source when the source's type changes; any other type is refused. Its outputs follow that type: a boolean has `exec-true` and `exec-false`; a text has one output `case-<id>` per case of `data.cases: [{ id, value }]`, in order, then `exec-default` for a text that matches no case. Cases are distinct, non-empty and compared exactly; a case written without an `id` gets one, and an id never changes, so editing or reordering cases keeps their edges, and outputs that go with a change of type leave their edges as stale pins. With no condition value the run fails; with nothing connected on the chosen output it answers \"No target connected to …\".",
+      "category": "Logic",
+      "icon": "Split",
+      "handles": [
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Run", "multiple": true },
+        {
+          "id": "condition",
+          "handleType": "boolean",
+          "role": "target",
+          "label": "Condition",
+          "default": false,
+          "accepts": ["boolean", "string"]
+        },
+        { "id": "exec-true", "handleType": "execution-context", "role": "source", "label": "True" },
+        { "id": "exec-false", "handleType": "execution-context", "role": "source", "label": "False" },
+        { "id": "case-", "handleType": "execution-context", "role": "source", "label": "Case", "dynamic": true },
+        { "id": "exec-default", "handleType": "execution-context", "role": "source", "label": "Default" }
+      ]
+    },
+    {
+      "type": "call-action",
+      "name": "Call Action",
+      "description": "Run from `exec-in` (an API Route, an Event, a Switch or another Call Action), calls one action of other nodes or of an app, then continues on `exec-out` (Done) when the call succeeds or on `exec-error` (Failed) when it fails, with the event it was given, and answers with what that output's target answered. With nothing connected on Done it answers `{ status: 200, body: <the action's result> }`; a failure with nothing connected on Failed fails the run with the action's problem, recorded on this node. Data: `target`, either `{ nodes: [<node id>, …] }`, nodes of this space on any graph, all of one type, called in order with the same parameters, the first failure stopping the rest; or `{ app: <instance id> }`, one app of this space (an address written here is stored as the app's id, so a rename does not break it). `action`: the id of one of the target's actions (list_actions, app_actions). `params: [{ name, type, required?, integer?, options?, description? }]`: the action's parameters that are a text, a number or a boolean, a snapshot taken when the action is written; writing `action` or `target` without `params` takes it, and the answer carries it. Each parameter is the value input `param-<name>`: its wired value, else the value typed at `data.inputs.param-<name>`; one with neither is left out of the call, and a required one fails the call before it starts, naming it. A call from a graph runs as nobody: a node action gets no caller and an app action runs as its extension; an action declared for administrators is never called from a graph. A target in another space and an action the target does not declare are reported on the node and refused when it runs. Parameters that no longer match the action's are reported on the node, and the call still runs with the parameters the node keeps until the snapshot is taken again (write `action` again without `params`, or Refresh on the card). A call that would re-enter an action still running in the same chain is refused as a loop. The call's outcome is a run-time value (`runtime: true`), set only while Done or Failed dispatches: `result` (object) is the action's result when it is an object, `result-text` (text) when it is a text, and `error` (text) is the failure's message on Failed. A result of any other shape, such as the list several targets answer, is on neither output.",
+      "category": "Logic",
+      "icon": "Zap",
+      "handles": [
+        { "id": "exec-in", "handleType": "execution-context", "role": "target", "label": "Run", "multiple": true },
+        { "id": "param-", "handleType": "string", "role": "target", "label": "Parameter", "dynamic": true },
+        { "id": "exec-out", "handleType": "execution-context", "role": "source", "label": "Done" },
+        { "id": "exec-error", "handleType": "execution-context", "role": "source", "label": "Failed" },
+        { "id": "result", "handleType": "object", "role": "source", "label": "Result", "runtime": true },
+        { "id": "result-text", "handleType": "string", "role": "source", "label": "Result text", "runtime": true },
+        { "id": "error", "handleType": "string", "role": "source", "label": "Error", "runtime": true }
+      ]
+    }
   ],
   "handleTypes": [
     {
@@ -337,12 +633,25 @@
     },
     { "id": "filesystem-target", "label": "Filesystem Target", "color": "oklch(0.7 0.17 140)" },
     { "id": "text-stream", "label": "Text Stream", "color": "oklch(0.75 0.17 100)" },
-    { "id": "agent-instruction", "label": "Agent Instruction", "color": "oklch(0.72 0.16 180)" },
     {
       "id": "execution-context",
       "label": "Execution Context",
       "color": "oklch(0.72 0.17 30)",
       "description": "Async execution context for request/response handlers"
+    },
+    {
+      "id": "string",
+      "label": "Text",
+      "color": "oklch(0.72 0.17 350)",
+      "description": "Text. A number or a boolean connects to a text input and reads as its text"
+    },
+    { "id": "number", "label": "Number", "color": "oklch(0.7 0.15 250)", "description": "A finite number" },
+    { "id": "boolean", "label": "Boolean", "color": "oklch(0.78 0.15 70)", "description": "True or false" },
+    {
+      "id": "object",
+      "label": "Object",
+      "color": "oklch(0.72 0.14 215)",
+      "description": "A JSON object (not a list, not null), such as a request's body. Connects only to an object input and takes no typed value; read a field with a Get node"
     }
   ]
 }

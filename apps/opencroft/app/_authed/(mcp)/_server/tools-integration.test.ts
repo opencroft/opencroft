@@ -44,6 +44,56 @@ test('list_actions returns the real action list, not an empty/undefined result',
   )
 })
 
+// A route re-exposes the routed terminal's context whole, so a context its
+// source refused to agents stays refused through the route.
+async function freshSpaceWithRoutedContext(slug: string, context: Record<string, unknown>): Promise<string> {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  const nodeId = `${slug}-router`
+  await registry.create(slug, slug, {
+    nodes: [
+      {
+        id: nodeId,
+        type: 'builtin.core.terminal-router',
+        position: { x: 0, y: 0 },
+        data: { routes: [{ id: 'r1', target: 'routed-node/terminal', context }] },
+      },
+    ],
+    edges: [],
+  })
+  return `${nodeId}/route-r1`
+}
+
+// As the in-process agent chat calls: it has its own permission flow, so the
+// call does not wait in the MCP approval queue, which nobody answers here.
+const agentCall = { internal: true, callerAgent: 'agent.alice' }
+
+test('remote_exec refuses a routed context its source refused to agents, with the reason', async () => {
+  const reason = "Not opened: container web-1 is not this Application's."
+  const target = await freshSpaceWithRoutedContext(`tools-it-refused-${crypto.randomUUID()}`, {
+    type: 'local',
+    agentRefusal: reason,
+  })
+
+  await assert.rejects(
+    handleToolCall('remote_exec', { target, command: 'true' }, agentCall),
+    (err: { message?: string }) => {
+      assert.equal(err.message, reason)
+      return true
+    },
+  )
+})
+
+test('remote_exec runs on a routed context that carries no refusal', async () => {
+  const target = await freshSpaceWithRoutedContext(`tools-it-routed-${crypto.randomUUID()}`, { type: 'local' })
+
+  const result = await handleToolCall('remote_exec', { target, command: 'echo routed-ok' }, agentCall)
+
+  assert.equal(result.isError, undefined)
+  const text = (result.content as { type: string; text: string }[])[0]?.text ?? ''
+  assert.match(text, /routed-ok/)
+})
+
 // A matching test for the `call` handler (dispatchNodeActionImpl) is deliberately
 // not here: that path runs the action through getExtensionModule's real compiled
 // bundle eval, and this codebase's plain test runner can't cross that boundary —

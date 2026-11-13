@@ -1,6 +1,6 @@
 'use client'
 
-// Creating a group chat, from the list's `action` slot.
+// Creating a group chat, from the plus on the list's Channels heading.
 //
 // The form itself is the kit's `CreateGroupChatForm` and is not reshaped here.
 // This owns only what a form component should not: the request, the pending
@@ -69,9 +69,8 @@ export function CreateGroupChatAction() {
         }
       }}
     >
-      <DialogTrigger render={<Button size='sm' variant='outline' />}>
-        <Plus className='size-3.5' />
-        New group chat
+      <DialogTrigger render={<Button size='icon-xs' variant='ghost' aria-label='New group chat' />}>
+        <Plus />
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

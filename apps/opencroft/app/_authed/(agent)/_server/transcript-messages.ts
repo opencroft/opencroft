@@ -64,9 +64,21 @@ export interface OpenReply {
 export interface IndexState {
   /** The first event the written rows do not account for. */
   resumeFrom: number
+  /**
+   * How much of the reply text at `resumeFrom` the written rows do account
+   * for: an entry of the engine's compacted log is one reply run, rewritten
+   * as it grows, so rows can be written from part of it.
+   */
+  resumeChars: number
   /** The open turn: its question's position, or a reply's that came without one. */
   turn: number | null
   open: OpenReply | null
+  /**
+   * The reply entry last read, and how much of its text has been taken: a
+   * later write of the same entry carries the whole text again, and only what
+   * follows is new.
+   */
+  taken?: { position: number; chars: number }
 }
 
 export interface IndexStep {
@@ -76,22 +88,18 @@ export interface IndexStep {
   persist: boolean
 }
 
-export const INITIAL_STATE: IndexState = { resumeFrom: 0, turn: null, open: null }
+export const INITIAL_STATE: IndexState = { resumeFrom: 0, resumeChars: 0, turn: null, open: null }
 
 /**
  * The rows `events` complete, given the state the transcript was in before
  * them.
  *
  * Reply text before any question -- a transcript whose opening turn was cut by
- * the event cap, or an agent speaking first -- opens a turn at its own first
+ * trimming, or an agent speaking first -- opens a turn at its own first
  * chunk, so it is still searchable and still has somewhere to open at.
  */
 export function indexEvents(state: IndexState, events: readonly RecordedEvent[]): IndexStep {
-  const step: IndexStep = {
-    rows: [],
-    state: { ...state, open: state.open && { ...state.open } },
-    persist: false,
-  }
+  const step: IndexStep = { rows: [], state: copyState(state), persist: false }
   for (const { position, event, createdAt } of events) {
     // Already accounted for: a stretch of history recorded again (an edit's
     // fork, a harness replay) that the rows already hold.
@@ -106,22 +114,28 @@ export function indexEvents(state: IndexState, events: readonly RecordedEvent[])
           step.rows.push({ position, segment, role: 'user', turn: position, text, createdAt })
         }
         step.state.resumeFrom = position + 1
+        step.state.resumeChars = 0
         break
       }
       case 'agent_message': {
-        if (event.text === '') {
+        // What this write adds: all of a chunk, or what an entry rewritten in
+        // place has grown by since it was last read.
+        const from = takenFrom(step.state, position)
+        const text = event.text.slice(from)
+        step.state.taken = { position, chars: Math.max(from, event.text.length) }
+        if (text === '') {
           break
         }
         const held = step.state.open
-        if (held && held.text.length >= SEGMENT_CHARS && /^\s/.test(event.text)) {
-          writeHeld(step, position)
+        if (held && held.text.length >= SEGMENT_CHARS && /^\s/.test(text)) {
+          writeHeld(step, position, from)
         }
         step.state.turn ??= position
         step.state.open ??= { position, segment: 0, text: '', createdAt }
-        step.state.open.text += event.text
+        step.state.open.text += text
         const length = step.state.open.text.length
-        if (length >= MAX_SEGMENT_CHARS || (length >= SEGMENT_CHARS && /\s$/.test(event.text))) {
-          writeHeld(step, position + 1)
+        if (length >= MAX_SEGMENT_CHARS || (length >= SEGMENT_CHARS && /\s$/.test(text))) {
+          writeHeld(step, position, event.text.length)
         }
         break
       }
@@ -143,11 +157,24 @@ export function indexEvents(state: IndexState, events: readonly RecordedEvent[])
  * the process that was streaming it no longer is and nothing will end it.
  */
 export function endOpenReply(state: IndexState, through: number): IndexStep {
-  const step: IndexStep = { rows: [], state: { ...state, open: state.open && { ...state.open } }, persist: false }
+  const step: IndexStep = { rows: [], state: copyState(state), persist: false }
   if (step.state.open) {
     closeReply(step, through)
   }
   return step
+}
+
+function copyState(state: IndexState): IndexState {
+  return { ...state, open: state.open && { ...state.open }, ...(state.taken ? { taken: { ...state.taken } } : {}) }
+}
+
+// How much of the reply entry at `position` is already taken: by this state
+// as it read it, or by the written rows when they stop inside it.
+function takenFrom(state: IndexState, position: number): number {
+  if (state.taken?.position === position) {
+    return state.taken.chars
+  }
+  return position === state.resumeFrom ? state.resumeChars : 0
 }
 
 // Also recorded when nothing was open: the events up to here are then
@@ -156,11 +183,13 @@ function closeReply(step: IndexStep, through: number): void {
   writeHeld(step, through)
   step.state.open = null
   step.state.resumeFrom = through
+  step.state.resumeChars = 0
   step.persist = true
 }
 
-// Write the open reply's held text out as segments, as of `through`.
-function writeHeld(step: IndexStep, through: number): void {
+// Write the open reply's held text out as segments, as of `through` and the
+// first `chars` of the reply text recorded there.
+function writeHeld(step: IndexStep, through: number, chars = 0): void {
   const open = step.state.open
   if (!open) {
     return
@@ -178,6 +207,7 @@ function writeHeld(step: IndexStep, through: number): void {
   }
   open.text = ''
   step.state.resumeFrom = through
+  step.state.resumeChars = chars
   step.persist = true
 }
 

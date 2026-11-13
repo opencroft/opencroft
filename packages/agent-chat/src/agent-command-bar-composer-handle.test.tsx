@@ -1,14 +1,15 @@
 // Writing into the composer through its handle: what a reply quoted from the
 // transcript leaves behind -- the text, the focus, and where the caret is.
 //
-// Mounted, because the caret is placed after the kit bar has taken the new text
-// and that only happens in a real commit.
+// Mounted, because the caret is placed after the composer has taken the new
+// text and that only happens in a real commit.
 
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 
 import type { AgentCommandBarSession, AgentComposerHandle, UseAgentCommandBarOptions } from './agent-command-bar'
-import { installTestDom } from './test-dom'
+import { appendQuotedReply } from './message-quote'
+import { composerEditor, installComposerDom, settle } from './test-composer'
 
 let root: import('react-dom/client').Root | null = null
 let container: HTMLElement
@@ -25,7 +26,7 @@ const SESSION: AgentCommandBarSession = {
 }
 
 before(async () => {
-  container = installTestDom()
+  container = installComposerDom()
   ;({ act, createRef } = await import('react'))
   ;({ createRoot } = await import('react-dom/client'))
   ;({ useAgentCommandBar } = await import('./agent-command-bar'))
@@ -58,15 +59,17 @@ async function mount(savedDraft: string) {
   const next = createRoot(container)
   root = next
   await act(async () => next.render(<Bar {...options} />))
+  await settle()
   const handle = composerRef.current
   assert.ok(handle, 'the hook published no handle')
   return handle
 }
 
-function composer(): HTMLTextAreaElement {
-  const textarea = container.querySelector('textarea')
-  assert.ok(textarea, 'no composer rendered')
-  return textarea
+/** Whether the caret is at the very end of the composer's text. */
+function caretAtEnd(): boolean {
+  const { state } = composerEditor(container)
+  const end = state.doc.content.size - 1
+  return state.selection.empty && state.selection.from === end
 }
 
 test('update loads the new text, focuses the composer and puts the caret at the end', async () => {
@@ -75,28 +78,60 @@ test('update loads the new text, focuses the composer and puts the caret at the 
   await act(async () =>
     handle.update((current) => {
       seen = current
-      return `${current}\n\n> quoted\n\n`
+      return `${current}\n\n> quoted`
     }),
   )
+  await settle()
   assert.equal(seen, 'draft', 'update is handed what the composer holds')
-  const textarea = composer()
-  assert.equal(textarea.value, 'draft\n\n> quoted\n\n')
+  const editor = composerEditor(container)
+  assert.deepEqual(
+    editor.state.doc.content.content.map((node) => [node.type.name, node.textContent]),
+    [
+      ['paragraph', 'draft'],
+      ['blockquote', 'quoted'],
+      ['paragraph', ''],
+    ],
+  )
   // Booleans, not the elements: a failing comparison prints its operands, and
   // printing a jsdom element walks the whole window -- the run stalls instead
   // of reporting.
-  assert.equal(document.activeElement === textarea, true, 'the composer does not have focus')
-  assert.equal(textarea.selectionStart, textarea.value.length)
-  assert.equal(textarea.selectionEnd, textarea.value.length)
+  assert.equal(document.activeElement === editor.view.dom, true, 'the composer does not have focus')
+  assert.equal(caretAtEnd(), true, 'the caret is not at the end')
+})
+
+test("a reply's quote goes in as a formatted quote, its lines kept, the caret on a line after it", async () => {
+  const handle = await mount('draft')
+  await act(async () => handle.update((current) => appendQuotedReply(current, 'first line\nsecond line\n\nthird')))
+  await settle()
+  const editor = composerEditor(container)
+  assert.deepEqual(editor.getJSON().content, [
+    { type: 'paragraph', content: [{ type: 'text', text: 'draft' }] },
+    {
+      type: 'blockquote',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'first line' }, { type: 'hardBreak' }, { type: 'text', text: 'second line' }],
+        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'third' }] },
+      ],
+    },
+    { type: 'paragraph' },
+  ])
+  assert.equal(editor.view.dom.textContent?.includes('>'), false, 'a quote mark is drawn as text')
+  assert.equal(caretAtEnd(), true, 'the caret is not at the end')
 })
 
 test('an update that leaves the text as it was still puts the caret at the end', async () => {
   // Loading a DIFFERENT text moves the caret to the end by itself, so the case
-  // above cannot tell whether the handle places it. Unchanged text leaves the
-  // textarea's value untouched, and only the handle moves the caret then.
+  // above cannot tell whether the handle places it. Here the load puts back the
+  // text that is already there.
   const handle = await mount('draft')
-  const textarea = composer()
-  textarea.setSelectionRange(0, 0)
+  await act(async () => {
+    composerEditor(container).commands.setTextSelection(1)
+  })
   await act(async () => handle.update((current) => current))
-  assert.equal(textarea.selectionStart, textarea.value.length)
-  assert.equal(document.activeElement === textarea, true, 'the composer does not have focus')
+  await settle()
+  assert.equal(caretAtEnd(), true, 'the caret is not at the end')
+  assert.equal(document.activeElement === composerEditor(container).view.dom, true, 'the composer does not have focus')
 })

@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import type { TerminalContext } from '../types'
 import { getBackend } from './backend'
+import { DOCKER_EXEC, withFakeDocker } from './test-fake-docker'
 
 const LOCAL: TerminalContext = { type: 'local' } as TerminalContext
 
@@ -41,6 +42,51 @@ test('a non-zero exit is a result, not a rejection, and still reports truncation
   const result = await exec("head -c 5000 /dev/zero | tr '\\0' x; exit 3", 1000)
   assert.equal(result.exitCode, 3)
   assert.equal(result.stdoutTruncated, true)
+})
+
+// ── stdin: the channel for a value that must stay out of argv and environ ──
+
+const STDIN_SECRET = 'S3CRET-VALUE-ON-STDIN'
+
+test('a local command reads the stdin it is given', async () => {
+  // `wc -c` proves the input arrived without reprinting it: a command handed nothing would count 0.
+  const result = await getBackend(LOCAL).exec(LOCAL, 'wc -c', { stdin: Buffer.from(STDIN_SECRET) })
+  assert.equal(result.stdout.trim(), String(STDIN_SECRET.length))
+})
+
+test('a docker-exec command reads the stdin it is given, through the parent docker exec -i', async () => {
+  // Bounded: a stdin that never arrives is also never closed, and `wc -c` would wait on it.
+  await withFakeDocker(async () => {
+    const result = await getBackend(DOCKER_EXEC).exec(DOCKER_EXEC, 'wc -c', {
+      stdin: Buffer.from(STDIN_SECRET),
+      timeoutMs: 5000,
+    })
+    assert.equal(result.stdout.trim(), String(STDIN_SECRET.length))
+  })
+})
+
+test('a docker-exec command still receives env over stdin when it is given no stdin', async () => {
+  // The positive control for the fake: env rides the same channel, so a fake that dropped stdin
+  // would fail here too.
+  await withFakeDocker(async () => {
+    const result = await getBackend(DOCKER_EXEC).exec(DOCKER_EXEC, 'printf %s "$GREETING"', {
+      env: { GREETING: 'hello' },
+    })
+    assert.equal(result.stdout, 'hello')
+  })
+})
+
+test('env and stdin together are refused where env travels over stdin, naming the transport', async () => {
+  for (const ctx of [DOCKER_EXEC, { type: 'ssh', host: 'h' } as TerminalContext]) {
+    assert.throws(
+      () => getBackend(ctx).exec(ctx, 'true', { env: { A: '1' }, stdin: Buffer.from('x') }),
+      (err: Error) => {
+        assert.match(err.message, /cannot carry both `env` and `stdin`/)
+        assert.ok(err.message.startsWith(ctx.type), `the refusal names ${ctx.type}`)
+        return true
+      },
+    )
+  }
 })
 
 // ── stream: the third method, and the contexts that refuse it ──

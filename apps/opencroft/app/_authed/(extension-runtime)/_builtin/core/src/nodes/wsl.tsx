@@ -1,5 +1,5 @@
 import { invoke } from '@opencroft/client/actions'
-import { inspectorIntent, NodeFrame, OutputHandle, useReactFlow } from '@opencroft/client/canvas'
+import { inspectorIntent, NodeFrame, OutputHandle } from '@opencroft/client/canvas'
 import { Terminal } from '@opencroft/client/terminal'
 import { Input, Label } from '@opencroft/client/ui'
 import { Cpu, HardDrive, MemoryStick, SquareTerminal, TerminalSquare } from 'lucide-react'
@@ -19,7 +19,6 @@ export interface WslData {
 
 export function WslNode({ id, data, selected }: { id: string; data: WslData; selected?: boolean }) {
   const [stats, setStats] = useState<WslStats | null>(null)
-  const rf = useReactFlow()
 
   useEffect(() => {
     if (!data.distro) {
@@ -33,10 +32,9 @@ export function WslNode({ id, data, selected }: { id: string; data: WslData; sel
 
   const openInspector = useCallback(
     (tab: string) => {
-      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
       inspectorIntent.open(id, tab)
     },
-    [id, rf],
+    [id],
   )
 
   const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])

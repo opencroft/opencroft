@@ -5,6 +5,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin, PluginKey, type Transaction } from '@tiptap/pm/state'
 import { type Mappable, StepMap } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
+import { changedRange, changeMapping } from 'agent-chat/markdown-doc-change'
 import {
   AGENT_EDIT_HIDDEN_STYLE,
   type AgentEditPlan,
@@ -18,12 +19,7 @@ import { hueFor } from 'ui/components/ui/editing/collaborator-caret'
 import type { PaletteHue } from 'ui/components/ui/input/color-palette'
 
 import { absolutePosition } from '@/components/shared-markdown-editor/relative-position'
-import {
-  changeMapping,
-  type ReplacedContent,
-  replacedContent,
-} from '@/components/shared-markdown-editor/replaced-content'
-import { changedRange } from '@/lib/markdown-doc-change'
+import { type ReplacedContent, replacedContent } from '@/components/shared-markdown-editor/replaced-content'
 import type { MarkdownEditMessage, MarkdownEditOrigin } from '@/lib/markdown-doc-protocol'
 
 /*

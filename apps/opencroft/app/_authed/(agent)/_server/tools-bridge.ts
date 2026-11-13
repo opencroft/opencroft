@@ -1,13 +1,12 @@
 import { adapterSupportsElicitation } from 'agent-client/agent-client'
-import { type AskUserQuestionSpec, contentToAnswers, questionsToElicitation } from 'agent-client/elicitation-form'
+import { type AskUserQuestionSpec, answerLines, questionsToElicitation } from 'agent-client/elicitation-form'
 import { jsonSchemaToZodShape } from 'agent-client/json-schema'
 import { type LocalTool, SKILL_TOOL_NAME, type ToolsCaller } from 'agent-client/mcp-server'
 
 import type { ListedTool } from '@/app/_authed/(mcp)/_server/execution-mode'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { handleToolCall, listDynamicTools, READ_ONLY_TOOLS, toolDefinitions } from '@/app/_authed/(mcp)/_server/tools'
-import { slug } from '@/app/_authed/(server)/_server/types'
-import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
+import { agentForMcpIdentity } from '@/app/_authed/(space)/_server/agents-impl'
 
 // Bridges opencroft's own MCP tool registry (spaces, nodes, extensions, docs,
 // remote ops, MCP config, skills, dynamic agent-tool graph nodes — see
@@ -53,12 +52,7 @@ async function callTool(
  * wrong agent.
  */
 async function callingAgentName(caller: ToolsCaller): Promise<string | null> {
-  const identity = caller.mcpIdentity
-  if (!identity) {
-    return null
-  }
-  const matches = (await listAgentNodesImpl()).filter((node) => slug(node.name) === identity)
-  return matches.length === 1 ? (matches[0]?.name ?? null) : null
+  return (await agentForMcpIdentity(caller.mcpIdentity))?.name ?? null
 }
 
 // The JSON-Schema-to-Zod conversion is the expensive half and does not depend
@@ -127,8 +121,9 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
   const toolCaller: ToolCallerContext = sessionId ? { agent: callerAgent, sessionId } : { agent: callerAgent }
   // A harness verified to ask natively (ACP elicitation) does not get the
   // fallback question tool at all: both would render identically in the chat,
-  // but the tool path dies at the MCP request timeout and the native one
-  // doesn't — offering both just lets the model pick the worse channel.
+  // but the native one hands the answer back inside the turn, while the tool
+  // makes the agent end its turn and wait for a message — offering both just
+  // lets the model pick the worse channel.
   const harnessAsks = adapterSupportsElicitation(caller.adapterId)
   // The registry's `skill` is for external clients: agent-client registers its
   // own under the same name, filtered by the agent's role, and a second one
@@ -137,7 +132,9 @@ export async function opencroftLocalTools(caller: ToolsCaller): Promise<LocalToo
     .filter((tool) => tool.name !== SKILL_TOOL_NAME)
     .filter((tool) => !(tool.name === 'ask_user' && harnessAsks))
     .map((tool) => toLocalTool(tool, toolCaller))
-    .map((tool) => (tool.name === 'ask_user' && sessionId ? sessionAskUserTool(tool, sessionId) : tool))
+    .map((tool) =>
+      tool.name === 'ask_user' && sessionId ? sessionAskUserTool(tool, { agent: callerAgent, sessionId }) : tool,
+    )
 }
 
 /**
@@ -162,41 +159,88 @@ function parseAskUserQuestions(raw: unknown): AskUserQuestionSpec[] | null {
   return questions.some((q) => !q.title || !q.question || q.options.length === 0) ? null : questions
 }
 
+/** What the session's agent is told the tool does: it answers later, and the agent waits. */
+const SESSION_ASK_USER_DESCRIPTION =
+  'Ask the user structured questions with predefined options: up to 5 questions, each with up to 5 options plus a custom text input. ' +
+  'The call returns at once: the questions are shown to the user, and the answers arrive later in this conversation as a message, ' +
+  'one "question"="answer" line per question. After calling it, end your turn: make no further tool calls, do not continue the ' +
+  'task and do not guess the answers. Wait for the message with the answers, however long it takes.'
+
+/** The call's own answer: the question is out, and the agent stops here. */
+function askUserStartedText(taskId: string): string {
+  return (
+    `Your questions are shown to the user, as background task ${taskId}. End your turn now: make no further tool ` +
+    'calls, and do not continue the task or guess the answers. The answers will arrive in this conversation as ' +
+    'a message about that task when the user gives them.'
+  )
+}
+
 /**
  * ask_user for a caller WITH a session: the question goes into that session's
  * chat as the same form an agent-sent ACP elicitation renders as, instead of
- * the instance-wide MCP request queue. Same questions argument, same
- * `"question"="answer"` result text, same cancelled error — only where the
- * form appears changes. Callers without a session (external MCP clients) keep
- * the base handler's global path.
+ * the instance-wide MCP request queue. Callers without a session (external MCP
+ * clients) keep the base handler's global path.
+ *
+ * The call does not wait for the answer. It starts a background task, with no
+ * time limit, whose work is the question: the call answers at once, so no
+ * harness's MCP request timeout can drop it, and the answer is the task's
+ * result, delivered into the conversation like any other task's. The question
+ * outlives the turn that asked it (the agent is told to end that turn), and
+ * the task ends the way any in-process task does — answered, dismissed (a
+ * failure saying so), stopped from the chat, ended with its conversation when
+ * that is deleted, or ended by a restart. Starting the task here rather than
+ * through a declaration is the one exception task-tools.ts's header names.
  *
  * No `space`: the form lands in the session's own chat, so there is no space
  * to name, and asking for one would make every in-chat question carry an
  * argument nothing reads. The base tool requires it because its queue is
  * shown per space.
  *
- * The agent-client import is deferred to the call because this module is on
- * the tools.ts <-> agent-client-instance import cycle (see getStaticTools).
+ * The agent-client and task-tools imports are deferred to the call because
+ * this module is on the tools.ts <-> agent-client-instance import cycle (see
+ * getStaticTools), and a tool family module must not be the first way into it.
  */
-function sessionAskUserTool(base: LocalTool, sessionId: string): LocalTool {
+function sessionAskUserTool(base: LocalTool, caller: ToolCallerContext & { sessionId: string }): LocalTool {
   const { space: _space, ...inputSchema } = base.inputSchema
   return {
     ...base,
+    description: SESSION_ASK_USER_DESCRIPTION,
     inputSchema,
     handler: async (args) => {
       const questions = parseAskUserQuestions(args.questions)
       if (!questions) {
         return base.handler(args)
       }
-      const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
       const { message, schema } = questionsToElicitation(questions)
-      const content = await agentClient.askUser(sessionId, { message, form: schema })
-      if (content === null) {
-        return { content: [{ type: 'text' as const, text: 'cancelled' }], isError: true }
-      }
-      const answers = contentToAnswers(questions, content)
-      const lines = questions.map((q) => `"${q.question}"="${answers[q.title] ?? ''}"`)
-      return { content: [{ type: 'text' as const, text: `User answered to your questions:\n${lines.join('\n')}` }] }
+      const { backgroundTaskService, taskOwner } = await import('@/app/_authed/(mcp)/_server/task-tools')
+      const record = await (await backgroundTaskService()).startInProcessTask({
+        owner: taskOwner(caller),
+        kind: 'tool',
+        name: 'ask_user',
+        target: '',
+        summary: `Question for the user: ${questions.map((q) => q.title).join(', ')}`,
+        timeoutMs: null,
+        run: async (signal) => {
+          const { agentClient } = await import('@/app/_authed/(agent)/_server/agent-client-instance')
+          if (!agentClient.listSessions().some((session) => session.id === caller.sessionId)) {
+            throw new Error('The conversation that asked is not open, so the questions could not be shown.')
+          }
+          const content = await agentClient.askUser(caller.sessionId, {
+            message,
+            form: schema,
+            signal,
+            outlivesTurn: true,
+          })
+          if (content === null) {
+            // A stop from the chat or the conversation's deletion aborts the
+            // signal and has ended the task already; what remains is a reader
+            // who closed the form.
+            throw signal.aborted ? signal.reason : new Error('The user dismissed the questions without answering.')
+          }
+          return `The user answered:\n${answerLines(questions, content)}`
+        },
+      })
+      return { content: [{ type: 'text' as const, text: askUserStartedText(record.taskId) }] }
     },
   }
 }

@@ -1,6 +1,6 @@
 // Server entry: API routes import the engine from here.
 
-export type { AgentClientOptions, ClientInfo, PromptAttachmentInput } from './agent-client'
+export type { AgentClientOptions, ClientInfo, PromptAttachmentInput, RecordedLogOpts } from './agent-client'
 export { agentClient, createAgentClient, supportsImagePrompt, supportsMidTurnInput } from './agent-client'
 // What a message carries beside its words. The host hands attachments to
 // prompt() and resolves their bytes through loadAttachments; the engine turns
@@ -31,8 +31,23 @@ export {
 export { resolveSelectionContextWindow, selectionModels } from './endpoint'
 export type { ChatBlock, ChatMessage } from './fold'
 export { buildBlocks, foldEvents, isTerminalToolStatus } from './fold'
+// Instruction files: where each harness reads the host's texts (also
+// importable via the subpaths; instruction-paths is client-safe).
+export type { InstructionRereads, InstructionTarget } from './harness-adapters'
+export { dockerExecShell, localShell } from './harness-process'
+export type { InstructionTexts } from './instruction-files'
+export type { InstructionFilePath, InstructionRole } from './instruction-paths'
+export { instructionFilePaths } from './instruction-paths'
 // Tool / skill registration surface.
-export type { LocalTool, SkillHandler, SkillsInput, ToolsCaller, ToolsInput } from './mcp-server'
+export {
+  type LocalTool,
+  MCP_FORWARDED_HEADER,
+  type SkillHandler,
+  type SkillsInput,
+  type ToolCallContext,
+  type ToolsCaller,
+  type ToolsInput,
+} from './mcp-server'
 export type { KeyValue, McpServerConfig, McpTransport } from './mcp-types'
 export type { EventsWindow } from './pagination'
 // Permission model (also importable via the subpath).
@@ -53,6 +68,7 @@ export {
   classifyModes,
   modeIdForCanonical,
   mostSupervisedModeId,
+  offeredModeId,
   SUPERVISION_ORDER,
 } from './session-modes'
 export type { SkillDef } from './skills'
@@ -60,9 +76,15 @@ export type { SkillDef } from './skills'
 export type { SynonymRegistration, SynonymResolver } from './synonyms'
 export { createSynonymResolver } from './synonyms'
 export type { ToolResult } from './tool-result'
+// The compacted log the engine keeps with `compactLog` (also importable via
+// the subpath), and the function a host compacts a log recorded event by event
+// with.
+export type { LogWrite } from './transcript-log'
+export { compactTranscript, SESSION_LOG, TranscriptLog } from './transcript-log'
 // Shared client-safe types & helpers (also importable via subpaths).
 export type {
   AgentSelection,
+  AskOutcome,
   ChatEvent,
   PermissionOpt,
   PlanItem,
@@ -70,5 +92,8 @@ export type {
   QueueMode,
   SessionMeta,
   SessionMode,
+  HarnessProcess,
+  RemoteShell,
+  ShellResolver,
   SpawnConfig,
 } from './types'

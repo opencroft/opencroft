@@ -54,7 +54,8 @@ test('host.graph.listHandles enumerates with no Start context, and its ids resol
   // Covers the enumeration path — spaces, manifests, filtering, and the
   // getContext pairing — with no Start context. It does NOT cover the dynamic
   // expansion branch: a localhost node returns before the docker call, and
-  // reaching that branch needs an application node with a live docker context.
+  // reaching that branch needs the docker extension's application node, which
+  // this test does not install.
   // The static guard below is what holds that half.
   const slug = `host-no-context-handles-${crypto.randomUUID()}`
   const nodeId = 'localhost-handles-1'
@@ -102,15 +103,15 @@ test('host.graph.listHandles enumerates with no Start context, and its ids resol
 
 test('node-handles reaches extension actions through the plain impl, never the server fn', async () => {
   // Asserted against the source rather than by execution, deliberately: the
-  // failing path needs an application node with a live docker context, so an
-  // executed test would pass whether or not the dependency is correct — and a
+  // failing path needs the docker extension's application node, which this
+  // test does not install, so an executed test would pass whether or not the dependency is correct — and a
   // vacuous guard is worse than none.
   //
   // The rule: the createServerFn in _server/actions.ts needs TanStack Start's
   // request-scoped AsyncLocalStorage. host.graph.listHandles is reachable from
   // an extension's Nitro route, which never establishes it, so this module must
   // use invokeExtensionActionImpl. Using the server fn would throw only for
-  // nodes that have something to expand — surfacing as "some sources are
+  // application nodes — surfacing as "some sources are
   // missing" rather than as an error.
   const source = await readFile(new URL('./node-handles.ts', import.meta.url), 'utf8')
   assert.ok(

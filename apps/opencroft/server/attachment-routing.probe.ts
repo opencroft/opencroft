@@ -43,11 +43,26 @@ const server = await createServer({
 })
 await server.listen()
 
+// Listening is not ready: Nitro's dev server still has to start its worker,
+// and the worker has to load the server entry through Vite. A request that
+// comes before that is answered 503 once Nitro's own short wait for it runs
+// out, and on a loaded host the start outlasts that wait. So a 503 is asked
+// again until the server answers. None of the probed routes answers 503
+// itself, so no result this records is lost.
+async function fetchOnceReady(request: ProbeRequest): Promise<Response> {
+  for (;;) {
+    const response = await fetch(`http://127.0.0.1:${port}${request.path}`, {
+      headers: { 'sec-fetch-dest': request.dest },
+    })
+    if (response.status !== 503) return response
+    await response.arrayBuffer()
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+}
+
 const results: ProbeResult[] = []
 for (const request of requests) {
-  const response = await fetch(`http://127.0.0.1:${port}${request.path}`, {
-    headers: { 'sec-fetch-dest': request.dest },
-  })
+  const response = await fetchOnceReady(request)
   await response.arrayBuffer()
   results.push({ ...request, status: response.status, contentType: response.headers.get('content-type') ?? '' })
 }

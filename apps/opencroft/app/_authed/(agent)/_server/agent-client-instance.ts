@@ -1,14 +1,17 @@
 import { join } from 'node:path'
 
 import { createAgentClient, type PermissionContext, type PermissionOutcome } from 'agent-client/agent-client'
+import type { LogWrite } from 'agent-client/transcript-log'
 import type { ChatEvent, CompactionState } from 'agent-client/types'
 
 import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
+import { agentShell } from '@/app/_authed/(agent)/_server/agent-terminal'
 import { loadAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
 import { recordChatUsageTurn } from '@/app/_authed/(agent)/_server/chat-usage-store'
+import { loadInstructionTexts } from '@/app/_authed/(agent)/_server/instruction-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
-import { appendSessionEvent } from '@/app/_authed/(agent)/_server/session-event-store'
+import { recordLogWrite, sessionHistoryPort } from '@/app/_authed/(agent)/_server/session-event-store'
 import { loadSkillDefs, skillBodyHandler } from '@/app/_authed/(agent)/_server/skill-store'
 import { toolPermissionOutcome } from '@/app/_authed/(agent)/_server/tool-permission'
 import { opencroftLocalTools } from '@/app/_authed/(agent)/_server/tools-bridge'
@@ -58,21 +61,22 @@ function resolvePermission(context: PermissionContext): PermissionOutcome | Prom
 // records the figure that actually matters — what the session holds now that
 // the turn is over. A session unloaded or a process killed mid-turn simply
 // keeps the previous turn's value, which is the correct conservative answer.
-// Everything a session emits, recorded under the key that outlives it, so a
-// reopened chat is rebuilt from what was actually shown rather than from what
-// the agent's own history replay happens to carry. See session-event-store for
-// the batching, and agent-client's restoreSession for what reads it back.
+// Every write the engine makes to a session's logs, recorded under the key that
+// outlives it, so a reopened chat is rebuilt from what was actually shown
+// rather than from what the agent's own history replay happens to carry. See
+// session-event-store for the batching, and agent-client's restoreSession for
+// what reads it back.
 //
-// Every kind, deliberately: a snapshot event is cheap, the read side already
-// folds the last one seen per kind, and deciding here which kinds "matter"
-// would be this file holding a second opinion about the transcript's shape.
-function persistSessionEvent(event: ChatEvent, sessionKey: string | undefined): void {
+// Every write, deliberately: the engine's log already decides what an entry is
+// (compactLog), and deciding here which kinds "matter" would be this file
+// holding a second opinion about the transcript's shape.
+function persistLogWrite(sessionId: string, write: LogWrite, sessionKey: string | undefined): void {
   if (!sessionKey) {
     // Nothing could address the rows later — the same reason the durable queue
     // skips a keyless session.
     return
   }
-  appendSessionEvent(sessionKey, event)
+  recordLogWrite(sessionKey, sessionId, write)
 }
 
 function persistUsageOnTurnEnd(sessionId: string, event: ChatEvent, sessionKey: string | undefined): void {
@@ -195,6 +199,20 @@ function notifyEngineActivity(): void {
   }
 }
 
+// Every event the engine emits, for server modules that act on a session's
+// state as it changes (yolo-mode-enforcement.ts) — the same cycle-avoidance as
+// subscribeEngineActivity above: they import this module, so it cannot import
+// them.
+const engineEventListeners = new Set<(sessionId: string, event: ChatEvent) => void>()
+
+/** Called with each event the engine emits, after its subscribers. Returns the unsubscribe. */
+export function subscribeEngineEvents(listener: (sessionId: string, event: ChatEvent) => void): () => void {
+  engineEventListeners.add(listener)
+  return () => {
+    engineEventListeners.delete(listener)
+  }
+}
+
 export const agentClient = createAgentClient({
   // Sleep Mode's gate: while the instance is asleep no queue is drained to
   // any agent — see (mcp)/_server/sleep-mode for why the flag is a
@@ -203,6 +221,19 @@ export const agentClient = createAgentClient({
   shouldHoldDelivery: isSleepMode,
   tools: opencroftLocalTools,
   loadMcpServers: readMcpServersForAgent,
+  // The agent's own text and its place's shared text, written as the
+  // harness's instruction files at every session open (see instruction-store).
+  // Called through a function: instruction-store reaches this module back
+  // through the graph writes it imports, so its binding is not ready while
+  // this one evaluates.
+  loadInstructionFiles: (selection) => loadInstructionTexts(selection),
+  // An agent with a terminal picked runs through it: its selection names the
+  // terminal target as its shell (agent-terminal.ts).
+  shells: (target) => agentShell(target),
+  // The line of the `<file>.meta` sidecar beside every file written: where
+  // the text is edited, since an edit made in the file does not last.
+  instructionFileSidecar:
+    "This file is written by OpenCroft from the agent's settings. Edits to it are replaced. Delete this .meta file to stop OpenCroft writing it.",
   // Durable copy of the queue. Written behind the in-memory one, and read back
   // to restore a session that is opening — plus, since the delivery gate
   // learned to reach sessions this process does not have, enumerated on wake to
@@ -238,14 +269,24 @@ export const agentClient = createAgentClient({
   // The extension point itself stays in agent-client: it is a host-agnostic
   // seam in a shared package, and this product no longer using it is not a
   // reason to take it from one that might.
+  // Each session's log compacted as the engine appends to it, a log per
+  // subagent, and frames named by position: the store records the log, not
+  // the stream, and the chat names events by the positions frames carry.
+  compactLog: true,
+  onRecord: persistLogWrite,
+  // The store keeps every entry and serves what lies below a session's tail,
+  // so a session holds only the tail in memory, however long it runs.
+  history: sessionHistoryPort,
   onEvent: (sessionId, event, sessionKey) => {
-    persistSessionEvent(event, sessionKey)
     persistUsageOnTurnEnd(sessionId, event, sessionKey)
     // The queue and the usage reading are part of what the activity readers
     // publish, and the engine reports their changes as these two events rather
     // than as an activity change.
     if (event.kind === 'queue' || event.kind === 'usage') {
       notifyEngineActivity()
+    }
+    for (const listener of engineEventListeners) {
+      listener(sessionId, event)
     }
   },
   onActivityChange: notifyEngineActivity,

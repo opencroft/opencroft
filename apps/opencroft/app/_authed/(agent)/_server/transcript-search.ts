@@ -111,8 +111,8 @@ export async function searchTranscripts(
 
 /**
  * The indexed message that starts at `position` -- its role and whole text,
- * segments joined -- or null when none does. What a turn the event cap has
- * trimmed is still known by.
+ * segments joined -- or null when none does. What tells a turn the transcript
+ * no longer holds from one it never had.
  */
 export async function indexedMessageAt(
   sessionKey: string,

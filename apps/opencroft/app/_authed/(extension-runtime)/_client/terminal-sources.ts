@@ -48,6 +48,17 @@ export function listSource(
   }
 }
 
+// A router's route is named by the terminal it reaches, with which of its
+// owner's terminals that is when the owner says; the router it is listed
+// under already says it is a route.
+export function routedName(routed: NonNullable<TerminalSourceTarget['routed']>): string {
+  if (!routed.ref) {
+    return routed.target
+  }
+  const { name, detail } = describeGraphRef(routed.ref, splitTarget(routed.target).handleId)
+  return detail ? `${name} · ${detail}` : name
+}
+
 interface SourcesState {
   /** Null until the first answer: the sources themselves are not known yet. */
   infos: TerminalSourceInfo[] | null
@@ -129,7 +140,9 @@ export function useTerminalSources(spaceSlug?: string): { sources: TerminalListS
       describeGraphRef(info.ref),
       targets.map((target) => ({
         target: target.target,
-        name: target.label || describeGraphRef(info.ref, target.handleId).detail || '',
+        name: target.routed
+          ? routedName(target.routed)
+          : target.label || describeGraphRef(info.ref, target.handleId).detail || '',
       })),
       { loading: state.pending.includes(info.ref.id), showSpace: !spaceSlug },
     )

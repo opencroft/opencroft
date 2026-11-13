@@ -86,6 +86,9 @@ export type SSEEvent = BaseEvent &
     | { type: 'stream_chunk'; nodeId: string; handleId: string; chunk: StreamChunkPayload }
     | { type: 'node_data_updated'; nodeId: string; data: Record<string, unknown> }
     | { type: 'session_activity'; activity: SessionActivitySnapshot }
+    // A group chat the receiving person is in changed its members, grants or
+    // archive. Only the id: the page reads what changed through the gated reads.
+    | { type: 'group_chat_changed'; groupChatId: string }
   )
 
 /** Comment anchored to a node, as stored on the client side. One per node. */

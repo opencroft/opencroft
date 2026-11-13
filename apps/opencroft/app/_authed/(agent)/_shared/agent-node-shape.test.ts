@@ -4,20 +4,15 @@ import test from 'node:test'
 import {
   AGENT_NODE_TYPE,
   AGENT_TOOL_NODE_TYPE,
-  agentInstructionName,
-  agentInstructionText,
   agentNodeAvatar,
   agentNodeName,
-  isAgentInstructionNode,
   isAgentNode,
   SEND_MESSAGE_NODE_TYPE,
 } from './agent-node-shape'
 
-test('isAgentNode/isAgentInstructionNode match only their own type', () => {
+test('isAgentNode matches only the Agent type', () => {
   assert.equal(isAgentNode({ type: 'builtin.core.agent' }), true)
-  assert.equal(isAgentNode({ type: 'builtin.core.agent-instruction' }), false)
-  assert.equal(isAgentInstructionNode({ type: 'builtin.core.agent-instruction' }), true)
-  assert.equal(isAgentInstructionNode({ type: 'builtin.core.agent' }), false)
+  assert.equal(isAgentNode({ type: 'builtin.core.agent-tool' }), false)
   assert.equal(isAgentNode({}), false)
 })
 
@@ -40,12 +35,4 @@ test('agentNodeAvatar returns undefined rather than an empty string when absent'
   assert.equal(agentNodeAvatar({ data: { avatar: 'https://example.invalid/a.png' } }), 'https://example.invalid/a.png')
   assert.equal(agentNodeAvatar({ data: {} }), undefined)
   assert.equal(agentNodeAvatar({}), undefined)
-})
-
-test('agentInstructionName/agentInstructionText read their own fields independently', () => {
-  const instr = { type: 'builtin.core.agent-instruction', data: { name: 'Tone', instruction: 'Be terse.' } }
-  assert.equal(agentInstructionName(instr), 'Tone')
-  assert.equal(agentInstructionText(instr), 'Be terse.')
-  assert.equal(agentInstructionName({}), '')
-  assert.equal(agentInstructionText({ data: {} }), '')
 })

@@ -58,9 +58,10 @@ export function dockerApplicationType(dockerExtensionId: string | null): string 
 }
 
 // Live ids for a node's dynamic source handles — a declared dynamic handle is
-// an id PREFIX, and the concrete ids only exist at runtime (one per running
-// container). Returns [] for anything with no dynamic source handle, and on
-// failure, so a single unreachable node can't fail a whole enumeration.
+// an id PREFIX, and the concrete ids depend on the node (an Application's
+// replicas, a router's routes). Returns [] for anything with no dynamic source
+// handle, and on failure, so a single unreachable node can't fail a whole
+// enumeration.
 //
 // Knows each node type with dynamic handles — the docker application node and
 // the Terminal Router — which is why it lives in one place: when another node
@@ -71,8 +72,8 @@ export function dockerApplicationType(dockerExtensionId: string | null): string 
 // _server/actions.ts. The server fn needs TanStack Start's request-scoped
 // AsyncLocalStorage, which an extension's Nitro route never establishes — and
 // this is reachable from one, via host.graph.listHandles. Using the server fn
-// here would throw "No Start context found" for exactly those nodes that have
-// a container to expand, i.e. it would read as "some sources are missing"
+// here would throw "No Start context found" for every Application node, i.e.
+// it would read as "some sources are missing"
 // rather than as an error. See the route-context test beside this file.
 export async function expandDynamicHandles(
   node: DynamicHandleNode,
@@ -100,23 +101,17 @@ export async function expandDynamicHandles(
     }
     return []
   }
-  const resolved = node.data?.__resolvedContexts as Record<string, { sourceNodeId?: string }> | undefined
-  const dockerNodeId = resolved?.['docker-in']?.sourceNodeId
-  if (!dockerNodeId) {
-    return []
-  }
-  const service = (node.data?.name as string) || node.id
+  // The extension owns which outputs an Application has (one per replica, whether or not its
+  // container runs) and how they are named; only ids under the declared prefix are kept.
   try {
-    const containers = (await invokeExtensionActionImpl({
+    const ids = (await invokeExtensionActionImpl({
       extensionId: dockerExtensionId,
-      actionName: 'docker.ps',
-      args: [{ dockerNodeId, service }],
-    })) as Array<{
-      id: string
-      name: string
-      running: boolean
-    }>
-    return containers.filter((c) => c.running).map((c) => `${dynamic.id}${c.name || c.id}`)
+      actionName: 'docker.instanceHandles',
+      args: [{ nodeId: node.id, data: node.data ?? {} }],
+    })) as unknown
+    return Array.isArray(ids)
+      ? ids.filter((id): id is string => typeof id === 'string' && id.startsWith(dynamic.id))
+      : []
   } catch (err) {
     console.error(`[node-handles.expandDynamicHandles] failed for ${node.id}:`, err)
     return []

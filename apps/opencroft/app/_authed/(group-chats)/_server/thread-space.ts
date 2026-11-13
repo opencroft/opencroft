@@ -7,7 +7,7 @@ import {
   space,
   spaceSlugAlias,
 } from '@opencroft/db'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 
 // Which thread a session key addresses, and which space that thread's chat
 // belongs to — answered from the tables alone, in a module whose only tail is
@@ -67,21 +67,9 @@ export async function spaceIdBySlug(slug: string): Promise<string | null> {
 }
 
 /**
- * The space the thread bound to `sessionKey` belongs to: its chat's slug, read
- * as a space address. A space's chat lives at the space's own slug (see
- * `CreateGroupChatOptions.slug`), and a space rename leaves that chat at the
- * old slug, which then resolves through the space's alias.
- *
- * A CHAT RENAME MOVES THE CHAT OFF THAT SLUG, and the space still owns it: the
- * space finds its chat through `chatRowBySlug`, live slug then the chat's slug
- * aliases. So this is that lookup inverted — the chat's live slug first, then
- * the slugs it was renamed away from. Two aliases naming two different spaces
- * means both spaces reach this chat, and picking one would credit the other's
- * spend to it, so that case resolves to no space. The migration that backfilled
- * the column applies the same order.
- *
- * Null for a key no thread holds, and for a thread whose chat sits at no
- * space's address — a chat created on its own rather than as a space's.
+ * The space the thread bound to `sessionKey` belongs to: the space whose chat
+ * holds it (see `spaceIdOfChat`). Null for a key no thread holds, and for a
+ * thread whose chat is no space's.
  */
 export async function spaceIdForSessionKey(sessionKey: string): Promise<string | null> {
   const threadId = await threadIdForSessionKey(sessionKey)
@@ -94,9 +82,27 @@ export async function spaceIdForSessionKey(sessionKey: string): Promise<string |
     .innerJoin(groupChat, eq(groupChat.id, groupChatThread.groupChatId))
     .where(eq(groupChatThread.id, threadId))
     .limit(1)
-  if (!chat) {
-    return null
-  }
+  return chat ? spaceIdOfChat(chat) : null
+}
+
+/**
+ * The space a chat is the chat of: its slug, read as a space address. A
+ * space's chat lives at the space's own slug (see
+ * `CreateGroupChatOptions.slug`), and a space rename leaves that chat at the
+ * old slug, which then resolves through the space's alias.
+ *
+ * A CHAT RENAME MOVES THE CHAT OFF THAT SLUG, and the space still owns it: the
+ * space finds its chat through `chatRowBySlug`, live slug then the chat's slug
+ * aliases. So this is that lookup inverted — the chat's live slug first, then
+ * the slugs it was renamed away from. Two aliases naming two different spaces
+ * means both spaces reach this chat, and picking one would credit the other's
+ * spend to it, so that case resolves to no space. The migration that backfilled
+ * the column applies the same order.
+ *
+ * Null for a chat at no space's address — one created on its own rather than
+ * as a space's.
+ */
+export async function spaceIdOfChat(chat: { id: string; slug: string }): Promise<string | null> {
   const live = await spaceIdBySlug(chat.slug)
   if (live) {
     return live
@@ -113,4 +119,44 @@ export async function spaceIdForSessionKey(sessionKey: string): Promise<string |
     }
   }
   return spaceIds.size === 1 ? [...spaceIds][0] : null
+}
+
+/** A space as the chat it owns names it. */
+export interface ChatSpace {
+  id: string
+  slug: string
+  name: string
+}
+
+/** The space each chat is the chat of (see `spaceIdOfChat`), by chat id; a chat that is no space's has no entry. */
+export async function spacesOfChats(chats: Array<{ id: string; slug: string }>): Promise<Map<string, ChatSpace>> {
+  const spaceIdByChat = new Map<string, string>()
+  for (const chat of chats) {
+    const spaceId = await spaceIdOfChat(chat)
+    if (spaceId) {
+      spaceIdByChat.set(chat.id, spaceId)
+    }
+  }
+  if (spaceIdByChat.size === 0) {
+    return new Map()
+  }
+  const rows = await db
+    .select({ id: space.id, slug: space.slug, name: space.name })
+    .from(space)
+    .where(inArray(space.id, [...new Set(spaceIdByChat.values())]))
+  const spaceById = new Map(rows.map((row) => [row.id, row]))
+  const result = new Map<string, ChatSpace>()
+  for (const [chatId, spaceId] of spaceIdByChat) {
+    const found = spaceById.get(spaceId)
+    if (found) {
+      result.set(chatId, found)
+    }
+  }
+  return result
+}
+
+/** The slug of the space each chat is the chat of (see `spaceIdOfChat`), by chat id; a chat that is no space's has no entry. */
+export async function spaceSlugsOfChats(chats: Array<{ id: string; slug: string }>): Promise<Map<string, string>> {
+  const spaces = await spacesOfChats(chats)
+  return new Map([...spaces].map(([chatId, chatSpace]) => [chatId, chatSpace.slug]))
 }

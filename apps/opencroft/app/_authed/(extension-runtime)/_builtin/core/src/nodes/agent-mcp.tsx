@@ -1,3 +1,4 @@
+import { type NamedValue, SecretValueTable } from '@opencroft/client/secrets'
 import {
   Badge,
   Button,
@@ -13,8 +14,6 @@ import { Loader2, Plus, Trash2 } from 'lucide-react'
 import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
-import { type KeyValue, KeyValueEditor } from './key-value-editor'
-
 type McpTransport = 'http' | 'sse' | 'stdio'
 
 interface McpServerConfig {
@@ -23,8 +22,9 @@ interface McpServerConfig {
   url?: string
   command?: string
   args?: string[]
-  headers?: KeyValue[]
-  env?: KeyValue[]
+  /** Typed text or `secret:<NAME>`, as `SecretValueTable` stores them. */
+  headers?: NamedValue[]
+  env?: NamedValue[]
 }
 
 interface McpRow {
@@ -42,7 +42,9 @@ const TRANSPORTS: McpTransport[] = ['http', 'sse', 'stdio']
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 
-export function AgentMcpTab() {
+// The list is the instance's, shown on an agent: that agent is who the Test
+// button checks a server for, and whose graph the secret picker offers.
+export function AgentMcpTab({ nodeId }: { nodeId: string }) {
   const [rows, setRows] = useState<McpRow[]>([])
   const [checks, setChecks] = useState<Record<string, CheckState>>({})
   const [saving, setSaving] = useState(false)
@@ -71,25 +73,28 @@ export function AgentMcpTab() {
     })
   }, [])
 
-  const test = useCallback(async (row: McpRow) => {
-    setChecks((current) => ({ ...current, [row.id]: { status: 'checking' } }))
-    try {
-      const result = await fetch('/api/acp/mcp-check', {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify(row.config),
-      }).then((r) => r.json())
-      setChecks((current) => ({
-        ...current,
-        [row.id]: result.ok ? { status: 'ok', tools: result.tools } : { status: 'failed', error: result.error },
-      }))
-    } catch (err) {
-      setChecks((current) => ({
-        ...current,
-        [row.id]: { status: 'failed', error: err instanceof Error ? err.message : String(err) },
-      }))
-    }
-  }, [])
+  const test = useCallback(
+    async (row: McpRow) => {
+      setChecks((current) => ({ ...current, [row.id]: { status: 'checking' } }))
+      try {
+        const result = await fetch(`/api/acp/mcp-check?agent=${encodeURIComponent(nodeId)}`, {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify(row.config),
+        }).then((r) => r.json())
+        setChecks((current) => ({
+          ...current,
+          [row.id]: result.ok ? { status: 'ok', tools: result.tools } : { status: 'failed', error: result.error },
+        }))
+      } catch (err) {
+        setChecks((current) => ({
+          ...current,
+          [row.id]: { status: 'failed', error: err instanceof Error ? err.message : String(err) },
+        }))
+      }
+    },
+    [nodeId],
+  )
 
   const save = useCallback(async () => {
     setSaving(true)
@@ -115,7 +120,8 @@ export function AgentMcpTab() {
       <div className='flex flex-col gap-3 p-1'>
         <p className='text-[10px] text-muted-foreground'>
           MCP servers are shared by every local agent in this workspace (not per node). opencroft's own tools are always
-          available; add custom servers here.
+          available; add custom servers here. A secret picked for a header or variable is looked up by name for each
+          agent, in the Secrets Stores of that agent's graph.
         </p>
         {rows.map((row) => (
           <McpServerRow
@@ -204,7 +210,13 @@ function McpServerRow({
               onChange({ args: e.target.value.split(' ').filter(Boolean) })
             }
           />
-          <KeyValueEditor label='Environment' entries={config.env ?? []} onChange={(env) => onChange({ env })} />
+          <SecretValueTable
+            label='Environment'
+            nameLabel='Variable'
+            namePlaceholder='NAME'
+            entries={config.env}
+            onChange={(env) => onChange({ env })}
+          />
         </>
       ) : (
         <>
@@ -214,9 +226,11 @@ function McpServerRow({
             className='h-7 text-xs font-mono'
             onChange={(e: ChangeEvent<HTMLInputElement>) => onChange({ url: e.target.value })}
           />
-          <KeyValueEditor
-            label='Headers (e.g. Authorization: Bearer …)'
-            entries={config.headers ?? []}
+          <SecretValueTable
+            label='Headers'
+            nameLabel='Header'
+            namePlaceholder='Header-Name'
+            entries={config.headers}
             onChange={(headers) => onChange({ headers })}
           />
         </>

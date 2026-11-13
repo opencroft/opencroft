@@ -9,7 +9,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { TerminalList } from 'ui/nodes/terminal-list'
 
 import { describeGraphRef, type GraphRefDescription } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
-import { listedTargets, listSource, targetSources } from '@/app/_authed/(extension-runtime)/_client/terminal-sources'
+import {
+  listedTargets,
+  listSource,
+  routedName,
+  targetSources,
+} from '@/app/_authed/(extension-runtime)/_client/terminal-sources'
 import type { GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
 
 const dockerHost: GraphRefDescription = {
@@ -80,6 +85,16 @@ test('one route to a worktree is named the way its App names it', () => {
   const text = rowsOf([listSource(gitApp.id, owner, [route], {})])
   assert.match(text, /scratch · login-form · Code/)
   assert.doesNotMatch(text, /login--form/)
+})
+
+test("a router's route offered in a space's picker is named by the terminal it reaches", () => {
+  const handleId = 'worktree-terminal-scratch-login--form'
+  assert.equal(routedName({ target: `${gitApp.id}/${handleId}`, ref: gitApp }), 'Code · scratch · login-form')
+  assert.equal(routedName({ target: `${gitApp.id}/terminal`, ref: gitApp }), 'Code')
+})
+
+test('a route whose terminal nothing answers to is named by its target', () => {
+  assert.equal(routedName({ target: 'gone/terminal', ref: null }), 'gone/terminal')
 })
 
 test('a handle its App does not name falls back to its id', () => {

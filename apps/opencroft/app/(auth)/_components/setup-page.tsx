@@ -3,12 +3,11 @@
 import { signIn } from '@opencroft/auth/client'
 import type { SetupFailure } from '@opencroft/auth/server'
 import { useRouteContext, useRouter } from '@tanstack/react-router'
-import { TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
-import { Alert, AlertDescription, AlertTitle } from 'ui/alert'
 import { AuthAdminSetupForm } from 'ui/auth/auth-admin-setup-form'
 import { AuthShell } from 'ui/auth/auth-shell'
 
+import { InstanceKeysStrip } from '@/app/_components/instance-keys-strip'
 import { completeSetup } from '@/app/(auth)/_server/setup'
 
 // The copy lives here, not on the server. The server answers with which
@@ -98,23 +97,15 @@ export function SetupPage() {
   }
 
   return (
-    <AuthShell>
+    // The same strip stands across the top of an administrator's settings
+    // while the key file is in use.
+    <AuthShell banner={keyFileNotice ? <InstanceKeysStrip notice={keyFileNotice} /> : undefined}>
       <div className='flex flex-col gap-2 text-center'>
         <h1 className='text-2xl font-semibold'>Set up OpenCroft</h1>
         <p className='text-sm text-muted-foreground'>
           This instance has no accounts yet. The one you create now is an administrator.
         </p>
       </div>
-      {/* The host's own child beside the form, as the form's design has it.
-          The same words stay on Settings → Backup & Restore while the key
-          file is in use. */}
-      {keyFileNotice && (
-        <Alert>
-          <TriangleAlert />
-          <AlertTitle>Keys are stored in the data volume</AlertTitle>
-          <AlertDescription>{keyFileNotice}</AlertDescription>
-        </Alert>
-      )}
       <AuthAdminSetupForm
         name={name}
         onNameChange={setName}

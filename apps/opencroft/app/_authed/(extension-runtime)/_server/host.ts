@@ -4,9 +4,11 @@ import { promises as fsPromises } from 'node:fs'
 import nodeOs from 'node:os'
 import nodePath from 'node:path'
 
+import * as values from '@opencroft/core/values'
 import { db, spaceApp } from '@opencroft/db'
-import { dataDir } from '@opencroft/instance'
+import { dataDir, instanceId } from '@opencroft/instance'
 import type {
+  ExecDispatchOptions,
   ExtensionServerHost,
   GraphEdgeRecord,
   GraphNodeRecord,
@@ -14,19 +16,26 @@ import type {
   HostAgentGroupChatsApi,
   HostAgentsApi,
   HostCompactResult,
+  HostExecContextApi,
   HostGraphApi,
   HostMcpTokensApi,
   HostMentionsApi,
   HostPersonGroupChatsApi,
   HostSecretsApi,
+  HostSpacesApi,
+  HostSshKeysApi,
   HostThreadUsage,
+  HostUsageApi,
   HostUser,
   HostUsersApi,
   ListHandlesFilter,
 } from '@opencroft/server'
-import type { ServerConfig, TerminalContext } from '@opencroft/terminal'
+import { agentRefusalOf, type ServerConfig, type TerminalContext } from '@opencroft/terminal'
 import {
   exec,
+  getBackend,
+  listTerminalFolders,
+  readTerminalFile,
   resolveKeyContent,
   sshExec,
   startJobSession,
@@ -35,32 +44,66 @@ import {
   terminalExecResult,
   terminalRun,
   terminalRunResult,
+  writeTerminalFile,
 } from '@opencroft/terminal/server'
 import { asc } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { readAgentInstructions, writeAgentInstructions } from '@/app/_authed/(agent)/_server/agent-instructions'
+import { listAgentPresence, subscribeAgentPresence } from '@/app/_authed/(agent)/_server/agent-presence'
 import { queryChatUsageTurnsBySessionKey } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { SEND_MESSAGE_NODE_TYPE } from '@/app/_authed/(agent)/_shared/agent-node-shape'
 import { appInstanceDataDir } from '@/app/_authed/(apps)/_server/instance-paths'
+import { isAutolayoutSection } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/section-shared'
 import { declaredTypesOf, namesCoreType, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
+import { enumCasesOfManifests } from '@/app/_authed/(extension-runtime)/_enum-types'
 import {
   extensionUrl,
   extensionUrlBase,
   parseType,
   resolveTypeRef,
 } from '@/app/_authed/(extension-runtime)/_extension-id'
+import {
+  type PlacementRequest,
+  placeAbsolute,
+  withoutStandingPlaces,
+} from '@/app/_authed/(extension-runtime)/_frame-placement'
+import {
+  deletedWithContents,
+  deleteKeepingChildren,
+  withAbsolutePositions,
+  withLevels,
+} from '@/app/_authed/(extension-runtime)/_frame-tree'
+import { newNodeData } from '@/app/_authed/(extension-runtime)/_node-defaults'
+import { withNodeErrors } from '@/app/_authed/(extension-runtime)/_node-errors'
 import { collabApiFor } from '@/app/_authed/(extension-runtime)/_server/collab-api'
+import {
+  appDirectoryFor,
+  type DirectoryListing,
+  type DirectoryViewer,
+  listSpacesFor,
+  subscribeDirectoryListing,
+} from '@/app/_authed/(extension-runtime)/_server/directory'
 import {
   dispatchExecutionContext,
   type ExecDispatchSummary,
 } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
+import { frameTest } from '@/app/_authed/(extension-runtime)/_server/frame-types'
+import {
+  callFromGraph,
+  graphCallActions,
+  graphCallTargets,
+} from '@/app/_authed/(extension-runtime)/_server/graph-calls'
+import { nodeTypeDefaults } from '@/app/_authed/(extension-runtime)/_server/provided-points'
 import {
   deliverToSendMessageNode,
   type SendMessageDeliveryResult,
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { wiredEdgesOf } from '@/app/_authed/(extension-runtime)/_wired-edges'
 import { COMPACT_WAIT_MS, compactResultOf, waitForCompact } from '@/app/_authed/(group-chats)/_server/compact-wait'
+import type { MemberPrincipal, SenderThread } from '@/app/_authed/(group-chats)/_server/model'
 import { mcpTokensApi } from '@/app/_authed/(mcp)/_server/mcp-tokens'
 import { mutateSettingData, withSettingLock } from '@/app/_authed/(settings)/_server/settings-cas'
 import { getSettingImpl, setSettingImpl } from '@/app/_authed/(settings)/_server/settings-impl'
@@ -75,8 +118,10 @@ import { listUserDirectory } from '@/app/_server/user-directory'
 import { newGraphId } from '@/lib/graph-id'
 import { toastStore } from '@/lib/toast-store'
 import { cacheDir } from '@/server/cache'
+import { credentialRedactor } from '@/server/credential-redactor'
 import { decrypt, encrypt } from '@/server/crypto'
 import { secrets } from '@/server/secrets'
+import { sshKeys } from '@/server/ssh-key-store'
 
 function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('hex')
@@ -124,20 +169,46 @@ async function loadAllGraphs(): Promise<GraphEntry[]> {
   }))
 }
 
+// Edges as wiring reads them (see `wiredEdges`): an extension walking them
+// meets the real source of a node inside a subgraph, as it would outside one.
 async function readGraph(): Promise<GraphSnapshot> {
   const graphs = await loadAllGraphs()
   const nodes: GraphNodeRecord[] = []
   const edges: GraphEdgeRecord[] = []
   for (const g of graphs) {
-    nodes.push(...(g.graph.nodes as unknown as GraphNodeRecord[]))
-    edges.push(...(g.graph.edges as unknown as GraphEdgeRecord[]))
+    nodes.push(...asRead(g.graph))
+    edges.push(...wiredEdgesOf<GraphEdgeRecord>(g.graph))
   }
   return { nodes, edges }
 }
 
 const EXTENSION_HOST_ORIGIN: GraphWriteOrigin = { kind: 'extension', name: 'extension host' }
 
-async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => void): Promise<void> {
+/**
+ * A graph's nodes as extensions read them: positions absolute, where each is
+ * drawn on its level's canvas, and the subgraph a node inside one is in (see
+ * `_frame-tree.ts`).
+ */
+function asRead(graph: GraphData): GraphNodeRecord[] {
+  return withLevels(withAbsolutePositions(graph.nodes as unknown as GraphNodeRecord[]))
+}
+
+/** Applies `request` to the graph's nodes and returns the placed node as read, or throws why it is refused. */
+async function place(graph: GraphData, request: PlacementRequest): Promise<GraphNodeRecord | null> {
+  const placed = placeAbsolute(
+    graph.nodes as unknown as GraphNodeRecord[],
+    [request],
+    await frameTest(),
+    isAutolayoutSection,
+  )
+  if ('refused' in placed) {
+    throw new Error(placed.refused)
+  }
+  graph.nodes = placed.nodes as unknown as GraphData['nodes']
+  return asRead(graph).find((n) => n.id === request.id) ?? null
+}
+
+async function writeNodePatch(nodeId: string, mutate: (graph: GraphData) => void | Promise<void>): Promise<void> {
   const r = getSpacesRegistry()
   await r.ensureLoaded()
   const ref = r.findByNode(nodeId)
@@ -189,6 +260,7 @@ function graphApiFor(extensionId: string): HostGraphApi {
     listNodesByType: async (type) => graphApi.listNodesByType(await typeRef(type)),
     listHandles: async (filter) =>
       graphApi.listHandles(filter?.handleType ? { ...filter, handleType: await typeRef(filter.handleType) } : filter),
+    getHandleType: async (type) => graphApi.getHandleType(await typeRef(type)),
     createNode: async (address, type, data, position) =>
       graphApi.createNode(address, await typeRef(type), data, position),
   }
@@ -204,8 +276,13 @@ const graphApi: HostGraphApi = {
     const r = getSpacesRegistry()
     await r.ensureLoaded()
     const ref = r.findByNode(nodeId)
-    const node = ref?.graph.graph.nodes.find((n) => (n as { id?: string }).id === nodeId)
-    return (node as unknown as GraphNodeRecord) ?? null
+    return (ref ? asRead(ref.graph.graph) : []).find((n) => n.id === nodeId) ?? null
+  },
+  async listGraphNodes(nodeId) {
+    const r = getSpacesRegistry()
+    await r.ensureLoaded()
+    const ref = r.findByNode(nodeId)
+    return ref ? asRead(ref.graph.graph) : []
   },
   async listNodesByType(type) {
     const graph = await readGraph()
@@ -220,9 +297,19 @@ const graphApi: HostGraphApi = {
     const owners = await listGraphHandleOwners(filter)
     return (await Promise.all(owners.map((owner) => owner.handles()))).flat()
   },
+  async getHandleType(type) {
+    const { loadAllManifests } = await import('@/app/_authed/(extension-runtime)/_server/loader')
+    for (const manifest of await loadAllManifests()) {
+      const found = manifest.handleTypes?.find((handleType) => handleType.id === type)
+      if (found) {
+        return found
+      }
+    }
+    return null
+  },
   async updateNode(nodeId, patch) {
     let updated: GraphNodeRecord | null = null
-    await writeNodePatch(nodeId, (graph) => {
+    await writeNodePatch(nodeId, async (graph) => {
       const node = graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as unknown as
         | GraphNodeRecord
         | undefined
@@ -232,12 +319,37 @@ const graphApi: HostGraphApi = {
       if (patch.data) {
         node.data = { ...node.data, ...patch.data }
       }
-      if (patch.position) {
-        node.position = patch.position
-      }
-      updated = node
+      updated =
+        patch.position || patch.parentId !== undefined
+          ? await place(
+              graph,
+              withoutStandingPlaces(graph.nodes as unknown as GraphNodeRecord[], [
+                {
+                  id: nodeId,
+                  ...(patch.position ? { position: patch.position } : {}),
+                  ...(patch.parentId === undefined ? {} : { parentId: patch.parentId }),
+                },
+              ])[0],
+            )
+          : (asRead(graph).find((n) => n.id === nodeId) ?? null)
     })
     return updated
+  },
+  async setNodeErrors(nodeId, source, errors) {
+    // Read first: a check reporting the answer it reported last writes nothing,
+    // and most runs of a check report what they did before.
+    const stored = await graphApi.getNode(nodeId)
+    if (!stored || withNodeErrors(stored.data ?? {}, source, errors) === stored.data) {
+      return
+    }
+    await writeNodePatch(nodeId, (graph) => {
+      const node = graph.nodes.find((n) => (n as { id?: string }).id === nodeId) as unknown as
+        | GraphNodeRecord
+        | undefined
+      if (node) {
+        node.data = withNodeErrors(node.data ?? {}, source, errors)
+      }
+    })
   },
   async createNode(address, type, data, position) {
     const r = getSpacesRegistry()
@@ -247,28 +359,39 @@ const graphApi: HostGraphApi = {
       throw new Error(`Graph not found: ${address}`)
     }
     const id = newGraphId()
-    const node: GraphNodeRecord = { id, type, data, position }
+    const node: GraphNodeRecord = { id, type, data: newNodeData(await nodeTypeDefaults(type), data), position }
+    let created = node
     await mutateLiveGraph(
       r.addressOf(ref),
       EXTENSION_HOST_ORIGIN,
-      (graph) => {
+      async (graph) => {
         graph.nodes.push(node as unknown as Record<string, unknown>)
+        // Into the frame under its corner, as a node dropped there goes.
+        created = (await place(graph, { id, position })) ?? node
       },
       { resolveContexts: false },
     )
-    return node
+    return created
   },
   async deleteNode(nodeId) {
     await writeNodePatch(nodeId, (graph) => {
-      graph.nodes = graph.nodes.filter((n) => (n as { id?: string }).id !== nodeId)
+      // A deleted frame's members stay where they are drawn, in a frame that
+      // holds them; a deleted subgraph takes what is inside it.
+      const nodes = graph.nodes as unknown as GraphNodeRecord[]
+      const gone = deletedWithContents(nodes, new Set([nodeId]))
+      graph.nodes = deleteKeepingChildren(nodes, gone) as unknown as GraphData['nodes']
       graph.edges = graph.edges.filter((e) => {
         const source = (e as { source?: string }).source
         const targetId = (e as { target?: string }).target
-        return source !== nodeId && targetId !== nodeId
+        return !gone.has(source ?? '') && !gone.has(targetId ?? '')
       })
     })
   },
 }
+
+/** `graph.setNodeErrors` for host code outside any extension, such as an API Route's request. */
+export const setNodeErrors: HostGraphApi['setNodeErrors'] = (nodeId, source, errors) =>
+  graphApi.setNodeErrors(nodeId, source, errors)
 
 /**
  * The nodes and App instances owning handles that match `filter`, each with
@@ -363,6 +486,9 @@ export async function listGraphHandleOwners(
             spaceSlug: handle.spaceSlug,
             type: `app:${handle.type}`,
             nodeName: handle.title,
+            slug: handle.slug,
+            // An instance whose space is gone has no address to give.
+            ...(handle.spaceSlug ? { address: `${handle.spaceSlug}.${handle.slug}` } : {}),
             handleId: handle.handleId,
             declaredId: handle.declaredId,
             handleType: handle.handleType,
@@ -399,7 +525,7 @@ async function findSendMessageNode(
   return {
     node: node as unknown as GraphNodeRecord,
     nodes: graphs.flatMap((g) => g.graph.nodes) as unknown as SendMessageNodeLike[],
-    edges: graphs.flatMap((g) => g.graph.edges) as unknown as SendMessageEdgeLike[],
+    edges: graphs.flatMap((g) => wiredEdgesOf<SendMessageEdgeLike>(g.graph)),
   }
 }
 
@@ -478,7 +604,7 @@ async function getTerminalContext(nodeId: string, handleId: string): Promise<Ter
   }
   const { getExtensionModule } = await import('@/app/_authed/(extension-runtime)/_server/loader')
   const mod = await getExtensionModule(manifest.id)
-  const value = mod.exposeOutput?.(handleId, node.data, bare, nodeId)
+  const value = mod.exposeOutput?.(handleId, node.data, bare, nodeId, undefined, enumCasesOfManifests(manifests))
   if (value === undefined || value === null) {
     throw new Error(`No context value for ${nodeId}/${handleId}`)
   }
@@ -499,8 +625,14 @@ function dispatchExecutionContextForHost(
   sourceNodeId: string,
   sourceHandleId: string,
   event: unknown,
+  options?: ExecDispatchOptions,
 ): Promise<ExecDispatchSummary> {
-  return dispatchExecutionContext({ sourceNodeId, sourceHandleId, event })
+  return dispatchExecutionContext({
+    sourceNodeId,
+    sourceHandleId,
+    event,
+    ...(options && Object.hasOwn(options, 'run') ? { run: options.run } : {}),
+  })
 }
 
 function execFilePromise(cmd: string, args: string[]): Promise<string> {
@@ -582,19 +714,64 @@ async function compactOwnThread(systemId: string, ref: string): Promise<HostComp
   return compactResultOf(status)
 }
 
-/** What any sender may do: see its chats, open threads, post, resolve a thread, archive the threads it owns, read the usage of and compact its extension's own threads. No transcripts. */
-function groupChatsForSender(who: () => Promise<AttributedSender>, systemId: string): HostGroupChatsApi {
+// Lazy for the same reason as the model, which it imports.
+const threadActivity = () => import('@/app/_authed/(group-chats)/_server/thread-activity')
+
+/**
+ * The thread-activity calls reading as `reader`: the sender's own chats, or
+ * the person's in a copy a person called with. A subscription is held by
+ * `binding`, so it ends with the call or the module it was made through.
+ */
+function threadActivityFor(
+  reader: () => Promise<MemberPrincipal>,
+  binding: CallBinding,
+): Pick<HostGroupChatsApi, 'activity' | 'subscribeActivity'> {
+  return {
+    activity: async (options) => (await threadActivity()).threadActivityPage(await reader(), options),
+    subscribeActivity: (listener) => {
+      if (!binding.live()) {
+        throw new Error('This group-chat access was bound to an action call that has ended')
+      }
+      let unsubscribe: (() => void) | null = null
+      let released = false
+      void threadActivity().then(({ subscribeThreadActivity }) => {
+        if (!released) {
+          unsubscribe = subscribeThreadActivity(reader, listener)
+        }
+      })
+      return binding.hold(() => {
+        released = true
+        unsubscribe?.()
+      })
+    },
+  }
+}
+
+/** What any sender may do: see its chats, open threads, post, resolve a thread, archive the threads it owns, read the usage of and compact its extension's own threads, and read what its chats' threads are doing. No transcripts. */
+function groupChatsForSender(
+  who: () => Promise<AttributedSender>,
+  systemId: string,
+  binding: CallBinding,
+): HostGroupChatsApi {
+  const withActivity = async (thread: SenderThread) => (await threadActivity()).threadWithActivity(thread)
   return {
     list: async () => (await groupChatModel()).listGroupChatsForSender(await who()),
     startThread: async ({ chat, agentNodeId, message, title, folder, sessionOptions }) => {
       const { startThreadForSender } = await groupChatModel()
-      return startThreadForSender(await who(), chat, agentNodeId, message, { title, folder, sessionOptions })
+      const started = await startThreadForSender(await who(), chat, agentNodeId, message, {
+        title,
+        folder,
+        sessionOptions,
+      })
+      return { ...started, thread: await withActivity(started.thread) }
     },
     send: async ({ thread, message, queue, sessionOptions }) =>
       (await groupChatModel()).sendInThreadForSender(await who(), thread, message, queue ?? 'wait', sessionOptions),
-    thread: async (ref) => (await groupChatModel()).threadForSender(await who(), ref),
-    archive: async (ref) => (await groupChatModel()).setThreadArchivedForSender(await who(), ref, true),
-    unarchive: async (ref) => (await groupChatModel()).setThreadArchivedForSender(await who(), ref, false),
+    thread: async (ref) => withActivity(await (await groupChatModel()).threadForSender(await who(), ref)),
+    archive: async (ref) =>
+      withActivity(await (await groupChatModel()).setThreadArchivedForSender(await who(), ref, true)),
+    unarchive: async (ref) =>
+      withActivity(await (await groupChatModel()).setThreadArchivedForSender(await who(), ref, false)),
     usage: async (ref, options) => {
       await who()
       return threadUsage(systemId, ref, options?.since)
@@ -603,6 +780,7 @@ function groupChatsForSender(who: () => Promise<AttributedSender>, systemId: str
       await who()
       return compactOwnThread(systemId, ref)
     },
+    ...threadActivityFor(async () => (await who()).principal, binding),
   }
 }
 
@@ -622,41 +800,53 @@ export function groupChatsForCaller(
   extensionId: string,
   caller: AppActionCaller | undefined,
 ): { api: HostGroupChatsApi | HostAgentGroupChatsApi | HostPersonGroupChatsApi; end: () => void } {
-  if (!caller) {
-    return { api: extensionGroupChats(extensionId), end: () => {} }
-  }
   let ended = false
-  const live = () => !ended
+  const subscriptions = subscriptionHolder()
+  const binding: CallBinding = { live: () => !ended, hold: subscriptions.hold }
   const end = () => {
     ended = true
+    subscriptions.end()
+  }
+  if (!caller) {
+    // Nobody to bind the copy to, so it never stops working; its subscriptions still end with the call.
+    return {
+      api: extensionGroupChats(extensionId, { live: () => true, hold: subscriptions.hold }),
+      end: subscriptions.end,
+    }
   }
   if ('person' in caller) {
-    return { api: personGroupChats(extensionId, caller.person.id, live), end }
+    return { api: personGroupChats(extensionId, caller.person.id, binding), end }
   }
-  const who = boundSender(() => senderForSend({ callerAgent: caller.agent }, [], listAgentNodesImpl), live)
+  const who = boundSender(() => senderForSend({ callerAgent: caller.agent }, [], listAgentNodesImpl), binding.live)
   const api: HostAgentGroupChatsApi = {
-    ...groupChatsForSender(who, registerExtensionSystemSender(extensionId)),
+    ...groupChatsForSender(who, registerExtensionSystemSender(extensionId), binding),
     turns: async (ref, page) => (await groupChatModel()).threadTurnsForSender(await who(), ref, page),
   }
   return { api, end }
 }
 
 /**
- * The extension's own identity for sending, and two calls acting as the
- * person. The grant names no principal: it can only ever add THIS extension's
+ * The extension's own identity for sending, and the calls acting as the
+ * person: their chats, the grant, and what their chats' threads are doing.
+ * The grant names no principal: it can only ever add THIS extension's
  * identity, through the members gate as the person. Like the agent-bound copy,
  * it refuses once the action that received it has ended.
  */
-function personGroupChats(extensionId: string, userId: string, live: () => boolean): HostPersonGroupChatsApi {
+function personGroupChats(extensionId: string, userId: string, binding: CallBinding): HostPersonGroupChatsApi {
   const systemId = registerExtensionSystemSender(extensionId)
   const whilePending = async () => {
-    if (!live()) {
+    if (!binding.live()) {
       throw new Error('This group-chat access was bound to an action call that has ended')
     }
     return groupChatModel()
   }
+  const person = async (): Promise<MemberPrincipal> => {
+    await whilePending()
+    return { kind: 'user', userId }
+  }
   return {
-    ...extensionGroupChats(extensionId),
+    ...extensionGroupChats(extensionId, binding),
+    ...threadActivityFor(person, binding),
     personChats: async () =>
       (await (await whilePending()).listGroupChatsForPerson(userId, systemId)).map(({ systemGranted, ...chat }) => ({
         ...chat,
@@ -666,7 +856,58 @@ function personGroupChats(extensionId: string, userId: string, live: () => boole
   }
 }
 
-function extensionGroupChats(extensionId: string): HostGroupChatsApi {
+// Lazy for the same reason as the model, which it imports.
+const usageSummary = () => import('@/app/_authed/(group-chats)/_server/usage-summary')
+
+/** Spend summaries reading as `reader`: over the chats it is a member of. */
+function usageApi(reader: () => Promise<MemberPrincipal>): HostUsageApi {
+  return {
+    summary: async (options) => (await usageSummary()).usageSummary(await reader(), options),
+  }
+}
+
+/** The extension's own system identity, as a chat member. */
+function extensionPrincipal(extensionId: string): MemberPrincipal {
+  return { kind: 'system', systemId: registerExtensionSystemSender(extensionId) }
+}
+
+/**
+ * `usage` for one App action invocation, reading as whoever it is on behalf
+ * of: the calling agent or person, else the extension's own system identity.
+ * Built by the host per call; the caller ends it with `end()` when the action
+ * settles, and a copy kept past that refuses.
+ */
+export function usageForCaller(
+  extensionId: string,
+  caller: AppActionCaller | undefined,
+): { api: HostUsageApi; end: () => void } {
+  let ended = false
+  const live = () => !ended
+  let reader: () => Promise<MemberPrincipal>
+  if (!caller) {
+    reader = async () => extensionPrincipal(extensionId)
+  } else if ('person' in caller) {
+    const userId = caller.person.id
+    reader = async () => {
+      if (!live()) {
+        throw new Error('This usage access was bound to an action call that has ended')
+      }
+      return { kind: 'user', userId }
+    }
+  } else {
+    const who = boundSender(() => senderForSend({ callerAgent: caller.agent }, [], listAgentNodesImpl), live)
+    reader = async () => (await who()).principal
+  }
+  return {
+    api: usageApi(reader),
+    end: () => {
+      ended = true
+    },
+  }
+}
+
+/** `groupChats` as the extension's own system identity. `binding` holds its subscriptions; its other calls work whenever called. */
+function extensionGroupChats(extensionId: string, binding: CallBinding): HostGroupChatsApi {
   const systemId = registerExtensionSystemSender(extensionId)
   return groupChatsForSender(
     boundSender(
@@ -674,6 +915,7 @@ function extensionGroupChats(extensionId: string): HostGroupChatsApi {
       () => true,
     ),
     systemId,
+    binding,
   )
 }
 
@@ -738,7 +980,10 @@ function storageApi(extensionId: string): ExtensionStorageApi {
   }
 }
 
-export interface ExtensionHost {
+/** `@opencroft/server/values`: host-free, served as it is. */
+type ValuesModule = typeof values
+
+export interface ExtensionHost extends ValuesModule {
   extensionId: string
   /** Where the host serves this extension: `/api/ext/<extensionId>`. */
   urlBase: string
@@ -765,13 +1010,19 @@ export interface ExtensionHost {
     randomToken: typeof randomToken
     randomString: typeof randomString
   }
+  /** This instance's id (`@opencroft/instance`). */
+  readonly instanceId: string
   db: typeof db
   secrets: HostSecretsApi
+  /** Text with credentials removed, by the rules node reads use — see `@/server/credential-redactor`. */
+  credentialRedactor: typeof credentialRedactor
   settings: { get: typeof hostGetSetting; set: typeof hostSetSetting }
   graph: HostGraphApi
   storage: ExtensionStorageApi
-  /** The calling extension's own added App instances (see `provides.apps`). */
+  /** The calling extension's own added App instances (see `provides.apps`), and the directory of every App its system identity may see. */
   apps: HostAppsApi
+  /** The spaces this extension's own system identity may see — see `directoryApis`. */
+  spaces: HostSpacesApi
   /** Deliver a message through a SendMessage node's own path (session reuse/
    *  create, envelope composition, hidden-by-default registration) — the same
    *  mechanism its `text-in` wiring uses, not a parallel implementation. */
@@ -782,14 +1033,18 @@ export interface ExtensionHost {
    * when an agent called — see `groupChatsForCaller`.
    */
   groupChats: HostGroupChatsApi
+  /** Spend summaries as this extension's own system identity. An App action gets `ctx.usage` instead, reading as its caller — see `usageForCaller`. */
+  usage: ExtensionServerHost['usage']
   /** The people directory, three fields per account — see `@/app/_server/user-directory`. */
   users: HostUsersApi
-  /** The agent directory, three fields per agent — see `listAgentDirectory`. */
+  /** The agent directory, three fields per agent — see `listAgentDirectory` — and each agent's presence — see `agent-presence`. */
   agents: HostAgentsApi
   /** Who a markdown text mentions — see `@/app/_server/mentions`. */
   mentions: HostMentionsApi
   /** An agent node's credentials for the MCP endpoint — see the package declaration. */
   mcpTokens: HostMcpTokensApi
+  /** An agent's instruction texts — see the package declaration and (agent)/_server/agent-instructions. */
+  agentInstructions: ExtensionServerHost['agentInstructions']
   /**
    * Fire-and-forget push to all connected clients; received in extension
    * client code via getStream(extensionId, 'events').
@@ -807,17 +1062,27 @@ export interface ExtensionHost {
    * object without establishing that they agree.
    */
   terminal: ExtensionServerHost['terminal']
+  agentRefusalOf: typeof agentRefusalOf
   collab: ExtensionServerHost['collab']
   ssh: {
+    keys: HostSshKeysApi
     exec(config: ServerConfig, command: string): Promise<string>
-    resolveKey(keyPath?: string): Promise<string | undefined>
+    resolveKey(keyPath: string | undefined, scope: { nodeId: string } | undefined): Promise<string | undefined>
   }
   execContext: {
     /** Dispatch an execution-context event to every target connected to
      *  `sourceHandleId` on `sourceNodeId` (broadcast). Returns the primary
      *  target's result plus every target's outcome — see
      *  `_server/exec-dispatch.ts` for the resolution and fan-out contract. */
-    dispatch(sourceNodeId: string, sourceHandleId: string, event: unknown): Promise<ExecDispatchSummary>
+    dispatch(
+      sourceNodeId: string,
+      sourceHandleId: string,
+      event: unknown,
+      options?: ExecDispatchOptions,
+    ): Promise<ExecDispatchSummary>
+    callTargets: HostExecContextApi['callTargets']
+    callableActions: HostExecContextApi['callableActions']
+    call: HostExecContextApi['call']
   }
 }
 
@@ -838,33 +1103,120 @@ function hostSetSetting(opts: { data: { id: string; data: Record<string, unknown
   return setSettingImpl(opts.data)
 }
 
-/** One added App instance, as reported to the providing extension. */
-export interface HostAppInstance {
-  instanceId: string
-  /** The App's bare type, as the providing extension declared it. */
-  type: string
-  /** @deprecated Read `type`, which holds the same bare value. */
-  appSlug: string
-  spaceSlug: string
-  /** The instance's display name — the host's field, required at add time. */
-  name: string
-  /** The instance's slug — unique in its space; `<spaceSlug>.<slug>` is its address. */
-  slug: string
-  params: Record<string, string>
-  /** Absolute path of the instance's private data directory. */
-  dataDir: string
+export type HostAppsApi = ExtensionServerHost['apps']
+
+/**
+ * The subscriptions made through one copy of the host's APIs, held until the
+ * copy's owner ends them: a call when it settles, the loader when it unloads
+ * the module evaluation the copy was built for.
+ */
+export interface SubscriptionHolder {
+  /** Hold `unsubscribe` until `end`; returns the unsubscribe to hand the extension, which also lets go of it. */
+  hold: (unsubscribe: () => void) => () => void
+  /** End every subscription still held. One held after this ends at once. */
+  end: () => void
 }
 
-export interface HostAppsApi {
-  /** The calling extension's added App instances, oldest first; optionally one App's only, named by its bare type. */
-  listInstances(type?: string): Promise<HostAppInstance[]>
+export function subscriptionHolder(): SubscriptionHolder {
+  let ended = false
+  const held = new Set<() => void>()
+  return {
+    hold: (unsubscribe) => {
+      if (ended) {
+        unsubscribe()
+        return () => {}
+      }
+      const release = () => {
+        held.delete(release)
+        unsubscribe()
+      }
+      held.add(release)
+      return release
+    },
+    end: () => {
+      ended = true
+      for (const release of [...held]) {
+        release()
+      }
+    },
+  }
+}
+
+/** What binds a directory copy to one call: whether the call is still running, and what holds its subscriptions. */
+interface CallBinding {
+  live: () => boolean
+  hold: SubscriptionHolder['hold']
+}
+
+/**
+ * `spaces` and `apps` seeing as `viewer`. A copy bound to one caller stops
+ * working once that call has ended, and the subscriptions made through it end
+ * with the call.
+ */
+function directoryApis(
+  extensionId: string,
+  viewer: DirectoryViewer,
+  binding: CallBinding,
+): { spaces: HostSpacesApi; apps: HostAppsApi } {
+  const whileLive = () => {
+    if (!binding.live()) {
+      throw new Error('This directory access was bound to a call that has ended')
+    }
+  }
+  const subscribeTo = (listing: DirectoryListing) => (listener: Parameters<HostSpacesApi['subscribe']>[0]) => {
+    whileLive()
+    return binding.hold(subscribeDirectoryListing(listing, listener))
+  }
+  return {
+    spaces: {
+      list: async () => {
+        whileLive()
+        return listSpacesFor(viewer)
+      },
+      subscribe: subscribeTo('spaces'),
+    },
+    apps: {
+      ...appsApi(extensionId),
+      directory: async (options) => {
+        whileLive()
+        return appDirectoryFor(viewer, options)
+      },
+      subscribe: subscribeTo('apps'),
+    },
+  }
+}
+
+/**
+ * `spaces` and `apps` for one call on behalf of `caller` — an App action, a
+ * session route — or as the extension's own system identity when nobody is
+ * named. Built by the host per call, never chosen by the extension; the caller
+ * ends it with `end()` when the call settles.
+ */
+export function directoryForCaller(
+  extensionId: string,
+  caller: AppActionCaller | undefined,
+): { spaces: HostSpacesApi; apps: HostAppsApi; end: () => void } {
+  let ended = false
+  const subscriptions = subscriptionHolder()
+  const viewer: DirectoryViewer = !caller
+    ? { kind: 'system', systemId: registerExtensionSystemSender(extensionId) }
+    : 'person' in caller
+      ? { kind: 'person', userId: caller.person.id }
+      : { kind: 'agent', name: caller.agent }
+  return {
+    ...directoryApis(extensionId, viewer, { live: () => !ended, hold: subscriptions.hold }),
+    end: () => {
+      ended = true
+      subscriptions.end()
+    },
+  }
 }
 
 // Read from the database rather than the (apps) runtime's in-memory load
 // state: an extension server module can be re-evaluated at any time (source
 // edit, rebuild), and this answer must not depend on which process events it
 // happened to witness.
-function appsApi(extensionId: string): HostAppsApi {
+function appsApi(extensionId: string): Pick<HostAppsApi, 'listInstances'> {
   return {
     listInstances: async (type) => {
       const wanted = type ? resolveTypeRef(extensionId, type) : undefined
@@ -893,9 +1245,19 @@ function appsApi(extensionId: string): HostAppsApi {
   }
 }
 
-export function createHost(extensionId: string): ExtensionHost {
+/**
+ * The host one evaluation of an extension's server module sees. `hold` keeps
+ * the subscriptions made through it; the loader passes one it ends when it
+ * unloads that evaluation, so a listener the module never removed does not
+ * outlive it.
+ */
+export function createHost(
+  extensionId: string,
+  hold: SubscriptionHolder['hold'] = subscriptionHolder().hold,
+): ExtensionHost {
   const urlBase = extensionUrlBase(extensionId)
   return {
+    ...values,
     extensionId,
     urlBase,
     assetUrl: (path) => extensionUrl(extensionId, 'assets', path),
@@ -909,18 +1271,36 @@ export function createHost(extensionId: string): ExtensionHost {
     cacheDir: (...parts) => cacheDir('extensions', extensionId, ...parts),
     dataDir: (...parts) => dataDir('extension-data', extensionId, ...parts),
     crypto: { encrypt, decrypt, randomToken, randomString },
+    // Read when an extension loads it, not when a host is built: the first read writes the file.
+    get instanceId() {
+      return instanceId()
+    },
     db,
     secrets,
+    credentialRedactor,
     settings: { get: hostGetSetting, set: hostSetSetting },
     graph: graphApiFor(extensionId),
     storage: storageApi(extensionId),
-    apps: appsApi(extensionId),
+    ...directoryApis(
+      extensionId,
+      { kind: 'system', systemId: registerExtensionSystemSender(extensionId) },
+      { live: () => true, hold },
+    ),
     sendMessage: sendMessageApi,
-    groupChats: extensionGroupChats(extensionId),
+    groupChats: extensionGroupChats(extensionId, { live: () => true, hold }),
+    usage: usageApi(async () => extensionPrincipal(extensionId)),
     users: { list: listUserDirectory },
-    agents: { list: listAgentDirectory },
+    agents: {
+      list: listAgentDirectory,
+      presence: listAgentPresence,
+      subscribePresence: (listener) => hold(subscribeAgentPresence(listener)),
+    },
     mentions: { find: mentionsIn },
     mcpTokens: mcpTokensApi,
+    agentInstructions: {
+      read: readAgentInstructions,
+      write: (id, role, text, options) => writeAgentInstructions(id, role, text, { expected: options?.expected }),
+    },
     events: {
       broadcast: (name, payload) => {
         toastStore.broadcast({ type: 'extension_event', extensionId, name, payload })
@@ -934,9 +1314,21 @@ export function createHost(extensionId: string): ExtensionHost {
       getContext: getTerminalContext,
       startJob: startJobSession,
       stopViewJob,
+      readFile: readTerminalFile,
+      writeFile: writeTerminalFile,
+      listFolders: listTerminalFolders,
+      spawn: (ctx, argv, opts) => getBackend(ctx).spawn(ctx, argv, opts),
     },
-    ssh: { exec: sshExec, resolveKey: resolveKeyContent },
-    execContext: { dispatch: dispatchExecutionContextForHost },
+    agentRefusalOf,
+    // `scope` is read optionally: an extension compiled against an older `@opencroft/server` calls
+    // without one, and a Key Store reference is then refused by the host's check rather than read.
+    ssh: { keys: sshKeys, exec: sshExec, resolveKey: (keyPath, scope) => resolveKeyContent(keyPath, scope?.nodeId) },
+    execContext: {
+      dispatch: dispatchExecutionContextForHost,
+      callTargets: graphCallTargets,
+      callableActions: graphCallActions,
+      call: callFromGraph,
+    },
     collab: collabApiFor(extensionId),
   }
 }

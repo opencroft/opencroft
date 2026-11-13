@@ -1,8 +1,6 @@
-'use client'
-
 import type React from 'react'
 
-import { MenuLayout } from '../layout/menulayout'
+import { MenuLayout, type MenuWidth } from '../layout/menulayout'
 import { ScrollContent, ScrollPage } from '../layout/scrollpage'
 import { cn } from 'cn'
 
@@ -31,6 +29,13 @@ export interface SettingsShellProps {
   // Extra menu content beneath the sections -- the extension pages, or
   // anything else the host adds to the menu.
   menuExtra?: React.ReactNode
+  // The menu column's width from md up, as MenuLayout takes it: the settings
+  // page keeps the default, a dialog of a few sections takes 'narrow'.
+  menuWidth?: MenuWidth
+  // A line across the top of the page, above the menu and the panel alike --
+  // a NoticeStrip about the instance rather than about one section, so it
+  // stays put whichever section is open.
+  banner?: React.ReactNode
   // The active section's content.
   children: React.ReactNode
   className?: string
@@ -58,6 +63,8 @@ export function SettingsShell({
   isOpened,
   onClosed,
   menuExtra,
+  menuWidth,
+  banner,
   children,
   className,
 }: SettingsShellProps) {
@@ -74,7 +81,8 @@ export function SettingsShell({
             aria-current={value === section.id ? 'page' : undefined}
           >
             {Icon ? <Icon className='h-4 w-4 shrink-0' aria-hidden='true' /> : null}
-            {section.label}
+            {/* Truncated rather than wrapped, so a narrow menu keeps one row per section. */}
+            <span className='min-w-0 truncate'>{section.label}</span>
           </button>
         )
       })}
@@ -83,10 +91,13 @@ export function SettingsShell({
   )
 
   return (
-    <MenuLayout isOpened={isOpened} onClosed={onClosed} menu={menu}>
-      <ScrollPage>
-        <ScrollContent className='p-4'>{children}</ScrollContent>
-      </ScrollPage>
-    </MenuLayout>
+    <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
+      {banner}
+      <MenuLayout isOpened={isOpened} onClosed={onClosed} menu={menu} menuWidth={menuWidth}>
+        <ScrollPage>
+          <ScrollContent className='p-4'>{children}</ScrollContent>
+        </ScrollPage>
+      </MenuLayout>
+    </div>
   )
 }

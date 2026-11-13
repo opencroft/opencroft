@@ -2,7 +2,7 @@
  * `@opencroft/client/terminal` — terminals: the embeddable terminal, and
  * picking, showing and listing "node-id/handle-id" terminal targets.
  */
-import type { TerminalProps } from '@opencroft/terminal/client'
+import type { TerminalConfig, TerminalProps } from '@opencroft/terminal/client'
 import type { FC } from 'react'
 
 export type { TerminalConfig, TerminalProps, TerminalStatus } from '@opencroft/terminal/client'
@@ -10,11 +10,23 @@ export type { TerminalConfig, TerminalProps, TerminalStatus } from '@opencroft/t
 /** Embeddable xterm terminal connected to the host's terminal WebSocket. */
 export declare const Terminal: FC<TerminalProps>
 
+/**
+ * A terminal-context value (what a `terminal-context` handle carries: local, wsl, ssh or
+ * docker-exec) as the `connection` a `Terminal` opens, or null for none. A docker-exec context
+ * opens its `shell`, else bash where the container has it and sh where it doesn't, as its `user`
+ * and in its `cwd` when given.
+ */
+export declare const connectionFromContext: (value: Record<string, unknown> | undefined) => TerminalConfig | null
+
 export interface TerminalSelectorProps {
   /** "node-id/handle-id" of the selected terminal source, or '' for none. */
   value?: string
   onChange: (value: string) => void
-  /** Limit the choices to one space's nodes; omit to offer every space. */
+  /**
+   * Limit the choices to one space's terminals and the routes of its Terminal
+   * Routers, the way that space reaches a terminal of another; omit to offer
+   * every space's terminals, without routers.
+   */
   spaceSlug?: string
   /** Offer an explicit "None" choice (reported as ''). */
   allowNone?: boolean

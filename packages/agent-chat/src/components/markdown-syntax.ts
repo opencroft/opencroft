@@ -1,3 +1,4 @@
+import type { Parent, Root, RootContent } from 'mdast'
 import remarkDirective from 'remark-directive'
 import remarkGfm from 'remark-gfm'
 
@@ -18,3 +19,29 @@ export const markdownDirectiveSyntax = [remarkDirective, remarkDirectiveBlocks]
  * to either of them. Free of React, so a server can parse with it.
  */
 export const markdownSyntax = [remarkGfm, ...markdownDirectiveSyntax]
+
+function breakLines(parent: Parent): void {
+  parent.children = parent.children.flatMap((child): RootContent[] => {
+    if (child.type === 'text' && child.value.includes('\n')) {
+      return child.value
+        .split('\n')
+        .flatMap((line, index): RootContent[] => [
+          ...(index > 0 ? [{ type: 'break' } as const] : []),
+          ...(line ? [{ type: 'text', value: line } as const] : []),
+        ])
+    }
+    if ('children' in child) {
+      breakLines(child)
+    }
+    return [child]
+  }) as typeof parent.children
+}
+
+/**
+ * A line break inside a paragraph's text as a line break, where markdown
+ * reads it as a space: the way a chat message is written. Code keeps its
+ * own lines.
+ */
+export function remarkLineBreaks() {
+  return (tree: Root) => breakLines(tree)
+}

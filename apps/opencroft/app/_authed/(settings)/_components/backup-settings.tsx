@@ -1,5 +1,9 @@
 'use client'
 
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
+import { toast } from 'sonner'
+import { type BackupInstanceKeys, BackupRestore } from 'ui/settings/backup-restore'
+
 import {
   type BackupContents,
   type BackupFileInfo,
@@ -14,12 +18,7 @@ import {
   resetDatabase,
   restoreBackupNow,
   setBackupSchedule,
-} from '@opencroft/db-backups/server'
-import { useRouteContext } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react'
-import { toast } from 'sonner'
-import { type BackupInstanceKeys, BackupRestore } from 'ui/settings/backup-restore'
-
+} from '@/app/_authed/(settings)/_server/backup-actions'
 import { getInstanceKeys } from '@/app/_authed/(settings)/_server/instance-keys-actions'
 
 // The page is the kit's BackupRestore; what stays here is everything that
@@ -71,9 +70,6 @@ function undecryptableAfterRestore(count: number): string {
 }
 
 export default function BackupSettings() {
-  // The keys are an administrator's concern, and their endpoint refuses
-  // anyone else: the card is simply not drawn for other readers.
-  const { isAdmin } = useRouteContext({ from: '/_authed' })
   const [backups, setBackups] = useState<BackupFileInfo[]>([])
   const [instanceKeys, setInstanceKeys] = useState<BackupInstanceKeys | undefined>(undefined)
   const [stats, setStats] = useState<BackupStorageStats | null>(null)
@@ -90,19 +86,17 @@ export default function BackupSettings() {
         listBackups(),
         getBackupStats(),
         // A failure here costs the keys card, not the backup list.
-        isAdmin
-          ? getInstanceKeys().catch((err: unknown) => {
-              console.error('[backup] instance keys could not be read', err)
-              return undefined
-            })
-          : undefined,
+        getInstanceKeys().catch((err: unknown) => {
+          console.error('[backup] instance keys could not be read', err)
+          return undefined
+        }),
       ])
       setBackups(list)
       setStats(storage)
       setInstanceKeys(keys)
       setLoading(false)
     })
-  }, [isAdmin])
+  }, [])
 
   useEffect(() => {
     refresh()
@@ -186,7 +180,7 @@ export default function BackupSettings() {
         const restoredRows = Object.values(result.restored).reduce((sum, count) => sum + count, 0)
         // The restore has happened whatever this answers, so a failed check
         // must not stop the reload; the keys card after it says the same.
-        const keys = isAdmin ? await getInstanceKeys().catch(() => undefined) : undefined
+        const keys = await getInstanceKeys().catch(() => undefined)
         if (keys && keys.undecryptableSecrets > 0) {
           alert(undecryptableAfterRestore(keys.undecryptableSecrets))
         }

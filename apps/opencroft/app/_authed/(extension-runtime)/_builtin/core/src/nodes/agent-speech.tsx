@@ -1,4 +1,5 @@
 import { invoke } from '@opencroft/client/actions'
+import { SecretValueField, SecretValueTable } from '@opencroft/client/secrets'
 import {
   Input,
   Label,
@@ -14,7 +15,6 @@ import {
 import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 
 import type { AgentData } from './agent'
-import { KeyValueEditor } from './key-value-editor'
 
 // Suggested voices for OpenAI-compatible speech endpoints that expose no
 // `/audio/voices` list of their own.
@@ -36,6 +36,7 @@ interface TtsCapabilities {
 // fields from the agent node's data by node type — nothing here is specific
 // to any one consumer.
 export function AgentSpeechTab({
+  nodeId,
   data,
   updateData,
 }: {
@@ -54,6 +55,7 @@ export function AgentSpeechTab({
     try {
       setCaps(
         await invoke<TtsCapabilities>('tts.capabilities', {
+          nodeId,
           baseUrl: data.ttsApiBase,
           apiKey: data.ttsApiKey,
           headers: data.ttsHeaders,
@@ -64,7 +66,7 @@ export function AgentSpeechTab({
     }
     // Serialised: the probe has to re-run when a header is edited, and the
     // array identity changes on every keystroke.
-  }, [data.ttsApiBase, data.ttsApiKey, JSON.stringify(data.ttsHeaders ?? [])])
+  }, [nodeId, data.ttsApiBase, data.ttsApiKey, JSON.stringify(data.ttsHeaders ?? [])])
 
   // Refresh whenever the endpoint, key or headers change — voices and
   // supported knobs are endpoint-specific, and an authenticated endpoint
@@ -89,22 +91,18 @@ export function AgentSpeechTab({
             placeholder='http://localhost:8880/v1'
           />
         </div>
-        <div className='flex flex-col gap-1'>
-          <Label>API Key</Label>
-          {/* Not a login: the browser is told so, or it offers saved passwords here. */}
-          <Input
-            type='password'
-            autoComplete='one-time-code'
-            value={data.ttsApiKey ?? ''}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ ttsApiKey: e.target.value })}
-            placeholder='not-needed'
-          />
-        </div>
-        <KeyValueEditor
+        <SecretValueField
+          label='API Key'
+          value={data.ttsApiKey}
+          onChange={(ttsApiKey) => updateData({ ttsApiKey })}
+          placeholder='not-needed'
+        />
+        <SecretValueTable
           label='Request headers (optional)'
-          entries={data.ttsHeaders ?? []}
+          nameLabel='Header'
+          namePlaceholder='Header-Name'
+          entries={data.ttsHeaders}
           onChange={(ttsHeaders) => updateData({ ttsHeaders })}
-          valuePlaceholder='value or secret:NAME'
         />
         <div className='flex flex-col gap-1'>
           <Label>Model</Label>

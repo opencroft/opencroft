@@ -2,6 +2,7 @@ import type { HostCollabApi } from '@opencroft/server'
 
 import { markdownDocName } from '@/lib/markdown-doc-protocol'
 import {
+  dropMarkdownDocs,
   editMarkdownDoc,
   flushMarkdownDocs,
   readMarkdownDoc,
@@ -28,6 +29,7 @@ export function collabApiFor(extensionId: string): HostCollabApi {
       edit: (kind, key, origin, change) => editMarkdownDoc(owner(kind), key, origin, change),
       flush: (kind, key) => flushMarkdownDocs(owner(kind), key),
       whileClosed: (kind, keys, change, options) => whileMarkdownDocsClosed(owner(kind), keys, change, options),
+      drop: (kind, keyPrefix) => dropMarkdownDocs(owner(kind), keyPrefix),
     },
   }
 }

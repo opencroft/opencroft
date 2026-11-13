@@ -195,6 +195,43 @@ test('a handle naming a type that is neither bare nor qualified is refused', () 
   )
 })
 
+test('an input that takes several value types names them as handleType is named, and they come back qualified', () => {
+  const level = {
+    id: 'level',
+    role: 'target' as const,
+    handleType: 'builtin.core.number',
+    accepts: ['builtin.core.number', 'builtin.core.string'],
+    typeGroup: 'reading',
+  }
+  const normalized = normalizeManifest(manifest({ nodes: [{ type: 'gauge', name: 'Gauge', handles: [level] }] }), ID)
+  assert.deepEqual(normalized.nodes?.[0].handles?.[0], level)
+})
+
+test('an accepts on a source, of a type that is no value type, or without its own handleType is refused', () => {
+  const refused = (handle: Record<string, unknown>, message: RegExp) =>
+    assert.throws(
+      () =>
+        normalizeManifest(
+          manifest({ nodes: [{ type: 'gauge', name: 'Gauge', handles: [{ id: 'level', ...handle } as never] }] }),
+          ID,
+        ),
+      message,
+    )
+  const number = 'builtin.core.number'
+  refused(
+    { role: 'source', handleType: number, accepts: [number] },
+    /Extension acme\.widgets declares the handle "level" with accepts: only an input takes several types/,
+  )
+  refused(
+    { role: 'target', handleType: number, accepts: [number, 'signal'] },
+    /accepting "signal", which is not a value type/,
+  )
+  refused(
+    { role: 'target', handleType: number, accepts: ['builtin.core.string'] },
+    /with accepts that do not hold its handleType, builtin\.core\.number/,
+  )
+})
+
 test('a manifest the runtime refuses is still shown, by its identity, without the types it declares', () => {
   const { result, warnings } = collectingWarnings(() =>
     manifestForDisplay(manifest({ description: 'Gauges', nodes: [{ type: 'a.gauge', name: 'Gauge' }] }), ID),

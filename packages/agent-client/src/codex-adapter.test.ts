@@ -10,7 +10,7 @@ import { AGENT_PROVIDERS } from './agent-providers'
 import type { AgentConnection } from './connection'
 import { ActionRequiredError } from './errors'
 import { foldEvents } from './fold'
-import { CODEX_DEFAULT_BASE_URL, HARNESS_ADAPTERS } from './harness-adapters'
+import { HARNESS_ADAPTERS, OPENAI_DEFAULT_BASE_URL } from './harness-adapters'
 import { awaitOauthLogin, disconnectOauth, oauthLoginStatus, startOauthLogin } from './oauth-login'
 import { adaptersForProvider, buildSpawnConfig, findAdapter, findProvider } from './resolve'
 import type { AgentSelection, ChatEvent } from './types'
@@ -44,9 +44,9 @@ test('codex spawns the pinned agentclientprotocol adapter with a hermetic home a
   assert.deepEqual(config.args, ['-y', '@agentclientprotocol/codex-acp@1.13.1'])
   assert.equal(config.env.CODEX_API_KEY, KEY)
   assert.equal(config.env.NO_BROWSER, '1')
-  // Relative to the workdir the harness starts in, so it never falls back to ~/.codex.
-  assert.equal(config.env.CODEX_HOME, '.harness-home/codex')
-  assert.deepEqual(config.ensureDirs, ['.harness-home/codex'])
+  // Inside the agent's workdir, so it never falls back to ~/.codex.
+  assert.equal(config.env.CODEX_HOME, '/work/agent/.harness-home/codex')
+  assert.deepEqual(config.ensureDirs, ['/work/agent/.harness-home/codex'])
   assert.equal(config.env.OPENAI_BASE_URL, undefined, 'codex-acp ignores it; the endpoint rides authenticate')
   assert.equal(config.env.OPENAI_MODEL, undefined)
   assert.deepEqual(JSON.parse(config.env.CODEX_CONFIG), { model: 'gpt-5-codex' })
@@ -68,7 +68,10 @@ test('a container spawn creates the harness home inside the container, after ent
   assert.equal(config.command, 'docker')
   assert.equal(config.ensureDirs, undefined, 'container paths are never created on the host')
   const script = config.args[config.args.indexOf('sh') + 2]
-  assert.equal(script, "mkdir -p '/agents/a' && cd '/agents/a' && mkdir -p '.harness-home/codex' && exec \"$0\" \"$@\"")
+  assert.equal(
+    script,
+    "mkdir -p '/agents/a' && cd '/agents/a' && mkdir -p '/agents/a/.harness-home/codex' && exec \"$0\" \"$@\"",
+  )
   assert.ok(config.args.includes('CODEX_HOME'), 'forwarded by name')
 })
 
@@ -108,7 +111,11 @@ test('the gateway request carries the endpoint and the key as a Bearer header', 
   assert.deepEqual(codexAuth(codexSelection()), {
     methodId: 'gateway',
     _meta: {
-      gateway: { baseUrl: CODEX_DEFAULT_BASE_URL, headers: { Authorization: `Bearer ${KEY}` }, providerName: 'OpenAI' },
+      gateway: {
+        baseUrl: OPENAI_DEFAULT_BASE_URL,
+        headers: { Authorization: `Bearer ${KEY}` },
+        providerName: 'OpenAI',
+      },
     },
   })
   const custom = codexAuth(
@@ -249,7 +256,7 @@ test('a Codex session authenticates through the gateway before session/new and g
       'gateway auth declared on this connection',
     )
     // The harness home exists before the harness starts, inside its workdir.
-    assert.equal(init.env?.CODEX_HOME, '.harness-home/codex')
+    assert.equal(init.env?.CODEX_HOME, join(h.cwd, '.harness-home', 'codex'))
     assert.ok(existsSync(join(h.cwd, '.harness-home', 'codex')))
     assert.equal(init.env?.NO_BROWSER, '1')
     assert.deepEqual(JSON.parse(init.env?.CODEX_CONFIG ?? '{}'), { model: 'gpt-5-codex' })
@@ -257,7 +264,7 @@ test('a Codex session authenticates through the gateway before session/new and g
       methodId: 'gateway',
       _meta: {
         gateway: {
-          baseUrl: CODEX_DEFAULT_BASE_URL,
+          baseUrl: OPENAI_DEFAULT_BASE_URL,
           headers: { Authorization: `Bearer ${KEY}` },
           providerName: 'OpenAI',
         },

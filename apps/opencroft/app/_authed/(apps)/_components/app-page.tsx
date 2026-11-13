@@ -7,6 +7,7 @@ import { LogoLoader } from 'ui/logo-loader'
 
 import { AppRouterProvider } from '@/app/_authed/(apps)/_components/app-router'
 import type { SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
+import { ChatDockAppType } from '@/app/_authed/(extension-runtime)/_client/chat-dock-mode'
 import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { InstallMissingExtension, missingTypeLabel } from '@/app/_authed/(extension-runtime)/_client/missing-extension'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
@@ -43,7 +44,9 @@ export function AppPage({ spaceSlug, instance }: { spaceSlug: string; instance: 
       {Body ? (
         <Suspense fallback={<AppLoading />}>
           <AppRouterProvider base={`/space/${spaceSlug}/app/${instance.slug}`}>
-            <Body instanceId={instance.id} spaceSlug={spaceSlug} params={instance.params} />
+            <ChatDockAppType.Provider value={instance.type}>
+              <Body instanceId={instance.id} spaceSlug={spaceSlug} params={instance.params} />
+            </ChatDockAppType.Provider>
           </AppRouterProvider>
         </Suspense>
       ) : loaded ? (

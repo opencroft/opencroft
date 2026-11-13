@@ -36,6 +36,7 @@ export {
   imageToolView,
   lookupToolView,
   normalizeToolId,
+  type ToolCallState,
   type ToolMessage,
   type ToolViewDisplay,
   type ToolViewMode,
@@ -43,6 +44,7 @@ export {
   type ToolViewRegistry,
   type ToolViewResult,
   type ToolViewSpec,
+  toolCallState,
   toolViewProps,
 } from './tool-views'
 export { TurnDetails, type TurnDetailsProps } from './turn-details'

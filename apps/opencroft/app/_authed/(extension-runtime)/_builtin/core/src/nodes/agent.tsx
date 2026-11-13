@@ -1,5 +1,7 @@
 import { invoke } from '@opencroft/client/actions'
-import { InputHandle, NodeFrame } from '@opencroft/client/canvas'
+import { NodeFrame } from '@opencroft/client/canvas'
+import { type NamedValue, SecretValueField, SecretValueTable } from '@opencroft/client/secrets'
+import { TerminalRef, TerminalSelector } from '@opencroft/client/terminal'
 import {
   AgentAvatar,
   Button,
@@ -12,13 +14,21 @@ import {
   SelectTrigger,
   SelectValue,
   Spinner,
-  Textarea,
 } from '@opencroft/client/ui'
+import { IMAGE_INPUT_OPTIONS, imageInputChoice, imageInputFromChoice } from 'agent-client/image-input'
+import {
+  adapterOffered,
+  findAdapter,
+  findProvider,
+  NATIVE_API_LABELS,
+  nativeApisOffered,
+  responsesApiOptIn,
+} from 'agent-client/resolve'
+import type { NativeApi } from 'agent-client/types'
 import { RefreshCw, Trash2, Upload, User } from 'lucide-react'
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
 
-import type { KeyValue } from './key-value-editor'
-import { useSecretKeys } from './secrets'
+import { profileSendsHeaders } from './agent-headers-shared'
 
 export interface AgentData {
   name: string
@@ -27,15 +37,23 @@ export interface AgentData {
   providerId?: string
   adapterId?: string
   model?: string
+  /** The provider key: the NAME of a secret in the Secrets Stores of the
+   * node's graph, never a value. */
   apiKeySecret?: string
   defaultModeId?: string
   /** Optional OpenAI-compatible base-URL override (wins over the provider endpoint). */
   baseUrl?: string
+  /** Extra request headers for every request the harness makes to `baseUrl`,
+   * merged over its own, as `ttsHeaders`. Sent only when the harness can send
+   * headers and `baseUrl` is set (`profileSendsHeaders`). */
+  endpointHeaders?: NamedValue[]
   /** The endpoint also serves OpenAI's Responses API — what offers Responses-only
    * harnesses (Codex) on a provider that isn't OpenAI itself. */
   responsesApi?: boolean
-  /** System prompt for the Custom (native) harness; ignored by ACP agents. */
+  /** System prompt for the Custom (native) harness; ignored by ACP agents. Edited in the Instructions tab. */
   systemPrompt?: string
+  /** The agent's own instructions (markdown), written as the instruction file in its workspace. */
+  workspaceInstructions?: string
   /** Reasoning effort (e.g. 'low' | 'medium' | 'high'); empty = off. */
   reasoningEffort?: string
   /** Sampling temperature for the Custom (native) harness. */
@@ -43,9 +61,23 @@ export interface AgentData {
   /** The model's context window in tokens. Unset means unknown, and unknown is
    * reported as unknown -- nothing guesses one from the model name. */
   contextWindow?: number
-  /** When set, the harness runs inside this Docker container via `docker exec`,
-   * with its workspace at /agents/<agent-slug>. Empty = run on the host. */
+  /** Whether the model takes images, for the Custom (native) harness: the
+   * pictures tools return are sent to it. Unset asks the endpoint, and a model
+   * the endpoint reports nothing about is sent none. */
+  imageInput?: boolean
+  /** The model API the Custom (native) harness speaks, among those the provider
+   * offers (agent-client `nativeApisOffered`). Unset is the provider's first. */
+  nativeApi?: NativeApi
+  /** The Docker container an agent ran in before agents ran through
+   * terminals. Present only on an agent the server could not move to that
+   * container's terminal (placement-migration.ts); nothing runs there. */
   containerName?: string
+  /** The terminal the harness runs through, as the "node-id/handle-id" target
+   * the TerminalSelector gives. Required for every harness but the Custom
+   * one, which runs inside OpenCroft. */
+  terminal?: string
+  /** The harness's working directory on `terminal`; required while it is set. */
+  terminalFolder?: string
   /** Opt-in (default off) for the idle-session reaper to unload this agent's
    * sessions once idle longer than autoUnloadIdleMinutes. Off by default
    * because unloading kills any background work an idle session still owns. */
@@ -55,12 +87,15 @@ export interface AgentData {
   /** Speech profile (Speech tab): OpenAI-compatible speech endpoint and
    * output-format knobs, read from the node's data by speech consumers. */
   ttsApiBase?: string
+  /** Typed, or `secret:NAME` resolved from the Secrets Store server-side at
+   * request time (`secrets.resolveValue`). A typed key is flagged in the tab. */
   ttsApiKey?: string
   /** Extra request headers for every TTS call, merged over the defaults — so a
    * custom `Authorization` replaces the `ttsApiKey` Bearer shorthand rather
    * than colliding with it. A value of `secret:NAME` is resolved from the
-   * Secrets Store server-side at request time; anything else is sent as typed. */
-  ttsHeaders?: KeyValue[]
+   * Secrets Store server-side at request time; anything else is sent as typed,
+   * and a typed credential is flagged in the tab. */
+  ttsHeaders?: NamedValue[]
   ttsModel?: string
   voice?: string
   ttsSpeed?: number
@@ -76,10 +111,11 @@ export interface AgentData {
    * transcription endpoint, read from the node's data by speech-to-text
    * consumers. */
   asrApiBase?: string
+  /** Typed, or `secret:NAME`, as `ttsApiKey`. */
   asrApiKey?: string
   /** Extra request headers for every ASR call — same merge and `secret:NAME`
    * handling as `ttsHeaders`. */
-  asrHeaders?: KeyValue[]
+  asrHeaders?: NamedValue[]
   asrModel?: string
   asrLanguage?: string
 }
@@ -93,15 +129,7 @@ function readAsDataUrl(file: File): Promise<string> {
 }
 
 export function AgentNode({ data, selected }: { id: string; data: AgentData; selected?: boolean }) {
-  return (
-    <NodeFrame icon={User} title={data.name || 'Agent'} selected={selected ?? false}>
-      <div className='flex flex-col gap-1.5'>
-        <InputHandle type='agent-instruction' id='instructions-in'>
-          <span className='text-[10px] text-muted-foreground'>Instructions</span>
-        </InputHandle>
-      </div>
-    </NodeFrame>
-  )
+  return <NodeFrame icon={User} title={data.name || 'Agent'} selected={selected ?? false} />
 }
 
 export function AgentInspector({
@@ -160,11 +188,21 @@ export function AgentInspector({
 // ─── Agent Profile Tab (local agent-client backend) ─────────────────
 
 interface AgentCatalog {
-  adapters: { id: string; label: string; protocol: string; kind: 'acp' | 'native'; supportsOauthLogin: boolean }[]
-  providers: { id: string; label: string; models: string[]; protocols: string[] }[]
+  adapters: {
+    id: string
+    label: string
+    protocol: string
+    kind: 'acp' | 'native'
+    supportsOauthLogin: boolean
+    takesEndpointHeaders: boolean
+  }[]
+  providers: { id: string; label: string; models: string[] }[]
 }
 
-const NO_SECRET = '__none__'
+// How a secret field stores a picked secret (`secret:<NAME>`). The node keeps
+// `apiKeySecret` as the bare name, which every reader of it resolves, so the
+// field's value is converted at the edge.
+const SECRET_PREFIX = 'secret:'
 const NO_REASONING = '__default__'
 
 export function AgentProfileTab({
@@ -177,7 +215,6 @@ export function AgentProfileTab({
   updateData: (p: Partial<AgentData>) => void
 }) {
   const [catalog, setCatalog] = useState<AgentCatalog | null>(null)
-  const secretKeys = useSecretKeys()
 
   useEffect(() => {
     invoke<AgentCatalog>('agent.listAgentCatalog')
@@ -189,13 +226,7 @@ export function AgentProfileTab({
     <ScrollArea className='h-full'>
       <div className='flex flex-col gap-3 p-1'>
         {catalog ? (
-          <LocalProfileFields
-            nodeId={nodeId}
-            data={data}
-            updateData={updateData}
-            catalog={catalog}
-            secretKeys={secretKeys}
-          />
+          <LocalProfileFields nodeId={nodeId} data={data} updateData={updateData} catalog={catalog} />
         ) : (
           <p className='text-xs text-muted-foreground'>Loading profile options…</p>
         )}
@@ -209,32 +240,35 @@ function LocalProfileFields({
   data,
   updateData,
   catalog,
-  secretKeys,
 }: {
   nodeId: string
   data: AgentData
   updateData: (p: Partial<AgentData>) => void
   catalog: AgentCatalog
-  secretKeys: string[]
 }) {
   const provider = catalog.providers.find((p) => p.id === data.providerId)
   const adapter = catalog.adapters.find((a) => a.id === data.adapterId)
-  // Mirrors agent-client's adapterOffered (resolve.ts): a Responses-API-only
-  // harness is offered on a provider with an OpenAI-compatible endpoint only
-  // when the profile says that endpoint serves the Responses API too.
-  const responsesOptIn = Boolean(
-    provider?.protocols.includes('openai') && !provider.protocols.includes('openai-responses'),
-  )
-  const adapters = catalog.adapters.filter(
-    (a) =>
-      a.protocol === 'native' ||
-      (provider
-        ? provider.protocols.includes(a.protocol) ||
-          (a.protocol === 'openai-responses' && responsesOptIn && data.responsesApi === true)
-        : true),
-  )
+  // agent-client's own rule for which harnesses a provider offers, so the list
+  // and the harness that runs cannot disagree.
+  const providerSpec = findProvider(data.providerId ?? '')
+  const adapters = catalog.adapters.filter((a) => {
+    const spec = findAdapter(a.id)
+    return !providerSpec || !spec || adapterOffered(spec, providerSpec, data)
+  })
+  const nativeApis = providerSpec ? nativeApisOffered(providerSpec, data) : []
+  const responsesOptIn = responsesApiOptIn(providerSpec)
   const models = provider?.models ?? []
   const isNative = adapter?.kind === 'native'
+  // A terminal picked here is where the agent runs.
+  const terminal = data.terminal?.trim() || ''
+  const check = useTerminalCheck({
+    nodeId,
+    terminal: terminal && !isNative ? terminal : null,
+    folder: data.terminalFolder?.trim() ?? '',
+    adapterId: data.adapterId,
+    providerId: data.providerId,
+    baseUrl: data.baseUrl,
+  })
   // Turning the opt-in off drops a Responses-only harness the list no longer offers.
   const setResponsesApi = (on: boolean) =>
     updateData({ responsesApi: on, ...(!on && adapter?.protocol === 'openai-responses' ? { adapterId: '' } : {}) })
@@ -269,6 +303,11 @@ function LocalProfileFields({
   const [loadingModels, setLoadingModels] = useState(false)
   const modelOptions = Array.from(new Set([...(data.model ? [data.model] : []), ...models, ...discovered]))
 
+  const sendsHeaders = profileSendsHeaders(adapter?.takesEndpointHeaders ?? false, data.baseUrl)
+  const headers = sendsHeaders ? data.endpointHeaders : undefined
+  const headersKey = JSON.stringify(headers ?? [])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the headers array is keyed by its JSON, so the list is read again on an edit and not on a new array identity
   const loadModels = useCallback(async () => {
     if (!data.baseUrl) {
       return
@@ -276,14 +315,19 @@ function LocalProfileFields({
     setLoadingModels(true)
     try {
       setDiscovered(
-        await invoke<string[]>('agent.listModels', { baseUrl: data.baseUrl, apiKeySecret: data.apiKeySecret }),
+        await invoke<string[]>('agent.listModels', {
+          nodeId,
+          baseUrl: data.baseUrl,
+          apiKeySecret: data.apiKeySecret,
+          headers,
+        }),
       )
     } catch {
       setDiscovered([])
     } finally {
       setLoadingModels(false)
     }
-  }, [data.baseUrl, data.apiKeySecret])
+  }, [nodeId, data.baseUrl, data.apiKeySecret, headersKey])
 
   // OpenAI-compatible endpoints expose no static catalog, so read
   // `<baseUrl>/models` and refresh whenever the endpoint or key changes.
@@ -351,38 +395,18 @@ function LocalProfileFields({
         <OauthAccountSection
           adapterId={adapter.id}
           nodeId={nodeId}
-          homeKey={`${data.name ?? ''}\u0000${data.containerName ?? ''}`}
+          homeKey={[data.name ?? '', terminal, data.terminalFolder ?? ''].join('\u0000')}
         />
       ) : (
-        <div className='flex flex-col gap-1'>
-          <Label className='text-xs'>API key secret</Label>
-          <Select
-            value={data.apiKeySecret || NO_SECRET}
-            items={{ [NO_SECRET]: 'None' }}
-            onValueChange={(v) => {
-              if (v !== null) {
-                updateData({ apiKeySecret: v === NO_SECRET ? '' : v })
-              }
-            }}
-          >
-            <SelectTrigger className='h-8 text-xs'>
-              <SelectValue placeholder='None' />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_SECRET}>None</SelectItem>
-              {secretKeys.map((k) => (
-                <SelectItem key={k} value={k} className='font-mono text-xs'>
-                  {k}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {secretKeys.length === 0 ? (
-            <p className='text-[10px] text-muted-foreground'>
-              Add a Secrets Store node with the provider key to reference it here.
-            </p>
-          ) : null}
-        </div>
+        <SecretValueField
+          label='API key secret'
+          value={data.apiKeySecret ? `${SECRET_PREFIX}${data.apiKeySecret}` : ''}
+          onChange={(v) =>
+            updateData({ apiKeySecret: v.startsWith(SECRET_PREFIX) ? v.slice(SECRET_PREFIX.length) : '' })
+          }
+          placeholder='No secret'
+          allowTyped={false}
+        />
       )}
       {efforts.length > 0 ? (
         <div className='flex flex-col gap-1'>
@@ -420,6 +444,15 @@ function LocalProfileFields({
         />
         <p className='text-[10px] text-muted-foreground'>Optional OpenAI-compatible endpoint override.</p>
       </div>
+      {sendsHeaders ? (
+        <SecretValueTable
+          label='Request headers (optional)'
+          nameLabel='Header'
+          namePlaceholder='Header-Name'
+          entries={data.endpointHeaders}
+          onChange={(endpointHeaders) => updateData({ endpointHeaders })}
+        />
+      ) : null}
       {responsesOptIn ? (
         <div className='flex flex-col gap-1'>
           <div className='flex items-center gap-2'>
@@ -434,23 +467,58 @@ function LocalProfileFields({
             </Label>
           </div>
           <p className='text-[10px] text-muted-foreground'>
-            Offers Codex, which speaks only OpenAI&apos;s Responses API (<code>/responses</code>). Most
-            OpenAI-compatible servers implement Chat Completions only.
+            Offers Codex, which speaks only OpenAI&apos;s Responses API (<code>/responses</code>), and that API for the
+            Custom harness. Most OpenAI-compatible servers implement Chat Completions only.
           </p>
         </div>
       ) : null}
-      <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>Docker container</Label>
-        <Input
-          className='h-8 text-xs'
-          value={data.containerName ?? ''}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ containerName: e.target.value })}
-          placeholder='Run on host'
-        />
+      {isNative ? (
         <p className='text-[10px] text-muted-foreground'>
-          Optional. Runs the harness inside this container via <code>docker exec</code>.
+          The Custom harness runs inside OpenCroft, so it uses no terminal.
         </p>
-      </div>
+      ) : (
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>Terminal</Label>
+          <TerminalSelector
+            value={terminal}
+            onChange={(value) => updateData({ terminal: value || undefined })}
+            placeholder='Choose a terminal'
+          />
+          <p className='text-[10px] text-muted-foreground'>
+            Required. The harness runs through this terminal: a Localhost node for this server, a server over SSH, or an
+            Application's container.
+          </p>
+          {check ? (
+            <TerminalCheckLine check={check} />
+          ) : (
+            <p className='text-[10px] text-destructive' role='alert'>
+              Choose a terminal: the agent does not start without one.
+            </p>
+          )}
+        </div>
+      )}
+      {terminal && !isNative ? (
+        <div className='flex flex-col gap-1'>
+          <Label className='text-xs'>Folder</Label>
+          <Input
+            className='h-8 text-xs'
+            value={data.terminalFolder ?? ''}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ terminalFolder: e.target.value })}
+            placeholder="The terminal's own directory"
+            aria-invalid={check !== null && check !== 'checking' && Boolean(check.folderProblem)}
+          />
+          <p className='text-[10px] text-muted-foreground'>
+            Optional. The working directory on the selected terminal, which must exist there. Empty: the directory the
+            terminal starts in, such as a worktree terminal's worktree, a container's working directory or an SSH
+            login's home.
+          </p>
+          {check !== null && check !== 'checking' && check.folderProblem ? (
+            <p className='text-[10px] text-destructive' role='alert'>
+              {check.folderProblem}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <div className='flex flex-col gap-1'>
         <div className='flex items-center gap-2'>
           <input
@@ -489,20 +557,115 @@ function LocalProfileFields({
           </div>
         ) : null}
       </div>
-      {isNative ? <NativeProfileFields data={data} updateData={updateData} /> : null}
+      {isNative ? <NativeProfileFields data={data} updateData={updateData} apis={nativeApis} /> : null}
       {/* Outside the gate above, and after it so a native profile keeps the
           field order it always had. */}
       <ContextWindowField data={data} updateData={updateData} />
-      {data.containerName ? (
+      {isNative ? null : terminal ? (
         <p className='text-[10px] text-muted-foreground'>
-          Runs in container <code>{data.containerName}</code> at <code>/agents/&lt;agent-slug&gt;</code>.
+          Runs through terminal <TerminalRef target={terminal} /> in <WorkdirText check={check} />.
         </p>
-      ) : (
-        <p className='text-[10px] text-muted-foreground'>
-          Runs in a persistent per-agent workspace: <code>data/agent-workspace/&lt;agent-slug&gt;</code>.
+      ) : data.containerName?.trim() ? (
+        <p className='text-[10px] text-destructive' role='alert'>
+          Ran in the Docker container <code>{data.containerName.trim()}</code>, and could not be moved to its terminal:
+          choose a Terminal above.
         </p>
-      )}
+      ) : null}
     </div>
+  )
+}
+
+// What agent.checkTerminal answers.
+interface TerminalCheck {
+  workdir?: string
+  folderProblem?: string
+  problem?: string
+  endpoint?: { reachable: boolean; message: string }
+  error?: string
+}
+
+// How long a typed Folder or Base URL rests before the terminal is asked about it.
+const ENDPOINT_RECHECK_DELAY_MS = 600
+
+// Whether the profile's harness could start on the picked terminal, asked
+// again when the terminal, the Folder, the harness or the endpoint changes:
+// the directory it works in there, its launcher, and whether its model
+// endpoint answers from there (agent.checkTerminal). Null while no terminal
+// is to be asked: none is picked, or the Custom harness, which runs inside
+// OpenCroft, is chosen.
+function useTerminalCheck(ask: {
+  nodeId: string
+  terminal: string | null
+  folder?: string
+  adapterId?: string
+  providerId?: string
+  baseUrl?: string
+}): TerminalCheck | 'checking' | null {
+  const { nodeId, terminal, folder, adapterId, providerId, baseUrl } = ask
+  const [check, setCheck] = useState<TerminalCheck | 'checking'>('checking')
+  useEffect(() => {
+    if (!terminal) {
+      return
+    }
+    let active = true
+    setCheck('checking')
+    const timer = setTimeout(() => {
+      invoke<TerminalCheck>('agent.checkTerminal', { nodeId, terminal, folder, adapterId, providerId, baseUrl })
+        .then((answer) => {
+          if (active) {
+            setCheck(answer)
+          }
+        })
+        .catch((e: unknown) => {
+          if (active) {
+            setCheck({ error: e instanceof Error ? e.message : String(e) })
+          }
+        })
+    }, ENDPOINT_RECHECK_DELAY_MS)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [nodeId, terminal, folder, adapterId, providerId, baseUrl])
+  return terminal ? check : null
+}
+
+// The directory the agent works in, as the terminal check found it.
+function WorkdirText({ check }: { check: TerminalCheck | 'checking' | null }) {
+  if (check === null || check === 'checking') {
+    return <>a folder still being checked</>
+  }
+  if (check.workdir) {
+    return <code>{check.workdir}</code>
+  }
+  return check.folderProblem ? <>a folder that does not exist there</> : <>a folder the terminal could not name</>
+}
+
+// The terminal check's answer about the harness: its launcher and its endpoint.
+function TerminalCheckLine({ check }: { check: TerminalCheck | 'checking' }) {
+  if (check === 'checking') {
+    return <p className='text-[10px] text-muted-foreground'>Checking the terminal…</p>
+  }
+  const trouble = check.problem ?? check.error
+  if (trouble) {
+    return (
+      <p className='text-[10px] text-destructive' role='alert'>
+        {trouble}
+      </p>
+    )
+  }
+  return (
+    <>
+      <p className='text-[10px] text-muted-foreground'>Node.js is available on this terminal.</p>
+      {check.endpoint ? (
+        <p
+          className={`text-[10px] ${check.endpoint.reachable ? 'text-muted-foreground' : 'text-destructive'}`}
+          role={check.endpoint.reachable ? undefined : 'alert'}
+        >
+          {check.endpoint.message}
+        </p>
+      ) : null}
+    </>
   )
 }
 
@@ -704,23 +867,31 @@ function OauthAccountSection({ adapterId, nodeId, homeKey }: { adapterId: string
   )
 }
 
-// System prompt + temperature only apply to the in-process Custom (native)
-// harness; ACP agents carry their own prompt and manage their own sampling.
-// That is the whole of what this gate is for — the context window was in here
-// too and is not native-only, which is why it now renders on its own above.
-function NativeProfileFields({ data, updateData }: { data: AgentData; updateData: (p: Partial<AgentData>) => void }) {
+// Temperature and image input only apply to the in-process Custom (native)
+// harness; ACP agents manage their own sampling and decide what their model is
+// shown. Its system prompt is in the Instructions tab, with every other
+// harness's instruction texts.
+function NativeProfileFields({
+  data,
+  updateData,
+  apis,
+}: {
+  data: AgentData
+  updateData: (p: Partial<AgentData>) => void
+  apis: NativeApi[]
+}) {
   return (
     <div className='flex flex-col gap-3'>
-      <div className='flex flex-col gap-1'>
-        <Label className='text-xs'>System prompt</Label>
-        <Textarea
-          className='text-xs'
-          rows={4}
-          value={data.systemPrompt ?? ''}
-          onChange={(e: ChangeEvent<HTMLTextAreaElement>) => updateData({ systemPrompt: e.target.value })}
-          placeholder='Custom harness system prompt…'
+      {/* Offered only where there is a choice: a provider with one API runs on it. */}
+      {apis.length > 1 ? (
+        <ProfileSelect
+          label='API'
+          value={data.nativeApi && apis.includes(data.nativeApi) ? data.nativeApi : apis[0]}
+          placeholder={NATIVE_API_LABELS[apis[0]]}
+          options={apis.map((api) => ({ value: api, label: NATIVE_API_LABELS[api] }))}
+          onChange={(value) => updateData({ nativeApi: value as NativeApi })}
         />
-      </div>
+      ) : null}
       <div className='flex flex-col gap-1'>
         <Label className='text-xs'>Temperature</Label>
         <Input
@@ -735,6 +906,19 @@ function NativeProfileFields({ data, updateData }: { data: AgentData; updateData
           }
           placeholder='Provider default'
         />
+      </div>
+      <div className='flex flex-col gap-1'>
+        <ProfileSelect
+          label='Image input'
+          value={imageInputChoice(data.imageInput)}
+          placeholder='Ask the endpoint'
+          options={IMAGE_INPUT_OPTIONS}
+          onChange={(value) => updateData({ imageInput: imageInputFromChoice(value) })}
+        />
+        <span className='text-[10px] text-muted-foreground'>
+          Whether the model is shown the images tools return. Ask the endpoint uses the model list's input modalities; a
+          model it reports nothing about gets a text note in place of the image.
+        </span>
       </div>
     </div>
   )

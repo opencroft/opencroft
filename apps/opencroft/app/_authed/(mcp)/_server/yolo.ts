@@ -4,9 +4,10 @@
  * Two things happen while it is on, and they are separate mechanisms that this
  * flag deliberately ties together:
  *   1. MCP tool calls are allowed without approval (see resolvePermission).
- *   2. Every agent session is forced into its bypass permission mode and cannot
- *      be moved off it (see the agent layer's YOLO mode enforcement, which
- *      subscribes below). The mode each session was in is restored when YOLO is
+ *   2. Every agent session is forced into its bypass — its Bypass mode, or the
+ *      setting its harness declares instead (Copilot's `allow_all`) — and
+ *      cannot be moved off it (see the agent layer's YOLO mode enforcement,
+ *      which subscribes below). What each session had is restored when YOLO is
  *      turned back off.
  *
  * Controlled by:

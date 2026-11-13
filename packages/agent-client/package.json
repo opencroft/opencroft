@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.7.0",
+    "@ai-sdk/anthropic": "3.0.82",
+    "@ai-sdk/openai": "3.0.69",
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ai": "^6.0.197",

@@ -1,287 +1,164 @@
 'use client'
 
-import { THEME_PREFERENCES, type ThemePreference } from '@opencroft/auth/theme'
-import { Link, useLocation, useRouteContext, useRouter } from '@tanstack/react-router'
-import { Heart, LogOut, type LucideIcon, MessagesSquare, Monitor, Moon, Puzzle, SettingsIcon, Sun } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { toast } from 'sonner'
-import { Avatar, AvatarFallback, AvatarImage } from 'ui/avatar'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from 'ui/dropdown-menu'
-import { AppSwitcher, type SwitcherApp } from 'ui/layouts/app-switcher'
-import { SpaceSelector } from 'ui/layouts/space-selector'
-import { TitleBar, TitleBarIconButton, type TitleBarOpenFailure, TitleBarPageLinks } from 'ui/layouts/title-bar'
-import { Logo } from 'ui/logo'
+import { Link, useRouteContext } from '@tanstack/react-router'
+import { cn } from 'cn'
+import type { LucideIcon } from 'lucide-react'
+import { SpaceSelectorIcon } from 'ui/layouts/space-selector'
+import { TitleBar, TitleBarIconButton } from 'ui/layouts/title-bar'
 import { useSidebar } from 'ui/sidebar'
 import { Wordmark } from 'ui/wordmark'
 
-import { appBasePath } from '@/app/_authed/(apps)/_lib/app-routes'
-import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
-import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
-import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { DEFAULT_GRAPH_SLUG, GRAPH_APP_TYPE, type SpaceSummary } from '@/app/_authed/(space)/_server/types'
-import { useBuildLabel } from '@/app/_components/dev-build-badge'
-import { useHistoryReach } from '@/app/_shell/history-reach'
-import { SPONSOR_URL } from '@/app/_shell/sponsor'
-import { useThemePreference } from '@/app/_shell/theme-preference'
-import { useSignOut } from '@/app/(auth)/_components/sign-out-item'
+import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import { ACCOUNT_PAGES, AccountAvatar, AccountMenu } from '@/app/_shell/account-menu'
+import { useAppLauncher } from '@/app/_shell/app-launcher-host'
+import { AppTypeMenu } from '@/app/_shell/app-type-menu'
+import { PageMenu } from '@/app/_shell/page-menu'
+import { ACCOUNT_PATH, APPS_PATH, CHATS_PATH, isRootPage, ROOTS, SPACES_PATH } from '@/app/_shell/roots'
+import { useScreenStack } from '@/app/_shell/screen-stack'
+import type { SpaceNavigation } from '@/app/_shell/space-navigation'
+
+interface Props {
+  spaces: SpaceSummary[]
+  navigation: SpaceNavigation
+  hasSidebar: boolean
+}
+
+const under = (to: string) => (path: string) => path === to || path.startsWith(`${to}/`)
 
 /**
- * The space the reader is in: the one in the address, and only that. Off a
- * space's own pages there is none — the title bar shows no current space
- * rather than one somebody else last opened.
+ * The pages outside the spaces, named where an app's name goes: the roots
+ * (the chats with their own screens) and the account's pages. The Apps page
+ * is the App Launcher itself, so it names nothing.
  */
-function slugFromPath(pathname: string): string | null {
-  const match = pathname.match(/^\/space\/([^/]+)/)
-  return match ? decodeURIComponent(match[1]) : null
+const PAGES: { label: string; icon: LucideIcon; matches: (pathname: string) => boolean }[] = [
+  ...ROOTS.filter((root) => root.path !== APPS_PATH).map(({ path, label, icon }) => ({
+    label,
+    icon,
+    matches: path === CHATS_PATH ? under(path) : (pathname: string) => pathname === path,
+  })),
+  ...ACCOUNT_PAGES.map(({ label, to, icon }) => ({ label, icon, matches: under(to) })),
+]
+
+function pageOf(pathname: string) {
+  return PAGES.find((page) => page.matches(pathname))
 }
 
-function isDefaultGraph(instance: SpaceAppInstance) {
-  return instance.type === GRAPH_APP_TYPE && instance.slug === DEFAULT_GRAPH_SLUG
-}
+const HERE =
+  'flex h-8 min-w-0 items-center gap-2 rounded-md px-1.5 text-sm font-medium hover:bg-accent active:bg-accent pointer-coarse:h-10'
 
 /**
- * The space's App instances, as the title bar lists them. The space's graphs
- * are instances too, so they arrive here with the rest; the default one is
- * addressed by the space itself, which is where the space's own link goes.
- * Refetched on every navigation, not only when the space changes, so an
- * instance added in the settings shows up as soon as the reader goes anywhere.
- * Moving between one App's own pages is not going anywhere: the App is the
- * page, so those moves share one trigger and fetch nothing.
+ * The app's title bar: the screen stack's Back below a root, the sidebar
+ * button when the page has a sidebar, the mark linking home, where the
+ * reader is (the space's icon and the open app's name, opening a menu of the
+ * apps of its type in the space; elsewhere opening the App Launcher),
+ * the App Launcher, chats, the spaces and the account menu. Below md, the App Launcher,
+ * chats, the spaces and the account move to the bottom navigation, and the
+ * page's own menu takes the end.
  */
-function useSpaceApps(slug: string | null, pathname: string): SwitcherApp[] {
-  const [instances, setInstances] = useState<SpaceAppInstance[]>([])
-  const [apps, setApps] = useState<AppMeta[]>([])
-  const page = appBasePath(pathname) ?? pathname
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: page is the refetch trigger, see above
-  useEffect(() => {
-    if (!slug) {
-      return
-    }
-    let cancelled = false
-    Promise.all([listSpaceApps({ data: slug }), listApps()])
-      .then(([nextInstances, nextApps]) => {
-        if (!cancelled) {
-          setInstances(nextInstances)
-          setApps(nextApps)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setInstances([])
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [slug, page])
-
-  if (!slug) {
-    return []
-  }
-  return instances.map((instance) => {
-    const meta = apps.find((app) => app.type === instance.type)
-    return {
-      id: instance.id,
-      label: instance.name || meta?.title || instance.type,
-      href: isDefaultGraph(instance) ? `/space/${slug}` : `/space/${slug}/app/${instance.slug}`,
-      icon: resolveIcon(meta?.icon),
-      type: meta?.title ?? instance.type,
-    }
-  })
-}
-
-function initials(name: string) {
-  return name
-    .split(/[\s@.]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('')
-}
-
-const THEME_CHOICES: Record<ThemePreference, { label: string; icon: LucideIcon }> = {
-  light: { label: 'Light', icon: Sun },
-  dark: { label: 'Dark', icon: Moon },
-  system: { label: 'System', icon: Monitor },
-}
-
-function ThemeChoices() {
-  const { theme, choose } = useThemePreference()
-  return (
-    <DropdownMenuGroup>
-      <DropdownMenuLabel>Theme</DropdownMenuLabel>
-      <DropdownMenuRadioGroup value={theme} onValueChange={choose}>
-        {THEME_PREFERENCES.map((value) => {
-          const { label, icon: Icon } = THEME_CHOICES[value]
-          return (
-            <DropdownMenuRadioItem key={value} value={value}>
-              <Icon />
-              {label}
-            </DropdownMenuRadioItem>
-          )
-        })}
-      </DropdownMenuRadioGroup>
-    </DropdownMenuGroup>
-  )
-}
-
-function announceCopy(copied: boolean) {
-  if (copied) {
-    toast('Link copied')
-  } else {
-    toast.error('The link could not be copied.')
-  }
-}
-
-const OPEN_FAILURE_NOTICES: Record<TitleBarOpenFailure, string> = {
-  unreadable: 'The clipboard could not be read.',
-  'not-a-link': 'The clipboard does not hold a link.',
-  blocked: 'The browser blocked the new window.',
-}
-
-function announceOpenFailure(reason: TitleBarOpenFailure) {
-  toast.error(OPEN_FAILURE_NOTICES[reason])
-}
-
-function AccountMenu() {
+export function AppTitleBar({ spaces, navigation, hasSidebar }: Props) {
   const { account } = useRouteContext({ from: '/_authed' })
-  const signOut = useSignOut()
-  const buildLabel = useBuildLabel()
-  const router = useRouter()
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<TitleBarIconButton aria-label='Account' title={account.email} />}>
-        <Avatar className='size-6'>
-          {/* Kept mounted so the server-rendered page already carries the image. */}
-          {account.avatarUrl && <AvatarImage src={account.avatarUrl} alt='' keepMounted />}
-          <AvatarFallback className='text-xs'>{initials(account.name || account.email)}</AvatarFallback>
-        </Avatar>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align='end' className='w-56'>
-        <TitleBarPageLinks
-          onCopied={announceCopy}
-          onOpenFailed={announceOpenFailure}
-          onNavigate={(path) => router.history.push(path)}
-        />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className='truncate'>{account.name || account.email}</DropdownMenuLabel>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem render={<Link to='/settings' />}>
-          <SettingsIcon />
-          Settings
-        </DropdownMenuItem>
-        <DropdownMenuItem render={<Link to='/extensions' />}>
-          <Puzzle />
-          Extensions
-        </DropdownMenuItem>
-        {/* biome-ignore lint/a11y/useAnchorContent: the label is the item's children, placed inside the anchor at render */}
-        <DropdownMenuItem render={<a href={SPONSOR_URL} target='_blank' rel='noopener noreferrer' />}>
-          <Heart />
-          Sponsor
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <ThemeChoices />
-        {signOut && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={signOut}>
-              <LogOut />
-              Sign out
-            </DropdownMenuItem>
-          </>
-        )}
-        {buildLabel && (
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className='truncate font-mono text-[10px] font-normal' title={buildLabel}>
-              {buildLabel}
-            </DropdownMenuLabel>
-          </DropdownMenuGroup>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/**
- * The app's title bar: Back and Forward when running as an installed app, the
- * sidebar button when the page has a sidebar, the mark linking home, where the reader is (space, then app), chats and the
- * account menu.
- */
-export function AppTitleBar({ spaces, hasSidebar }: { spaces: SpaceSummary[]; hasSidebar: boolean }) {
-  const pathname = useLocation({ select: (l) => l.pathname })
-  const router = useRouter()
   const { toggleSidebar } = useSidebar()
-  const { canGoBack, canGoForward } = useHistoryReach()
-  const slug = slugFromPath(pathname)
-  const apps = useSpaceApps(slug, pathname)
-
-  const navigate = (href: string) => router.history.push(href)
-  // The default graph answers at the space's own address and at its app
-  // address alike; every other app only at its own.
-  const defaultGraphAppHref = `/space/${slug}/app/${DEFAULT_GRAPH_SLUG}`
-  const activeApp = apps.find((app) =>
-    app.href === `/space/${slug}`
-      ? pathname === app.href || pathname === defaultGraphAppHref || pathname.startsWith(`${defaultGraphAppHref}/`)
-      : pathname === app.href || pathname.startsWith(`${app.href}/`),
-  )?.id
+  const launcher = useAppLauncher()
+  const { slug, apps, activeAppId } = navigation
+  const current = spaces.find((space) => space.slug === slug)
+  const activeApp = apps.find((app) => app.id === activeAppId)
+  // Where the reader is: in a space, its icon and the open app's name; off
+  // one, the page's own icon and name.
+  const page = slug ? null : pageOf(navigation.pathname)
+  const topLevel = isRootPage(navigation.pathname)
+  const stack = useScreenStack()
+  // The chats' own screens lead with their Back, one level at a time.
+  const hasOwnBack = navigation.pathname.startsWith(`${CHATS_PATH}/`)
+  const here = slug ? (
+    <>
+      <SpaceSelectorIcon icon={current?.icon} className='size-5' />
+      <span className='truncate'>{activeApp?.label ?? current?.name ?? slug}</span>
+    </>
+  ) : (
+    page && (
+      <>
+        <page.icon className='size-5 shrink-0' />
+        <span className='truncate'>{page.label}</span>
+      </>
+    )
+  )
 
   return (
     <TitleBar
-      onHistoryBack={() => router.history.back()}
-      onHistoryForward={() => router.history.forward()}
-      canGoBack={canGoBack}
-      canGoForward={canGoForward}
       onMenu={hasSidebar ? toggleSidebar : undefined}
+      // On a phone the sidebar opens from the page menu instead.
+      menuClassName='max-md:hidden'
+      // The app moves through screen stacks at every width: a page below a
+      // root pops back down its stack, in place of the browser's Back and
+      // Forward.
+      onBack={topLevel || hasOwnBack ? undefined : () => stack.back(navigation.pathname)}
       brand={
-        <Link to='/' aria-label='Home'>
+        // Home is a root like the others, so a press goes there in place of
+        // the stack rather than on top of it. It is the spaces list, where
+        // `/` redirects; a press for a new tab keeps the link.
+        <Link
+          to='/'
+          aria-label='Home'
+          onClick={(event) => {
+            if (event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
+              event.preventDefault()
+              stack.switchRoot(SPACES_PATH)
+            }
+          }}
+        >
           <Wordmark />
         </Link>
       }
-      brandCompact={
-        <Link to='/' aria-label='Home'>
-          <Logo size={24} />
-        </Link>
-      }
+      // On a phone the full mark shows only on the top-level pages, the ones
+      // with the bottom navigation; an app has the bar's whole width.
+      brandCompact={topLevel ? undefined : false}
       context={
-        slug && (
+        here &&
+        (slug && activeApp ? (
+          // In an app, a menu of the apps of its type in the space.
+          <AppTypeMenu apps={apps} activeApp={activeApp} spaceSlug={slug} className={HERE}>
+            {here}
+          </AppTypeMenu>
+        ) : (
           <>
-            <SpaceSelector
-              spaces={spaces}
-              currentSlug={slug}
-              hrefFor={(space) => `/space/${space}`}
-              settingsHrefFor={(space) => `/space/${space}/settings`}
-              allSpacesHref='/spaces'
-              createHref='/spaces?new=1'
-              onNavigate={navigate}
-            />
-            <AppSwitcher
-              apps={apps}
-              activeId={activeApp}
-              createHref={`/space/${slug}/settings?section=apps&tab=add`}
-              onNavigate={navigate}
-            />
+            {/* Where the reader is, as one press to the App Launcher: its page on a
+                phone, its dialog from md up. */}
+            {/* On a phone a top-level page is named by the bottom navigation already. */}
+            {!topLevel && (
+              <Link to={APPS_PATH} className={cn(HERE, 'md:hidden')}>
+                {here}
+              </Link>
+            )}
+            <button type='button' onClick={launcher.open} className={cn(HERE, 'max-md:hidden')}>
+              {here}
+            </button>
           </>
-        )
+        ))
       }
       trailing={
         <>
-          <TitleBarIconButton render={<Link to='/group-chats' />} nativeButton={false} aria-label='Chats' title='Chats'>
-            <MessagesSquare />
-          </TitleBarIconButton>
-          <AccountMenu />
+          {/* Roots, so a switch to one replaces the stack, as the bottom
+              navigation's do on a phone; Apps opens the App Launcher's
+              dialog, and the account has its menu. */}
+          {ROOTS.filter((root) => root.path !== ACCOUNT_PATH).map(({ path, label, icon: Icon }) => (
+            <TitleBarIconButton
+              key={path}
+              aria-label={label}
+              title={label}
+              onClick={path === APPS_PATH ? launcher.open : () => stack.switchRoot(path)}
+              className='max-md:hidden'
+            >
+              <Icon />
+            </TitleBarIconButton>
+          ))}
+          <AccountMenu
+            trigger={
+              <TitleBarIconButton aria-label='Account' title={account.email} className='max-md:hidden'>
+                <AccountAvatar className='size-6' />
+              </TitleBarIconButton>
+            }
+          />
+          <PageMenu className='md:hidden' onSidebar={hasSidebar ? toggleSidebar : undefined} />
         </>
       }
     />

@@ -1,5 +1,6 @@
 import { Check, GripHorizontal, GripVertical, Plus, Table2 } from 'lucide-react'
-import { type CSSProperties, type PointerEvent, type ReactNode, useRef, useState } from 'react'
+import { type CSSProperties, type PointerEvent, type ReactNode, type RefObject, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -22,16 +23,35 @@ import type {
   MarkdownTableEditing,
   MarkdownTableSelection,
 } from './markdown-table'
-import { ACTIONS, ActionGroups, ActionItem, ALIGNS, type Axis, CONTEXT, DELETE_TABLE, DROPDOWN } from './markdown-table-actions'
-import { boundaries, nearest, useTableLayout } from './markdown-table-layout'
+import {
+  ACTIONS,
+  ActionGroups,
+  ActionItem,
+  ALIGNS,
+  type Axis,
+  alignCommand,
+  CONTEXT,
+  DELETE_TABLE,
+  DROPDOWN,
+} from './markdown-table-actions'
+import { boundaries, nearest, type Placement, useFramePlacement, useTableLayout } from './markdown-table-layout'
 
 /* ─── Grips ───────────────────────────────────────────────────────────── */
 
 // How far a mouse press travels before it is a drag rather than a press.
 const DRAG_THRESHOLD = 4
 
-// A control's glyph is small; its hit area reaches past it on every side.
-const HIT = "relative after:absolute after:-inset-1.5 after:content-['']"
+// A control's glyph is small; its hit area reaches past it on every side. The
+// layer the controls sit in lets the pointer through everywhere else.
+const HIT = "pointer-events-auto relative after:absolute after:-inset-1.5 after:content-['']"
+
+// How far the column strip reaches past each side of the frame, in px: half an
+// insert button, so the `+` on the frame's outer edges shows whole.
+const COLUMN_STRIP_OVERHANG = 8
+
+// The strips' depth beside and above the frame, in px (`w-6`, `h-6`): as far
+// as any control reaches out of it.
+const STRIP = 24
 
 interface Drag {
   axis: Axis
@@ -154,15 +174,9 @@ function Grip({
             <DropdownMenuSeparator />
             {ALIGNS.map((option) => {
               const Icon = option.icon
-              // Left is the default, so choosing it writes no alignment at all.
               const current = (align ?? 'left') === option.align
               return (
-                <DropdownMenuItem
-                  key={option.align}
-                  onClick={() =>
-                    onCommand({ type: 'alignColumn', index, align: option.align === 'left' ? null : option.align })
-                  }
-                >
+                <DropdownMenuItem key={option.align} onClick={() => onCommand(alignCommand(index, option.align))}>
                   <Icon />
                   {option.label}
                   {current ? <Check className='ml-auto' /> : null}
@@ -203,7 +217,7 @@ function TableGrip({ onCommand }: { onCommand: (command: MarkdownTableCommand) =
         aria-label='Table'
         className={cn(
           HIT,
-          'absolute top-1 left-1 flex size-4 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground',
+          'absolute -top-5 -left-5 flex size-4 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground',
         )}
       >
         <Table2 className='size-3.5' />
@@ -261,13 +275,63 @@ function pickCell(frame: HTMLElement | null, target: EventTarget | null): Picked
 }
 
 /**
+ * The layer the controls are drawn in: over the page, or over the dialog the
+ * table is in, lined up with the frame and cut to what the frame's scrolling
+ * ancestors show. Its children are placed against the frame's box.
+ *
+ * It is not inside the frame's own container, because that container may cut
+ * off what reaches past it -- an editor's text area scrolls, and with no inset
+ * of its own a table at its edge would lose the strips beside and above it --
+ * and making room there would put space around the table that a paragraph
+ * does not have. It takes the popups' level, where the order they opened in
+ * decides: over a dialog the table is in, under a menu opened from a grip.
+ */
+function ControlLayer({
+  placement,
+  layerRef,
+  children,
+}: {
+  placement: Placement
+  layerRef: RefObject<HTMLDivElement | null>
+  children: ReactNode
+}) {
+  const { host, frame, visible } = placement
+  return createPortal(
+    <div
+      ref={layerRef}
+      className='pointer-events-none fixed z-50 select-none overflow-hidden'
+      style={{
+        left: visible.left,
+        top: visible.top,
+        width: Math.max(0, visible.right - visible.left),
+        height: Math.max(0, visible.bottom - visible.top),
+      }}
+    >
+      <div
+        className='absolute'
+        style={{
+          left: frame.left - visible.left,
+          top: frame.top - visible.top,
+          width: frame.right - frame.left,
+          height: frame.bottom - frame.top,
+        }}
+      >
+        {children}
+      </div>
+    </div>,
+    host,
+  )
+}
+
+/**
  * The editable form of `MarkdownTable`. Pure presentation over a table it is
  * handed: what each control does is reported through `onCommand`, and the
  * cells the caret or a cell selection is in come in as `selection`.
  *
- * The controls sit in gutters above and beside the frame, outside the text an
- * editor hosts (`contentEditable={false}`), so pressing them never puts a caret
- * in them. The column strip follows the table's sideways scroll.
+ * The controls sit in strips above and beside the frame, drawn in a layer
+ * over the page rather than in the text an editor hosts, so the table takes
+ * no more room than in the rendered view and pressing a control never puts a
+ * caret in it. The column strip follows the table's sideways scroll.
  */
 export function MarkdownTableEditor({
   editing,
@@ -278,9 +342,11 @@ export function MarkdownTableEditor({
   frameClassName: string
   children?: ReactNode
 }) {
-  const { selection, onCommand } = editing
+  const { selection, onCommand, cellMenu = true } = editing
   const frameRef = useRef<HTMLDivElement>(null)
   const layout = useTableLayout(frameRef, selection !== null)
+  const layerRef = useRef<HTMLDivElement>(null)
+  const placement = useFramePlacement(frameRef, layerRef, selection !== null, STRIP)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [drag, setDrag] = useState<Drag | null>(null)
   const [picked, setPicked] = useState<Picked | null>(null)
@@ -315,8 +381,8 @@ export function MarkdownTableEditor({
   const shown = layout && selection ? shownControls(selection, layout.columns.length, layout.rows.length) : null
 
   return (
-    <div className='relative my-2 pt-6 pl-6'>
-      <ContextMenu>
+    <>
+      <ContextMenu disabled={!cellMenu}>
         <ContextMenuTrigger
           ref={frameRef}
           // The stock trigger is `select-none`; this one holds editable text.
@@ -351,32 +417,39 @@ export function MarkdownTableEditor({
           <ActionItem action={DELETE_TABLE} index={0} count={1} onCommand={onCommand} parts={CONTEXT} />
         </ContextMenuContent>
       </ContextMenu>
-      {layout && shown ? (
-        <div contentEditable={false} className='select-none'>
-          <div className='absolute top-0 right-0 left-6 h-6 overflow-hidden'>
-            {shown.columns.map((index) => (
-              <Grip
-                key={index}
-                axis='column'
-                index={index}
-                count={layout.columns.length}
-                align={layout.aligns[index]}
-                style={{ left: layout.x + layout.columns[index].start + layout.columns[index].size / 2 - scrollLeft }}
-                onCommand={onCommand}
-                onDrag={(x, y) => dragTo('column', index, x, y)}
-                onDrop={drop}
-              />
-            ))}
-            {shown.columnLines.map((index) => (
-              <InsertButton
-                key={index}
-                label='Insert column here'
-                style={{ left: layout.x + columnLines[index] - scrollLeft, top: '50%' }}
-                onInsert={() => onCommand({ type: 'insertColumn', index })}
-              />
-            ))}
+      {layout && shown && placement ? (
+        <ControlLayer placement={placement} layerRef={layerRef}>
+          {/* Cut to the frame's width, give or take the overhang, so columns
+              scrolled out of the frame take their controls with them. */}
+          <div
+            className='absolute -top-6 h-6 overflow-hidden'
+            style={{ left: -COLUMN_STRIP_OVERHANG, right: -COLUMN_STRIP_OVERHANG }}
+          >
+            <div className='absolute inset-y-0' style={{ left: COLUMN_STRIP_OVERHANG, right: COLUMN_STRIP_OVERHANG }}>
+              {shown.columns.map((index) => (
+                <Grip
+                  key={index}
+                  axis='column'
+                  index={index}
+                  count={layout.columns.length}
+                  align={layout.aligns[index]}
+                  style={{ left: layout.x + layout.columns[index].start + layout.columns[index].size / 2 - scrollLeft }}
+                  onCommand={onCommand}
+                  onDrag={(x, y) => dragTo('column', index, x, y)}
+                  onDrop={drop}
+                />
+              ))}
+              {shown.columnLines.map((index) => (
+                <InsertButton
+                  key={index}
+                  label='Insert column here'
+                  style={{ left: layout.x + columnLines[index] - scrollLeft, top: '50%' }}
+                  onInsert={() => onCommand({ type: 'insertColumn', index })}
+                />
+              ))}
+            </div>
           </div>
-          <div className='absolute top-6 bottom-0 left-0 w-6'>
+          <div className='absolute top-0 bottom-0 -left-6 w-6'>
             {shown.rows.map((index) => (
               <Grip
                 key={index}
@@ -401,9 +474,9 @@ export function MarkdownTableEditor({
           <TableGrip onCommand={onCommand} />
           {drag && landing(drag) !== drag.from ? (
             // Where the dragged row or column will land, drawn across the
-            // frame from its top-left corner. Over its own edges a drop moves
-            // nothing, so there is no line to promise a move.
-            <div aria-hidden className='pointer-events-none absolute top-6 left-6'>
+            // frame. Over its own edges a drop moves nothing, so there is no
+            // line to promise a move.
+            <div aria-hidden className='absolute inset-0'>
               <div
                 className='absolute bg-primary'
                 style={
@@ -414,8 +487,8 @@ export function MarkdownTableEditor({
               />
             </div>
           ) : null}
-        </div>
+        </ControlLayer>
       ) : null}
-    </div>
+    </>
   )
 }

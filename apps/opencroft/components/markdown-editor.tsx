@@ -1,16 +1,17 @@
 'use client'
 
-import type { MarkdownEditorOwnDocument, MarkdownEditorSurfaceProps } from 'agent-chat/markdown-editor'
-import { cn } from 'cn'
+import type { MarkdownEditorOwnDocument, MarkdownEditorSurfaceProps } from 'agent-chat/components/markdown-editor'
+import { MarkdownEditorPlaceholder } from 'agent-chat/components/markdown-editor-frame'
 import { lazy, type ReactNode, Suspense } from 'react'
 
-export type { MarkdownEditorToolbarGroup } from 'agent-chat/markdown-editor'
+export type { MarkdownEditorToolbarGroup, MarkdownEditorVariant } from 'agent-chat/components/markdown-editor'
 
 /** A document several people edit at once, by the name its owner hands out. */
 export interface MarkdownEditorSharedDocument {
   collab: { document: string }
   value?: never
   onChange?: never
+  dialect?: never
 }
 
 export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
@@ -19,7 +20,7 @@ export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
 /*
  * The markdown WYSIWYG, deferred.
  *
- * The component itself lives in `agent-chat/markdown-editor` and
+ * The component itself lives in `agent-chat/components/markdown-editor` and
  * this adds nothing to it but a load boundary. That boundary is the point: the
  * module behind it pulls TipTap and ProseMirror, and this file is reachable
  * from the extension host surface, which is what every surface that merely
@@ -36,7 +37,9 @@ export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
  * A shared document's editor is behind the same boundary, with Yjs and the
  * collaboration provider besides.
  */
-const Editor = lazy(() => import('agent-chat/markdown-editor').then((module) => ({ default: module.MarkdownEditor })))
+const Editor = lazy(() =>
+  import('agent-chat/components/markdown-editor').then((module) => ({ default: module.MarkdownEditor })),
+)
 const SharedEditor = lazy(() =>
   import('@/components/shared-markdown-editor/shared-markdown-editor').then((module) => ({
     default: module.SharedMarkdownEditor,
@@ -52,9 +55,14 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     const { collab: _collab, ...own } = props
     editor = <Editor {...own} />
   }
-  return (
-    // The same empty box the editor itself shows before TipTap has created it,
-    // so arriving is one transition rather than two.
-    <Suspense fallback={<div className={cn('rounded-md border bg-background', props.className)} />}>{editor}</Suspense>
+  // The same empty frame the editor itself shows before TipTap has created it,
+  // so arriving is one transition rather than two.
+  const placeholder = (
+    <MarkdownEditorPlaceholder
+      variant={props.variant}
+      className={props.className}
+      contentClassName={props.contentClassName}
+    />
   )
+  return <Suspense fallback={placeholder}>{editor}</Suspense>
 }

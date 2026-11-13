@@ -53,35 +53,40 @@ export function threadLeaf(thread: GroupChatThreadEntry, state: ThreadRowState |
   }
 }
 
+/** A chat's threads as rows, in the server's order. */
+export function threadLeaves(threads: GroupChatThreadEntry[], stateById: ThreadRowStateById): ChatListLeaf[] {
+  return threads.map((thread) => threadLeaf(thread, stateById.get(thread.id)))
+}
+
 /**
- * The tree to render: the saved arrangement, filled in from the live threads.
+ * The tree to render: the saved arrangement, filled in from the live rows --
+ * a chat's threads (`threadLeaves`), or the threads in Recent.
  *
- * A layout entry whose thread no longer exists is dropped, and a thread the
- * layout does not mention joins the loose list at the end in the server's
- * order. Together those mean an unarranged chat and an arranged one take the
- * same path: an empty layout renders every thread loose, so nothing has to
- * write a layout before a list can be shown.
+ * A layout entry whose row no longer exists is dropped, and a row the layout
+ * does not mention joins the loose list at the end in the given order.
+ * Together those mean an unarranged list and an arranged one take the same
+ * path: an empty layout renders every row loose, so nothing has to write a
+ * layout before a list can be shown.
  *
  * A folder is open or closed as the reader left it (`folderOpen`); one they
  * never toggled carries no `open`, and the list draws it at its default.
  */
 export function layoutToNodes(
   layout: ThreadLayout,
-  threads: GroupChatThreadEntry[],
-  stateById: ThreadRowStateById,
+  leaves: ChatListLeaf[],
   folderOpen: FolderOpenById,
 ): ChatListNode[] {
-  const byId = new Map(threads.map((t) => [t.id, t]))
+  const byId = new Map(leaves.map((leaf) => [leaf.id, leaf]))
   const placed = new Set<string>()
   const nodes: ChatListNode[] = []
 
   const leafFor = (threadId: string): ChatListLeaf | null => {
-    const thread = byId.get(threadId)
-    if (!thread) {
+    const leaf = byId.get(threadId)
+    if (!leaf) {
       return null
     }
     placed.add(threadId)
-    return threadLeaf(thread, stateById.get(threadId))
+    return leaf
   }
 
   for (const entry of layout.entries) {
@@ -102,9 +107,9 @@ export function layoutToNodes(
     })
   }
 
-  for (const thread of threads) {
-    if (!placed.has(thread.id)) {
-      nodes.push({ type: 'item', item: threadLeaf(thread, stateById.get(thread.id)) })
+  for (const leaf of leaves) {
+    if (!placed.has(leaf.id)) {
+      nodes.push({ type: 'item', item: leaf })
     }
   }
   return nodes

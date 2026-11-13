@@ -106,6 +106,114 @@ test('a tab outside tabs is plain content', () => {
   assert.equal(html, '<div class="prose-chat"><div><p>alone</p></div></div>')
 })
 
+/**
+ * The grid's own classes, and each grid column's span classes in source
+ * order, as `col-span-12 @3xl:col-span-4`.
+ */
+function gridClasses(html: string): { grid: string | undefined; columns: string[] } {
+  const grid = /<div class="(grid [^"]*)">/.exec(html)?.[1]
+  const columns = [...html.matchAll(/<div class="(col-span-\d+ [^"]*)">/g)].map((match) =>
+    match[1]
+      .split(' ')
+      .filter((name) => /^(@xl:|@3xl:)?col-span-\d+$/.test(name))
+      .join(' '),
+  )
+  return { grid, columns }
+}
+
+/** A grid of `layout` whose columns hold `A`, `B`, ... in order. */
+function grid(layout: string, count: number): string {
+  const columns = Array.from({ length: count }, (_, k) => `:::col\n${String.fromCharCode(65 + k)}\n:::`)
+  return [`::::grid{layout=${layout}}`, ...columns, '::::'].join('\n')
+}
+
+test('a grid renders its blocks on a 12-column grid, its steps measured on its container', () => {
+  const html = render(grid('1/2+1/2', 2))
+  assert.match(html, /<div class="@container my-2">/)
+  const { grid: classes, columns } = gridClasses(html)
+  assert.equal(classes, 'grid grid-cols-12 gap-4 @xl:gap-8')
+  assert.deepEqual(columns, ['col-span-12 @xl:col-span-6', 'col-span-12 @xl:col-span-6'])
+  assert.equal(visibleText(html), 'AB')
+  assert.doesNotMatch(html, /:::/)
+})
+
+test('a third beside two thirds is 4 + 8 of 12 wide, and a full row each below that', () => {
+  const { columns } = gridClasses(render(grid('1/3+2/3', 2)))
+  assert.deepEqual(columns, ['col-span-12 @3xl:col-span-4', 'col-span-12 @3xl:col-span-8'])
+})
+
+test('a half beside two quarters takes a row alone below wide, and the quarters share the next as halves', () => {
+  const { columns } = gridClasses(render(grid('1/2+1/4+1/4', 3)))
+  assert.deepEqual(columns, ['col-span-12 @3xl:col-span-6', 'col-span-6 @3xl:col-span-3', 'col-span-6 @3xl:col-span-3'])
+})
+
+test('a full-width block spans the row at every step', () => {
+  assert.deepEqual(gridClasses(render(grid('full', 1))).columns, ['col-span-12'])
+})
+
+test('the layout may be written as the label', () => {
+  const html = render('::::grid[1/4+3/4]\n:::col\nA\n:::\n:::col\nB\n:::\n::::')
+  assert.equal(gridClasses(html).columns.length, 2)
+  assert.equal(visibleText(html), 'AB')
+})
+
+test('a column holds any markdown, and the columns keep their source order', () => {
+  const html = render(
+    [
+      ':::::grid{layout=1/2+1/2}',
+      ':::col',
+      '| a | b |',
+      '| - | - |',
+      '| 1 | 2 |',
+      ':::',
+      '::::col',
+      ':::tip',
+      'Inside a column.',
+      ':::',
+      '::::',
+      ':::::',
+    ].join('\n'),
+  )
+  assert.equal(gridClasses(html).columns.length, 2)
+  assert.ok(html.indexOf('<table') < html.indexOf('role="note"'))
+  assert.match(visibleText(html), /TipInside a column\./)
+})
+
+test('a grid without a layout of its own, or with columns its layout does not have, is plain content', () => {
+  const sources = [
+    grid('1/3+2/3', 3),
+    grid('1/4+1/4+1/4+1/4', 3),
+    grid('1/2', 2),
+    grid('2/3+2/3', 2),
+    '::::grid\n:::col\nA\n:::\n:::col\nB\n:::\n::::',
+  ]
+  for (const source of sources) {
+    const html = render(source)
+    assert.equal(gridClasses(html).grid, undefined, source)
+    assert.match(visibleText(html), /^AB/, source)
+  }
+})
+
+test('a grid holding anything besides columns, and a column outside a grid, are plain content', () => {
+  const html = render('::::grid{layout=full}\nstray paragraph\n:::col\ninside\n:::\n::::')
+  assert.equal(gridClasses(html).grid, undefined)
+  assert.equal(visibleText(html), 'stray paragraphinside')
+  assert.equal(render(':::col\nalone\n:::'), '<div class="prose-chat"><div><p>alone</p></div></div>')
+  assert.equal(render('::::grid{layout=full}\n::::'), '<div class="prose-chat"><div></div></div>')
+})
+
+test('a malformed grid written with its layout as the label keeps the label as text', () => {
+  assert.equal(visibleText(render('::::grid[1/2+1/2]\n:::col\nA\n:::\n::::')), '1/2+1/2A')
+})
+
+test('attributes other than the layout never reach a grid', () => {
+  const html = render(
+    '::::grid{layout=full style="position:fixed"}\n:::col{onclick="alert(1)" class="x"}\nA\n:::\n::::',
+  )
+  assert.equal(gridClasses(html).columns.length, 1)
+  assert.doesNotMatch(html, /position:fixed|alert\(1\)|onclick|class="x"|layout="/)
+})
+
 test('text directives in prose stay the text the author typed', () => {
   const source = 'See file:README, set key:value{x=1} and mailto:someone :smile: today.'
   assert.equal(render(source), `<div class="prose-chat"><p>${source}</p></div>`)
@@ -187,4 +295,45 @@ test('inline rendering keeps an icon', async () => {
 test('inline rendering unwraps a block to its text', () => {
   const html = render(':::note\nshort **hint**\n:::', true)
   assert.equal(html, '<span class="prose-chat">short <strong>hint</strong></span>')
+})
+
+// The hinted content, as the trigger the hint opens from.
+const HINT_TRIGGER = /<span [^>]*role="button"[^>]*>(.*?)<\/span>/
+
+test('a hint marks its content, formatting, icons and emoji included, as a focusable trigger', async () => {
+  await preloadIcons(['rocket'])
+  const html = render('Ship :hint[**today** :icon[rocket] 🚀]{text="Before the freeze"} please.')
+  const trigger = HINT_TRIGGER.exec(html)
+  assert.ok(trigger, 'a trigger')
+  assert.match(trigger[0], /tabindex="0"/)
+  assert.match(trigger[0], /class="[^"]*border-dotted/)
+  assert.match(trigger[1], /^<strong>today<\/strong> <svg [^>]*lucide-rocket.*<\/svg> 🚀$/)
+  // The icon draws no text, so the spaces either side of it meet.
+  assert.equal(visibleText(html), 'Ship today  🚀 please.')
+  assert.doesNotMatch(html, /:hint|text=/)
+})
+
+test('a hint goes around inline code and inside bold or a link', () => {
+  assert.equal(HINT_TRIGGER.exec(render('a :hint[`c`]{text=t} b'))?.[1], '<code>c</code>')
+  assert.match(render('**a :hint[b]{text=t} c**'), /<strong>a <span [^>]*role="button"[^>]*>b<\/span> c<\/strong>/)
+  assert.match(
+    render('[a :hint[b]{text=t} c](https://example.com)'),
+    /<a [^>]*href="https:\/\/example.com"[^>]*>a <span [^>]*role="button"[^>]*>b<\/span> c<\/a>/,
+  )
+})
+
+test('a hint with no note, or an empty one, is its content alone', () => {
+  for (const source of ['a :hint[**b**] c', 'a :hint[**b**]{text=""} c', 'a :hint[**b**]{text="  "} c']) {
+    assert.equal(render(source), '<div class="prose-chat"><p>a <strong>b</strong> c</p></div>', source)
+  }
+})
+
+test('attributes other than the note never reach a hint', () => {
+  const html = render(':hint[b]{text=t style="position:fixed" onclick="alert(1)" class="x"}')
+  assert.match(html, HINT_TRIGGER)
+  assert.doesNotMatch(html, /position:fixed|alert\(1\)|onclick|class="x"/)
+})
+
+test('inline rendering keeps a hint', () => {
+  assert.match(render('a :hint[b]{text=t} c', true), /^<span class="prose-chat">a <span [^>]*role="button"[^>]*>b<\/span> c/)
 })

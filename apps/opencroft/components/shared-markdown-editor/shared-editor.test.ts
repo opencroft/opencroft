@@ -11,6 +11,9 @@ import { installDomEnvironment } from '@/test-support/dom-environment'
 const dom = await installDomEnvironment()
 // The playback asks whether motion is reduced; jsdom has no media queries.
 ;(globalThis.window as unknown as { matchMedia: unknown }).matchMedia = () => ({ matches: false })
+// An editor's `focus()` waits a frame before it scrolls the caret into view.
+globalThis.requestAnimationFrame = window.requestAnimationFrame
+globalThis.cancelAnimationFrame = window.cancelAnimationFrame
 
 const { Editor } = await import('@tiptap/core')
 const { Collaboration } = await import('@tiptap/extension-collaboration')
@@ -20,14 +23,17 @@ const {
   prosemirrorJSONToYXmlFragment,
   updateYFragment,
   yUndoPluginKey,
+  yXmlFragmentToProsemirrorJSON,
 } = await import('@tiptap/y-tiptap')
-const { markdownEditorExtensions, readMarkdown } = await import('agent-chat/markdown-editor')
+const { markdownEditorExtensions, readMarkdown } = await import('agent-chat/components/markdown-editor')
 const { markdownConverter, markdownSchema } = await import('agent-chat/markdown-schema')
 const Y = await import('yjs')
 const { EditPlayback } = await import('@/components/shared-markdown-editor/edit-playback')
 const { OneStepUndo } = await import('@/components/shared-markdown-editor/one-step-undo')
 const { MARKDOWN_DOC_FIELD } = await import('@/lib/markdown-doc-protocol')
-const { changedRange } = await import('@/lib/markdown-doc-change')
+const { changedRange } = await import('agent-chat/markdown-doc-change')
+const { applyLink, editLink } = await import('agent-chat/components/markdown-editor-link')
+const { applyHint, editHint, hintTarget, removeHint } = await import('agent-chat/components/markdown-editor-hint')
 type MarkdownEditMessage = import('@/lib/markdown-doc-protocol').MarkdownEditMessage
 
 after(() => dom.cleanup())
@@ -278,5 +284,88 @@ test('a change made elsewhere is in the document at once, and played back over i
   assert.equal(waiting(), '')
   assert.doesNotMatch(shown.textContent ?? '', /agent-a/)
   assert.deepEqual(playing.at(-1), [])
+  editor.destroy()
+})
+
+/** Opens the link popover on the first `text` in the editor's document. */
+function pickForLink(editor: InstanceType<typeof Editor>, text: string) {
+  let from = -1
+  editor.state.doc.descendants((node, pos) => {
+    const at = node.isText ? (node.text ?? '').indexOf(text) : -1
+    if (from < 0 && at >= 0) {
+      from = pos + at
+    }
+  })
+  assert.ok(from >= 0, `"${text}" is in the document`)
+  editor.commands.setTextSelection({ from, to: from + text.length })
+  assert.ok(editLink(editor))
+}
+
+/** The text the link popover is editing, as it is painted. */
+function picked(editor: InstanceType<typeof Editor>): string {
+  return [...editor.view.dom.querySelectorAll('.markdown-editor-inline-target')]
+    .map((part) => part.textContent)
+    .join('')
+}
+
+test('a link goes on the text picked for it after a change from elsewhere before it', () => {
+  const doc = sharedDoc('Intro\n\nA word to link here')
+  const editor = editorOn(doc)
+  pickForLink(editor, 'word')
+  doc.transact(() => blockText(doc, 0).insert(0, 'New '), ELSEWHERE)
+  assert.equal(picked(editor), 'word')
+  assert.ok(applyLink(editor, 'word', 'https://example.com'))
+  assert.equal(readMarkdown(editor), 'New Intro\n\nA [word](https://example.com) to link here')
+  editor.destroy()
+})
+
+/** The markdown the Yjs document holds, as the server writes it to storage. */
+function storedMarkdown(doc: InstanceType<typeof Y.Doc>): string {
+  return markdownConverter().serialize(yXmlFragmentToProsemirrorJSON(doc.getXmlFragment(MARKDOWN_DOC_FIELD)))
+}
+
+/** The position of the `index`-th icon in the editor's document. */
+function iconAt(editor: InstanceType<typeof Editor>, index: number): number {
+  const found: number[] = []
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'markdownIcon') {
+      found.push(pos)
+    }
+  })
+  assert.ok(index < found.length, `the document has icon ${index}`)
+  return found[index]
+}
+
+test('hints over icons hold in the shared document, read, added and removed', () => {
+  const hinted = 'Ship :hint[**today** :icon[rocket] 🚀]{text="Soon"} now'
+  const doc = sharedDoc(`${hinted}\n\nJust :icon[star] here`)
+  const editor = editorOn(doc)
+  assert.equal(readMarkdown(editor), `${hinted}\n\nJust :icon[star] here`)
+  // A caret beside the hinted icon is in the whole hint.
+  editor.commands.setTextSelection(iconAt(editor, 0))
+  assert.equal(hintTarget(editor.state)?.values.text, 'Soon')
+  assert.equal(hintTarget(editor.state)?.existing, true)
+
+  editor.commands.setTextSelection({ from: iconAt(editor, 1), to: iconAt(editor, 1) + 1 })
+  assert.ok(editHint(editor))
+  assert.ok(applyHint(editor, 'Star'))
+  assert.equal(storedMarkdown(doc), `${hinted}\n\nJust :hint[:icon[star]]{text="Star"} here`)
+
+  editor.commands.setTextSelection(iconAt(editor, 0))
+  assert.ok(editHint(editor))
+  assert.ok(removeHint(editor))
+  assert.equal(storedMarkdown(doc), 'Ship **today** :icon[rocket] 🚀 now\n\nJust :hint[:icon[star]]{text="Star"} here')
+  editor.destroy()
+})
+
+test('a link takes in what a change from elsewhere wrote inside the picked text', () => {
+  const doc = sharedDoc('A word to link here')
+  const editor = editorOn(doc)
+  pickForLink(editor, 'word to link')
+  doc.transact(() => blockText(doc, 0).insert('A word'.length, 'ing'), ELSEWHERE)
+  assert.equal(picked(editor), 'wording to link')
+  // The text field still holds what the popover opened with.
+  assert.ok(applyLink(editor, 'word to link', 'https://example.com'))
+  assert.equal(readMarkdown(editor), 'A [wording to link](https://example.com) here')
   editor.destroy()
 })

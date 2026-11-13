@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./actions": "./src/actions.ts",
+    "./agents": "./src/agents.ts",
     "./apps": "./src/apps.ts",
     "./chat": "./src/chat.ts",
     "./collab": "./src/collab.ts",
@@ -20,10 +21,13 @@
     "./routes": "./src/routes.ts",
     "./secrets": "./src/secrets.ts",
     "./settings": "./src/settings.ts",
+    "./spaces": "./src/spaces.ts",
     "./storage": "./src/storage.ts",
     "./system": "./src/system.ts",
     "./terminal": "./src/terminal.ts",
-    "./tools": "./src/tools.ts"
+    "./tools": "./src/tools.ts",
+    "./usage": "./src/usage.ts",
+    "./values": "./src/values.ts"
   },
   "dependencies": {
     "@opencroft/core": "*",

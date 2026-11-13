@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { GroupChatThreadEntry } from '@/app/_authed/(group-chats)/_server/read-model'
-import { layoutToNodes, nodesToLayout } from '../_lib/thread-tree-layout'
+import { layoutToNodes, nodesToLayout, threadLeaves } from '../_lib/thread-tree-layout'
 import {
   folderNameByThreadId,
   MAX_THREAD_LAYOUT_ATTEMPTS,
@@ -277,7 +277,7 @@ test('the thread list draws a placed thread in its folder and would write the sa
       archived: false,
     }),
   )
-  const nodes = layoutToNodes(placed, threads, new Map(), {})
+  const nodes = layoutToNodes(placed, threadLeaves(threads, new Map()), {})
   const later = nodes.find((n) => n.type === 'folder' && n.folder.name === 'Later')
   assert.deepEqual(later?.type === 'folder' && later.folder.items.map((i) => i.id), ['new'])
   assert.deepEqual(nodesToLayout(nodes), placed)

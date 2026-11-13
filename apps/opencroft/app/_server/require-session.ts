@@ -20,7 +20,9 @@ import { getRequest } from '@tanstack/react-start/server'
 //                                questions, see caller.ts
 //   /api/route/$                a user's own "API Route" canvas node: the
 //                                whole feature is being a webhook target for
-//                                whatever external caller the user configured
+//                                whatever external caller the user configured;
+//                                a route can require its own header secret
+//                                (api-route-access.ts)
 //   /api/ext/<extensionId>/http/*
 //                               an extension's own declared HTTP handler —
 //                                "proxies, webhooks, SSE all work" is that
@@ -37,27 +39,27 @@ export async function requireSession(request: Request): Promise<Response | null>
   return null
 }
 
-// Session gate for a createServerFn handler. A server function is its own
-// callable HTTP endpoint, reachable without going through the page that leads
-// to it, so the route-level gate in _authed.tsx does not cover it — a handler
-// that must not answer an anonymous caller awaits this first. Unlike
-// requireSession above, which a route handler calls with the request and
-// returns the 401 to, a server function has nowhere to return a Response, so
-// this THROWS one: the framework sends a thrown Response as the HTTP response
-// (start-server-core's server-functions-handler), which is what makes the
-// status a real 401 rather than a serialized error inside a 200.
-export async function requireSessionServerFn(): Promise<void> {
-  if (!(await getSessionUser(getRequest()))) {
-    throw Response.json({ error: 'Unauthorized' }, { status: 401 })
+// requireSession for a route only an administrator may use: 401 with no
+// session, 403 for a signed-in non-administrator, null to continue.
+export async function requireAdminSession(request: Request): Promise<Response | null> {
+  const denied = await requireSession(request)
+  if (denied) return denied
+  if (!(await requireAdminUser(request))) {
+    return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
+  return null
 }
 
-// The same seam for an admin-only server function: layered after
-// requireSessionServerFn by the request-facing dispatcher for an action an
-// extension declared `admin`. A signed-in non-admin is authenticated but not
-// authorized, so this is a 403, not a 401. `requireAdminUser` RETURNS the admin
-// or null rather than throwing, so the result must be acted on — a bare `await`
-// with the value dropped type-checks and gates nothing.
+// Server functions do not use requireSession: every one of them runs the
+// session gate registered in app/start.ts (server-fn-session-gate.ts) first.
+//
+// The admin seam for a server function whose admin requirement depends on its
+// arguments: the request-facing dispatcher for an action an extension declared
+// `admin`. A signed-in non-admin is authenticated but not authorized, so this
+// THROWS a 403 Response, which the framework sends as the HTTP response
+// (start-server-core's server-functions-handler). `requireAdminUser` RETURNS
+// the admin or null rather than throwing, so the result must be acted on — a
+// bare `await` with the value dropped type-checks and gates nothing.
 export async function requireAdminServerFn(): Promise<void> {
   if (!(await requireAdminUser(getRequest()))) {
     throw Response.json({ error: 'Forbidden' }, { status: 403 })

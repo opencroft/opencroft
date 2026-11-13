@@ -11,6 +11,7 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import { canonicalModeOf } from 'agent-client/session-modes'
 
 import {
+  commandBarDials,
   modeEntries,
   selectLeftoverBooleanOptions,
   selectLeftoverConfigs,
@@ -151,6 +152,29 @@ test("the mode dial reads each Codex value's stated kind", () => {
     entries.map((entry) => canonicalModeOf('codex', entry)),
     ['accept-edits', 'auto', 'bypass'],
   )
+})
+
+test("OpenCode's build is shown as Auto and sends build back; an unknown mode keeps the agent's name", () => {
+  const dial = commandBarDials(
+    [
+      {
+        id: 'mode',
+        name: 'Mode',
+        type: 'select',
+        currentValue: 'build',
+        options: [
+          { value: 'build', name: 'build' },
+          { value: 'plan', name: 'plan' },
+          { value: 'docs-writer', name: 'Docs Writer' },
+        ],
+      },
+    ],
+    'opencode',
+  )
+  assert.deepEqual(dial.modeValues, ['auto', 'plan', 'docs-writer'])
+  assert.equal(dial.modeCurrent, 'auto')
+  assert.equal(dial.modeBack.get('auto'), 'build')
+  assert.equal(dial.modeLabels['docs-writer'], 'Docs Writer')
 })
 
 test('an uncategorized agent keeps its controls by conventional id (the Claude and native shape)', () => {

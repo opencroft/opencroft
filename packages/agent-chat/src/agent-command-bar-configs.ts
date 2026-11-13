@@ -189,7 +189,8 @@ export function commandBarDials(configOptions: SessionConfigOption[] | undefined
   // does -- see canonicalModeOf.
   const modeMeta = new Map(modeWire.map((entry) => [entry.id, entry._meta]))
   // A wire value nothing recognises passes through as itself: the kit renders
-  // it with its own label and no grade colour, which is the honest answer.
+  // it under the agent's name for it (modeLabels) with the plain shield and no
+  // grade colour, which is the honest answer.
   const modeOf = (value: string) =>
     (adapterId ? canonicalModeOf(adapterId, { id: value, _meta: modeMeta.get(value) }) : undefined) ?? value
   const effortOf = (value: string) => (adapterId ? canonicalEffortId(adapterId, value) : undefined) ?? value
@@ -214,6 +215,11 @@ export function commandBarDials(configOptions: SessionConfigOption[] | undefined
     modelId: modelOption?.id ?? MODEL_CONFIG_ID,
     fastId: fastOption?.id ?? FAST_MODE_CONFIG_ID,
     modeValues: modeWire.map((entry) => modeOf(entry.id)),
+    // The agent's own name for each mode, keyed by the value the dial shows:
+    // what the kit labels a mode outside our vocabulary with.
+    modeLabels: Object.fromEntries(
+      flattenOptions(modeOption?.options).map((entry) => [modeOf(entry.value), entry.label]),
+    ),
     effortValues,
     modeCurrent: modeOf(String(modeOption?.currentValue ?? '')),
     effortCurrent: effortOf(String(effortOption?.currentValue ?? '')),

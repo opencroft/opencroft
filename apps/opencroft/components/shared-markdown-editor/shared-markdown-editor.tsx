@@ -5,7 +5,7 @@ import { useSession } from '@opencroft/auth/client'
 import type { AnyExtension } from '@tiptap/core'
 import { Collaboration } from '@tiptap/extension-collaboration'
 import { CollaborationCaret } from '@tiptap/extension-collaboration-caret'
-import { MarkdownEditor, type MarkdownEditorSurfaceProps } from 'agent-chat/markdown-editor'
+import { MarkdownEditor, type MarkdownEditorSurfaceProps } from 'agent-chat/components/markdown-editor'
 import { useEffect, useMemo, useState } from 'react'
 import {
   collaboratorCaretElement,

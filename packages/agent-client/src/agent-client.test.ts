@@ -1920,7 +1920,7 @@ test('a form elicitation surfaces its schema and resolves with the content objec
   assert.deepEqual(ask.form, schema)
   h.client.resolveElicitation(ask.requestId, { choice: 'a' })
   assert.deepEqual(await response, { action: 'accept', content: { choice: 'a' } })
-  assert.ok(h.events.some((event) => event.kind === 'ask_user_resolved' && event.requestId === ask.requestId))
+  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: ask.requestId, outcome: 'answered' })
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -1940,7 +1940,7 @@ test('a url elicitation surfaces its link and resolves from the agent completion
   assert.equal(ask.url, 'https://example.invalid/login')
   await completeElicitation({ elicitationId: 'elic-1' })
   assert.deepEqual(await response, { action: 'accept' })
-  assert.ok(h.events.some((event) => event.kind === 'ask_user_resolved' && event.requestId === ask.requestId))
+  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: ask.requestId, outcome: 'answered' })
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -1963,6 +1963,39 @@ test('a host-raised askUser renders as the same ask_user event and answers with 
   await h.client.deleteSession(h.sessionId)
 })
 
+test('a host-raised askUser whose caller gives up closes its card, and a later answer reaches nobody', async () => {
+  const h = await setup('openclaw')
+  const caller = new AbortController()
+  const pending = h.client.askUser(h.sessionId, { message: 'Which way?', signal: caller.signal })
+  const ask = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(ask && ask.kind === 'ask_user')
+  caller.abort()
+  assert.equal(await pending, null)
+  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: ask.requestId, outcome: 'withdrawn' })
+  // The reader answering the withdrawn card changes nothing: no second
+  // resolution, and the ask is gone from the pending set.
+  const resolvedBefore = h.events.filter((event) => event.kind === 'ask_user_resolved').length
+  h.client.resolveElicitation(ask.requestId, 'left')
+  assert.equal(h.events.filter((event) => event.kind === 'ask_user_resolved').length, resolvedBefore)
+  assert.equal(h.client.pendingRequestSessionId(ask.requestId), undefined)
+  // Already given up before asking: no card at all.
+  const asksBefore = h.events.filter((event) => event.kind === 'ask_user').length
+  assert.equal(await h.client.askUser(h.sessionId, { message: 'Too late?', signal: AbortSignal.abort() }), null)
+  assert.equal(h.events.filter((event) => event.kind === 'ask_user').length, asksBefore)
+  // An answer that comes first wins, and the caller giving up afterwards
+  // closes nothing a second time.
+  const answered = new AbortController()
+  const third = h.client.askUser(h.sessionId, { message: 'Up or down?', signal: answered.signal })
+  const thirdAsk = h.events.filter((event) => event.kind === 'ask_user').at(-1)
+  assert.ok(thirdAsk && thirdAsk.kind === 'ask_user')
+  h.client.resolveElicitation(thirdAsk.requestId, { question_0: 'up' })
+  assert.deepEqual(await third, { question_0: 'up' })
+  const resolvedAfterAnswer = h.events.filter((event) => event.kind === 'ask_user_resolved').length
+  answered.abort()
+  assert.equal(h.events.filter((event) => event.kind === 'ask_user_resolved').length, resolvedAfterAnswer)
+  await h.client.deleteSession(h.sessionId)
+})
+
 // The reader dismissing an ask is their answer: decline. `cancel` is for an
 // ask whose turn went away (see the turn-end tests below), and an agent may
 // read it as an aborted call instead of an answer.
@@ -1981,6 +2014,7 @@ test('a plain-message elicitation takes a free-text answer, and no answer declin
   assert.ok(secondAsk && secondAsk.kind === 'ask_user')
   h.client.resolveElicitation(secondAsk.requestId)
   assert.deepEqual(await second, { action: 'decline' })
+  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: secondAsk.requestId, outcome: 'declined' })
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -2106,7 +2140,7 @@ test('a codex form answers under its question and note keys, and no event carrie
   assert.deepEqual(answered, { action: 'accept', content })
   assert.deepEqual(Object.keys((answered as { content: object }).content).sort(), ['target', 'target_note', 'token'])
   // What the transcript records of the answer is that there was one.
-  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: ask.requestId })
+  assert.deepEqual(h.events.at(-1), { kind: 'ask_user_resolved', requestId: ask.requestId, outcome: 'answered' })
   assert.ok(!JSON.stringify(h.events).includes('tok-SECRET-1'))
   await h.client.deleteSession(h.sessionId)
 })
@@ -2134,8 +2168,11 @@ test('an ask raised in a turn closes as cancelled when the turn ends, and a late
   assert.ok(!h.client.awaitingUserSessionKeys().includes('agent:asks:turn-end'))
   const folded = foldEvents(h.events).filter((message) => message.kind === 'ask')
   assert.deepEqual(
-    folded.map((message) => message.kind === 'ask' && message.resolved),
-    [true, true],
+    folded.map((message) => message.kind === 'ask' && [message.resolved, message.outcome]),
+    [
+      [true, 'turn_ended'],
+      [true, 'turn_ended'],
+    ],
   )
 
   // The reader answers the card they still had open: nothing reaches the
@@ -2143,6 +2180,122 @@ test('an ask raised in a turn closes as cancelled when the turn ends, and a late
   h.client.resolveElicitation(agentEvent.requestId, { target: 'Staging', token: 'late' })
   assert.equal(resolutionsOf(h.events, agentEvent.requestId), 1)
   await h.client.deleteSession(h.sessionId)
+})
+
+// A host caller that answers its agent at once and delivers the answer later
+// raises a question no turn waits on: the turn that asked ends (the agent is
+// told to end it), or is stopped, and the question is still there to answer.
+test('a host ask that outlives its turn stays open through the turn ending and being stopped', async () => {
+  const h = await setup('openclaw', { sessionKey: 'agent:asks:outlives' })
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  const outliving = h.client.askUser(h.sessionId, { message: 'Which way?', outlivesTurn: true })
+  const bound = h.client.askUser(h.sessionId, { message: 'And now?' })
+  const [outlivingEvent, boundEvent] = asksIn(h.events)
+  assert.ok(outlivingEvent && boundEvent)
+
+  await h.client.cancel(h.sessionId)
+  h.endTurn()
+  await settle()
+  assert.equal(await bound, null, 'the control: a turn-bound ask closed with its turn')
+  assert.equal(resolutionsOf(h.events, outlivingEvent.requestId), 0, 'the outliving card is still open')
+  assert.equal(h.client.pendingRequestSessionId(outlivingEvent.requestId), h.sessionId)
+  assert.ok(h.client.awaitingUserSessionKeys().includes('agent:asks:outlives'), 'and the session still awaits')
+
+  h.client.resolveElicitation(outlivingEvent.requestId, { choice: 'Left' })
+  assert.deepEqual(await outliving, { choice: 'Left' })
+  assert.equal(resolutionsOf(h.events, outlivingEvent.requestId), 1)
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('a session reopened in the same process keeps a host ask that outlives its turn open', async () => {
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [{ kind: 'user', text: 'one' }])
+  const recorded: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => recorded.push(event))
+  const outliving = harness.client.askUser(harness.sessionId, { message: 'Which way?', outlivesTurn: true })
+  const ask = asksIn(recorded).at(-1)
+  assert.ok(ask)
+  // The control: an ask in the log that nothing in this process holds.
+  const stale: ChatEvent = { kind: 'ask_user', requestId: 'held-by-a-gone-process', message: 'Old?' }
+
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [...recorded, stale])
+  const reopened: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => reopened.push(event))
+  assert.equal(resolutionsOf(reopened, ask.requestId), 0, 'its card is still open')
+  assert.equal(resolutionsOf(reopened, 'held-by-a-gone-process'), 1, 'the gone one is closed')
+
+  harness.client.resolveElicitation(ask.requestId, { choice: 'Right' })
+  assert.deepEqual(await outliving, { choice: 'Right' })
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+test('a session restored from a recording that lacks its open host ask shows the ask again', async () => {
+  const harness = restoreSetup()
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [{ kind: 'user', text: 'one' }])
+  const outliving = harness.client.askUser(harness.sessionId, { message: 'Which way?', outlivesTurn: true })
+  const ask = asksIn(harness.observed).at(-1)
+  assert.ok(ask)
+
+  // A recording from before the ask, the way a capped one can have aged it out.
+  await harness.client.restoreSession(harness.sessionId, harness.selection, [{ kind: 'user', text: 'one' }])
+  const reopened: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => reopened.push(event))
+  assert.deepEqual(
+    asksIn(reopened).map((event) => event.requestId),
+    [ask.requestId],
+  )
+  assert.equal(resolutionsOf(reopened, ask.requestId), 0)
+
+  harness.client.resolveElicitation(ask.requestId, { choice: 'Left' })
+  assert.deepEqual(await outliving, { choice: 'Left' })
+  await harness.client.deleteSession(harness.sessionId)
+})
+
+// An agent that cannot reattach without replaying rebuilds the transcript from
+// its own history, which never held a question the host raised.
+test('a session whose process stopped and was reopened by replay shows a host ask that outlives its turn again', async () => {
+  const harness = restoreSetup({ resumable: false })
+  const { connections } = acpStore()
+  const agent = connections.get(connectionKey(harness.selection))
+  assert.ok(agent)
+  // Stopping the process drops its connection; the reopen starts the agent again.
+  const stopAndReopen = async () => {
+    await harness.client.deleteSession(harness.sessionId)
+    connections.set(connectionKey(harness.selection), agent)
+    await harness.client.loadSession(harness.sessionId, harness.selection)
+  }
+  await harness.client.loadSession(harness.sessionId, harness.selection)
+  const form = { type: 'object' as const, properties: { choice: { type: 'string' as const, enum: ['Left', 'Right'] } } }
+  const outliving = harness.client.askUser(harness.sessionId, { message: 'Which way?', form, outlivesTurn: true })
+  const ask = asksIn(harness.observed).at(-1)
+  assert.ok(ask)
+
+  await stopAndReopen()
+  const reopened: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => reopened.push(event))
+  assert.deepEqual(
+    asksIn(reopened).map((event) => [event.requestId, event.message, event.form]),
+    [[ask.requestId, 'Which way?', form]],
+    'the same card, shown once',
+  )
+  assert.equal(resolutionsOf(reopened, ask.requestId), 0)
+  assert.deepEqual(
+    foldEvents(reopened)
+      .filter((message) => message.kind === 'ask')
+      .map((message) => message.kind === 'ask' && message.resolved),
+    [false],
+    'and open to answer',
+  )
+
+  // Reopened once more: still one card, not one per reopen.
+  await stopAndReopen()
+  const again: ChatEvent[] = []
+  harness.client.subscribe(harness.sessionId, (event) => again.push(event))
+  assert.equal(asksIn(again).length, 1)
+
+  harness.client.resolveElicitation(ask.requestId, { choice: 'Right' })
+  assert.deepEqual(await outliving, { choice: 'Right' })
+  await harness.client.deleteSession(harness.sessionId)
 })
 
 test('stopping a turn closes its ask at once, without waiting for the agent to end the turn', async () => {
@@ -6464,6 +6617,105 @@ test("a subagent's notice lands in the session itself, not inside the subagent's
   assert.deepEqual(h.events.at(-1), { kind: 'notice', notice: { severity: 'warning', title: 'Model fallback' } })
   assert.ok(!h.events.some((event) => event.kind === 'subagent_event'), 'nothing was nested under the subagent')
   await h.client.deleteSession(h.sessionId)
+})
+
+// What the Claude bridge sends for a Bash call to a client without terminal
+// output: the call's description as its content while it runs, then the real
+// output when it settles.
+test("a running call's content that only repeats its description is not output; live output is", async () => {
+  const h = await setup('openclaw')
+  const input = { command: 'for i in 1 2; do echo line $i; done', description: 'Echo two lines' }
+  sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'bash-1', title: 'Terminal', status: 'pending' })
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'bash-1',
+    rawInput: input,
+    content: [{ type: 'content', content: { type: 'text', text: 'Echo two lines' } }],
+  })
+  const described = h.events.at(-1)
+  assert.ok(described?.kind === 'tool_update')
+  assert.deepEqual(described.input, input)
+  assert.equal(described.output, undefined)
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'bash-1',
+    status: 'in_progress',
+    content: [{ type: 'content', content: { type: 'text', text: 'line 1\n' } }],
+  })
+  const live = h.events.at(-1)
+  assert.ok(live?.kind === 'tool_update')
+  assert.equal(live.status, 'in_progress')
+  assert.equal(live.output, 'line 1\n')
+  // Settled with the same words as the description: that is the output.
+  sendUpdate(h.sessionId, {
+    sessionUpdate: 'tool_call_update',
+    toolCallId: 'bash-1',
+    status: 'completed',
+    rawInput: input,
+    content: [{ type: 'content', content: { type: 'text', text: 'Echo two lines' } }],
+  })
+  const settled = h.events.at(-1)
+  assert.equal(settled?.kind === 'tool_update' && settled.output, 'Echo two lines')
+  await h.client.deleteSession(h.sessionId)
+})
+
+// The Claude bridge without its v2 capability settles a call a Stop cut short
+// as `failed`, with prose for the model as its content (claude-agent-acp 0.90.0
+// tool-calls/renderer.js: resultStatus, unfinished).
+test('a call that settles failed after a Stop was sent for its turn reads as cancelled', async () => {
+  const h = await setup('openclaw')
+  const failedUpdate = (toolCallId: string, text: string) => {
+    sendUpdate(h.sessionId, { sessionUpdate: 'tool_call', toolCallId, title: 'Terminal', status: 'pending' })
+    sendUpdate(h.sessionId, {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: 'failed',
+      content: [{ type: 'content', content: { type: 'text', text } }],
+    })
+    const event = h.events.at(-1)
+    assert.ok(event?.kind === 'tool_update')
+    return event
+  }
+
+  await h.client.prompt(h.sessionId, 'go', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.equal(failedUpdate('before-stop', 'ls: /missing: No such file').status, 'failed', 'the control: no Stop yet')
+  await h.client.cancel(h.sessionId)
+  const stopped = failedUpdate('ran', "The user doesn't want to proceed with this tool use.")
+  assert.equal(stopped.status, 'cancelled')
+  assert.equal(stopped.output, "The user doesn't want to proceed with this tool use.")
+  assert.equal(failedUpdate('never-ran', 'Claude stopped this tool call before it ran.').status, 'cancelled')
+  h.endTurn()
+  await settle()
+
+  // The next turn was not stopped: its failures are failures.
+  await h.client.prompt(h.sessionId, 'again', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.equal(failedUpdate('next-turn', 'exit 3').status, 'failed')
+  h.endTurn()
+  await settle()
+
+  // A turn that ends on a rejected prompt has no turn_end, and still ends the
+  // Stop's window.
+  await h.client.prompt(h.sessionId, 'stop me', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  await h.client.cancel(h.sessionId)
+  h.failTurn('connection lost')
+  await settle()
+  await h.client.prompt(h.sessionId, 'after', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
+  assert.equal(failedUpdate('after-rejected-turn', 'exit 4').status, 'failed')
+  await h.client.deleteSession(h.sessionId)
+})
+
+test('the Copilot and OpenCode adapters read how a completed command really ended', () => {
+  for (const id of ['copilot', 'copilot-subscription']) {
+    const settle = findAdapter(id)?.settleCompletedCall
+    assert.equal(settle?.('ls: no such file\n<shellId: 1 completed with exit code 3>'), 'failed', id)
+    assert.equal(settle?.('line 1\n<shellId: 0 completed with exit code 0>'), undefined, id)
+  }
+  const opencode = findAdapter('opencode')?.settleCompletedCall
+  assert.equal(
+    opencode?.('(no output)\n\n<shell_metadata>\nUser aborted the command\n</shell_metadata>'),
+    'cancelled',
+  )
+  assert.equal(findAdapter('claude')?.settleCompletedCall, undefined)
 })
 
 test("a subagent's permission request is asked in the parent chat and answered from there", async () => {

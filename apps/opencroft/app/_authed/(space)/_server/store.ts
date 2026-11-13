@@ -2,6 +2,9 @@ import { db, space, spaceApp, spaceGraph, spaceSlugAlias } from '@opencroft/db'
 import { randomSpaceIconValue } from '@opencroft/db/space-icon-presets'
 import { asc, eq, inArray } from 'drizzle-orm'
 
+import type { TreeNode } from '@/app/_authed/(extension-runtime)/_frame-tree'
+import { type MembershipChange, toTree } from '@/app/_authed/(extension-runtime)/_frame-tree-convert'
+import { announceDirectoryChange } from '@/app/_authed/(space)/_server/directory-changes'
 import { slugify } from '@/app/_authed/(space)/_server/slug'
 import {
   DEFAULT_GRAPH_NAME,
@@ -93,12 +96,46 @@ export class DefaultGraphRemovalError extends Error {
   }
 }
 
-export function parseGraph(data: string): GraphData {
-  const parsed = JSON.parse(data) as Partial<GraphData>
+/**
+ * The stored graph's format. 2 holds frame members as children, `parentId`
+ * and positions relative to the frame (see `_frame-tree.ts`); a graph stored
+ * without it holds every position absolute, frames holding nodes by area.
+ */
+export const GRAPH_FORMAT_VERSION = 2
+
+/** A frame test for the stored nodes of a graph (see `frameTest`). */
+export type StoredFrameTest = (node: { type?: unknown }) => boolean
+
+/** Stored graph JSON as it is, and whether it is in the current format. */
+export function readStoredGraph(data: string): { graph: GraphData; current: boolean } {
+  const parsed = JSON.parse(data) as Partial<GraphData> & { version?: unknown }
   return {
-    nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
-    edges: Array.isArray(parsed.edges) ? parsed.edges : [],
+    graph: {
+      nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
+      edges: Array.isArray(parsed.edges) ? parsed.edges : [],
+    },
+    current: parsed.version === GRAPH_FORMAT_VERSION,
   }
+}
+
+/** `graph`, stored before the frame tree, converted to it, with the nodes whose frames changed. */
+export function convertToTree(
+  graph: GraphData,
+  isFrame: StoredFrameTest,
+): { graph: GraphData; changes: MembershipChange[] } {
+  const { nodes, changes } = toTree(graph.nodes as unknown as TreeNode[], isFrame)
+  return { graph: { nodes: nodes as unknown as GraphData['nodes'], edges: graph.edges }, changes }
+}
+
+/** Stored graph JSON as a graph in the current format: one stored before it is converted. */
+export function parseGraph(data: string, isFrame: StoredFrameTest): GraphData {
+  const { graph, current } = readStoredGraph(data)
+  return current ? graph : convertToTree(graph, isFrame).graph
+}
+
+/** `graph` as stored: in the current format. */
+export function serializeGraph(graph: GraphData): string {
+  return JSON.stringify({ version: GRAPH_FORMAT_VERSION, nodes: graph.nodes, edges: graph.edges })
 }
 
 export function nodeIdsOf(graph: GraphData): string[] {
@@ -122,8 +159,49 @@ class SpacesRegistry {
   private graphsByInstance = new Map<string, GraphRuntime>()
   private loaded = false
   private loadPromise: Promise<void> | null = null
+  // Which stored nodes are frames, read once as the registry loads: a graph
+  // stored before the frame tree is converted with it.
+  private isFrame: StoredFrameTest = () => false
   private graphRemovedListeners: Array<(graphIds: string[]) => void> = []
   private nodeRemovedListeners: Array<(nodeIds: string[]) => void> = []
+  private graphNodesRemovedListeners: Array<(nodeIds: string[]) => void> = []
+  private graphChangedListeners: Array<(ref: GraphRef) => void> = []
+  private graphAddressChangedListeners: Array<(graphIds: string[]) => void> = []
+
+  /**
+   * Called with a graph each time its content changes in memory, by any writer. A change of
+   * several elements is one call, but a burst of edits (typing in an inspector) is a call per
+   * edit, so a listener with work to do waits for the burst to end.
+   */
+  onGraphChanged(listener: (ref: GraphRef) => void): void {
+    this.graphChangedListeners.push(listener)
+  }
+
+  /** For the graph's writers: this graph's content changed. */
+  graphChanged(ref: GraphRef): void {
+    for (const listener of this.graphChangedListeners) {
+      listener(ref)
+    }
+  }
+
+  /**
+   * Called with the ids of graphs whose address moved: a graph renamed to a new slug, a graph
+   * transferred to another space, or every graph of a space whose slug moved. Called once the
+   * rows are committed, so `addressOf` gives the new address.
+   */
+  onGraphAddressesChanged(listener: (graphIds: string[]) => void): void {
+    this.graphAddressChangedListeners.push(listener)
+  }
+
+  private graphAddressesChanged(graphs: GraphRuntime[]): void {
+    if (graphs.length === 0) {
+      return
+    }
+    const graphIds = graphs.map((graph) => graph.id)
+    for (const listener of this.graphAddressChangedListeners) {
+      listener(graphIds)
+    }
+  }
 
   /** Called with the ids of graphs once their rows are gone, by graph or by space removal. */
   onGraphsRemoved(listener: (graphIds: string[]) => void): void {
@@ -136,6 +214,16 @@ class SpacesRegistry {
    */
   onNodesRemoved(listener: (nodeIds: string[]) => void): void {
     this.nodeRemovedListeners.push(listener)
+  }
+
+  /**
+   * Called with the ids of the nodes of a graph that was deleted, by itself or with its space; not
+   * for a node deleted from a graph that stays. A graph or space is deleted only on purpose, and
+   * never comes back with an undo, so this is for what a node owns that must not outlive a
+   * deliberate deletion but must survive a node's passing absence from its graph.
+   */
+  onGraphNodesRemoved(listener: (nodeIds: string[]) => void): void {
+    this.graphNodesRemovedListeners.push(listener)
   }
 
   /** For the graph's writers: these nodes are no longer in it. */
@@ -153,7 +241,13 @@ class SpacesRegistry {
     for (const listener of this.graphRemovedListeners) {
       listener(graphIds)
     }
-    this.nodesRemoved(graphs.flatMap((graph) => nodeIdsOf(graph.graph)))
+    const nodeIds = graphs.flatMap((graph) => nodeIdsOf(graph.graph))
+    if (nodeIds.length > 0) {
+      for (const listener of this.graphNodesRemovedListeners) {
+        listener(nodeIds)
+      }
+    }
+    this.nodesRemoved(nodeIds)
   }
 
   async ensureLoaded(): Promise<void> {
@@ -167,6 +261,9 @@ class SpacesRegistry {
   }
 
   private async load(): Promise<void> {
+    // Imported on use: the extension loader reads graphs through this registry.
+    const { frameTest } = await import('@/app/_authed/(extension-runtime)/_server/frame-types')
+    this.isFrame = await frameTest()
     await this.migrateLegacyGraph()
     const rows = await db.query.space.findMany({ orderBy: asc(space.createdAt) })
     for (const row of rows) {
@@ -195,7 +292,7 @@ class SpacesRegistry {
         slug: row.slug,
         name: row.name,
         instanceId: row.instanceId,
-        graph: parseGraph(row.data),
+        graph: parseGraph(row.data, this.isFrame),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       })
@@ -216,7 +313,8 @@ class SpacesRegistry {
     if (!legacy) {
       return
     }
-    const graph = parseGraph(legacy.data)
+    // Copied in the format it was stored in; it is converted where it is read as a graph.
+    const { graph } = readStoredGraph(legacy.data)
     await db.insert(space).values({
       slug: DEFAULT_SPACE_SLUG,
       name: DEFAULT_SPACE_NAME,
@@ -275,7 +373,7 @@ class SpacesRegistry {
         slug: created.slug,
         name: created.name,
         instanceId: created.instanceId,
-        graph: parseGraph(created.data),
+        graph: parseGraph(created.data, this.isFrame),
         createdAt: created.createdAt,
         updatedAt: created.updatedAt,
       })
@@ -314,7 +412,7 @@ class SpacesRegistry {
           instanceId: instanceRow.id,
           slug: DEFAULT_GRAPH_SLUG,
           name: DEFAULT_GRAPH_NAME,
-          data: JSON.stringify(graph),
+          data: serializeGraph(graph),
         })
         .returning()
       return { row: spaceRow, graphRow: createdGraph }
@@ -473,7 +571,9 @@ class SpacesRegistry {
 
   /** A new space, wearing a random preset icon. */
   async create(name: string, slug: string, graph: GraphData): Promise<SpaceRuntime> {
-    return this.createInternal(name, slug, graph, randomSpaceIconValue())
+    const runtime = await this.createInternal(name, slug, graph, randomSpaceIconValue())
+    announceDirectoryChange({ subject: 'space', change: 'added' })
+    return runtime
   }
 
   /**
@@ -499,7 +599,7 @@ class SpacesRegistry {
         instanceId,
         slug,
         name,
-        data: JSON.stringify(EMPTY_GRAPH),
+        data: serializeGraph(EMPTY_GRAPH),
       })
       .returning()
     const runtime: GraphRuntime = {
@@ -590,6 +690,9 @@ class SpacesRegistry {
         owner.defaultGraphSlug = graph.slug
       }
     }
+    if (graph.slug !== previousSlug) {
+      this.graphAddressesChanged([graph])
+    }
     return graph
   }
 
@@ -678,11 +781,12 @@ class SpacesRegistry {
         slug: replacement.slug,
         name: replacement.name,
         instanceId: replacement.instanceId,
-        graph: parseGraph(replacement.data),
+        graph: parseGraph(replacement.data, this.isFrame),
         createdAt: replacement.createdAt,
         updatedAt: replacement.updatedAt,
       })
     }
+    this.graphAddressesChanged([graph])
     return { space: target, graph }
   }
 
@@ -723,6 +827,7 @@ class SpacesRegistry {
     const [row] = await db.update(space).set({ icon }).where(eq(space.id, id)).returning()
     runtime.icon = row.icon
     runtime.updatedAt = row.updatedAt
+    announceDirectoryChange({ subject: 'space', change: 'updated' })
     return runtime
   }
 
@@ -774,6 +879,7 @@ class SpacesRegistry {
       const [row] = await db.update(space).set({ name }).where(eq(space.id, id)).returning()
       runtime.name = row.name
       runtime.updatedAt = row.updatedAt
+      announceDirectoryChange({ subject: 'space', change: 'renamed' })
       return runtime
     }
     // ONE TRANSACTION over the three writes, because each is only correct with
@@ -797,6 +903,8 @@ class SpacesRegistry {
     this.bySlug.set(row.slug, id)
     this.aliasBySlug.delete(nextSlug)
     this.aliasBySlug.set(previousSlug, id)
+    this.graphAddressesChanged([...runtime.graphs.values()])
+    announceDirectoryChange({ subject: 'space', change: 'renamed' })
     return runtime
   }
 
@@ -820,6 +928,7 @@ class SpacesRegistry {
         this.aliasBySlug.delete(aliasSlug)
       }
     }
+    announceDirectoryChange({ subject: 'space', change: 'removed' })
     return true
   }
 }

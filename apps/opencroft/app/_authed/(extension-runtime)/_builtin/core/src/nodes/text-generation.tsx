@@ -57,7 +57,14 @@ export function TextGenerationInspector({
 }
 
 export const TEXT_GENERATION_HANDLES = [
-  { id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Prompt', streamAction: 'run' },
+  {
+    id: 'text-in',
+    handleType: 'text-stream',
+    role: 'target' as const,
+    label: 'Prompt',
+    streamAction: 'run',
+    multiple: true,
+  },
   { id: 'text-out', handleType: 'text-stream', role: 'source' as const, label: 'Text' },
 ]
 

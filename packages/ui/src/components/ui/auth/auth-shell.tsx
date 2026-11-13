@@ -3,6 +3,12 @@ import type { ReactNode } from 'react'
 import { TitleDragStrip } from '../layouts/title-drag-handle'
 
 export interface AuthShellProps {
+  /**
+   * A line across the top of the page, above the centred column -- a
+   * NoticeStrip about the instance rather than about the form. Omitted, the
+   * page starts with the column.
+   */
+  banner?: ReactNode
   children: ReactNode
 }
 
@@ -12,10 +18,13 @@ export interface AuthShellProps {
 // footer are deliberately not part of it; a host places those around what it
 // puts inside. An auth screen has no title bar, so in an installed app that
 // draws into the window's title bar it starts with the drag strip instead.
-export function AuthShell({ children }: AuthShellProps) {
+// A banner sits under the drag strip and spans the page, so the column below
+// keeps its own measure and stays centred in the height that is left.
+export function AuthShell({ banner, children }: AuthShellProps) {
   return (
     <div className='flex min-h-svh flex-col bg-background'>
       <TitleDragStrip />
+      {banner}
       <div className='flex flex-1 flex-col items-center justify-center gap-6 p-6 md:p-10'>
         <div className='w-full max-w-sm'>
           <div className='flex flex-col gap-6'>{children}</div>

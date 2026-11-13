@@ -58,6 +58,9 @@ export interface VersionedThreadLayout {
   version: number
 }
 
+/** A write at a version: saved at the new one, or refused with the layout that is there instead. */
+export type SaveLayoutResult = { ok: true; version: number } | { ok: false; current: VersionedThreadLayout }
+
 const EMPTY_LAYOUT: ThreadLayout = { entries: [] }
 
 function parseLayout(raw: string): ThreadLayout {
@@ -97,14 +100,33 @@ function parseLayout(raw: string): ThreadLayout {
  * table has the same exposure. Not this module's to fix.
  */
 export async function readThreadLayout(groupChatId: string, list: ThreadList): Promise<VersionedThreadLayout> {
-  const row = await getSetting(settingId(groupChatId, list))
+  return readLayoutRow(settingId(groupChatId, list))
+}
+
+/**
+ * The arrangement kept in one settings row, whichever list it belongs to: a
+ * chat's thread list here, a person's Recent in recent-store.ts. Same contract
+ * as `readThreadLayout`, and ungated in the same way.
+ */
+export async function readLayoutRow(rowId: string): Promise<VersionedThreadLayout> {
+  const row = await getSetting(rowId)
   if (!row) {
     // Version 0 is "no row yet", which is what upsertSettingCas expects from a
-    // first writer -- so an unarranged chat and an arranged one are written the
+    // first writer -- so an unarranged list and an arranged one are written the
     // same way, with no separate create path.
     return { layout: EMPTY_LAYOUT, version: 0 }
   }
   return { layout: parseLayout(row.data), version: row.version }
+}
+
+/** `writeThreadLayout` for any one settings row; see `readLayoutRow`. */
+export async function writeLayoutRow(
+  rowId: string,
+  layout: ThreadLayout,
+  expectedVersion: number,
+): Promise<number | null> {
+  const row = await upsertSettingCas(rowId, JSON.stringify(layout), expectedVersion)
+  return row?.version ?? null
 }
 
 /**
@@ -132,8 +154,7 @@ export async function writeThreadLayout(
   layout: ThreadLayout,
   expectedVersion: number,
 ): Promise<number | null> {
-  const row = await upsertSettingCas(settingId(groupChatId, list), JSON.stringify(layout), expectedVersion)
-  return row?.version ?? null
+  return writeLayoutRow(settingId(groupChatId, list), layout, expectedVersion)
 }
 
 /** How many lost races `updateThreadLayout` absorbs before it gives up. */
@@ -168,17 +189,31 @@ export async function updateThreadLayout(
   change: (layout: ThreadLayout) => ThreadLayout | null,
   read: (groupChatId: string, list: ThreadList) => Promise<VersionedThreadLayout> = readThreadLayout,
 ): Promise<void> {
+  await updateLayoutRow(settingId(groupChatId, list), change, () => read(groupChatId, list))
+}
+
+/**
+ * `updateThreadLayout` for any one settings row, answering with the layout as
+ * it stands after the change (or as it was read, when `change` had nothing to
+ * do) and its version.
+ */
+export async function updateLayoutRow(
+  rowId: string,
+  change: (layout: ThreadLayout) => ThreadLayout | null,
+  read: () => Promise<VersionedThreadLayout> = () => readLayoutRow(rowId),
+): Promise<VersionedThreadLayout> {
   for (let attempt = 0; attempt < MAX_THREAD_LAYOUT_ATTEMPTS; attempt++) {
-    const current = await read(groupChatId, list)
+    const current = await read()
     const next = change(current.layout)
     if (!next) {
-      return
+      return current
     }
-    if ((await writeThreadLayout(groupChatId, list, next, current.version)) !== null) {
-      return
+    const version = await writeLayoutRow(rowId, next, current.version)
+    if (version !== null) {
+      return { layout: next, version }
     }
   }
-  throw new Error(`The thread list changed ${MAX_THREAD_LAYOUT_ATTEMPTS} times while it was being written; try again`)
+  throw new Error(`The list changed ${MAX_THREAD_LAYOUT_ATTEMPTS} times while it was being written; try again`)
 }
 
 // ── Folders, by the name a person sees ───────────────────────────────────
@@ -264,6 +299,35 @@ export function withoutThread(layout: ThreadLayout, threadId: string): ThreadLay
             },
       ),
   }
+}
+
+/**
+ * The layout with each of `threadIds` the layout does not hold yet appended
+ * loose at the end of the top level, in the given order; `null` when it holds
+ * them all. A thread already there, at the top level or in a folder, stays
+ * where it is.
+ */
+export function withThreadsAdded(layout: ThreadLayout, threadIds: readonly string[]): ThreadLayout | null {
+  const held = new Set(threadIdsIn(layout))
+  const added = [...new Set(threadIds)].filter((id) => !held.has(id))
+  if (added.length === 0) {
+    return null
+  }
+  return { entries: [...layout.entries, ...added.map((threadId): ThreadLayoutEntry => ({ kind: 'thread', threadId }))] }
+}
+
+/** The layout without any of `threadIds`, or `null` when it holds none of them. */
+export function withoutThreads(layout: ThreadLayout, threadIds: readonly string[]): ThreadLayout | null {
+  let next: ThreadLayout | null = null
+  for (const threadId of threadIds) {
+    next = withoutThread(next ?? layout, threadId) ?? next
+  }
+  return next
+}
+
+/** Every thread id the layout holds, top level and folders, in stored order. */
+export function threadIdsIn(layout: ThreadLayout): string[] {
+  return layout.entries.flatMap((entry) => (entry.kind === 'thread' ? [entry.threadId] : entry.folder.threadIds))
 }
 
 /**

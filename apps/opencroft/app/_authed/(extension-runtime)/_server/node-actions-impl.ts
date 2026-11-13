@@ -1,32 +1,42 @@
+import type { NodeError } from '@opencroft/core'
+import { inputValue, isValueHandle, wiredValueOf } from '@opencroft/core/values'
 import type { ActionAccess } from '@opencroft/server/actions'
 
+import { declaredHandlesOf } from '@/app/_authed/(extension-runtime)/_declared-handles'
 import { declaredTypesOf, resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
+import { enumCasesOfManifests } from '@/app/_authed/(extension-runtime)/_enum-types'
 import { parseType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { absolutePosition, ancestors, byIdOf } from '@/app/_authed/(extension-runtime)/_frame-tree'
+import { actionFailure, withActionError, withProblem } from '@/app/_authed/(extension-runtime)/_node-errors'
 import { resolveGraphContexts } from '@/app/_authed/(extension-runtime)/_server/graph-context-resolver'
 import type { GraphSnapshot } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
+import { currentRunEvents } from '@/app/_authed/(extension-runtime)/_server/run-scope'
 import { getStream } from '@/app/_authed/(extension-runtime)/_server/stream'
-import type {
-  ConnectedSource,
-  ExtensionManifest,
-  NodeAction,
-  NodeActionCtx,
-  NodeActionCtxNode,
-  NodeActionDescriptor,
-  ResolvedInput,
-  Stream,
+import {
+  type ConnectedSource,
+  type ExtensionHandle,
+  type ExtensionManifest,
+  findExtensionHandle,
+  type NodeAction,
+  type NodeActionCtx,
+  type NodeActionCtxNode,
+  type NodeActionDescriptor,
+  type ResolvedInput,
+  type Stream,
 } from '@/app/_authed/(extension-runtime)/_types'
+import { wiredEdgesOf } from '@/app/_authed/(extension-runtime)/_wired-edges'
 import type { GraphWriteOrigin } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
 import { mutateLiveGraph } from '@/app/_authed/(space)/_server/graph-collab'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 
-const ERRORS_KEY = '__errors'
 const NODE_ACTION_ORIGIN: GraphWriteOrigin = { kind: 'extension', name: 'node action' }
 
 export interface GraphNodeLike {
   id: string
   type?: string
+  parentId?: string
   position?: { x: number; y: number }
   data?: Record<string, unknown>
   style?: Record<string, unknown>
@@ -70,12 +80,16 @@ export async function findNodeWithGraph(nodeId: string): Promise<FoundNode | nul
   }
   // The node's whole SPACE, across its graphs: action inputs resolve over
   // the space's wiring, and which canvas the node sits on does not narrow it.
+  // Wired (see `wiredEdges`), so connected sources are the real ones through
+  // any subgraph port. Inside a run, the producers' run-time outputs answer
+  // from the run's events; the result is this dispatch's alone and is never
+  // stored.
   const graphs = [...ref.space.graphs.values()]
   const snapshot: GraphSnapshot = {
     nodes: graphs.flatMap((g) => g.graph.nodes) as unknown as GraphSnapshot['nodes'],
-    edges: graphs.flatMap((g) => g.graph.edges) as unknown as GraphSnapshot['edges'],
+    edges: graphs.flatMap((g) => wiredEdgesOf<GraphSnapshot['edges'][number]>(g.graph)),
   }
-  const resolved = await resolveGraphContexts(snapshot)
+  const resolved = await resolveGraphContexts(snapshot, currentRunEvents())
   const graph = {
     nodes: resolved.nodes as unknown as GraphData['nodes'],
     edges: resolved.edges as unknown as GraphData['edges'],
@@ -162,13 +176,20 @@ export function buildCtx(
   callerAgent: string | undefined,
   signal?: AbortSignal,
   declared: ReadonlySet<string> = new Set(),
+  handles: readonly ExtensionHandle[] = [],
 ): NodeActionCtx {
   const data = node.data ?? {}
   const resolved = (data.__resolvedContexts as Record<string, ResolvedHandle> | undefined) ?? {}
   const allNodes = nodesAsLike(graph)
   const allEdges = edgesAsLike(graph)
 
+  // A value input reads as the canvas's `useInputValue` does: the wired
+  // value, else the value typed on the card, else the declared default.
   const input = <T>(handleId: string): T | undefined => {
+    const handle = findExtensionHandle(handles, handleId, 'target')
+    if (handle && isValueHandle(handle)) {
+      return inputValue(data, { ...handle, id: handleId }, wiredValueOf(data, handleId)) as T | undefined
+    }
     return resolved[handleId]?.value as T | undefined
   }
 
@@ -208,27 +229,14 @@ export function buildCtx(
   }
 
   const containingNodes = (type?: string): NodeActionCtxNode[] => {
-    const sx = node.position?.x ?? 0
-    const sy = node.position?.y ?? 0
     const wanted = type ? resolveCodeTypeRef(extensionId, type, (qualified) => declared.has(qualified)) : undefined
-    return allNodes
-      .filter((n) => {
-        if (n.id === node.id) {
-          return false
-        }
-        if (wanted && n.type !== wanted) {
-          return false
-        }
-        const px = n.position?.x ?? 0
-        const py = n.position?.y ?? 0
-        const w = (n.style?.width as number | undefined) ?? 200
-        const h = (n.style?.height as number | undefined) ?? 160
-        return sx >= px && sy >= py && sx < px + w && sy < py + h
-      })
+    const byId = byIdOf(allNodes)
+    return ancestors(node.id, byId)
+      .filter((n) => !wanted || n.type === wanted)
       .map((n) => ({
         id: n.id,
         type: n.type,
-        position: n.position ?? { x: 0, y: 0 },
+        position: absolutePosition(n, byId),
         data: n.data ?? {},
       }))
   }
@@ -295,19 +303,11 @@ async function writeNodeData(
   }
 }
 
-// The node's errors are what its frame shows. Clearing a node that has none is
-// the common case — every run starts by clearing — and writes nothing.
-function persistErrors(found: FoundNode, errors: string[]): Promise<void> {
-  return writeNodeData(found, (data) => {
-    if (errors.length > 0) {
-      return { ...data, [ERRORS_KEY]: errors }
-    }
-    if (!(ERRORS_KEY in data)) {
-      return data
-    }
-    const { [ERRORS_KEY]: _, ...rest } = data
-    return rest
-  })
+// The node's action error, which its card and Errors tab show. Clearing a node
+// that has none is the common case — every run starts by clearing — and writes
+// nothing. Errors other sources reported stay.
+function persistActionError(found: FoundNode, error: NodeError | undefined): Promise<void> {
+  return writeNodeData(found, (data) => withActionError(data, error))
 }
 
 // Persist a data patch produced by a node action (via ctx.updateData) back to
@@ -417,8 +417,13 @@ export async function dispatchNodeActionImpl(
     callerAgent,
     signal,
     declaredTypesOf(owning.manifest),
+    declaredHandlesOf(
+      found.node,
+      () => owning.manifest.nodes?.find((n) => n.type === type)?.handles ?? [],
+      enumCasesOfManifests(await loadAllManifests()),
+    ),
   )
-  await persistErrors(found, [])
+  await persistActionError(found, undefined)
   try {
     const result = await handler(ctx)
     if (Object.keys(pending).length > 0) {
@@ -426,13 +431,13 @@ export async function dispatchNodeActionImpl(
     }
     return result
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    // The node's own __errors only ever gets the bare message (surfaced in the
-    // UI/MCP response) — without this, the *only* diagnostic signal for a node
-    // action failure was that string, no stack, nowhere to find the actual
-    // throw site.
+    // The node records what a reader acts on (title, detail, next step), and
+    // the caller gets the same problem; the stack and the throw site are only
+    // here, in the server log.
     console.error(`[node-action] ${type}.${actionId} (node ${nodeId}) failed:`, err)
-    await persistErrors(found, [message])
-    throw err
+    const label = owning.manifest.nodes?.find((n) => n.type === type)?.actions?.find((a) => a.id === actionId)?.label
+    const failure = actionFailure(label ?? `Action "${actionId}"`, err)
+    await persistActionError(found, failure)
+    throw withProblem(err, failure)
   }
 }

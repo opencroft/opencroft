@@ -35,7 +35,7 @@ export interface MarkdownEditOrigin {
 /**
  * Sent to every editor of a document after a change made outside one -- an
  * agent's -- since a Yjs update itself does not say who made it. `from` and
- * `to` bound the new content (`changedRange` in `@/lib/markdown-doc-change`),
+ * `to` bound the new content (`changedRange` in `agent-chat/markdown-doc-change`),
  * as Yjs relative positions (`Y.relativePositionToJSON`), so each editor finds
  * them in its own copy. What the change replaced each editor takes from its
  * own copy as it drew it, when the change arrives.

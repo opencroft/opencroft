@@ -1,5 +1,3 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
@@ -41,9 +39,21 @@ import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { deliveryNoteBlock, hasUnresolvedToolCalls, isDeliveryNote } from './delivery-note'
 import { ActionRequiredError, errorMessage, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
-import { isTerminalToolStatus, lastConversationEvent } from './fold'
+import { foldEvents, isTerminalToolStatus, lastConversationEvent } from './fold'
 import type { HarnessAdapter, HarnessTurnEnd } from './harness-adapters'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
+import { placedShell, startHarnessProcess } from './harness-process'
+import {
+  DEFAULT_INSTRUCTION_SIDECAR,
+  defaultInstructionChangeNote,
+  fileAccessFor,
+  type InstructionSync,
+  type InstructionTexts,
+  instructionDigest,
+  writeInstructionFiles,
+} from './instruction-files'
+import type { InstructionRole } from './instruction-paths'
+import { missingLauncherCommands, missingLauncherMessage } from './launcher-check'
 import { readMcpConfig, resolveMcpServers } from './mcp-config'
 import { createMcpServer, type SkillHandler, type SkillsInput, type ToolsInput } from './mcp-server'
 import type { McpServerConfig } from './mcp-types'
@@ -53,23 +63,40 @@ import {
   NATIVE_PROMPT_CAPABILITIES,
   type NativeHarnessConfig,
   type NativeSession,
+  restoredNativeSession,
 } from './native-harness'
+import { conversationFromLog } from './native-history'
 import {
+  arrayLogReader,
+  contiguous,
   type EventsWindow,
+  type LogReader,
   pageBeforeByRecords,
   pageBeforeByTurns,
   type RecordsWindow,
+  recordsWindowFromReader,
   tailByRecords,
   tailByTurns,
 } from './pagination'
-import { type PermissionHandler, permissionContext } from './permission-context'
+import { type AnnouncedToolCall, type PermissionHandler, permissionContext } from './permission-context'
 import { type ResolvedPermissions, toolKey } from './permissions'
-import { DEFAULT_PRESENCE, msUntilDue, oldestMessageAt, presenceWindowMs } from './presence'
+import { DEFAULT_PRESENCE, effectivePresence, msUntilDue, oldestMessageAt, presenceWindowMs } from './presence'
 import { blockBytes, PROMPT_BLOCK_BUDGET, promptBudget } from './prompt-size'
 import { buildDelivery, type DeliveryNote } from './queue-tags'
-import { buildSpawnConfig, findAdapter, findProvider, isNativeSelection } from './resolve'
+import {
+  buildSpawnConfig,
+  findAdapter,
+  findProvider,
+  harnessHomeDir,
+  harnessPlacement,
+  isNativeSelection,
+  placementLabel,
+} from './resolve'
+import { offeredModeId } from './session-modes'
 import { foldRestoredState, restorableEvents } from './session-restore'
 import { fileSkillHandler, fileSkills } from './skills'
+import { type HistoryPort, type LogWrite, type PlacedEntry, SESSION_LOG, TranscriptLog } from './transcript-log'
+import { TURN_FAILURE_LOGS, type TurnFailureLog } from './turn-failure-log'
 import { findTurnBoundary } from './turns'
 import type {
   AgentSelection,
@@ -77,7 +104,10 @@ import type {
   AvailableCommand,
   ChatEvent,
   CompactionState,
+  HarnessProcess,
   PlanItem,
+  RemoteShell,
+  ShellResolver,
   Presence,
   PromptOrigin,
   QueuedPrompt,
@@ -162,6 +192,29 @@ export interface AgentClientOptions {
   // Lets a host store them elsewhere, e.g. a database, instead of on disk, and
   // scope the result using the selection's mcpIdentity if it wants to.
   loadMcpServers?: (selection: AgentSelection) => Promise<McpServerConfig[]>
+  // The instruction texts of a selection's harness (see InstructionTarget in
+  // harness-adapters): asked at every session open (new, load and resume) and
+  // before every prompt, only for a harness that declares where it reads
+  // them. At an open the engine writes them as the harness's files before the
+  // session request, so the harness starts on the current text. Before a
+  // prompt it writes them again when a text changed since the session last
+  // saw it, and puts a line ahead of the message naming the files a harness
+  // reads once per session (instructionChangeNote). For the system-prompt
+  // channel it updates the selection's system prompt instead. Absent: no
+  // instruction file is written.
+  loadInstructionFiles?: (selection: AgentSelection) => Promise<InstructionTexts | undefined>
+  // The host's shell for a selection's `shell` id (see RemoteShell): the
+  // harness, its instruction files and its MCP address go through it. Absent:
+  // a selection naming a shell is refused when it opens.
+  shells?: ShellResolver
+  // The one line of the sidecar (`<file>.meta`) the engine writes beside
+  // each instruction file it owns, telling a person who finds the file
+  // where its text is edited and that deleting the sidecar hands the file
+  // back. The file itself holds only the text.
+  instructionFileSidecar?: string
+  // The line put ahead of a message when instruction files changed under a
+  // live session, given the files' paths.
+  instructionChangeNote?: (paths: string[]) => string
   // System prompt and step cap for the in-process native harness (kind:'native'
   // adapter). Ignored by external ACP agents, which carry their own.
   systemPrompt?: string
@@ -196,6 +249,32 @@ export interface AgentClientOptions {
   // would have to look the key up on every chunk of every stream, which is a
   // scan of the whole registry per event.
   onEvent?: (sessionId: string, event: ChatEvent, sessionKey?: string) => void
+  // Keep each session's log compacted (see TranscriptLog): a chunk run, a tool
+  // call's updates, an entity's states and a turn's usage readings each hold
+  // one entry, rewritten in place; an unchanged snapshot is not appended; a
+  // subagent's steps go to a log of its own (getSubagentRecordsWindow) and its
+  // header in the parent's log carries `steps`. The stream still carries every
+  // event, and the snapshot prefix gains the subagents still running.
+  //
+  // Off by default: the log is then every event as it was emitted, as a host
+  // that records the stream and numbers events by counting them expects. A
+  // host turning it on records `onRecord`'s writes instead of the stream and
+  // names events by the positions frames and windows carry.
+  compactLog?: boolean
+  // Notified for every write to a session's log, after the subscribers and
+  // `onEvent`: an entry appended, or one rewritten in place (`appended`
+  // false), in the session's own log or a subagent's (`log`). What a host
+  // keeps a durable copy of the log from: writing each entry at its position
+  // keeps the copy equal to the log. Same isolation contract as onEvent.
+  onRecord?: (sessionId: string, write: LogWrite, sessionKey?: string) => void
+  // The host's copy of the logs, read back (see HistoryPort): with it and
+  // `compactLog`, a keyed session holds only the tail of its own log in
+  // memory, letting its oldest turns go once they are the host's, and every
+  // window, page and turn listing reaching below the tail reads through this.
+  // A session is then seeded with its log's tail (restoreSession's and
+  // createSession's `start`, `turnsBefore`, `before`). Without it a session
+  // holds its whole log.
+  history?: HistoryPort
   // Notified whenever a session's activity (see SessionActivity) differs from
   // what was last reported for it: it opened, a turn started or settled, it
   // began or stopped waiting on the person, its background work started or
@@ -367,7 +446,10 @@ export interface QueueStore {
   pendingKeys?(): string[] | Promise<string[]>
 }
 
-type Subscriber = (event: ChatEvent) => void
+// `position` is where the event stands in the session's own log: absent for a
+// snapshot-prefix event, a snapshot that changed nothing, and a subagent's step
+// (whose position in its own log rides the innermost `subagent_event`).
+type Subscriber = (event: ChatEvent, position?: number) => void
 
 interface SessionModes {
   available: SessionMode[]
@@ -390,7 +472,22 @@ interface SessionState {
   // The resolved selection is kept in memory so the engine can reconnect /
   // resume without any on-disk profile store.
   selection: AgentSelection
+  // The instruction texts this session's harness was given: written for it
+  // when it opened, or named to it in a change note since. Unset for a
+  // harness without instruction files.
+  instructions?: InstructionSync
   events: ChatEvent[]
+  // The log position of `events[0]`: past 0 for a session holding only its
+  // log's tail (AgentClientOptions.history). Every position the engine hands
+  // out or takes is the log's, never an index into `events`. Unset is 0.
+  logStart?: number
+  // How many turns (`user` entries) the log has below `logStart`: what turns
+  // a fork or an edit counts are numbered after. Unset is 0.
+  turnsBefore?: number
+  // With `compactLog`: the log over `events` (the same array) and the
+  // subagents' logs. Built where a record is seeded with subagent logs, and
+  // otherwise over `events` at the first append.
+  transcript?: TranscriptLog
   subscribers: Set<Subscriber>
   // What each subscriber asked to be told when this record stops being the
   // session (see endSubscriptions). Optional because a record that survived a
@@ -474,6 +571,24 @@ interface SessionState {
   harnessTurnFailure?: SessionFailure
   harnessTurnCancelled?: boolean
   /**
+   * A Stop was sent for the running turn, and the turn has not settled yet. A
+   * call that settles `failed` in that window was stopped: a harness reports a
+   * call it cut short as failed when its protocol has no cancelled status for
+   * the client (claude-agent-acp without its v2 capability, for one).
+   */
+  stopRequested?: boolean
+  /**
+   * The harness's failure log (HarnessAdapter.failureLog) and where the
+   * running turn's read of it starts, taken as the turn starts. Unset when the
+   * harness keeps no such log or the server cannot reach it.
+   */
+  failureLogRead?: { log: TurnFailureLog; home: string; from: number }
+  /**
+   * A reply chunk held back until the turn settles, because it may be the
+   * harness's stand-in for a failure it logged (see TurnFailureLog).
+   */
+  heldFailureReply?: Extract<ChatEvent, { kind: 'agent_message' }>
+  /**
    * The connection whose process runs those turns. Their only end is a status
    * that process sends, so a process that dies must end them itself — and
    * only its own: a replacement spawned under the same key runs none of them.
@@ -556,6 +671,28 @@ interface SessionState {
   // replay carries no turn boundaries of its own, so handleUpdate reconstructs
   // them while this is set — see the `user_message_chunk` case.
   replaying?: boolean
+  // True only while a resume by reload (HarnessAdapter.resumeByReload) has the
+  // harness load this session again. The load replays history this record
+  // already holds, so handleUpdate drops the replayed kinds for the session
+  // while this is set (see REPLAYED_ON_LOAD) and lets session state through.
+  // No turn of ours runs in that span: a refresh starts only on an idle
+  // session, the reload runs inside `resuming`, which connectionForSession
+  // waits out before any call reaches the harness, and reloads of one session
+  // run one after another. A turn the harness started by itself in that span
+  // would have its transcript dropped with the replay; the engine asks for
+  // none. What the session runs on afterwards comes from the load's answer.
+  reloading?: boolean
+  // The resume in flight on a session whose adapter resumes by reload, ending
+  // with the last one queued behind it. Between its close and the end of its
+  // load the harness does not hold the session as this record does, so every
+  // call that reaches the harness for the session waits this out
+  // (connectionForSession), and a resume that arrives meanwhile runs after it
+  // (resumeInTurn).
+  resuming?: Promise<void>
+  // A resume queued behind `resuming` that has not started yet. It reads the
+  // MCP server list when it starts, so another resume asked for meanwhile
+  // joins it instead of queueing a second.
+  resumeQueued?: Promise<void>
   // Set by refreshMcpServers() when it finds this session mid-turn, instead of
   // resuming it immediately — a resume rides the same connection a live
   // prompt is streaming over. settleTurn applies the deferred resume once the
@@ -612,7 +749,7 @@ interface SessionState {
 
 interface ConnEntry {
   // Absent for the in-process native harness, which has no subprocess.
-  process?: ChildProcessWithoutNullStreams
+  process?: HarnessProcess
   connection: AgentConnection
   // The session last prompted through this connection — scopes elicitation
   // routing per connection instead of globally.
@@ -643,10 +780,10 @@ interface ConnEntry {
   // resolved.
   forkSupported: boolean
   // Whether the agent advertised `sessionCapabilities.close` at initialize
-  // (same `{}`-means-supported spelling). Read only by the opt-in MCP refresh
-  // that closes before it resumes (see HarnessAdapter.mcpRefreshReopens):
+  // (same `{}`-means-supported spelling). Read by the two opt-in resumes that
+  // close first (see HarnessAdapter.mcpRefreshReopens and resumeByReload):
   // deleteSession tries a close regardless, because a failure there costs
-  // nothing, while a refresh must not close a session it cannot say will close.
+  // nothing, while a resume must not close a session it cannot say will close.
   // Only meaningful once `initialized` has resolved.
   closeSupported?: boolean
   // Whether the agent advertised `agentCapabilities.promptCapabilities.image`
@@ -693,6 +830,13 @@ interface ClientStore {
       // Raised while a turn of its session was in flight, so it ends with
       // that turn (see cancelTurnAsks).
       turnBound: boolean
+      // Raised by a host caller that delivers the answer itself (askUser's
+      // `outlivesTurn`): neither a turn nor a harness process waits on it, so
+      // it stays open across both, a restore of its session included.
+      outlivesTurn?: boolean
+      // The event that showed it, for such an ask: shown again when a reopen
+      // rebuilds the transcript without it (see showPendingAsks).
+      shown?: Extract<ChatEvent, { kind: 'ask_user' }>
     }
   >
   // Native-harness conversation state, owned here (not in the harness closure)
@@ -837,6 +981,46 @@ function toolOutputText(content: ToolCallContent[] | null | undefined, rawOutput
   return text !== null ? stripCodeFence(text) : JSON.stringify(rawOutput, null, 2)
 }
 
+type ToolCallUpdateNotification = Extract<SessionNotification['update'], { sessionUpdate: 'tool_call_update' }>
+
+// A `tool_call_update` as the event a transcript folds. `adapter` is the
+// harness the update came from (a subagent's update: its root session's), for
+// one that settles every finished command as completed (settleCompletedCall).
+//
+// Content that only repeats the call's own `description` argument while the
+// call runs is not output. The Claude bridge sends exactly that for a Bash or
+// PowerShell call to a client without terminal output (claude-agent-acp
+// tools.js, toolInfoFromToolUse), and shown as output it read as a finished
+// command whose output was its description.
+//
+// `stopping` says a Stop was sent for the running turn (stopRequested): a call
+// that settles `failed` then was stopped, and settles `cancelled`.
+function toolUpdateEvent(
+  update: ToolCallUpdateNotification,
+  adapter?: HarnessAdapter,
+  stopping = false,
+): Extract<ChatEvent, { kind: 'tool_update' }> {
+  const output = toolOutputText(update.content, update.rawOutput)
+  const description = (update.rawInput as { description?: unknown } | null | undefined)?.description
+  const running = update.status !== 'completed' && update.status !== 'failed'
+  const restatesInput = running && output !== undefined && output === description && update.rawOutput == null
+  const settled =
+    update.status === 'completed' && output !== undefined
+      ? adapter?.settleCompletedCall?.(output)
+      : stopping && update.status === 'failed'
+        ? 'cancelled'
+        : undefined
+  return {
+    kind: 'tool_update',
+    toolCallId: update.toolCallId,
+    title: update.title ?? undefined,
+    status: settled ?? update.status ?? undefined,
+    input: update.rawInput ?? undefined,
+    output: restatesInput ? undefined : output,
+    ...toolDiffs(update.content),
+  }
+}
+
 // The file changes among a tool call's `content` blocks, as an event's
 // `diffs` — nothing when it carries none. Nothing rather than an empty list for
 // content without a diff: the tool's text result arrives in the same field,
@@ -880,6 +1064,11 @@ function endsOnSettledWork(tail: ChatEvent | undefined): boolean {
 // by createAgentClient. Module-level, like `store`, because emit() is
 // module-level and fires for every session rather than per client instance.
 let onEventHook: ((sessionId: string, event: ChatEvent, sessionKey?: string) => void) | undefined
+
+// AgentClientOptions.compactLog and onRecord, module-level for the same reason.
+let compactLog = false
+let onRecordHook: ((sessionId: string, write: LogWrite, sessionKey?: string) => void) | undefined
+let historyPort: HistoryPort | undefined
 
 // Same shape and reasoning for AgentClientOptions.onActivityChange: the
 // mutations it reports happen in module-level functions too.
@@ -1034,20 +1223,195 @@ function emit(sessionId: string, event: ChatEvent): void {
   if (!session) {
     return
   }
+  const writes = appendToLog(session, event)
+  // A subagent's header goes out as the log holds it, which carries the count
+  // of its steps; every other event goes out as it came.
+  const own = writes[0]
+  publish(sessionId, session, own?.event.kind === 'subagent' ? nestedFrame(own) : event, own)
+  // A step that added an entry to a subagent's log rewrote the subagent's
+  // header with its new count; a reader is shown the header as it now stands.
+  for (const write of writes.slice(1)) {
+    publish(sessionId, session, nestedFrame(write), write)
+  }
+  for (const write of writes) {
+    if (write.event.kind === 'subagent' && write.event.subagent.steps !== undefined) {
+      const info = session.subagents?.get(write.event.subagent.subagentSessionId)
+      if (info) {
+        info.steps = write.event.subagent.steps
+      }
+    }
+    if (onRecordHook) {
+      try {
+        onRecordHook(sessionId, write, session.meta.sessionKey)
+      } catch {}
+    }
+  }
+  // Every ask raised or settled, and every subagent or task state, is emitted.
+  reportActivity(sessionId)
+}
+
+// The writes an event makes to the session's logs. Without `compactLog` every
+// event is appended to the session's own log as it is.
+function appendToLog(session: SessionState, event: ChatEvent): LogWrite[] {
+  if (compactLog) {
+    session.transcript ??= new TranscriptLog(session.events, new Map(), { start: logStartOf(session) })
+    const writes = session.transcript.append(event)
+    evictOldTurns(session)
+    return writes
+  }
   session.events.push(event)
+  return [{ log: SESSION_LOG, position: logStartOf(session) + session.events.length - 1, event, appended: true }]
+}
+
+/**
+ * How much of a session's own log a session with a history port holds: once
+ * it holds TAIL_EVICT_AT entries, its oldest whole turns go until about
+ * TAIL_KEEP are left. The gap between the two keeps eviction to one splice
+ * per TAIL_EVICT_AT − TAIL_KEEP appends. Memory only: the host keeps every
+ * entry, and reads below the tail go through the port.
+ */
+const TAIL_KEEP = 2000
+const TAIL_EVICT_AT = 4000
+
+function logStartOf(session: SessionState): number {
+  return session.logStart ?? 0
+}
+
+// Let go of the oldest turns of a long log the host keeps. Cut at a turn's
+// start, so the tail held always begins one: nothing of a turn still open (a
+// tool call's update, a reply's run, the turn's usage) stands below it, and
+// every window over the tail holds whole records. A turn longer than the whole
+// budget is held whole until it ends.
+function evictOldTurns(session: SessionState): void {
+  const { events, transcript } = session
+  if (!historyPort || !session.meta.sessionKey || !transcript || events.length < TAIL_EVICT_AT) {
+    return
+  }
+  let cut = -1
+  for (let i = events.length - TAIL_KEEP; i > 0; i--) {
+    if (events[i].kind === 'user') {
+      cut = i
+      break
+    }
+  }
+  if (cut <= 0) {
+    return
+  }
+  let turns = 0
+  for (let i = 0; i < cut; i++) {
+    if (events[i].kind === 'user') {
+      turns += 1
+    }
+  }
+  const start = logStartOf(session) + cut
+  transcript.evictBefore(start)
+  session.logStart = start
+  session.turnsBefore = (session.turnsBefore ?? 0) + turns
+}
+
+// A session's own log as a reader: what it holds, and below that what the
+// host keeps, when there is a port to read it through.
+function sessionLogReader(sessionId: string, session: SessionState): LogReader {
+  const start = logStartOf(session)
+  const held = arrayLogReader(session.events, start)
+  const port = session.meta.sessionKey ? historyPort : undefined
+  if (!port || start === 0) {
+    return held
+  }
+  return {
+    end: held.end,
+    read: async (from, to) => {
+      const own = await held.read(from, to)
+      if (from >= start) {
+        return own
+      }
+      const below = contiguous(await port.read(sessionId, SESSION_LOG, from, Math.min(to, start)), Math.min(to, start))
+      return below.events.length === 0 ? own : { start: below.start, events: [...below.events, ...own.events] }
+    },
+    turnStartBefore: async (position) =>
+      (await held.turnStartBefore(position)) ??
+      (position > 0 ? port.turnStartBefore(sessionId, SESSION_LOG, Math.min(position, start)) : null),
+  }
+}
+
+// A subagent's log as a reader: the engine's when it holds the log, else the
+// host's through the port. Null when neither knows the subagent.
+async function subagentLogReader(sessionId: string, subagentSessionId: string): Promise<LogReader | null> {
+  const held = subagentLog(sessionId, subagentSessionId)
+  const session = store.sessions.get(sessionId)
+  const port = session?.meta.sessionKey ? historyPort : undefined
+  if (held && (held.length > 0 || !port)) {
+    return arrayLogReader(held)
+  }
+  if (!compactLog || !session || !port) {
+    return held ? arrayLogReader(held) : null
+  }
+  const end = await port.end(sessionId, subagentSessionId)
+  if (end === 0 && !held) {
+    return null
+  }
+  return {
+    end,
+    read: async (from, to) => contiguous(await port.read(sessionId, subagentSessionId, from, to), to),
+    turnStartBefore: (position) => port.turnStartBefore(sessionId, subagentSessionId, position),
+  }
+}
+
+// Hands one frame to the subscribers and the host's observer, with where it
+// landed: its position in the session's log, or for a subagent's step its
+// position in that subagent's log, on the innermost wrapper.
+function publish(sessionId: string, session: SessionState, event: ChatEvent, write: LogWrite | undefined): void {
+  const inSession = write?.log === SESSION_LOG
+  const frame = write && !inSession ? atPosition(event, write.position) : event
   session.meta.lastActivityAt = Date.now()
   for (const subscriber of session.subscribers) {
-    subscriber(event)
+    subscriber(frame, inSession ? write.position : undefined)
   }
   // After the subscribers, so a slow or throwing host observer can never delay
   // or break delivery to the actual clients of the stream.
   if (onEventHook) {
     try {
-      onEventHook(sessionId, event, session.meta.sessionKey)
+      onEventHook(sessionId, frame, session.meta.sessionKey)
     } catch {}
   }
-  // Every ask raised or settled, and every subagent or task state, is emitted.
-  reportActivity(sessionId)
+}
+
+// A subagent's step with its position set on the innermost wrapper.
+function atPosition(event: ChatEvent, position: number): ChatEvent {
+  if (event.kind !== 'subagent_event') {
+    return event
+  }
+  return event.event.kind === 'subagent_event'
+    ? { ...event, event: atPosition(event.event, position) }
+    : { ...event, position }
+}
+
+// The frame for an entry of a subagent's log that no event of its own
+// brought: the entry, wrapped as a step of the subagents above it.
+function nestedFrame(write: LogWrite): ChatEvent {
+  return write.log === SESSION_LOG ? write.event : nestUnder(subagentRoute(write.log).chain, write.event)
+}
+
+// Close the last turn of a recorded transcript a session was just seeded with,
+// when the recording does not close it itself.
+//
+// A log that ends mid-turn is a session whose process stopped while it was
+// working, and nothing is coming to close it — the client would sit "waiting"
+// forever on a turn that ended when the process did. A log that already ends on
+// a boundary needs nothing, which is also what makes reopening the same session
+// twice idempotent.
+//
+// Read off what was RECORDED rather than off the seeded array: the closures
+// restorableEvents appends are bookkeeping about a dead process, and letting
+// them stand as the transcript's tail would both hide a boundary that is there
+// and report every such session as interrupted.
+function closeRecordedTurn(sessionId: string, recorded: readonly ChatEvent[]): void {
+  if (recorded.at(-1)?.kind !== 'turn_end') {
+    emit(sessionId, {
+      kind: 'turn_end',
+      stopReason: endsOnSettledWork(lastConversationEvent([...recorded])) ? 'replayed' : 'resumed',
+    })
+  }
 }
 
 // Turns actually running: prompts of ours and turns the harness started. The
@@ -1059,6 +1423,98 @@ function runningTurns(session: SessionState): number {
 
 function hasTurnInFlight(sessionId: string): boolean {
   return (store.sessions.get(sessionId)?.activeTurns ?? 0) > 0
+}
+
+// A subagent's own log (`compactLog`), empty for one the session knows that
+// has taken no step yet. Undefined for an unknown session or subagent, and
+// without `compactLog`.
+function subagentLog(sessionId: string, subagentSessionId: string): ChatEvent[] | undefined {
+  const session = store.sessions.get(sessionId)
+  if (!compactLog || !session) {
+    return undefined
+  }
+  const log = session.transcript?.entries(subagentSessionId)
+  return log ?? (session.subagents?.has(subagentSessionId) ? [] : undefined)
+}
+
+/**
+ * How a recorded log seeds a session, besides its entries (restoreSession,
+ * createSession's history).
+ *
+ * - `subagentLogs`: with `compactLog`, each subagent's own log as recorded,
+ *   by subagent session id. A host with a history port need give only the
+ *   ones still taking steps; the others are read through the port.
+ * - `start`: the log position of the first entry given, for a host giving
+ *   only its log's tail (AgentClientOptions.history). A turn's start: the
+ *   tail is cut at one.
+ * - `turnsBefore`: how many `user` entries the log has below `start`.
+ * - `before`: entries below `start` the session's state still comes from,
+ *   with their positions, oldest first: the newest of each state kind (modes,
+ *   a mode change, config options, commands, title, plan, usage), and every
+ *   subagent, background task and compaction not ended.
+ */
+export interface RecordedLogOpts {
+  subagentLogs?: ReadonlyMap<string, readonly ChatEvent[]>
+  start?: number
+  turnsBefore?: number
+  before?: readonly PlacedEntry[]
+}
+
+// What a recorded log's closures (restorableEvents) add past its end: never
+// emitted, so handed to the host here, or the next entry would be recorded
+// past a gap and the stored log would no longer be the one held.
+function recordClosures(sessionId: string, session: SessionState, recorded: number, seeded: number): void {
+  const start = logStartOf(session)
+  for (let i = recorded; i < seeded; i++) {
+    const write: LogWrite = { log: SESSION_LOG, position: start + i, event: session.events[i], appended: true }
+    try {
+      onRecordHook?.(sessionId, write, session.meta.sessionKey)
+    } catch {}
+  }
+}
+
+// A host's recorded subagent logs, copied for a session to append to; none
+// without `compactLog`, whose subagent steps are in the session's own log.
+function recordedSubagentLogs(logs: ReadonlyMap<string, readonly ChatEvent[]> | undefined): Map<string, ChatEvent[]> {
+  return new Map(compactLog ? [...(logs ?? [])].map(([id, log]) => [id, [...log]]) : [])
+}
+
+// The subagent logs a fork cut at log position `cut` keeps, copied: every log
+// the source holds but those of the subagents spawned at or after the cut, and
+// of the ones they spawned. A subagent spawned after the fork point is not the
+// fork's.
+function keptSubagentLogs(source: TranscriptLog | undefined, cut: number): Map<string, ChatEvent[]> {
+  const logs = new Map<string, ChatEvent[]>()
+  if (!source) {
+    return logs
+  }
+  const dropped = source.subagentsFrom(cut)
+  for (const [id, log] of source.subagentLogs()) {
+    if (!dropped.has(id)) {
+      logs.set(id, [...log])
+    }
+  }
+  return logs
+}
+
+// The tool call a permission request is about, as the harness announced it in
+// this session's transcript (a subagent's calls included), or undefined when
+// it asked without announcing one. Searched from the end: the request follows
+// its announcement closely. A subagent's call is in that subagent's own log
+// when the session keeps one (`subagentId`, the subagent that asked).
+function announcedToolCall(sessionId: string, toolCallId: string, subagentId?: string): AnnouncedToolCall | undefined {
+  const session = store.sessions.get(sessionId)
+  const events = (subagentId ? session?.transcript?.entries(subagentId) : undefined) ?? session?.events ?? []
+  for (let index = events.length - 1; index >= 0; index--) {
+    let event = events[index]
+    while (event?.kind === 'subagent_event') {
+      event = event.event
+    }
+    if (event?.kind === 'tool_call' && event.toolCallId === toolCallId) {
+      return { title: event.title, name: event.name }
+    }
+  }
+  return undefined
 }
 
 // An ask raised inside a turn belongs to that turn: once the turn has ended or
@@ -1089,7 +1545,35 @@ function cancelTurnAsks(sessionId: string): void {
     if (pending.sessionId === sessionId && pending.turnBound) {
       store.pendingElicitations.delete(requestId)
       pending.resolve({ action: 'cancel' })
-      emit(sessionId, { kind: 'ask_user_resolved', requestId })
+      emit(sessionId, { kind: 'ask_user_resolved', requestId, outcome: 'turn_ended' })
+    }
+  }
+}
+
+// Show again each question of a reopened session that this process still
+// holds open for a host caller (askUser's `outlivesTurn`) but whose card the
+// rebuilt transcript lacks. A replay (loadSession) rebuilds it from the
+// harness's own history, which never held a question the host raised, and a
+// recording can have aged it out. Without this the question stays pending,
+// and its caller waiting, with nothing on screen to answer it. A transcript
+// that still shows it open is left as it is, which keeps a second reopen from
+// showing it twice.
+function showPendingAsks(sessionId: string): void {
+  const session = store.sessions.get(sessionId)
+  if (!session) {
+    return
+  }
+  const open = new Set<string>()
+  for (const event of session.events) {
+    if (event.kind === 'ask_user') {
+      open.add(event.requestId)
+    } else if (event.kind === 'ask_user_resolved') {
+      open.delete(event.requestId)
+    }
+  }
+  for (const [requestId, pending] of store.pendingElicitations) {
+    if (pending.sessionId === sessionId && pending.shown && !open.has(requestId)) {
+      emit(sessionId, pending.shown)
     }
   }
 }
@@ -1156,6 +1640,22 @@ function withSnapshotPrefix(session: SessionState, windowed: ChatEvent[]): ChatE
   for (const task of session.asyncTasks?.values() ?? []) {
     if ((task.state === 'running' || task.state === 'paused') && !has('async_task')) {
       prefix.push({ kind: 'async_task', task: { ...task } })
+    }
+  }
+  // Running subagents, for the same reason, when their steps live in logs of
+  // their own: a window that starts below a spawn holds neither the header nor
+  // a step that would place one. Each comes as its header, nested under the
+  // subagents above it; spawn order puts a parent before its children.
+  if (compactLog) {
+    const placed = new Set(
+      windowed.flatMap((event) => (event.kind === 'subagent' ? [event.subagent.subagentSessionId] : [])),
+    )
+    for (const subagent of session.subagents?.values() ?? []) {
+      if (subagent.state === undefined && !placed.has(subagent.subagentSessionId)) {
+        const parentId = store.subagentParents.get(subagent.subagentSessionId)
+        const chain = parentId && store.subagentParents.has(parentId) ? subagentRoute(parentId).chain : []
+        prefix.push(nestUnder(chain, { kind: 'subagent', subagent: { ...subagent } }))
+      }
     }
   }
   // Only when it is not the default, matching every line above: absent means
@@ -1243,7 +1743,11 @@ function toolName(update: Record<string, unknown>): { name?: string } {
 // session-state kinds (modes, config, usage, …) describe the CHILD session,
 // which holds no state of its own here, and folding them into the parent
 // would overwrite the parent's.
-function childEventOf(update: SessionNotification['update']): ChatEvent | null {
+function childEventOf(
+  update: SessionNotification['update'],
+  adapter?: HarnessAdapter,
+  stopping = false,
+): ChatEvent | null {
   switch (update.sessionUpdate) {
     case 'user_message_chunk': {
       // Same rule as the parent's own user chunks (see isTaskNotification): a
@@ -1269,15 +1773,7 @@ function childEventOf(update: SessionNotification['update']): ChatEvent | null {
         ...toolDiffs(update.content),
       }
     case 'tool_call_update':
-      return {
-        kind: 'tool_update',
-        toolCallId: update.toolCallId,
-        title: update.title ?? undefined,
-        status: update.status ?? undefined,
-        input: update.rawInput ?? undefined,
-        output: toolOutputText(update.content, update.rawOutput),
-        ...toolDiffs(update.content),
-      }
+      return toolUpdateEvent(update, adapter, stopping)
     default:
       return null
   }
@@ -1542,12 +2038,85 @@ export function interceptDraftSessionUpdates(stream: Stream): Stream {
   }
 }
 
+// The failure log a session's harness keeps, opened at its current end, when
+// the server can read it: under a host spawn's home, resolved the way the
+// spawn creates it (against the spawn's cwd). A harness placed in a container
+// or behind a shell keeps its home there, so its failures stay the reply text
+// it sent.
+function failureLogFrom(sessionId: string, selection: AgentSelection): SessionState['failureLogRead'] {
+  const adapter = findAdapter(selection.adapterId)
+  if (!adapter?.failureLog || !adapter.homeEnv || harnessPlacement(selection).kind !== 'host') {
+    return undefined
+  }
+  const log = TURN_FAILURE_LOGS[adapter.failureLog]
+  const home = resolvePath(selection.cwd || '.', harnessHomeDir(adapter, selection))
+  return { log, home, from: log.mark(home, sessionId) }
+}
+
+// Updates that put something in the transcript after a held reply, which is
+// then not the turn's last word and is delivered in its place in the order.
+const RELEASES_HELD_REPLY = new Set(['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan'])
+
+function releaseHeldReply(sessionId: string, session: SessionState): void {
+  const held = session.heldFailureReply
+  session.heldFailureReply = undefined
+  if (held) {
+    emit(sessionId, held)
+  }
+}
+
+// What a settled turn makes of its held reply: the failure the harness logged
+// for it when the log holds one sent as exactly that text, so the turn ends
+// with the failure in its place; otherwise the reply is delivered as it came.
+// A turn that did not end normally (cancelled, or the prompt failed) is not
+// looked up.
+function settleHeldReply(sessionId: string, session: SessionState, stopReason?: string): SessionFailure | undefined {
+  const held = session.heldFailureReply
+  const source = session.failureLogRead
+  session.heldFailureReply = undefined
+  session.failureLogRead = undefined
+  if (!held) {
+    return undefined
+  }
+  const logged = stopReason === 'end_turn' && source ? source.log.read(source.home, sessionId, source.from) : undefined
+  if (logged && logged.reply === held.text) {
+    return logged.failure
+  }
+  emit(sessionId, held)
+  return undefined
+}
+
+// The kinds a session/load re-delivers as history: the conversation, plan,
+// compactions and draft subagent and task kinds, and the mode changes in it,
+// whose current value the load's answer carries. A resume by reload drops
+// these (see SessionState.reloading). The rest is session state the reloaded
+// session announces as it opens, and passes. Measured 2026-10-12 on Copilot
+// 1.0.95, closing and loading a live session with a changed MCP server list,
+// and loading it on a new process: user and agent message chunks, tool_call,
+// tool_call_update and current_mode_update arrived before the load's answer,
+// and two available_commands_update after it.
+const REPLAYED_ON_LOAD = new Set([
+  'user_message_chunk',
+  'agent_message_chunk',
+  'agent_thought_chunk',
+  'tool_call',
+  'tool_call_update',
+  'plan',
+  'current_mode_update',
+  'compaction_update',
+  'compaction_summary_chunk',
+  ...DRAFT_SESSION_UPDATE_KINDS,
+])
+
 // Dispatches an inbound session/update notification to store state + a
 // ChatEvent. Exported so tests can drive it directly — the real caller is the
 // ACP Client wired up per spawned connection (buildClient below), which test
 // mocks bypass entirely by seeding store.connections with a fake AgentConnection.
 export function handleUpdate(notification: SessionNotification): void {
   const { sessionId, update } = notification
+  if (store.sessions.get(subagentRoute(sessionId).rootId)?.reloading && REPLAYED_ON_LOAD.has(update.sessionUpdate)) {
+    return
+  }
   // Draft update kinds (subagents, async tasks — ACP #1992 / AIR) aren't in
   // the SDK's typed union yet; recognized by name ahead of the switch below.
   if (handleExtensionUpdate(sessionId, update as unknown as Record<string, unknown> & { sessionUpdate: string })) {
@@ -1572,11 +2141,16 @@ export function handleUpdate(notification: SessionNotification): void {
   // that subagent's transcript, nested into the session's log — the session
   // is what a subscriber is actually watching.
   if (route.chain.length > 0) {
-    const childEvent = childEventOf(update)
+    const root = store.sessions.get(route.rootId)
+    const childEvent = childEventOf(update, findAdapter(root?.selection.adapterId ?? ''), root?.stopRequested === true)
     if (childEvent) {
       emit(route.rootId, nestUnder(route.chain, childEvent))
     }
     return
+  }
+  const holding = store.sessions.get(sessionId)
+  if (holding?.heldFailureReply && RELEASES_HELD_REPLY.has(update.sessionUpdate)) {
+    releaseHeldReply(sessionId, holding)
   }
   switch (update.sessionUpdate) {
     case 'user_message_chunk': {
@@ -1613,7 +2187,18 @@ export function handleUpdate(notification: SessionNotification): void {
       break
     }
     case 'agent_message_chunk': {
-      emit(sessionId, { kind: 'agent_message', text: textOf(update.content), ...chunkMessageId(update) })
+      const event: Extract<ChatEvent, { kind: 'agent_message' }> = {
+        kind: 'agent_message',
+        text: textOf(update.content),
+        ...chunkMessageId(update),
+      }
+      // Held only while a live turn of ours can settle it: a replay is history.
+      const source = holding?.failureLogRead
+      if (holding && source && !holding.replaying && event.text.startsWith(source.log.replyPrefix)) {
+        holding.heldFailureReply = event
+        break
+      }
+      emit(sessionId, event)
       break
     }
     case 'agent_thought_chunk': {
@@ -1634,15 +2219,10 @@ export function handleUpdate(notification: SessionNotification): void {
       break
     }
     case 'tool_call_update': {
-      emit(sessionId, {
-        kind: 'tool_update',
-        toolCallId: update.toolCallId,
-        title: update.title ?? undefined,
-        status: update.status ?? undefined,
-        input: update.rawInput ?? undefined,
-        output: toolOutputText(update.content, update.rawOutput),
-        ...toolDiffs(update.content),
-      })
+      emit(
+        sessionId,
+        toolUpdateEvent(update, findAdapter(holding?.selection.adapterId ?? ''), holding?.stopRequested === true),
+      )
       break
     }
     case 'plan': {
@@ -1664,11 +2244,7 @@ export function handleUpdate(notification: SessionNotification): void {
       break
     }
     case 'current_mode_update': {
-      const session = store.sessions.get(sessionId)
-      if (session?.modes) {
-        session.modes.current = update.currentModeId
-      }
-      emit(sessionId, { kind: 'mode_changed', current: update.currentModeId })
+      recordModeChange(sessionId, update.currentModeId)
       break
     }
     case 'usage_update': {
@@ -2023,7 +2599,14 @@ export function buildClient(
       // async, and a turn that ends while it decides would otherwise make an
       // in-turn request look like one raised between turns.
       const turnBound = hasTurnInFlight(sessionId)
-      const outcome = permissionHandler ? await permissionHandler(permissionContext(request, mcpServerName)) : 'prompt'
+      const outcome = permissionHandler
+        ? await permissionHandler(
+            permissionContext(request, mcpServerName, {
+              announced: announcedToolCall(sessionId, request.toolCall.toolCallId, route.chain[0]),
+              naming: findAdapter(store.sessions.get(sessionId)?.selection.adapterId ?? '')?.mcpToolNaming,
+            }),
+          )
+        : 'prompt'
       if (outcome === 'allow') {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
       }
@@ -2107,7 +2690,7 @@ export function buildClient(
         if (pending.elicitationId !== undefined && pending.elicitationId === notification.elicitationId) {
           store.pendingElicitations.delete(requestId)
           pending.resolve({ action: 'accept' })
-          emit(pending.sessionId, { kind: 'ask_user_resolved', requestId })
+          emit(pending.sessionId, { kind: 'ask_user_resolved', requestId, outcome: 'answered' })
           break
         }
       }
@@ -2161,8 +2744,8 @@ function configOptionRequest(
 
 // A live connection's identity: everything that makes two harness processes
 // different — the spawn config, and for an adapter that authenticates after
-// initialize, the inputs of that request (endpoint and key), which are not all
-// part of the spawn. It is a DIGEST, never the material itself: the spawn env
+// initialize, the inputs of that request (endpoint, key and headers), which are
+// not all part of the spawn. It is a DIGEST, never the material itself: the spawn env
 // and the auth inputs carry the profile's key, and this string is a map key
 // that diagnostics print. Exported so tests can seed a connection under the
 // key the engine will look up.
@@ -2172,16 +2755,22 @@ export function connectionKey(selection: AgentSelection): string {
 
 function digestKey(config: SpawnConfig, selection: AgentSelection): string {
   const auth = findAdapter(selection.adapterId)?.authenticate
-    ? { providerId: selection.providerId, baseUrl: selection.baseUrl ?? '', apiKey: selection.apiKey }
+    ? {
+        providerId: selection.providerId,
+        baseUrl: selection.baseUrl ?? '',
+        apiKey: selection.apiKey,
+        headers: selection.headers ?? {},
+      }
     : undefined
   return createHash('sha256').update(JSON.stringify({ config, auth })).digest('hex')
 }
 
-// The values a connection must never let past the wire: the selection's key.
+// The values a connection must never let past the wire: the selection's key,
+// and its request header values, any of which may be a credential.
 // Too-short values are left alone — redacting a 2-character "key" would mangle
 // ordinary text and protect nothing.
 function secretsOf(selection: AgentSelection): string[] {
-  return selection.apiKey && selection.apiKey.length >= 8 ? [selection.apiKey] : []
+  return [selection.apiKey, ...Object.values(selection.headers ?? {})].filter((value) => value && value.length >= 8)
 }
 
 function redact(text: string, secrets: string[]): string {
@@ -2312,10 +2901,16 @@ function mcpTransportAccepted(server: AcpMcpServer, capabilities: ConnEntry['mcp
 // change. codex-acp 1.13.1 answers session/set_mode with `{}` and pushes neither
 // current_mode_update nor config_option_update (src/CodexAcpServer.ts
 // setSessionMode), so without these two the dial and the mode list disagree
-// until the session is reopened. Each side is only written with a value the
-// other already offers, so this never invents a state the agent did not list.
+// until the session is reopened. The same holds for a change the agent makes
+// itself: Copilot 1.0.95 reports `/autopilot on` as current_mode_update and
+// sends config_option_update only when its `allow_all` option changes with
+// the mode, so with `allow_all` already on, the `mode` option it last
+// reported still names the previous mode. Each side is only written with a
+// value the other already offers, so this never invents a state the agent
+// did not list.
 
-// A successful session/set_mode, recorded on both sides.
+// A successful session/set_mode or an agent's current_mode_update, recorded
+// on both sides.
 function recordModeChange(sessionId: string, modeId: string): void {
   const session = store.sessions.get(sessionId)
   if (session?.modes) {
@@ -2504,22 +3099,41 @@ function supportsTools(selection: AgentSelection): boolean {
 // invalidParams. Both bridges therefore also accept the message by content —
 // `messageFingerprint`, and `messageOccurrence` to tell identical texts apart
 // — and fall back to it when the id misses. See agentMessageFingerprint.
-function forkCutoffMeta(
-  session: { events: ChatEvent[] },
-  boundary: number | null,
-): Record<string, unknown> | undefined {
+//
+// `boundary` is the cut's position in the session's whole log, and the log is
+// read through `log` from its first entry: the harness counts identical texts
+// along its whole thread, so the occurrence is counted below the tail the
+// session holds as well, and the anchor may lie below it. A turn the host has
+// trimmed is still in the harness's thread but no longer in the log, so a
+// duplicate inside it goes uncounted; the message id, which the harness tries
+// first, is unaffected.
+async function forkCutoffMeta(log: LogReader, boundary: number | null): Promise<Record<string, unknown> | undefined> {
   if (boundary === null) {
     return undefined
   }
-  for (let i = boundary - 1; i >= 0; i -= 1) {
-    const event = session.events[i]
-    if (event.kind === 'agent_message' && event.messageId) {
-      const fingerprint = agentMessageFingerprint(session.events, i, event.messageId)
-      return { jetbrains: { air: { fork: { version: 1, messageId: event.messageId, ...fingerprint } } } }
+  // Message ids in first-appearance order, each with its joined text. The
+  // anchor is the last agent message before the cut, and the cut is a user
+  // turn, so the anchor's own chunks all lie before it.
+  const texts = new Map<string, string>()
+  let anchorId: string | undefined
+  for (let from = 0; from < boundary; from += FORK_SCAN_SPAN) {
+    const page = await log.read(from, Math.min(boundary, from + FORK_SCAN_SPAN))
+    for (const event of page.events) {
+      if (event.kind === 'agent_message' && event.messageId) {
+        texts.set(event.messageId, (texts.get(event.messageId) ?? '') + event.text)
+        anchorId = event.messageId
+      }
     }
   }
-  return undefined
+  if (anchorId === undefined) {
+    return undefined
+  }
+  const fingerprint = agentMessageFingerprint(texts, anchorId)
+  return { jetbrains: { air: { fork: { version: 1, messageId: anchorId, ...fingerprint } } } }
 }
+
+// How much of the log forkCutoffMeta reads at a time: one held tail's worth.
+const FORK_SCAN_SPAN = TAIL_KEEP
 
 // The content half of a fork point: which agent message, by what it said.
 //
@@ -2536,22 +3150,12 @@ function forkCutoffMeta(
 // Chunks without a message id are skipped rather than guessed into a message:
 // neither harness can be matched against them (codex stamps every item, the
 // Claude bridge groups by id), and counting them would shift the occurrence
-// of every later duplicate.
+// of every later duplicate. `texts` holds every message up to the anchor, by
+// id in first-appearance order, each with its joined text.
 function agentMessageFingerprint(
-  events: readonly ChatEvent[],
-  anchorIndex: number,
+  texts: ReadonlyMap<string, string>,
   anchorId: string,
 ): { messageFingerprint: string; messageOccurrence: number } {
-  // Message ids in first-appearance order, each with its joined text. The
-  // anchor's own chunks all lie at or before anchorIndex: it is the last
-  // agent message before the cut, and the cut is a user turn.
-  const texts = new Map<string, string>()
-  for (let i = 0; i <= anchorIndex; i += 1) {
-    const event = events[i]
-    if (event.kind === 'agent_message' && event.messageId) {
-      texts.set(event.messageId, (texts.get(event.messageId) ?? '') + event.text)
-    }
-  }
   const anchorText = texts.get(anchorId) ?? ''
   let occurrence = 0
   for (const [messageId, text] of texts) {
@@ -2670,7 +3274,10 @@ function hasLiveBackgroundWork(session: SessionState): boolean {
  * wherever the harness supports it.
  */
 function steersMidTurn(session: SessionState): boolean {
-  return session.presence.kind === 'realtime' && supportsMidTurnInput(session.selection) && !isCompacting(session)
+  return (
+    effectivePresence(session.presence, supportsMidTurnInput(session.selection)).kind === 'realtime' &&
+    !isCompacting(session)
+  )
 }
 
 /** Whether an adapter's harness is verified to send ACP elicitations — see
@@ -2709,6 +3316,9 @@ const EXIT_GRACE_MS = 200
 
 export function createAgentClient(options: AgentClientOptions = {}) {
   onEventHook = options.onEvent
+  compactLog = options.compactLog === true
+  onRecordHook = options.onRecord
+  historyPort = options.history
   onActivityChangeHook = options.onActivityChange
   onCompactionHook = options.onCompaction
   onHarnessTurnEndHook = (sessionId, signal) => endHarnessTurns(sessionId, signal)
@@ -2772,14 +3382,46 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // left out and returned as `dropped`: codex-acp, for one, rejects the WHOLE
   // session request over a single `sse` entry. The caller reports them in the
   // session (reportDroppedMcp) so a missing server is never silent.
+  // Refuses, naming the shell and what it lacks, when the adapter's launcher
+  // is not on the shell's PATH (launcher-check.ts). A probe that could not
+  // run says nothing about the launcher and is left to the spawn to report.
+  async function requireLauncher(shellId: string, adapterId: string): Promise<void> {
+    let missing: string[]
+    try {
+      missing = await missingLauncherCommands(placedShell({ kind: 'shell', shell: shellId }, options.shells), adapterId)
+    } catch {
+      return
+    }
+    if (missing.length > 0) {
+      const shell = options.shells?.(shellId)
+      const where = (await shell?.describe?.().catch(() => undefined)) ?? `shell '${shellId}'`
+      throw new ActionRequiredError(missingLauncherMessage(missing, where))
+    }
+  }
+
+  function shellOf(id: string): RemoteShell {
+    const shell = options.shells?.(id)
+    if (!shell) {
+      throw new Error(`The shell '${id}' this agent runs through is not known to this server.`)
+    }
+    return shell
+  }
+
   async function buildMcpServers(
     selection: AgentSelection,
   ): Promise<{ internal: AcpMcpServer; servers: AcpMcpServer[]; dropped: AcpMcpServer[] }> {
     const rawUrl = await mcp.ensureUrl()
-    // A containerized harness reaches the internal server via `docker exec`
-    // (see resolve.ts wrapInDocker), so the loopback address it was given has
-    // to be swapped for one that sibling container can actually resolve.
-    const url = selection.containerName ? containerReachableMcpUrl(rawUrl) : rawUrl
+    // A harness placed elsewhere cannot reach this process's loopback: a
+    // container started by `docker exec` (see resolve.ts wrapInDocker) gets an
+    // address that sibling container can resolve, and a harness behind a
+    // shell the address its shell names.
+    const placement = harnessPlacement(selection)
+    const url =
+      placement.kind === 'shell'
+        ? shellOf(placement.shell).mcpUrl(rawUrl)
+        : placement.kind === 'container'
+          ? containerReachableMcpUrl(rawUrl)
+          : rawUrl
     const internal: AcpMcpServer = {
       type: 'http',
       name: mcpServerName,
@@ -2806,6 +3448,94 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     })
   }
 
+  const instructionSidecar = options.instructionFileSidecar ?? DEFAULT_INSTRUCTION_SIDECAR
+  const instructionChangeNote = options.instructionChangeNote ?? defaultInstructionChangeNote
+
+  // The host's instruction texts for a selection whose harness reads files,
+  // or undefined: no hook, a harness without files, or nothing to write. A
+  // failed read is answered as a problem to report, never thrown, because a
+  // session opens without its instructions rather than not at all.
+  async function loadInstructionTexts(selection: AgentSelection): Promise<InstructionTexts | string | undefined> {
+    if (!options.loadInstructionFiles || findAdapter(selection.adapterId)?.instructions?.channel !== 'files') {
+      return undefined
+    }
+    try {
+      return await options.loadInstructionFiles(selection)
+    } catch (error) {
+      return `The instruction texts could not be read: ${errorMessage(error)}. The session started without them.`
+    }
+  }
+
+  // Write a selection's instruction files before a session request opens it.
+  async function openInstructionFiles(selection: AgentSelection): Promise<InstructionSync | undefined> {
+    const texts = await loadInstructionTexts(selection)
+    if (typeof texts === 'string') {
+      return { digests: { shared: '', agent: '' }, placed: [], problems: [texts] }
+    }
+    return texts
+      ? writeInstructionFiles(selection, texts, instructionSidecar, fileAccessFor(selection, options.shells))
+      : undefined
+  }
+
+  function reportInstructionProblems(sessionId: string, sync: InstructionSync | undefined): void {
+    for (const message of sync?.problems ?? []) {
+      emit(sessionId, { kind: 'error', message })
+    }
+  }
+
+  /**
+   * Bring a live session's instructions up to date before a prompt of its
+   * own, and answer the note to send ahead of it, if any. A text that changed
+   * since the session last saw it is written again; a file of it that the
+   * harness reads once per session is named in the note, since nothing else
+   * tells the harness to read it again. The session then counts as having
+   * seen the new text. A harness taking its instructions as a system prompt
+   * gets the new prompt on its selection instead, which it reads every turn.
+   */
+  async function refreshInstructions(sessionId: string, session: SessionState): Promise<ContentBlock | undefined> {
+    if (isNativeSelection(session.selection)) {
+      const texts = await options.loadInstructionFiles?.(session.selection).catch(() => undefined)
+      if (texts?.systemPrompt !== undefined && texts.systemPrompt !== session.selection.systemPrompt) {
+        session.selection = { ...session.selection, systemPrompt: texts.systemPrompt }
+      }
+      return undefined
+    }
+    const known = session.instructions
+    const texts = known ? await loadInstructionTexts(session.selection) : undefined
+    if (!known || !texts) {
+      return undefined
+    }
+    if (typeof texts === 'string') {
+      emit(sessionId, { kind: 'error', message: texts })
+      return undefined
+    }
+    const changed = (['shared', 'agent'] as InstructionRole[]).filter(
+      (role) => instructionDigest(texts[role] ?? '') !== known.digests[role],
+    )
+    if (changed.length === 0) {
+      return undefined
+    }
+    const synced = await writeInstructionFiles(
+      session.selection,
+      texts,
+      instructionSidecar,
+      fileAccessFor(session.selection, options.shells),
+    )
+    if (!synced || store.sessions.get(sessionId) !== session) {
+      return undefined
+    }
+    reportInstructionProblems(sessionId, synced)
+    session.instructions = synced
+    // Where the text is now, and where it was: a text emptied since has no
+    // file left, which the harness still remembers reading.
+    const paths = new Set(
+      [...known.placed, ...synced.placed]
+        .filter((entry) => entry.rereads === 'session' && changed.includes(entry.role))
+        .map((entry) => entry.path),
+    )
+    return paths.size > 0 ? deliveryNoteBlock(instructionChangeNote([...paths])) : undefined
+  }
+
   // Tag the internal server entry with a per-session token so the MCP server can
   // apply that session's permissions. Other entries are untouched.
   function tagInternal(internal: AcpMcpServer, servers: AcpMcpServer[], token: string): AcpMcpServer[] {
@@ -2824,17 +3554,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // agent mints for the fork. A harness that ignores them here (see
   // forkNeedsResume) is handed them again by the resume that opens the fork,
   // under a token of their own, and this one is retired then. `boundary` is
-  // the event-log index the cutoff names (null = no cutoff); see
-  // forkCutoffMeta for how it travels.
+  // the position in the session's log, read through `log`, that the cutoff
+  // names (null = no cutoff); see forkCutoffMeta for how it travels.
   async function forkExternalSession(
     session: SessionState,
     entry: ConnEntry | undefined,
+    log: LogReader,
     boundary: number | null,
   ): Promise<Awaited<ReturnType<AgentConnection['unstable_forkSession']>>> {
     const selection = session.selection
     if (entry?.forkSupported !== true) {
       throw new Error('Forking is only supported by the in-process native harness.')
     }
+    const cutoff = await forkCutoffMeta(log, boundary)
     let token: string | null = null
     let mcpServers: AcpMcpServer[] = []
     if (supportsTools(selection)) {
@@ -2851,7 +3583,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           sessionId: session.meta.id,
           cwd: selection.cwd,
           mcpServers,
-          _meta: forkCutoffMeta(session, boundary),
+          _meta: cutoff,
         }),
       )
       if (token) {
@@ -2885,10 +3617,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (isNativeSelection(selection)) {
       return ensureNativeConnection(selection)
     }
-    const spawnConfig = buildSpawnConfig(selection)
-    const key = digestKey(spawnConfig, selection)
     const adapter = findAdapter(selection.adapterId)
     const secrets = secretsOf(selection)
+    // Before anything is spawned or reused: a profile the harness cannot run
+    // on is refused with what it lacks, not with the harness's own failure.
+    try {
+      adapter?.checkSelection?.(findProvider(selection.providerId), selection)
+    } catch (error) {
+      throw redactedError(error, secrets)
+    }
+    const spawnConfig = buildSpawnConfig(selection)
+    const key = digestKey(spawnConfig, selection)
     // One live harness subprocess per distinct spawn config. Distinct profiles
     // (different harness/model/cwd) keep their own connection so their sessions
     // run concurrently in the background; identical configs share one
@@ -2900,8 +3639,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return existing.connection
     }
     // A host spawn's required directories (a harness home) are created here,
-    // against the harness's own workdir; a container spawn creates its own
-    // inside the container (resolve.ts wrapInDocker carries none out).
+    // against the harness's own workdir; a container or shell spawn creates
+    // its own where it runs (resolve.ts placedArgv carries none out).
     for (const dir of spawnConfig.ensureDirs ?? []) {
       await mkdir(resolvePath(spawnConfig.cwd || '.', dir), { recursive: true })
     }
@@ -2911,17 +3650,32 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       await raced.initialized
       return raced.connection
     }
-    const child = spawn(spawnConfig.command, spawnConfig.args, {
-      // Empty cwd (docker-exec form sets the container workdir via `-w`) falls
-      // back to the host default rather than failing to resolve.
-      cwd: spawnConfig.cwd || undefined,
-      env: { ...process.env, ...spawnConfig.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      // On Windows, launchers like `npx`/`npm` are `.cmd` scripts that Node's
-      // spawn can't resolve on PATH without a shell, so they ENOENT otherwise.
-      // Args here come from the fixed harness-adapter table, not user input.
-      shell: process.platform === 'win32',
-    })
+    // Through a shell, the harness's launcher is looked up first, so a place
+    // without it is named with what it lacks rather than with the shell's own
+    // "not found" from a process that already began starting.
+    const placement = harnessPlacement(selection)
+    if (placement.kind === 'shell') {
+      await requireLauncher(placement.shell, selection.adapterId)
+    }
+    let child: HarnessProcess
+    try {
+      child = await startHarnessProcess(spawnConfig, options.shells)
+    } catch (error) {
+      throw redactedError(
+        new Error(`The agent could not be started on ${placementLabel(placement)}`, {
+          cause: error,
+        }),
+        secrets,
+      )
+    }
+    // A shell starts its process asynchronously: another caller may have
+    // connected meanwhile, and the one already stored is the connection.
+    const racedStart = store.connections.get(key)
+    if (racedStart) {
+      child.kill()
+      await racedStart.initialized
+      return racedStart.connection
+    }
     // Kept, not just logged: if the handshake below fails, this is what tells
     // the caller why the process is gone (see harnessStartError).
     const failure: HarnessFailure = { stderr: [] }
@@ -3163,6 +3917,45 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (!session) {
       return
     }
+    if (findAdapter(session.selection.adapterId)?.resumeByReload === true) {
+      await resumeInTurn(session, () => resumeNow(sessionId, session, wanted), wanted === undefined)
+      return
+    }
+    await resumeNow(sessionId, session, wanted)
+  }
+
+  // Runs a resume after the one in flight on the session, if any (see
+  // SessionState.resuming). `joinable` resumes carry nothing of their own
+  // beyond the current MCP list, so one that finds another queued and not yet
+  // started joins it.
+  function resumeInTurn(session: SessionState, resume: () => Promise<void>, joinable: boolean): Promise<void> {
+    if (joinable && session.resumeQueued) {
+      return session.resumeQueued
+    }
+    const ahead = session.resuming ?? Promise.resolve()
+    const run = ahead
+      .catch(() => undefined)
+      .then(() => {
+        if (session.resumeQueued === turn) {
+          session.resumeQueued = undefined
+        }
+        return resume()
+      })
+    const turn: Promise<void> = run.finally(() => {
+      if (session.resuming === turn) {
+        session.resuming = undefined
+      }
+    })
+    session.resuming = turn
+    session.resumeQueued = joinable ? turn : undefined
+    return turn
+  }
+
+  async function resumeNow(
+    sessionId: string,
+    session: SessionState,
+    wanted?: { modes: SessionModes | null; configOptions: SessionConfigOption[] },
+  ): Promise<void> {
     const connection = await ensureConnection(session.selection)
     let mcpServers: AcpMcpServer[] = []
     if (!isNativeSelection(session.selection) && supportsTools(session.selection)) {
@@ -3176,29 +3969,92 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       mcpServers = tagInternal(internal, servers, token)
       reportDroppedMcp(sessionId, session.selection, dropped)
     }
+    // Written for a harness process that may read them anew, but not counted
+    // as seen: a harness that keeps the live session never re-reads, so a
+    // changed text is still named to it at the next prompt.
+    reportInstructionProblems(sessionId, await openInstructionFiles(session.selection))
     // Copied before the resume: reconcileResumedState compares against it, and
     // the live record is what the resume's answer overwrites.
     const logged = wanted ?? {
       modes: session.modes ? { ...session.modes } : null,
       configOptions: session.configOptions,
     }
+    const resumed = resumesByReload(session.selection)
+      ? await reloadSession(sessionId, session, connection, mcpServers)
+      : await resumeLiveSession(sessionId, session, connection, mcpServers)
+    session.attachedTo = resumed.connection
+    await reconcileResumedState(sessionId, resumed.connection, resumed.result, logged)
+  }
+
+  async function resumeLiveSession(
+    sessionId: string,
+    session: SessionState,
+    connection: AgentConnection,
+    mcpServers: AcpMcpServer[],
+  ): Promise<{ result: Awaited<ReturnType<AgentConnection['resumeSession']>>; connection: AgentConnection }> {
     // A harness whose resume rejoins a live session rather than rebuilding it
     // would keep its old MCP servers; closing first makes the resume a fresh
     // start (see HarnessAdapter.mcpRefreshReopens). A close that fails leaves
     // the session as it was, which is the state a plain resume handles — so it
     // does not stop the resume.
-    const entry = connEntryFor(session.selection)
-    if (findAdapter(session.selection.adapterId)?.mcpRefreshReopens === true && entry?.closeSupported === true) {
+    if (
+      findAdapter(session.selection.adapterId)?.mcpRefreshReopens === true &&
+      connEntryFor(session.selection)?.closeSupported === true
+    ) {
       await connection.closeSession({ sessionId }).catch(() => undefined)
     }
-    const resumed = await signedInCall(
+    return signedInCall(
       session.selection,
       connection,
       (live) => live.resumeSession({ sessionId, cwd: session.selection.cwd, mcpServers }),
       sessionId,
     )
-    session.attachedTo = resumed.connection
-    await reconcileResumedState(sessionId, resumed.connection, resumed.result, logged)
+  }
+
+  // Whether a session on this selection is resumed by loading it again (see
+  // HarnessAdapter.resumeByReload). Read once the connection has initialized.
+  function resumesByReload(selection: AgentSelection): boolean {
+    const entry = connEntryFor(selection)
+    return (
+      findAdapter(selection.adapterId)?.resumeByReload === true &&
+      entry?.resumeSession !== true &&
+      entry?.loadSession === true &&
+      entry.closeSupported === true
+    )
+  }
+
+  // The resume of a harness that has none: close the session where this
+  // process still holds it, then load it with the current MCP servers, the
+  // replay dropped (see SessionState.reloading). A process that never held it
+  // (a new one after the old exited) is not asked to close it. The load's
+  // answer carries the modes and options the session runs on, which
+  // reconcileResumedState reads like a resume's.
+  async function reloadSession(
+    sessionId: string,
+    session: SessionState,
+    connection: AgentConnection,
+    mcpServers: AcpMcpServer[],
+  ): Promise<{ result: Awaited<ReturnType<AgentConnection['loadSession']>>; connection: AgentConnection }> {
+    if (session.attachedTo === connection) {
+      await connection.closeSession({ sessionId }).catch(() => undefined)
+    }
+    session.reloading = true
+    try {
+      return await signedInCall(
+        session.selection,
+        connection,
+        (live) =>
+          live.loadSession({
+            sessionId,
+            cwd: session.selection.cwd,
+            mcpServers,
+            _meta: sessionMeta(session.selection),
+          }),
+        sessionId,
+      )
+    } finally {
+      session.reloading = false
+    }
   }
 
   // The connection entry backing a selection (subprocess connections only;
@@ -3327,11 +4183,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   // process that has never heard of the session, and every call would be
   // refused with "Session not found" until something reopened it. So the
   // session is resumed there first, the way a reopened chat is. A harness that
-  // cannot resume says so instead of the bare refusal.
+  // cannot resume says so instead of the bare refusal. A resume by reload in
+  // flight is waited out first: until its load is answered the harness holds
+  // the session closed or replaying (see SessionState.resuming).
   async function connectionForSession(sessionId: string): Promise<AgentConnection> {
     const session = store.sessions.get(sessionId)
     if (!session) {
       throw new Error(`Unknown session: ${sessionId}`)
+    }
+    while (session.resuming) {
+      await session.resuming.catch(() => undefined)
     }
     const connection = await ensureConnection(session.selection)
     if (isNativeSelection(session.selection) || !session.attachedTo || session.attachedTo === connection) {
@@ -3344,7 +4205,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   }
 
   async function reattachSession(sessionId: string, session: SessionState): Promise<AgentConnection> {
-    if (connEntryFor(session.selection)?.resumeSession !== true) {
+    if (connEntryFor(session.selection)?.resumeSession !== true && !resumesByReload(session.selection)) {
       const harness = findAdapter(session.selection.adapterId)?.label ?? 'The agent'
       throw new Error(
         `${harness} restarted and cannot resume a session, so this conversation cannot continue on it: start a new chat.`,
@@ -3515,6 +4376,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     const session = store.sessions.get(sessionId)
     if (session && (session.harnessTurns ?? 0) > 0) {
       session.harnessTurnCancelled = true
+    }
+    if (session && (session.activeTurns > 0 || (session.harnessTurns ?? 0) > 0)) {
+      session.stopRequested = true
     }
     try {
       // A session whose connection is gone has no turn to stop: the turn
@@ -3878,6 +4742,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return 'requeue'
       }
     }
+    // A turn reads only what its harness logs from here on (settleHeldReply).
+    if (session.activeTurns === 0) {
+      session.failureLogRead = failureLogFrom(sessionId, session.selection)
+    }
     // Counted BEFORE anything below awaits. Until this line the session reads
     // as idle, and a send landing in an await here would dispatch a second
     // prompt over this one.
@@ -3898,6 +4766,11 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (entry) {
       entry.lastSessionId = sessionId
     }
+    // A command goes as typed, since anything ahead of it stops it being one;
+    // a changed instruction file is named at the session's next message.
+    const instructionNote = deliveredText.trimStart().startsWith('/')
+      ? undefined
+      : await refreshInstructions(sessionId, session)
     built ??= await promptBlocks(session, deliveredText, attachments)
     const prompt = built.blocks
     emitDelivery(sessionId, deliveredText, attachments, built.problems)
@@ -3911,7 +4784,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // place the prompt promise settles, so a host reads them off the turn_end
     // event instead of re-parsing `_meta` — none of it is spec-guaranteed
     // shape, and the parse rules live in one module (usage-meta).
-    void connection.prompt({ sessionId, prompt }).then(
+    void connection.prompt({ sessionId, prompt: instructionNote ? [instructionNote, ...prompt] : prompt }).then(
       (response) =>
         settleTurn(sessionId, {
           stopReason: response.stopReason,
@@ -4472,6 +5345,9 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     if (runningTurns(session) > 0) {
       return
     }
+    // Here, not on turn_end: a turn that ends on a rejected prompt or a gone
+    // harness settles without one.
+    session.stopRequested = undefined
     // A compaction runs inside a turn, so the boundary ends whatever hold is
     // left: one whose terminal update never arrived must not hold the next
     // turn's deliveries. Nothing is owed any more either — the hand-over at
@@ -4521,6 +5397,10 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       }
       emit(sessionId, usageEventOf(session.usage))
     }
+    // Settled whatever the outcome: a held reply left behind would surface in
+    // the next turn's transcript.
+    const logged = settleHeldReply(sessionId, session, outcome.stopReason)
+    const failure = outcome.failure ?? logged
     if (outcome.stopReason !== undefined) {
       // The model the turn actually ran on, resolved at the boundary rather
       // than read off the selection mirror — which is empty for a session
@@ -4561,7 +5441,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         stopReason: outcome.stopReason,
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         ...(outcome.quota ? { quota: outcome.quota } : {}),
-        ...(outcome.failure ? { failure: outcome.failure } : {}),
+        ...(failure ? { failure } : {}),
         adapterId: session.selection.adapterId,
         ...(resolvedModel ? { model: resolvedModel } : {}),
         ...(turnCost ? { cost: turnCost } : {}),
@@ -4875,6 +5755,15 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // restart that is none of them, which is exactly when a wake matters
       // most -- the restart is what the gate was closed for.
       void openDueAbsentSessions()
+    },
+    /**
+     * The loopback address of the engine's MCP server, started if it is not
+     * running. For a host that relays requests to it from a harness placed
+     * elsewhere (RemoteShell.mcpUrl); every relayed request carries
+     * MCP_FORWARDED_HEADER.
+     */
+    mcpServerUrl(): Promise<string> {
+      return mcp.ensureUrl()
     },
     // `usage` is composed in here rather than stored on `meta`, so the live
     // session state stays the single source of truth for it.
@@ -5190,11 +6079,35 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       return resolved.map((tool) => ({ name: tool.name, description: tool.description }))
     },
 
+    /**
+     * Start a new agent session.
+     *
+     * `history` is a conversation recorded under an earlier session, for a
+     * conversation that has to go on when the agent no longer holds that
+     * session (ACP can resume a session only by an id the agent still has, and
+     * takes no history on `session/new`). The new session's transcript starts
+     * with it, seeded the way restoreSession seeds a log and never re-emitted,
+     * then closes its last turn if it was left open, and marks where the new
+     * session's own context begins with a `session_start` event, unless the
+     * history's transcript already ends on one. The agent
+     * itself starts with none of it: the history is the reader's, not the
+     * model's.
+     *
+     * `opts` say where the history stands in its log and what else seeds the
+     * session, as restoreSession takes them (RecordedLogOpts). Its subagents
+     * belonged to the earlier session and send nothing to this one, so they
+     * are kept as logs only, not as live subagents to route steps to.
+     */
     async createSession(
       selection: AgentSelection,
       defaultModeId?: string,
       permissions?: ResolvedPermissions,
+      history?: readonly ChatEvent[],
+      opts?: RecordedLogOpts,
     ): Promise<SessionMeta> {
+      // Before the harness can start: it reads its files as a session starts,
+      // and a harness may read the home-level one when its process does.
+      const instructions = await openInstructionFiles(selection)
       let connection = await ensureConnection(selection)
       const native = isNativeSelection(selection)
       // ACP: mint a token before newSession so the built-in MCP server can apply
@@ -5226,11 +6139,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
           nativeSession.permissions = permissions
         }
       }
+      // No pending asks are kept: they were the earlier session's, and nothing
+      // is left to answer them.
+      const carried = history && history.length > 0 ? restorableEvents(history) : []
+      const seeded = carried.length
+      const carriedStart = carried.length > 0 ? (opts?.start ?? 0) : 0
+      const before = carried.length > 0 ? (opts?.before ?? []) : []
       store.titleCounter += 1
       const now = Date.now()
       const meta: SessionMeta = {
         id: sessionId,
-        title: `New chat ${store.titleCounter}`,
+        title:
+          (carried.length > 0 ? foldRestoredState([...before.map((entry) => entry.event), ...carried]).title : undefined) ??
+          `New chat ${store.titleCounter}`,
         createdAt: now,
         lastActivityAt: now,
         // The native harness rewinds its own message store; an external ACP
@@ -5244,7 +6165,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       putSession(sessionId, {
         meta,
         selection,
-        events: [],
+        instructions,
+        events: carried,
+        ...(carriedStart > 0 ? { logStart: carriedStart, turnsBefore: opts?.turnsBefore ?? 0 } : {}),
+        ...(compactLog
+          ? {
+              transcript: new TranscriptLog(carried, recordedSubagentLogs(opts?.subagentLogs), {
+                start: carriedStart,
+                before,
+              }),
+            }
+          : {}),
         subscribers: new Set(),
         modes: response.modes ? toSessionModes(response.modes) : null,
         configOptions: response.configOptions ?? [],
@@ -5258,27 +6189,47 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         costAccountedFor: 0,
         ...(native ? {} : { attachedTo: connection }),
       })
+      const opened = store.sessions.get(sessionId)
+      if (opened && history) {
+        recordClosures(sessionId, opened, history.length, seeded)
+      }
+      // Before anything the new session says, so its own events follow the
+      // marker rather than the history above it.
+      //
+      // A history whose transcript ends on a session's start is one carried by
+      // a session that went before anything was said in it. For the reader its
+      // start and this one are the same change of context, so its marker
+      // stands for both: a second one would draw a rule per open of a chat
+      // nobody wrote in. Read off the fold, which is what decides what a
+      // transcript shows: what a harness announces on `session/new` (its
+      // commands, modes, usage) is recorded after that start and folds to
+      // nothing.
+      if (history && history.length > 0 && foldEvents([...history]).at(-1)?.kind !== 'session_start') {
+        closeRecordedTurn(sessionId, history)
+        emit(sessionId, { kind: 'session_start', sessionId })
+      }
       // A session opened under a key that was holding messages when the last
       // process stopped takes them back, at the cadence it was reading at,
       // before it can be sent anything new.
       await restoreSessionState(sessionId)
       reportDroppedMcp(sessionId, selection, droppedMcp)
+      reportInstructionProblems(sessionId, instructions)
       if (response.modes) {
         emitSessionModes(sessionId)
       }
       if (response.configOptions) {
         emitConfigOptions(sessionId)
       }
-      // Apply the requested initial approval mode, when offered.
-      if (
-        defaultModeId &&
-        response.modes &&
-        response.modes.currentModeId !== defaultModeId &&
-        response.modes.availableModes.some((mode) => mode.id === defaultModeId)
-      ) {
+      // Apply the requested initial approval mode, when offered: by its own id,
+      // or by what it means where this agent spells that mode differently.
+      const initialModeId =
+        defaultModeId && response.modes
+          ? offeredModeId(selection.adapterId, toSessionModes(response.modes).available, defaultModeId)
+          : undefined
+      if (initialModeId && response.modes?.currentModeId !== initialModeId) {
         await connection
-          .setSessionMode({ sessionId, modeId: defaultModeId })
-          .then(() => recordModeChange(sessionId, defaultModeId))
+          .setSessionMode({ sessionId, modeId: initialModeId })
+          .then(() => recordModeChange(sessionId, initialModeId))
           .catch((error: unknown) => reportAgentError(sessionId, 'session/set_mode', error))
       }
       // Apply the reasoning preference to ACP agents that expose a thought_level
@@ -5343,6 +6294,8 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       if (isNativeSelection(selection)) {
         return null
       }
+      // Before the harness can start, as createSession writes them.
+      const instructions = await openInstructionFiles(selection)
       const connection = await ensureConnection(selection)
       const entry = connEntryFor(selection)
       if (!entry?.loadSession) {
@@ -5380,6 +6333,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       putSession(sessionId, {
         meta,
         selection,
+        instructions,
         events: [],
         subscribers: new Set(),
         modes: null,
@@ -5452,6 +6406,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // half-built transcript.
       await restoreSessionState(sessionId)
       reportDroppedMcp(sessionId, selection, droppedMcp)
+      reportInstructionProblems(sessionId, instructions)
       // The replay streams history but no turn boundary, so the client would stay
       // stuck "waiting". A terminal turn_end marks the resumed session idle.
       //
@@ -5472,6 +6427,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // more often than not.
       const tail = loaded ? lastConversationEvent(loaded.events) : undefined
       emit(sessionId, { kind: 'turn_end', stopReason: endsOnSettledWork(tail) ? 'replayed' : 'resumed' })
+      showPendingAsks(sessionId)
       return meta
     },
 
@@ -5493,12 +6449,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
      * asked for here: the model's own context comes back from the harness's
      * own store, and no history crosses the wire.
      *
-     * Returns null when this cannot be done — a native selection, or an agent
-     * that does not advertise the resume capability — so a caller falls back to
-     * `loadSession` rather than losing the conversation. Both paths are kept
-     * because they fail differently: without a log there is nothing to restore
-     * FROM, and the harness's imperfect replay is much better than an empty
-     * chat.
+     * Returns null when this cannot be done — an agent that does not advertise
+     * the resume capability — so a caller falls back to `loadSession` rather
+     * than losing the conversation. Both paths are kept because they fail
+     * differently: without a log there is nothing to restore FROM, and the
+     * harness's imperfect replay is much better than an empty chat.
+     *
+     * A native session is the one case where the model's context comes from
+     * the log too. The Custom harness keeps its messages only in this
+     * process's memory, so once the session was dropped (its process stopped,
+     * an idle unload, a restart) the recording is all that is left of it: the
+     * conversation is rebuilt from the whole log (conversationFromLog), the
+     * part below the tail read through the history port, and seeded into the
+     * harness before it resumes the session. It has no replay to fall back on
+     * (`loadSession` answers null for it), so a null here would open the chat
+     * empty.
      *
      * `events` is seeded by assignment, never re-emitted. Emitting would hand
      * every restored event straight back to `onEvent`, and a host storing them
@@ -5509,13 +6474,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       selection: AgentSelection,
       events: readonly ChatEvent[],
       permissions?: ResolvedPermissions,
+      // Where `events` stand in the log and what else seeds the session (see
+      // RecordedLogOpts). Copied, like `events`.
+      opts?: RecordedLogOpts,
     ): Promise<SessionMeta | null> {
-      if (isNativeSelection(selection)) {
-        return null
-      }
+      const native = isNativeSelection(selection)
+      // Before the harness can start, as createSession writes them.
+      const instructions = await openInstructionFiles(selection)
       const connection = await ensureConnection(selection)
       const entry = connEntryFor(selection)
-      if (!entry?.resumeSession) {
+      if (!native && !entry?.resumeSession) {
         return null
       }
       // Mint a per-session MCP token before reattaching, mirroring createSession
@@ -5524,7 +6492,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       let token: string | null = null
       let mcpServers: AcpMcpServer[] = []
       let droppedMcp: AcpMcpServer[] = []
-      if (supportsTools(selection)) {
+      if (!native && supportsTools(selection)) {
         const { internal, servers, dropped } = await buildMcpServers(selection)
         token = randomUUID()
         store.acpTokenPermissions.set(token, permissions)
@@ -5532,8 +6500,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         mcpServers = tagInternal(internal, servers, token)
         droppedMcp = dropped
       }
-      const restored = restorableEvents(events)
-      const state = foldRestoredState(restored)
+      const pendingAsks = new Set(
+        [...store.pendingElicitations]
+          .filter(([, pending]) => pending.sessionId === sessionId && pending.outlivesTurn === true)
+          .map(([requestId]) => requestId),
+      )
+      const restored = restorableEvents(events, pendingAsks)
+      const seeded = restored.length
+      const subagentLogs = recordedSubagentLogs(opts?.subagentLogs)
+      const before = opts?.before ?? []
+      const state = foldRestoredState([...before.map((entry) => entry.event), ...restored], subagentLogs)
       store.titleCounter += 1
       const restoredAt = Date.now()
       const meta: SessionMeta = {
@@ -5545,14 +6521,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // `session/fork`, not the fact that history was rebuilt. This is the
         // path every OLD conversation reopens through (the recorded transcript
         // exists), so hardcoding false here hid the fork capability from every
-        // session that predates it.
-        canFork: entry.forkSupported === true,
+        // session that predates it. The native harness rewinds its own
+        // message store, as in createSession.
+        canFork: native || entry?.forkSupported === true,
         sessionKey: selection.sessionKey,
       }
       putSession(sessionId, {
         meta,
         selection,
+        instructions,
         events: restored,
+        ...(opts?.start ? { logStart: opts.start, turnsBefore: opts.turnsBefore ?? 0 } : {}),
+        ...(compactLog
+          ? { transcript: new TranscriptLog(restored, subagentLogs, { start: opts?.start ?? 0, before }) }
+          : {}),
         subscribers: new Set(),
         modes: state.modes,
         configOptions: state.configOptions,
@@ -5586,6 +6568,18 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       let response: Awaited<ReturnType<AgentConnection['resumeSession']>>
       let live = connection
       try {
+        if (native) {
+          const opened = store.sessions.get(sessionId)
+          const below = opened ? await sessionLogReader(sessionId, opened).read(0, logStartOf(opened)) : undefined
+          store.nativeSessions.set(
+            sessionId,
+            restoredNativeSession(
+              conversationFromLog([...(below?.events ?? []), ...restored]),
+              permissions,
+              state.usage?.used,
+            ),
+          )
+        }
         const resumed = await signedInCall(
           selection,
           connection,
@@ -5595,7 +6589,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         response = resumed.result
         live = resumed.connection
         const attached = store.sessions.get(sessionId)
-        if (attached) {
+        if (attached && !native) {
           attached.attachedTo = live
         }
       } catch (error) {
@@ -5604,6 +6598,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // session, exactly as loadSession does, held notifications included.
         releaseNotifications(store.sessions.get(sessionId))
         dropSession(sessionId)
+        store.nativeSessions.delete(sessionId)
         for (const subagentSessionId of state.subagents.keys()) {
           store.subagentParents.delete(subagentSessionId)
         }
@@ -5624,24 +6619,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // replay: a drain must not deliver into a session the agent has not
       // taken back yet.
       await restoreSessionState(sessionId)
-      reportDroppedMcp(sessionId, selection, droppedMcp)
-      // A log that ends mid-turn is a session whose process stopped while it
-      // was working, and nothing is coming to close it — the client would sit
-      // "waiting" forever on a turn that ended when the process did. A log that
-      // already ends on a boundary needs nothing, which is also what makes
-      // reopening the same session twice idempotent.
-      //
-      // Read off what was RECORDED rather than off the seeded array: the
-      // closures restorableEvents appends are bookkeeping about a dead process,
-      // and letting them stand as the transcript's tail would both hide a
-      // boundary that is there and report every such session as interrupted.
-      const tail = events.at(-1)
-      if (tail?.kind !== 'turn_end') {
-        emit(sessionId, {
-          kind: 'turn_end',
-          stopReason: endsOnSettledWork(lastConversationEvent([...events])) ? 'replayed' : 'resumed',
-        })
+      const reopened = store.sessions.get(sessionId)
+      if (reopened) {
+        recordClosures(sessionId, reopened, events.length, seeded)
       }
+      reportDroppedMcp(sessionId, selection, droppedMcp)
+      reportInstructionProblems(sessionId, instructions)
+      closeRecordedTurn(sessionId, events)
+      showPendingAsks(sessionId)
       return meta
     },
 
@@ -5821,14 +6806,17 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       eventIndex: number,
     ): { text: string; attachments: DeliveredAttachment[]; turnIndex: number } | null {
       const session = store.sessions.get(sessionId)
-      const event = session?.events[eventIndex]
+      // A position below what the session holds names a turn it cannot fork
+      // at: a fork carries on from the session's own copy of its history.
+      const held = session ? eventIndex - logStartOf(session) : -1
+      const event = held >= 0 ? session?.events[held] : undefined
       if (!session || !event || event.kind !== 'user') {
         return null
       }
       // The ordinal is how many user turns precede this one, which is exactly
       // what findTurnBoundary's own index means.
-      let turnIndex = 0
-      for (let i = 0; i < eventIndex; i += 1) {
+      let turnIndex = session.turnsBefore ?? 0
+      for (let i = 0; i < held; i += 1) {
         if (session.events[i].kind === 'user') {
           turnIndex += 1
         }
@@ -5888,13 +6876,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
       // Trim our event log at the same boundary the harness trims its messages —
       // drop from the chosen user turn's event — so the fork's replayed transcript
       // matches its model history. With no prior turn, keep the leading modes event.
+      // Turns are counted over the whole log, and the log held starts at a
+      // turn: a turn below it is not one this session can fork at.
+      const turnsBefore = session.turnsBefore ?? 0
+      if (dropFromTurn !== undefined && dropFromTurn < turnsBefore) {
+        throw new Error('That turn is older than the history this session holds, so it cannot be forked.')
+      }
       const userEvents: number[] = []
       session.events.forEach((event, index) => {
         if (event.kind === 'user') {
           userEvents.push(index)
         }
       })
-      const boundary = findTurnBoundary(userEvents, dropFromTurn)
+      const boundary = findTurnBoundary(userEvents, dropFromTurn === undefined ? undefined : dropFromTurn - turnsBefore)
       const response = native
         ? await connection.unstable_forkSession({
             sessionId,
@@ -5902,13 +6896,26 @@ export function createAgentClient(options: AgentClientOptions = {}) {
             mcpServers: [],
             _meta: dropFromTurn === undefined ? undefined : { dropFromTurn },
           })
-        : await forkExternalSession(session, entry, boundary)
+        : await forkExternalSession(
+            session,
+            entry,
+            sessionLogReader(sessionId, session),
+            boundary === null ? null : logStartOf(session) + boundary,
+          )
       // The fork starts idle with an empty queue, so the source session's
       // 'queue' snapshots must not carry over — replaying one would resurrect
-      // queue state the fork doesn't actually hold.
-      const forkedEvents = (
-        boundary === null ? session.events.filter((event) => event.kind === 'modes') : session.events.slice(0, boundary)
-      ).filter((event) => event.kind !== 'queue')
+      // queue state the fork doesn't actually hold. Emptied where they stand
+      // rather than dropped, as restorableEvents does, so the history the fork
+      // keeps is at the positions it had: the log below it is the source's.
+      const forkedEvents =
+        boundary === null
+          ? session.events.filter((event) => event.kind === 'modes')
+          : session.events
+              .slice(0, boundary)
+              .map((event): ChatEvent => (event.kind === 'queue' ? { kind: 'queue', items: [] } : event))
+      // Where the fork's log starts: where the source's does, for a fork that
+      // keeps its history. One that keeps nothing (no prior turn) starts anew.
+      const forkStart = boundary === null ? 0 : logStartOf(session)
       const forkedAt = Date.now()
       const meta: SessionMeta = {
         id: response.sessionId,
@@ -5935,6 +6942,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // selection object, as it always has.
         selection: opts?.sessionKey ? { ...session.selection, sessionKey: opts.sessionKey } : session.selection,
         events: forkedEvents,
+        ...(forkStart > 0 ? { logStart: forkStart, turnsBefore } : {}),
+        ...(compactLog
+          ? {
+              transcript: new TranscriptLog(
+                forkedEvents,
+                keptSubagentLogs(session.transcript, forkStart + (boundary ?? 0)),
+                { start: forkStart },
+              ),
+            }
+          : {}),
         subscribers: new Set(),
         // A copy when the source's is carried over: setMode and the reconcile
         // below write `current` in place, and a fork's mode change must not
@@ -6391,12 +7408,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         return
       }
       store.pendingElicitations.delete(requestId)
+      const answered = answer !== undefined && answer !== ''
       if (answer !== undefined && typeof answer !== 'string') {
         pending.resolve({ action: 'accept', content: answer })
       } else {
         pending.resolve(answer ? { action: 'accept', content: { answer } } : { action: 'decline' })
       }
-      emit(pending.sessionId, { kind: 'ask_user_resolved', requestId })
+      emit(pending.sessionId, { kind: 'ask_user_resolved', requestId, outcome: answered ? 'answered' : 'declined' })
     },
 
     /**
@@ -6406,36 +7424,63 @@ export function createAgentClient(options: AgentClientOptions = {}) {
      * waiting: an agent elicitation resolves a protocol response back over the
      * connection, while this resolves the host caller (a session-scoped tool
      * like ask_user) with the accepted content, or null when the reader
-     * dismissed it or the session is unknown.
+     * dismissed it, the session is unknown or `signal` aborted.
+     *
+     * `signal` is the caller giving up on the answer: an MCP client that
+     * cancelled the tool call behind the ask (its own request timeout) has
+     * nobody left to read it. The ask is then settled as a cancel, which
+     * closes its card the way a turn ending does (cancelTurnAsks), so a reader
+     * never answers into a call that is already gone.
+     *
+     * `outlivesTurn` is for a caller that does not wait inside the turn — one
+     * that returned to the agent at once and delivers the answer later. Its
+     * question stays open when the turn that raised it ends or is stopped, is
+     * shown again when its session is reopened in this process (its process
+     * stopped, say), and closes only when answered, dismissed or withdrawn
+     * through `signal`.
      */
     askUser(
       sessionId: string,
-      params: { message: string; form?: ElicitationSchema },
+      params: { message: string; form?: ElicitationSchema; signal?: AbortSignal; outlivesTurn?: boolean },
     ): Promise<Record<string, ElicitationContentValue> | null> {
       const session = store.sessions.get(sessionId)
-      if (!session) {
+      if (!session || params.signal?.aborted) {
         return Promise.resolve(null)
       }
+      const signal = params.signal
       return new Promise((resolveContent) => {
         const requestId = randomUUID()
-        store.pendingElicitations.set(requestId, {
-          sessionId,
-          // Adapts the protocol-response shape the shared resolve path speaks
-          // (resolveElicitation builds it) to the host caller's answer.
-          resolve: (response) =>
-            resolveContent(
-              response.action === 'accept'
-                ? ((response as { content?: Record<string, ElicitationContentValue> | null }).content ?? {})
-                : null,
-            ),
-          turnBound: hasTurnInFlight(sessionId),
-        })
-        emit(sessionId, {
+        const withdraw = () => {
+          if (store.pendingElicitations.get(requestId) === entry) {
+            store.pendingElicitations.delete(requestId)
+            entry.resolve({ action: 'cancel' })
+            emit(sessionId, { kind: 'ask_user_resolved', requestId, outcome: 'withdrawn' })
+          }
+        }
+        const shown: Extract<ChatEvent, { kind: 'ask_user' }> = {
           kind: 'ask_user',
           requestId,
           message: params.message,
           ...(params.form ? { form: params.form } : {}),
-        })
+        }
+        const entry = {
+          sessionId,
+          // Adapts the protocol-response shape the shared resolve path speaks
+          // (resolveElicitation builds it) to the host caller's answer.
+          resolve: (response: CreateElicitationResponse) => {
+            signal?.removeEventListener('abort', withdraw)
+            resolveContent(
+              response.action === 'accept'
+                ? ((response as { content?: Record<string, ElicitationContentValue> | null }).content ?? {})
+                : null,
+            )
+          },
+          turnBound: !params.outlivesTurn && hasTurnInFlight(sessionId),
+          ...(params.outlivesTurn ? { outlivesTurn: true, shown } : {}),
+        }
+        store.pendingElicitations.set(requestId, entry)
+        signal?.addEventListener('abort', withdraw, { once: true })
+        emit(sessionId, shown)
       })
     },
 
@@ -6482,15 +7527,19 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         opts?.onEnd?.()
         return () => {}
       }
-      const from = opts?.fromIndex ?? 0
+      // `fromIndex` is a log position; below what the session holds is from
+      // the first entry it holds.
+      const start = logStartOf(session)
+      const from = Math.min(Math.max((opts?.fromIndex ?? 0) - start, 0), session.events.length)
       const windowed = from > 0 ? session.events.slice(from) : session.events
       const replay = withSnapshotPrefix(session, windowed)
+      const prefix = replay.length - windowed.length
       // Before the first event goes out, so a subscriber that has to know the
       // offset knows it while it is still reading the replay.
-      opts?.onReplay?.({ snapshotPrefix: replay.length - windowed.length })
-      for (const event of replay) {
-        subscriber(event)
-      }
+      opts?.onReplay?.({ snapshotPrefix: prefix })
+      replay.forEach((event, index) => {
+        subscriber(event, index < prefix ? undefined : start + from + index - prefix)
+      })
       session.subscribers.add(subscriber)
       if (opts?.onEnd) {
         session.subscriberEnds ??= new Map()
@@ -6512,14 +7561,21 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // Turn granularity is for callers that want whole turns, never one cut in
     // half. The chat transcript pages by records instead; see
     // getRecordsWindow.
+    //
+    // Over what the session holds: for one holding only its log's tail
+    // (`history`), a window that would reach below it stops there, with
+    // `hasMore`.
     getEventsWindow(sessionId: string, opts: { beforeIndex?: number; turns: number }): EventsWindow | null {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
       }
-      return opts.beforeIndex === undefined
-        ? tailByTurns(session.events, opts.turns)
-        : pageBeforeByTurns(session.events, opts.beforeIndex, opts.turns)
+      const start = logStartOf(session)
+      const window =
+        opts.beforeIndex === undefined
+          ? tailByTurns(session.events, opts.turns)
+          : pageBeforeByTurns(session.events, opts.beforeIndex - start, opts.turns)
+      return { ...window, startIndex: window.startIndex + start, hasMore: window.hasMore || start > 0 }
     },
 
     // The chat transcript's only cursor: a window of `records` AGENT records,
@@ -6531,28 +7587,137 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // window starts mid-turn the enclosing one comes back as `header` rather
     // than inside `events`. See pagination.ts's RecordsWindow for why it is
     // separate. Returns null for an unknown session.
+    //
+    // Over what the session holds, like getEventsWindow: the window a stream
+    // opens on, which the tail always has room for. Pages reaching below the
+    // tail are getRecordsPage's.
     getRecordsWindow(sessionId: string, opts: { beforeIndex?: number; records: number }): RecordsWindow | null {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
       }
+      const start = logStartOf(session)
+      const window =
+        opts.beforeIndex === undefined
+          ? tailByRecords(session.events, opts.records)
+          : pageBeforeByRecords(session.events, opts.beforeIndex - start, opts.records)
+      return {
+        ...window,
+        startIndex: window.startIndex + start,
+        hasMore: window.hasMore || start > 0,
+        ...(window.header ? { header: { index: window.header.index + start, event: window.header.event } } : {}),
+      }
+    },
+
+    // getRecordsWindow over the whole log: for a session holding only its
+    // log's tail, what lies below it is read through the history port. What a
+    // "load older" page asks.
+    async getRecordsPage(
+      sessionId: string,
+      opts: { beforeIndex?: number; records: number },
+    ): Promise<RecordsWindow | null> {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return null
+      }
+      return recordsWindowFromReader(sessionLogReader(sessionId, session), opts)
+    },
+
+    // getRecordsWindow over one subagent's own log, the steps its section
+    // draws: tail first, then pages above a previous window's `startIndex`.
+    // Positions are that log's. Null for an unknown session or subagent, and
+    // for an engine without `compactLog`, whose subagent steps are in the
+    // session's own log. A known subagent that has taken no step yet answers
+    // an empty window. Over the logs the engine holds; with a history port,
+    // getSubagentRecordsPage reads the others too.
+    getSubagentRecordsWindow(
+      sessionId: string,
+      subagentSessionId: string,
+      opts: { beforeIndex?: number; records: number },
+    ): RecordsWindow | null {
+      const log = subagentLog(sessionId, subagentSessionId)
+      if (!log) {
+        return null
+      }
       return opts.beforeIndex === undefined
-        ? tailByRecords(session.events, opts.records)
-        : pageBeforeByRecords(session.events, opts.beforeIndex, opts.records)
+        ? tailByRecords(log, opts.records)
+        : pageBeforeByRecords(log, opts.beforeIndex, opts.records)
+    },
+
+    // getSubagentRecordsWindow for any subagent of the session: a log the
+    // engine does not hold (a finished subagent's, spawned below the tail) is
+    // read through the history port.
+    async getSubagentRecordsPage(
+      sessionId: string,
+      subagentSessionId: string,
+      opts: { beforeIndex?: number; records: number },
+    ): Promise<RecordsWindow | null> {
+      const reader = compactLog ? await subagentLogReader(sessionId, subagentSessionId) : null
+      return reader ? recordsWindowFromReader(reader, opts) : null
+    },
+
+    // The session's own log as a reader, below its tail too: what a listing
+    // of its turns pages through. Null for an unknown session.
+    logReader(sessionId: string): LogReader | null {
+      const session = store.sessions.get(sessionId)
+      return session ? sessionLogReader(sessionId, session) : null
+    },
+
+    // The position of the first entry of the session's own log the engine
+    // holds, which getSessionEvents starts at: past 0 for a session holding
+    // only its log's tail. Null for an unknown session.
+    getLogStart(sessionId: string): number | null {
+      const session = store.sessions.get(sessionId)
+      return session ? logStartOf(session) : null
+    },
+
+    // The entry standing at `position` in the session's own log, or with
+    // `subagentSessionId` in that subagent's (`compactLog`), as it is now: a
+    // frame names its entry by position, and an entry rewritten in place has
+    // grown past what the frame carried. Undefined for a position, log or
+    // session the engine does not hold.
+    getLogEntry(sessionId: string, position: number, subagentSessionId?: string): ChatEvent | undefined {
+      if (subagentSessionId !== undefined) {
+        return subagentLog(sessionId, subagentSessionId)?.[position]
+      }
+      const session = store.sessions.get(sessionId)
+      return session ? session.events[position - logStartOf(session)] : undefined
     },
 
     // The session's whole event log, in order — the read side of the durable-
     // transcript seam (a host records events as they arrive; this hands back
     // what it would have recorded for a session that arrived already built, a
-    // fork above all). Null for an unknown session. Not a paging window: a
-    // caller seeding a store wants all of it, and a bounded tail is what
-    // getRecordsWindow is for.
-    getSessionEvents(sessionId: string): ChatEvent[] | null {
+    // fork above all). With `subagentSessionId`, that subagent's own log
+    // instead (`compactLog`; null as getSubagentRecordsWindow is). Null for an
+    // unknown session. Not a paging window: a caller seeding a store wants all
+    // of it, and a bounded tail is what getRecordsWindow is for. The session's
+    // own is what the engine holds of it, from getLogStart.
+    getSessionEvents(sessionId: string, subagentSessionId?: string): ChatEvent[] | null {
       const session = store.sessions.get(sessionId)
       if (!session) {
         return null
       }
+      if (subagentSessionId !== undefined) {
+        const log = subagentLog(sessionId, subagentSessionId)
+        return log ? [...log] : null
+      }
       return [...session.events]
+    },
+
+    // Every subagent log the session keeps (`compactLog`), copied, by subagent
+    // session id: with getSessionEvents, what a host seeding a store from a
+    // session that arrived already built (a fork) writes. Empty without
+    // `compactLog`; null for an unknown session.
+    getSubagentLogs(sessionId: string): Map<string, ChatEvent[]> | null {
+      const session = store.sessions.get(sessionId)
+      if (!session) {
+        return null
+      }
+      const logs = new Map<string, ChatEvent[]>()
+      for (const [id, log] of session.transcript?.subagentLogs() ?? []) {
+        logs.set(id, [...log])
+      }
+      return logs
     },
 
     // A native session's conversation, in the package's own record type.

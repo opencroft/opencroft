@@ -1,5 +1,5 @@
 import { invoke } from '@opencroft/client/actions'
-import { inspectorIntent, NodeFrame, OutputHandle, useReactFlow } from '@opencroft/client/canvas'
+import { inspectorIntent, NodeFrame, OutputHandle } from '@opencroft/client/canvas'
 import { Terminal } from '@opencroft/client/terminal'
 import { Cpu, HardDrive, MemoryStick, Monitor, TerminalSquare } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -26,7 +26,6 @@ export function LocalhostNode({
 }) {
   void data
   const [stats, setStats] = useState<LocalhostStats | null>(null)
-  const rf = useReactFlow()
 
   useEffect(() => {
     invoke<LocalhostStats>('localhost.getStats')
@@ -36,10 +35,9 @@ export function LocalhostNode({
 
   const openInspector = useCallback(
     (tab: string) => {
-      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
       inspectorIntent.open(id, tab)
     },
-    [id, rf],
+    [id],
   )
 
   const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])

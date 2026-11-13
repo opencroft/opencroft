@@ -40,8 +40,14 @@ export const LOCK_TOOL_NAME = 'extension_lock'
 export interface GraphNode {
   id: string
   type?: string
+  /** The frame the node is inside; its stored `position` is then relative to that frame (see `_frame-tree.ts`). */
+  parentId?: string
   position?: { x: number; y: number }
   data?: Record<string, unknown>
+  /** Holds the node's canvas size (`width`, `height`) when it has one of its own. */
+  style?: Record<string, unknown>
+  /** Stacking on the canvas: frames are -1, drawn behind the rest. */
+  zIndex?: number
 }
 
 /**

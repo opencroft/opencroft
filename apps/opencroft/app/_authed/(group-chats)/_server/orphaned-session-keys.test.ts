@@ -18,7 +18,7 @@ import {
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { queueStore } from '@/app/_authed/(agent)/_server/queue-store'
-import { appendSessionEvent, flushSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
+import { flushSessionEvents, recordLogWrite } from '@/app/_authed/(agent)/_server/session-event-store'
 import { migrateThreadSessionKeys } from './model'
 import { describeOrphanSweep, type OrphanSweepReport, sweepOrphanedSessionKeys } from './orphaned-session-keys'
 
@@ -70,7 +70,12 @@ test('an orphan in each store is forgotten, whatever its spelling, and owned key
     },
     'end',
   )
-  appendSessionEvent(queueAndTranscriptOrphan, { kind: 'agent_message', text: 'from a deleted thread' })
+  recordLogWrite(queueAndTranscriptOrphan, 'orphan-session', {
+    log: '',
+    position: 0,
+    event: { kind: 'agent_message', text: 'from a deleted thread' },
+    appended: true,
+  })
   await flushSessionEvents()
   await writePersistedSession(directChat, 'direct', true)
 
@@ -149,7 +154,12 @@ test('state a half-finished move left under its colon key is kept, and so is the
     },
     'end',
   )
-  appendSessionEvent(colonKey, { kind: 'agent_message', text: 'recorded before the move' })
+  recordLogWrite(colonKey, 'colon-session', {
+    log: '',
+    position: 0,
+    event: { kind: 'agent_message', text: 'recorded before the move' },
+    appended: true,
+  })
   await flushSessionEvents()
 
   const migration = await migrateThreadSessionKeys()

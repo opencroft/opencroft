@@ -26,8 +26,9 @@ import {
 // component's business.
 export type PermissionMode = 'auto' | 'plan' | 'manual-edits' | 'accept-edits' | 'reject-edits' | 'bypass'
 
-// Anything that is not one of ours is shown as its own label, without an icon.
-// `string & {}` keeps autocomplete for the known modes while still accepting one.
+// Anything that is not one of ours is shown under the agent's own name for it,
+// with the plain shield. `string & {}` keeps autocomplete for the known modes
+// while still accepting one.
 export type ModeOption = PermissionMode | (string & {})
 
 // Every mode is a shield variant so they read as one family: the glyph carries
@@ -75,6 +76,11 @@ const MODE_ORDER: PermissionMode[] = ['auto', 'plan', 'manual-edits', 'accept-ed
 
 const NOT_SET_COLOUR = 'text-muted-foreground stroke-muted-foreground'
 
+// A mode outside the vocabulary has no known behaviour to grade, so it gets the
+// family's plain glyph in the plain text colour: set apart from Not set's muted
+// shield, and claiming no severity.
+const UNKNOWN_COLOUR = 'text-foreground stroke-foreground'
+
 function isKnown(option: ModeOption): option is PermissionMode {
   return (MODE_ORDER as string[]).includes(option)
 }
@@ -84,13 +90,23 @@ function orderOf(option: ModeOption): number {
   return isKnown(option) ? MODE_ORDER.indexOf(option) : Number.MAX_SAFE_INTEGER
 }
 
-function labelOf(option: ModeOption): string {
-  return isKnown(option) ? MODE_LABEL[option] : option
+function iconOf(option: ModeOption) {
+  return isKnown(option) ? MODE_ICON[option] : Shield
+}
+
+function colourOf(option: ModeOption): string {
+  return isKnown(option) ? MODE_COLOR[option] : UNKNOWN_COLOUR
 }
 
 export interface ModeSelectorProps {
   /** The modes on offer. Order does not matter; the menu sorts them. */
   options: ModeOption[]
+  /**
+   * The agent's own name for an option outside the vocabulary, keyed by the
+   * option. One without a name is shown as itself; the known modes always use
+   * their own labels.
+   */
+  labels?: Record<string, string>
   /** `null` means no mode has been chosen. */
   current: ModeOption | null
   onSelect: (option: ModeOption) => void
@@ -109,28 +125,29 @@ export interface ModeSelectorProps {
  * the agent may DO, and as an icon the colour alone says how much is being
  * waved through.
  */
-export function ModeSelector({ options, current, onSelect, onUnset, lockedReason, className }: ModeSelectorProps) {
+export function ModeSelector({
+  options,
+  labels,
+  current,
+  onSelect,
+  onUnset,
+  lockedReason,
+  className,
+}: ModeSelectorProps) {
   if (options.length === 0) {
     return null
   }
+  // Own keys only: the keys are whatever an agent called its modes.
+  const labelOf = (option: ModeOption) =>
+    isKnown(option) ? MODE_LABEL[option] : labels && Object.hasOwn(labels, option) ? labels[option] : option
   const locked = Boolean(lockedReason)
   // A pinned bypass is not this session's choice, so it alerts rather than
   // sitting there looking like a setting someone picked.
   const forcedBypass = locked && current === 'bypass'
   // Nothing chosen is drawn as the plain shield, muted: the family's glyph
   // without any one mode's behaviour or severity.
-  const Icon = forcedBypass
-    ? ShieldAlert
-    : current === null
-      ? Shield
-      : isKnown(current)
-        ? MODE_ICON[current]
-        : undefined
-  const colour = forcedBypass
-    ? 'text-destructive animate-pulse'
-    : current !== null && isKnown(current)
-      ? MODE_COLOR[current]
-      : NOT_SET_COLOUR
+  const Icon = forcedBypass ? ShieldAlert : current === null ? Shield : iconOf(current)
+  const colour = forcedBypass ? 'text-destructive animate-pulse' : current === null ? NOT_SET_COLOUR : colourOf(current)
   const currentLabel = current === null ? 'Not set' : labelOf(current)
   const title = lockedReason ?? `Permission mode: ${currentLabel}`
   const ordered = [...options].sort((a, b) => orderOf(a) - orderOf(b))
@@ -152,28 +169,20 @@ export function ModeSelector({ options, current, onSelect, onUnset, lockedReason
           />
         }
       >
-        {Icon ? (
-          <Icon className={`size-4 ${colour}`} />
-        ) : (
-          <span className='text-xs font-medium'>{currentLabel.slice(0, 1).toUpperCase()}</span>
-        )}
+        <Icon className={`size-4 ${colour}`} />
       </DropdownMenuTrigger>
       {/* The bar this sits in is at the bottom of the screen, so its menus open
           upward from the start edge. */}
       <DropdownMenuContent align='start' side='top' className='w-auto max-w-(--available-width)'>
         {ordered.map((option) => {
-          const ItemIcon = isKnown(option) ? MODE_ICON[option] : undefined
+          const ItemIcon = iconOf(option)
           return (
             <DropdownMenuItem
               key={option}
               onClick={() => onSelect(option)}
               className={option === current ? 'font-medium' : undefined}
             >
-              {ItemIcon ? (
-                <ItemIcon className={`size-4 ${MODE_COLOR[option as PermissionMode]}`} />
-              ) : (
-                <span className='size-4' />
-              )}
+              <ItemIcon className={`size-4 ${colourOf(option)}`} />
               {labelOf(option)}
             </DropdownMenuItem>
           )

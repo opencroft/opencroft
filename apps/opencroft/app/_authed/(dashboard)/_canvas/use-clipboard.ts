@@ -1,15 +1,33 @@
 'use client'
 
 import type { Edge, Node } from '@xyflow/react'
-import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useState } from 'react'
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useRef, useSyncExternalStore } from 'react'
 import { toast } from 'sonner'
 
 import { hasTextSelectionIn, isCanvasKeyPress } from '@/app/_authed/(dashboard)/_canvas/canvas-key-scope'
 import { assignPasteIds } from '@/app/_authed/(dashboard)/_canvas/paste-ids'
+import {
+  detachFromUnpicked,
+  nextPasteRun,
+  offsetTopLevel,
+  type PasteAnchor,
+  type PasteRun,
+  type Point,
+  pasteOffset,
+  type Transform,
+} from '@/app/_authed/(dashboard)/_canvas/paste-layout'
+import { isAutolayoutSection } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/section-shared'
+import { isSubgraph } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/subgraph-shared'
+import {
+  deletedWithContents,
+  deleteKeepingChildren,
+  descendants,
+  dropPlaced,
+  growToHold,
+} from '@/app/_authed/(extension-runtime)/_frame-tree'
 import { newGraphId } from '@/lib/graph-id'
 
 const FORMAT = 'opencroft/nodes'
-const PASTE_OFFSET = 20
 
 interface Payload {
   format: typeof FORMAT
@@ -28,10 +46,40 @@ interface Options {
   setNodes: (updater: (nodes: Node[]) => Node[]) => void
   setEdges: (updater: (edges: Edge[]) => Edge[]) => void
   onChange: (nodes: Node[], edges: Edge[]) => void
+  /** What the canvas shows now: the flow-space point at its centre, and its transform. */
+  view: () => CanvasView
+  /** Whether a node is a frame, which a pasted node can land in. */
+  isFrame: (node: Node) => boolean
+  /** The subgraph whose canvas is open, which pasted nodes land in; undefined for the top level. */
+  level?: string
 }
 
+export interface CanvasView {
+  centre: Point
+  transform: Transform
+}
+
+// A paste with no target goes to the centre of the view. The view is the
+// same while its transform is: a pan or a zoom starts over, and a pane that
+// only changes size (the inspector opening beside it) does not.
+function pasteIntoView(last: PasteRun | null, view: CanvasView): PasteRun {
+  return nextPasteRun(last, `view:${view.transform.join(',')}`, () => ({ point: view.centre, align: 'centre' }))
+}
+
+// The selection a copy takes: every selected node but comments, and
+// everything inside a selected subgraph at any depth, which a cut deletes
+// with it (see deletedWithContents). A picked node whose parent is not picked
+// is copied as a top-level node, so the clipboard never names a parent it
+// does not hold.
 function selectedSet(nodes: Node[]): Node[] {
-  return nodes.filter((n) => n.selected && n.type !== 'comment')
+  const picked = deletedWithContents(
+    nodes,
+    new Set(nodes.filter((n) => n.selected && n.type !== 'comment').map((n) => n.id)),
+  )
+  return detachFromUnpicked(
+    nodes.filter((n) => picked.has(n.id)),
+    nodes,
+  )
 }
 
 function edgesBetween(edges: Edge[], ids: Set<string>): Edge[] {
@@ -88,25 +136,18 @@ async function takenElsewhere(ids: string[], findTakenIds: Options['findTakenIds
   }
 }
 
-// `target`, when given, is a flow-space point (e.g. where a context menu was
-// invoked) that the pasted group's own top-left corner lands on, keeping the
-// copied nodes' positions relative to each other. Without one (the keyboard
-// shortcut, which has no invocation point to speak of) the group is offset
-// by a small fixed amount from where it was copied, as before.
+// The group moves by one offset (see pasteOffset), so the copied nodes keep
+// their positions relative to each other wherever they were copied from.
 //
 // Ids are kept unless taken (see assignPasteIds): a cut-and-paste moves the
 // very same nodes, so anything referring to them still does.
 function remap(
   payload: Payload,
   taken: ReadonlySet<string>,
-  target?: { x: number; y: number },
+  anchor: PasteAnchor,
+  repeat: number,
 ): { nodes: Node[]; edges: Edge[] } {
-  const offset = target
-    ? {
-        x: target.x - Math.min(...payload.nodes.map((n) => n.position.x)),
-        y: target.y - Math.min(...payload.nodes.map((n) => n.position.y)),
-      }
-    : { x: PASTE_OFFSET, y: PASTE_OFFSET }
+  const offset = pasteOffset(payload.nodes, anchor, repeat)
   const assigned = assignPasteIds(
     payload.nodes as Array<Node & { data: Record<string, unknown> }>,
     payload.edges,
@@ -114,18 +155,19 @@ function remap(
     newGraphId,
   )
   return {
-    nodes: assigned.nodes.map((n) => ({
-      ...n,
-      position: { x: n.position.x + offset.x, y: n.position.y + offset.y },
-      selected: true,
-    })),
+    nodes: offsetTopLevel(assigned.nodes, offset).map((n) => ({ ...n, selected: true })),
     edges: assigned.edges.map((e) => ({ ...e, selected: false })),
   }
 }
 
 export interface ClipboardControls {
   copy: () => Promise<void>
-  paste: (target?: { x: number; y: number }) => Promise<void>
+  /**
+   * Pastes the clipboard's nodes with their top-left corner on `target`, a
+   * flow-space point such as where a context menu was opened, or without one
+   * centred on the viewport.
+   */
+  paste: (target?: Point) => Promise<void>
   /** True once a copy/cut has written something pasteable in this session. */
   hasCopiedNodes: boolean
   /**
@@ -159,15 +201,59 @@ function shortcutAction(event: KeyboardEvent, canvas: Element): ClipboardAction 
   return action
 }
 
-export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, onChange }: Options): ClipboardControls {
-  // Tracked directly off a successful copy/cut rather than re-reading the
-  // system clipboard on every render: navigator.clipboard has no change
-  // event, and re-probing readText() to decide whether to enable a menu
-  // item would hit the same permission unreliability this file otherwise
-  // avoids for the actual paste. The tradeoff is real and narrow: content
-  // copied in a previous session (before a reload) won't show as pasteable
-  // until copied again here.
-  const [hasCopiedNodes, setHasCopiedNodes] = useState(false)
+// Whether a copy or cut on this page has written something pasteable, set
+// off the successful write rather than by reading the system clipboard on
+// every render: navigator.clipboard has no change event, and probing
+// readText() to decide whether to enable a menu item would hit the same
+// permission unreliability this file otherwise avoids for the actual paste.
+// Content copied before a reload doesn't show as pasteable until copied
+// again. It is one flag for the page, not per editor, so a copy in one graph
+// makes Paste available in the next graph opened.
+const copiedNodes = (() => {
+  let copied = false
+  const listeners = new Set<() => void>()
+  return {
+    get: () => copied,
+    set: () => {
+      if (!copied) {
+        copied = true
+        for (const listener of listeners) {
+          listener()
+        }
+      }
+    },
+    clear: () => {
+      copied = false
+      for (const listener of listeners) {
+        listener()
+      }
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+})()
+
+/** Forgets that anything was copied on this page, for tests to start from a clean page. */
+export function forgetCopiedNodes(): void {
+  copiedNodes.clear()
+}
+
+export function useClipboard({
+  findTakenIds,
+  nodes,
+  edges,
+  setNodes,
+  setEdges,
+  onChange,
+  view,
+  isFrame,
+  level,
+}: Options): ClipboardControls {
+  const hasCopiedNodes = useSyncExternalStore(copiedNodes.subscribe, copiedNodes.get, copiedNodes.get)
 
   const copy = useCallback(async () => {
     const picked = selectedSet(nodes)
@@ -177,7 +263,7 @@ export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, o
     const ids = new Set(picked.map((n) => n.id))
     const pickedEdges = edgesBetween(edges, ids)
     if (await writePayload(picked, pickedEdges)) {
-      setHasCopiedNodes(true)
+      copiedNodes.set()
     }
   }, [nodes, edges])
 
@@ -191,16 +277,21 @@ export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, o
     if (!(await writePayload(picked, pickedEdges))) {
       return
     }
-    setHasCopiedNodes(true)
-    const nextNodes = nodes.filter((n) => !ids.has(n.id))
+    copiedNodes.set()
+    // A cut frame's members stay where they are drawn, in a frame that holds
+    // them; a cut subgraph's contents were copied with it and go with it.
+    const nextNodes = deleteKeepingChildren(nodes, ids)
     const nextEdges = edges.filter((e) => !ids.has(e.source) && !ids.has(e.target))
     setNodes(() => nextNodes)
     setEdges(() => nextEdges)
     onChange(nextNodes, nextEdges)
   }, [nodes, edges, setNodes, setEdges, onChange])
 
+  // The last paste, for the next one into the same place to step on from it.
+  const lastPaste = useRef<PasteRun | null>(null)
+
   const paste = useCallback(
-    async (target?: { x: number; y: number }) => {
+    async (target?: Point) => {
       const payload = await readPayload()
       if (!payload) {
         return
@@ -210,17 +301,36 @@ export function useClipboard({ findTakenIds, nodes, edges, setNodes, setEdges, o
       for (const item of [...nodes, ...edges]) {
         taken.add(item.id)
       }
-      const { nodes: pastedNodes, edges: pastedEdges } = remap(payload, taken, target)
+      const run = target
+        ? nextPasteRun(lastPaste.current, `menu:${target.x},${target.y}`, () => ({ point: target, align: 'top-left' }))
+        : pasteIntoView(lastPaste.current, view())
+      const { nodes: pastedNodes, edges: pastedEdges } = remap(payload, taken, run.anchor, run.repeat)
       if (pastedNodes.length === 0) {
         return
       }
-      const nextNodes = [...nodes.map((n) => (n.selected ? { ...n, selected: false } : n)), ...pastedNodes]
+      lastPaste.current = run
+      // A pasted node whose frame was copied with it stays in it; every other
+      // goes into the frame under its corner where it lands, which may be one
+      // pasted with it, and the frames it lands in grow to hold it. On a
+      // subgraph's canvas they land on that canvas.
+      const pastedIds = new Set(pastedNodes.map((n) => n.id))
+      const placed = level
+        ? pastedNodes.map((n) => (n.parentId && pastedIds.has(n.parentId) ? n : { ...n, parentId: level }))
+        : pastedNodes
+      // What a pasted subgraph holds is not on this canvas, and is not selected.
+      const inside = new Set(placed.filter(isSubgraph).flatMap((s) => [...descendants(s.id, placed)]))
+      const landed = placed.map((n) => (inside.has(n.id) ? { ...n, selected: false } : n))
+      const nextNodes = growToHold(
+        dropPlaced([...nodes.map((n) => (n.selected ? { ...n, selected: false } : n)), ...landed], pastedIds, isFrame),
+        pastedIds,
+        isAutolayoutSection,
+      )
       const nextEdges = [...edges, ...pastedEdges]
       setNodes(() => nextNodes)
       setEdges(() => nextEdges)
       onChange(nextNodes, nextEdges)
     },
-    [findTakenIds, nodes, edges, setNodes, setEdges, onChange],
+    [findTakenIds, nodes, edges, setNodes, setEdges, onChange, view, isFrame, level],
   )
 
   const onKeyDown = useCallback(

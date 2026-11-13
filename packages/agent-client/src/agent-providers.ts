@@ -14,6 +14,7 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     label: 'Anthropic',
     endpoints: { anthropic: '' },
     models: [
+      'claude-fable-5-2',
       'claude-fable-5-1',
       'claude-fable-5',
       'claude-opus-5-5',
@@ -87,6 +88,16 @@ export const AGENT_PROVIDERS: AgentProvider[] = [
     // be typed in as a custom value.
     models: ['auto', 'pro', 'flash', 'flash-lite'],
     keyEnv: 'GEMINI_API_KEY',
+  },
+  {
+    id: 'github-copilot',
+    label: 'GitHub Copilot',
+    // GitHub's own model routing, reached with the subscriber's GitHub token.
+    endpoints: { 'github-copilot': '' },
+    // `auto` lets Copilot pick the model; a model id the subscription offers
+    // can be typed in as a custom value.
+    models: ['auto'],
+    keyEnv: 'COPILOT_GITHUB_TOKEN',
   },
   {
     id: 'dashscope',

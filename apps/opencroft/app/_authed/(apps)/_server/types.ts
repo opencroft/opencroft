@@ -16,6 +16,15 @@ export interface AppMeta extends AppEntry {
   updatesInPlace?: boolean
 }
 
+/** An App added to some space, by name and address only: what a search across spaces lists. */
+export interface SpaceAppEntry {
+  spaceSlug: string
+  id: string
+  type: string
+  name: string
+  slug: string
+}
+
 /** An App added to a space, with the parameter values the user entered. */
 export interface SpaceAppInstance {
   id: string

@@ -27,17 +27,10 @@ export const setSecret = createServerFn({ method: 'POST' })
     await secrets.set(data.storeId, data.key, data.value)
   })
 
-export const deleteSecret = createServerFn({ method: 'POST' })
-  .inputValidator((data: { storeId: string; key: string }) => data)
-  .handler(async ({ data }): Promise<void> => {
-    await secrets.delete(data.storeId, data.key)
-  })
-
-export const deleteStore = createServerFn({ method: 'POST' })
-  .inputValidator((storeId: string) => storeId)
-  .handler(async ({ data: storeId }): Promise<void> => {
-    await secrets.deleteStore(storeId)
-  })
+/** The secret names an App's field can pick: those `secrets.resolveValue(value, { spaceSlug })` finds. */
+export const listSpaceSecretNames = createServerFn({ method: 'POST' })
+  .inputValidator((spaceSlug: string) => spaceSlug)
+  .handler(({ data: spaceSlug }): Promise<string[]> => secrets.namesIn({ spaceSlug }))
 
 export interface SecretStoreSummary {
   storeId: string

@@ -13,8 +13,13 @@
 import type { Edge, Node } from '@xyflow/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { liveGraphOf, mergeRemoteEdges, mergeRemoteNodes } from '@/app/_authed/(dashboard)/_canvas/graph-view-state'
-import { LiveGraph } from '@/app/_authed/(dashboard)/_canvas/live-graph'
+import {
+  liveGraphOf,
+  mergeRemoteEdges,
+  mergeRemoteNodes,
+  withCurrentSelection,
+} from '@/app/_authed/(dashboard)/_canvas/graph-view-state'
+import { LiveGraph, type WriteOptions } from '@/app/_authed/(dashboard)/_canvas/live-graph'
 import { fetchSpaceGraph } from '@/app/_authed/(space)/_components/space-client'
 import type { LiveGraphSession } from '@/app/_authed/(space)/_lib/graph-collab-protocol'
 import { applyGraphChange } from '@/app/_authed/(space)/_lib/graph-doc'
@@ -34,8 +39,11 @@ export interface LiveGraphBinding {
    * has committed; every request until then is one write, and so one step.
    * `mergeKey` joins that step to the one before (see GraphUndo.beginStep);
    * requests with different keys in one render start a step of their own.
+   * The write is `untracked` (no step) only if every request in it was.
    */
-  requestWrite: (mergeKey?: string) => void
+  requestWrite: (options?: WriteOptions) => void
+  /** Whether this tab writes the layouts every viewer computes alike (see LiveGraph.isLayoutWriter). */
+  layoutWriter: boolean
 }
 
 export function useLiveGraph({
@@ -57,9 +65,21 @@ export function useLiveGraph({
   const [current, setCurrent] = useState(start)
   const [live, setLive] = useState<LiveGraph | null>(null)
   const [base, setBase] = useState<GraphData | null>(start?.graph ?? null)
-  const pending = useRef<{ mergeKey?: string } | null>(null)
+  const pending = useRef<WriteOptions | null>(null)
+  const [layoutWriter, setLayoutWriter] = useState(false)
 
   useEffect(() => setCurrent(start), [start])
+
+  // The tab stands as layout writer while its page is visible.
+  useEffect(() => {
+    if (!live) {
+      return
+    }
+    const stand = () => live.setLayoutCandidate(document.visibilityState === 'visible')
+    stand()
+    document.addEventListener('visibilitychange', stand)
+    return () => document.removeEventListener('visibilitychange', stand)
+  }, [live])
 
   useEffect(() => {
     if (!current) {
@@ -82,22 +102,36 @@ export function useLiveGraph({
       onStale: () => {
         void fetchSpaceGraph(slug).then(({ graph: fresh, live: session }) => {
           if (active) {
+            // The canvas takes the fresh graph with the base it becomes, as on
+            // a first load: a node this tab lacks and the base holds would
+            // read as one the tab removed (see mergeRemoteNodes). Comment
+            // overlays are not part of the graph and stay.
+            setNodes((ns) => [
+              ...withCurrentSelection(fresh.nodes as Node[], ns),
+              ...ns.filter((n) => n.type === 'comment'),
+            ])
+            setEdges(() => fresh.edges as Edge[])
             setCurrent(session ? { session, graph: fresh } : null)
           }
         })
       },
+      onLayoutWriterChange: setLayoutWriter,
     })
     setLive(graph)
     return () => {
       active = false
       graph.destroy()
       setLive(null)
+      setLayoutWriter(false)
     }
   }, [slug, current, setNodes, setEdges])
 
-  const requestWrite = useCallback((mergeKey?: string) => {
+  const requestWrite = useCallback(({ mergeKey, untracked = false }: WriteOptions = {}) => {
     const previous = pending.current
-    pending.current = { mergeKey: !previous || previous.mergeKey === mergeKey ? mergeKey : undefined }
+    pending.current = {
+      mergeKey: !previous || previous.mergeKey === mergeKey ? mergeKey : undefined,
+      untracked: untracked && (previous?.untracked ?? true),
+    }
   }, [])
 
   useEffect(() => {
@@ -107,14 +141,14 @@ export function useLiveGraph({
     }
     pending.current = null
     const next = liveGraphOf(nodes, edges, base)
-    live.write(next, base, request.mergeKey)
+    live.write(next, base, request)
     // The written change, applied to whatever base this update lands on: the
     // same graph when nothing arrived meanwhile, and otherwise the newer one
     // a remote change has just committed.
     setBase((latest) => (latest === base || !latest ? next : applyGraphChange(latest, base, next)))
   }, [live, nodes, edges, base])
 
-  return { live, requestWrite }
+  return { live, requestWrite, layoutWriter }
 }
 
 /**

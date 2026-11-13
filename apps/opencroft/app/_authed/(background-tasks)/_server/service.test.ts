@@ -17,7 +17,7 @@ import test from 'node:test'
 import { userText } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { type RunnerTransport, TAIL_MAX_BYTES } from './background-task-runner'
 import type { HostAsyncTaskInfo, HostTaskEngine } from './engine'
-import { BackgroundTasks, createState, deadlineOf, SERVER_RESTARTED, type ServiceDeps } from './service'
+import { BackgroundTasks, createState, deadlineOf, RETIRED, SERVER_RESTARTED, type ServiceDeps } from './service'
 import { insertTask } from './store'
 import type { BackgroundTaskRecord } from './types'
 
@@ -143,7 +143,11 @@ function runnerTask(
 }
 
 /** A tool's own handler, run in-process: how a tool's task runs unless its tool opted into the runner. */
-function toolTask(svc: BackgroundTasks, run: (signal: AbortSignal) => Promise<unknown>, timeoutMs = 3_600_000) {
+function toolTask(
+  svc: BackgroundTasks,
+  run: (signal: AbortSignal) => Promise<unknown>,
+  timeoutMs: number | null = 3_600_000,
+) {
   return svc.startInProcessTask({
     owner: OWNER,
     kind: 'tool',
@@ -638,6 +642,40 @@ test('a cancel by another session, or by the chat’s stop, still notifies the s
       ['session-1', `Background task ${byChat.taskId} has ended: stopped.`],
     ],
   )
+})
+
+test('a retired key’s in-process tasks stop, told, and its runner tasks and other keys’ tasks run on', async () => {
+  const otherKey = 'group-chat.team.reviewer.main'
+  const fake = fakeEngine([
+    { id: 'session-1', sessionKey: KEY },
+    { id: 'session-2', sessionKey: otherKey },
+  ])
+  const node = fakeNode()
+  const svc = service({ engine: fake.engine, node: node.transport })
+  let seen: AbortSignal | undefined
+  const retiring = await toolTask(
+    svc,
+    (signal) => {
+      seen = signal
+      return new Promise(() => {})
+    },
+    // No time limit, like a question for the user: nothing else would end it.
+    null,
+  )
+  const onNode = await runnerTask(svc)
+  const elsewhere = await inProcessTask(svc, () => new Promise(() => {}), { agent: 'reviewer', sessionId: 'session-2' })
+
+  await svc.retireSessionKey(KEY)
+
+  assert.equal((seen?.reason as Error | undefined)?.message, RETIRED, 'the handler is told to stop, and why')
+  const ended = await svc.get(retiring.taskId)
+  assert.deepEqual([ended?.state, ended?.reason], ['stopped', RETIRED])
+  assert.ok(ended?.deliveredAt, 'nobody is left to tell')
+  await svc.deliverOwed()
+  assert.deepEqual(fake.notified, [])
+  assert.equal((await svc.get(onNode.taskId))?.state, 'running')
+  assert.deepEqual(node.stops(), [])
+  assert.equal((await svc.get(elsewhere.taskId))?.state, 'running')
 })
 
 // ── telling the session ──────────────────────────────────────────────────

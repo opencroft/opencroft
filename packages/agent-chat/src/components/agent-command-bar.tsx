@@ -2,8 +2,8 @@
 
 import type { AvailableCommand } from 'agent-client/types'
 import { Check, Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
-import { Fragment, useRef, useState } from 'react'
-import type { KeyboardEvent, ReactNode, Ref } from 'react'
+import { Fragment, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import { Button } from 'ui/components/ui/button'
 import {
@@ -15,10 +15,56 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'ui/components/ui/dropdown-menu'
-import { Textarea } from 'ui/components/ui/textarea'
 import { cn } from 'cn'
 
-import { CommandAutocomplete, commandInvocation, commandToken, matchCommands } from './command-autocomplete'
+import { CommandAutocomplete } from './command-autocomplete'
+import { MentionAutocomplete, type MentionCandidate } from './mention-autocomplete'
+
+// The list open over the composer while something being typed can be
+// completed: the agent's commands after a `/`, people after an `@`. Which
+// items, which is active and what choosing does are the composer's; the bar
+// draws the list in its place above the text.
+export type AgentCommandBarSuggestions =
+  | {
+      kind: 'commands'
+      items: readonly AvailableCommand[]
+      activeIndex: number
+      onSelect: (item: AvailableCommand) => void
+      onHover: (index: number) => void
+    }
+  | {
+      kind: 'mentions'
+      items: readonly MentionCandidate[]
+      activeIndex: number
+      onSelect: (item: MentionCandidate) => void
+      onHover: (index: number) => void
+    }
+
+// The message being written, as the bar needs it: the text itself to place,
+// whether there is any to send, the send, and the list open over it. The text
+// is a slot because the editor behind it is the host's -- the bar draws where
+// a message is written, not how it is edited.
+export interface AgentCommandBarComposer {
+  input: ReactNode
+  hasText: boolean
+  // Sends what is written. `allowEmpty` comes from the Send button alone, and
+  // only where `emptySendLabel` offers sending nothing.
+  submit: (allowEmpty: boolean) => void
+  suggestions?: AgentCommandBarSuggestions | null
+}
+
+// What a paste or a drop actually brought, as files. Only entries the
+// platform reports as a file: an image copied out of a page carries BOTH an
+// image/* file and an HTML fragment naming it, so reading the item list
+// without this filter turns one screenshot into a picture plus a line of
+// markup typed into the message.
+export function filesFrom(transfer: DataTransfer | null): File[] {
+  return transfer
+    ? Array.from(transfer.items)
+        .flatMap((item) => (item.kind === 'file' ? [item.getAsFile()] : []))
+        .filter((file): file is File => file !== null)
+    : []
+}
 
 // One choice inside a setting.
 export interface CommandBarConfigOption {
@@ -57,40 +103,22 @@ const DEFAULT_APPROVAL_TITLES: ApprovalTitles = {
 }
 
 export interface AgentCommandBarProps {
-  value: string
-  // Bumped by the host every time it LOADS `value` from outside, as opposed to
-  // echoing back what was typed. It is what makes "reload this same text" a
-  // distinguishable event — see `shouldResyncBuffer`. Optional: a host that
-  // never needs to reload identical text can leave it unset.
-  valueRevision?: number
-  onValueChange: (text: string) => void
-  // Called with the trimmed text. **The value is cleared BEFORE this runs** --
-  // see the clear-on-send contract in this component's doc comment. A host that
-  // persists drafts can therefore clear its stored draft in the same turn, and
-  // a host whose send can fail is the one that puts the text back.
-  onSend: (text: string) => void
-  // Escape clears the composer. Given a handler, it is called instead of
-  // `onValueChange('')` -- a host that persists drafts usually wants the clear
-  // to skip whatever it does on an ordinary edit, so that abandoning a message
-  // does not overwrite the stored draft with an empty one.
-  onEscape?: () => void
-  placeholder?: string
-  autoFocus?: boolean
-  onFocus?: () => void
-  onBlur?: () => void
+  // The message being written. Its text is placed on its own full-width line,
+  // with the list it opens drawn above it; see `AgentCommandBarComposer`.
+  composer: AgentCommandBarComposer
   // A turn is running. With `onStop` given, Stop takes the trailing slot for
   // the whole turn -- and Send joins it, to its LEFT, as soon as there is text
   // to submit. An empty composer shows Stop alone.
   //
   // Send is deliberately NOT gated on `busy`. Submitting during a turn is how a
-  // follow-up message is held until the turn ends, and `send()` never had a busy
-  // gate -- only the button was taken away, which left a coarse pointer with no
-  // way to submit during a turn at all: Enter inserts a newline there by design,
-  // so the button is the only other route.
+  // follow-up message is held until the turn ends, and the composer's send has no
+  // busy gate -- were the button taken away, a coarse pointer would have no way
+  // to submit during a turn at all: Enter breaks the line there by design, so
+  // the button is the only route.
   busy?: boolean
   onStop?: () => void
-  // A send is in flight, or the agent cannot accept one. Both only gate
-  // sending; stopping stays available.
+  // A send is in flight, or the agent cannot accept one. Both only gate the
+  // Send button (the composer gates its own Enter); stopping stays available.
   sending?: boolean
   disabled?: boolean
   // Host slot: rendered at the very start of the action row.
@@ -205,10 +233,11 @@ export interface AgentCommandBarProps {
   // handing nothing to an agent is not an action, and a live button that does
   // nothing is worse than an unavailable one.
   //
-  // Given, Send stays available on an empty composer and `onSend('')` is
-  // called. The string is what the button then calls itself, because a press
-  // that sends no message must not say "Send". The new-thread composer uses
-  // this to mint the thread -- and with it the agent's session, and the
+  // Given, Send stays available on an empty composer, and pressing it asks the
+  // composer to send nothing (`composer.submit(true)`). The string is what the
+  // button then calls itself, because a press that sends no message must not
+  // say "Send". The new-thread composer uses this to mint the thread -- and
+  // with it the agent's session, and the
   // settings that only a live session can advertise -- before there is a first
   // message to send.
   //
@@ -240,14 +269,6 @@ export interface AgentCommandBarProps {
   // Overrides the button's title in each state. A host that can say where the
   // setting lives, or that clicking toggles it, should -- the panel cannot.
   approvalTitles?: ApprovalTitles
-  // The host needs this to focus the composer -- e.g. when it stages an
-  // existing message for editing.
-  textareaRef?: Ref<HTMLTextAreaElement>
-  // Commands the agent advertised for this session (see the session
-  // contract's `commands`). With any given, typing `/` in an empty composer
-  // opens the autocomplete, and so does a dollar sign where a name is spelled
-  // with one; without, `/text` is just text on its way out.
-  commands?: AvailableCommand[]
   className?: string
 }
 
@@ -266,45 +287,6 @@ export interface AgentCommandBarProps {
 export const commandBarControlHeight = 'h-7'
 export const commandBarControlClass = 'size-7 shrink-0'
 
-// The reset-contract decision behind the buffered `value` (see this
-// component's own doc comment): true when the `value` PROP has changed since
-// the render before this one -- `prevValue` is that prop as of the previous
-// render, tracked unconditionally, never touched by this component's own
-// `onValueChange` calls.
-//
-// That last part is the whole trick, and worth spelling out because the
-// obvious-looking alternative is wrong: comparing against "what this
-// component itself last reported" instead of "the prop last render" looks
-// equivalent and is not. A host that does NOT echo every keystroke back
-// through `value` (the entire point of the buffer) leaves `value` sitting at
-// its pre-keystroke content across the next render -- if the comparison
-// baseline were "last self-reported", that stale, unchanged `value` would
-// read as differing from what was JUST reported and the buffer would resync
-// BACKWARDS, erasing the keystroke that triggered the render in the first
-// place. Comparing against last render's PROP instead of last SELF-REPORT
-// means an unchanged `value` reads as unchanged, however many renders pass
-// and however many self-reports happened, and only a prop the HOST actually
-// moved reads as new.
-//
-// **AND THE TEXT ALONE CANNOT EXPRESS EVERY LOAD.** The comparison above is
-// blind to the one load whose whole purpose is to restore what `value` already
-// says: "put this message back the way it was". The host's `value` sits at the
-// text it loaded, the reader has since typed over it in the buffer, and the
-// reset loads that same text again -- an identical prop, no resync, and a
-// button that does nothing. `valueRevision` is how a host says "loaded", as a
-// fact separate from what was loaded: bump it on every external set and an
-// unchanged string still lands. Omitted on both sides it compares
-// `undefined !== undefined`, which is false, so a host that does not pass one
-// keeps exactly the behaviour above.
-export function shouldResyncBuffer(
-  value: string,
-  prevValue: string,
-  valueRevision?: number,
-  prevRevision?: number,
-): boolean {
-  return value !== prevValue || valueRevision !== prevRevision
-}
-
 // The bottom panel of an agent chat: the composer, an attachments row, and an
 // action row underneath carrying every control and every host slot.
 //
@@ -312,7 +294,7 @@ export function shouldResyncBuffer(
 // point.** A message is read on the width it was typed on rather than through a
 // gap between icon clusters. Everything else -- host slots, settings, the
 // approval toggle, send/stop -- sits on the row below, which is what lets the
-// panel hold together at a phone width instead of squeezing the textarea to
+// panel hold together at a phone width instead of squeezing the text to
 // nothing.
 //
 // **Above the composer sits the attachments row, and only while something
@@ -327,46 +309,26 @@ export function shouldResyncBuffer(
 // survives a remount), no approval state and no knowledge of where it is
 // mounted -- a host that wants this in a command bar, a sidebar or a dialog
 // puts it there. That is the whole reason the panel can be previewed at all:
-// a no-op `onValueChange` previews it correctly, nothing needs to run behind
+// any element in the composer's place previews it, nothing needs to run behind
 // it.
 //
-// The one exception, and it is a rendering optimisation rather than a change
-// to that contract: keystrokes update an internal buffer (seeded from
-// `value`, reported out through `onValueChange` on every change) rather than
-// requiring the host to round-trip `value` back down before a character
-// appears. A host publishing this element into a slot elsewhere in the tree
-// (an overlay, a portal) would otherwise rebuild and republish that slot on
-// every keystroke -- this component is exactly what is published in that
-// case, so it is the only layer that can absorb the fix. `value` remains the
-// single source of truth for anything EXTERNALLY driven -- a session switch,
-// clear-on-send, Escape -- which the buffer re-syncs from immediately; see
-// the reset contract below. A host that only ever sets `value` in response to
-// this component's own `onValueChange` (the ordinary case) never notices the
-// buffer exists.
-//
-// **Reset contract:** the buffer re-syncs from `value` whenever `value`
-// differs from what it was on the PREVIOUS render, or whenever
-// `valueRevision` does -- so an external `value` change (host clears the
-// draft, loads a different session's saved text, `onEscape` resets it) always
-// lands immediately, while a host that leaves `value` alone during ordinary
-// typing (the whole point of the buffer) never sees it fight back
-// mid-keystroke. The revision covers the load the text alone cannot express:
-// restoring the text `value` already holds. See `shouldResyncBuffer`'s own
-// comment for both halves -- why the comparison has to be against last
-// render's prop and not against what this component last reported outward,
-// and why a load needs an identity of its own.
+// **The text is a slot.** What is written, how it is edited, and what its keys
+// do belong to the composer the host passes (`composer.input`); the bar
+// places it on its line, draws the list it reports open above it, and sends
+// through `composer.submit` when Send is pressed. So the bar knows nothing
+// about an editor, and a second kind of text input is a change at the host.
 //
 // **Clear-on-send: the composer clears immediately, and the host restores on
-// failure.** `onValueChange('')` runs before `onSend`, so the composer is empty
-// the instant the message is handed over. The alternative -- hold the text and
-// clear only once the host confirms -- was considered and rejected: a send is
-// asynchronous and hosts chain sends behind one another, so "confirmed" can be
-// several round trips away, and the composer would sit full and unusable
-// through all of it while the message it still shows has already gone. That
-// penalises every successful send to tidy up a rare failing one.
+// failure.** The composer empties, and reports itself empty, before it hands
+// the message over, so it is empty the instant the message has gone. It does
+// not hold the text until the host confirms: a send is asynchronous and hosts
+// chain sends behind one another, so "confirmed" can be several round trips
+// away, and the composer would sit full and unusable through all of it while
+// the message it still shows has already gone. That would penalise every
+// successful send to tidy up a rare failing one.
 //
 // So the failure path is the host's, and it has both halves: put the text back
-// (through `value`) and say what happened (through `sendError`). A host that
+// (through its composer) and say what happened (through `sendError`). A host that
 // restores the ORIGINAL typed text rather than what it actually transmitted is
 // doing it right -- an outgoing transform is machinery the user never typed.
 // The visible cost of this choice is one frame of empty composer before the
@@ -392,9 +354,6 @@ export function shouldResyncBuffer(
 // instead. No class in here changes that and nothing in here can detect it, so
 // a host mounting this panel somewhere new owes it a bottom-anchored home.
 //
-// Enter sends on a fine-pointer client (Shift+Enter inserts a newline; on touch
-// there is no Shift key, so the button sends); Escape clears.
-//
 // **Send and Stop coexist while a turn runs, and Stop is the one that never
 // moves.** Stop holds the trailing slot from the moment `busy` goes true until
 // it goes false; Send appears to its LEFT once there is text, and goes when the
@@ -410,19 +369,11 @@ export function shouldResyncBuffer(
 // One structural rule matters more than it looks: **the wrapper column, the
 // composer and the action row are rendered unconditionally**, even with no
 // error above the composer. If the element structure changed as a conditional
-// slot appeared and cleared, the textarea would be a different element
+// slot appeared and cleared, the composer's text would be a different element
 // afterwards -- React would remount it and the caret would vanish mid-sentence.
 // A host memoising this panel has to preserve the same property on its side.
 export function AgentCommandBar({
-  value,
-  valueRevision,
-  onValueChange,
-  onSend,
-  onEscape,
-  placeholder,
-  autoFocus,
-  onFocus,
-  onBlur,
+  composer,
   busy = false,
   onStop,
   sending = false,
@@ -447,63 +398,19 @@ export function AgentCommandBar({
   onToggleAutoApprove,
   yoloMode = false,
   approvalTitles = DEFAULT_APPROVAL_TITLES,
-  textareaRef,
-  commands,
   className,
 }: AgentCommandBarProps) {
-  // Buffered value -- see this component's own doc comment for why and the
-  // reset contract, and `shouldResyncBuffer`'s own comment (exported and
-  // tested on its own above -- no React rendering harness in this package to
-  // exercise the component end-to-end, but the one piece of this worth
-  // getting wrong in isolation is which of "value" and "buffered" wins, and
-  // that reduces to a pure function). `prevValueRef` tracks the PROP as of
-  // the previous render, unconditionally -- `setValue` below never touches
-  // it; only the render-time check does.
-  const [buffered, setBuffered] = useState(value)
-  const prevValueRef = useRef(value)
-  const prevRevisionRef = useRef(valueRevision)
-  if (shouldResyncBuffer(value, prevValueRef.current, valueRevision, prevRevisionRef.current)) {
-    prevValueRef.current = value
-    prevRevisionRef.current = valueRevision
-    setBuffered(value)
-  }
-  const setValue = (next: string) => {
-    setBuffered(next)
-    onValueChange(next)
-  }
-
-  const hasText = Boolean(buffered.trim())
+  const { hasText, suggestions } = composer
   // An empty composer is sendable only where the host has said what sending it
   // would mean -- see `emptySendLabel`.
   const emptySendOffered = Boolean(emptySendLabel)
   const canSend = (hasText || emptySendOffered) && !sending && !disabled
   const hasConfigs = Boolean(configs && configs.length > 0)
 
-  // Slash-command autocomplete. Derived from the buffered text every render
-  // rather than held in state: the popup is a VIEW of what is typed, and a
-  // stored copy is a second answer that can disagree with the first after a
-  // draft restore or a buffer resync. Only the keyboard cursor and an explicit
-  // dismiss are state of their own.
-  const [commandCursor, setCommandCursor] = useState(0)
   // Whether a file is being dragged over the bar. Only ever true while
   // `onFiles` is wired -- a bar with nowhere to put a file must not offer to
   // take one.
   const [dragging, setDragging] = useState(false)
-  const [dismissedToken, setDismissedToken] = useState<string | null>(null)
-  const typedToken = commandToken(buffered)
-  const commandMatches =
-    commands && typedToken !== null && typedToken !== dismissedToken ? matchCommands(commands, buffered) : null
-  const commandPopupOpen = commandMatches !== null && commandMatches.length > 0
-  // Clamp instead of resetting on every keystroke: narrowing `/re` -> `/rev`
-  // keeps the highlighted row when it survives the filter.
-  const activeCommandIndex = commandPopupOpen ? Math.min(commandCursor, commandMatches.length - 1) : 0
-
-  const insertCommand = (command: AvailableCommand) => {
-    // The trailing space settles the token, which closes the popup by the
-    // derivation above -- no state to clean up beyond the cursor.
-    setValue(`${commandInvocation(command)} `)
-    setCommandCursor(0)
-  }
 
   // Stop is present for the whole turn; Send is only withheld from a turn with
   // nothing to send. Without `onStop` there is no stop button to make room for,
@@ -524,66 +431,6 @@ export function AgentCommandBar({
           .join(' · ')
       : 'Settings'
 
-  // `allowEmpty` belongs to the CALLER rather than to the composer: the button
-  // passes it and Enter does not, which is the whole of the keystroke rule
-  // stated on `emptySendLabel`.
-  const send = (allowEmpty = false) => {
-    const text = buffered.trim()
-    if ((!text && !allowEmpty) || sending || disabled) return
-    // Cleared before the send so a host persisting drafts sees the empty value
-    // and the send in the same turn, rather than racing its own save.
-    setValue('')
-    onSend(text)
-  }
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    // The command popup owns navigation keys while it is open: Enter picks
-    // instead of sending, Escape closes it instead of clearing the composer.
-    // Ahead of the send branch deliberately -- Enter's meaning depends on
-    // whether a choice is on screen, and this is the one place that knows.
-    if (commandPopupOpen) {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setCommandCursor((activeCommandIndex + 1) % commandMatches.length)
-        return
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setCommandCursor((activeCommandIndex - 1 + commandMatches.length) % commandMatches.length)
-        return
-      }
-      if (event.key === 'Enter' || event.key === 'Tab') {
-        event.preventDefault()
-        insertCommand(commandMatches[activeCommandIndex])
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        // Remembered per token, so the popup stays closed while THIS token is
-        // being typed and offers itself again for the next one.
-        setDismissedToken(typedToken)
-        return
-      }
-    }
-    // On a touch device (phone soft keyboard) there's no accessible Shift key,
-    // so Enter inserts a newline like in any other textarea; only fine-pointer
-    // clients (mouse / physical keyboard) send on Enter. Read at event time --
-    // the handler only runs client-side on interaction, so there's nothing to hydrate.
-    const isCoarsePointer =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(pointer: coarse)').matches
-    if (event.key === 'Enter' && !event.shiftKey && !isCoarsePointer) {
-      event.preventDefault()
-      send()
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      if (onEscape) onEscape()
-      else setValue('')
-    }
-  }
-
   // An empty composer's press is not a send, so it is not named one. With text
   // in it the button is the ordinary Send (or Commit) whatever the host allows
   // on an empty one.
@@ -591,18 +438,6 @@ export function AgentCommandBar({
     !hasText && emptySendLabel ? emptySendLabel : submitMode === 'commit' ? 'Commit edits' : 'Send'
 
   const approvalTitle = yoloMode ? approvalTitles.yolo : autoApprove ? approvalTitles.on : approvalTitles.off
-
-  // What a paste or a drop actually brought, as files. Only entries the
-  // platform reports as a file: an image copied out of a page carries BOTH an
-  // image/* file and an HTML fragment naming it, so reading the item list
-  // without this filter turns one screenshot into a picture plus a line of
-  // markup typed into the message.
-  const filesFrom = (transfer: DataTransfer | null): File[] =>
-    transfer
-      ? Array.from(transfer.items)
-          .flatMap((item) => (item.kind === 'file' ? [item.getAsFile()] : []))
-          .filter((file): file is File => file !== null)
-      : []
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: a drop target has no interactive ARIA role to take -- dropping is a pointer-only gesture with no keyboard equivalent to expose, and the same capability is reachable from the attach control in the action row, which is a real button
@@ -649,8 +484,13 @@ export function AgentCommandBar({
       onDrop={
         onFiles
           ? (event) => {
-              const files = filesFrom(event.dataTransfer)
               setDragging(false)
+              // A drop on the text is the composer's, which takes the files
+              // itself; the rest of the bar takes them here.
+              if (event.defaultPrevented) {
+                return
+              }
+              const files = filesFrom(event.dataTransfer)
               if (files.length > 0) {
                 event.preventDefault()
                 onFiles(files)
@@ -665,8 +505,8 @@ export function AgentCommandBar({
           screen reader reports.
 
           A conditional slot that holds its position whether or not it renders,
-          so the textarea below keeps its place among the children and is never
-          remounted. See the structural rule in this component's doc comment --
+          so the composer's text below keeps its place among the children and
+          is never remounted. See the structural rule in this component's doc comment --
           an element that appears and disappears ABOVE the composer is exactly
           the shape that would break it if it were spliced in instead. */}
       {sendError ? (
@@ -735,47 +575,29 @@ export function AgentCommandBar({
           the reader cannot see is what they cannot decide about. */}
       {attachments ? <div className='flex min-w-0 flex-wrap items-center gap-1 px-1'>{attachments}</div> : null}
 
-      {/* Relative wrapper anchors the command popup to the composer's own
-          box: the popup opens ABOVE (bottom-full), matching the panel's
-          grow-upward contract -- the text never moves under the cursor. A
-          permanent wrapper, not a conditional one, so the textarea's place in
-          the child list never changes as the popup comes and goes. */}
-      <div className='relative min-w-0'>
-        {commandPopupOpen ? (
+      {/* Relative wrapper anchors the popups to the composer's own box: they
+          open ABOVE (bottom-full), matching the panel's grow-upward contract
+          -- the text never moves under the cursor. A permanent wrapper, not a
+          conditional one, so the text's place in the child list never
+          changes as a popup comes and goes. */}
+      <div data-slot='agent-command-bar-composer' className='relative flex min-w-0 flex-col'>
+        {suggestions?.kind === 'commands' ? (
           <CommandAutocomplete
-            items={commandMatches}
-            activeIndex={activeCommandIndex}
-            onSelect={insertCommand}
-            onHover={setCommandCursor}
+            items={suggestions.items}
+            activeIndex={suggestions.activeIndex}
+            onSelect={suggestions.onSelect}
+            onHover={suggestions.onHover}
           />
         ) : null}
-        <Textarea
-          ref={textareaRef}
-          value={buffered}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          // A pasted picture is how a screenshot usually arrives. Text pastes
-          // are left entirely alone: the event is claimed only when the
-          // clipboard actually carried a file, so copying a paragraph still
-          // types it into the box.
-          onPaste={
-            onFiles
-              ? (event) => {
-                  const files = filesFrom(event.clipboardData)
-                  if (files.length > 0) {
-                    event.preventDefault()
-                    onFiles(files)
-                  }
-                }
-              : undefined
-          }
-          onFocus={onFocus}
-          onBlur={onBlur}
-          placeholder={placeholder}
-          rows={1}
-          autoFocus={autoFocus}
-          className='max-h-60 min-h-8 w-full min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:border-0 focus-visible:ring-0'
-        />
+        {suggestions?.kind === 'mentions' ? (
+          <MentionAutocomplete
+            items={suggestions.items}
+            activeIndex={suggestions.activeIndex}
+            onSelect={suggestions.onSelect}
+            onHover={suggestions.onHover}
+          />
+        ) : null}
+        {composer.input}
       </div>
 
       <div className='flex min-w-0 items-center gap-1 px-1'>
@@ -919,7 +741,7 @@ export function AgentCommandBar({
               variant='ghost'
               className={commandBarControlClass}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => send(emptySendOffered)}
+              onClick={() => composer.submit(emptySendOffered)}
               disabled={!canSend}
               // Both carry an explicit name as well as a title. `title` alone
               // does name a button with no text, but weakly -- and these two

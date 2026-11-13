@@ -4,7 +4,6 @@
 // request returns once the user has entered the code there, or the attempt
 // failed. Nothing is typed back into the process.
 
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 
 import {
@@ -18,6 +17,7 @@ import {
 
 import { errorMessage } from './errors'
 import type { OauthLoginResult } from './oauth-login'
+import type { HarnessProcess } from './types'
 
 export interface DeviceCodePrompt {
   verificationUrl: string
@@ -46,7 +46,7 @@ function isWebUrl(value: string): boolean {
 }
 
 export function driveDeviceCodeLogin(
-  child: ChildProcessWithoutNullStreams,
+  child: HarnessProcess,
   spec: { methodId: string; label: string },
   on: { prompt: (prompt: DeviceCodePrompt) => void; done: (result: OauthLoginResult) => void },
 ): void {

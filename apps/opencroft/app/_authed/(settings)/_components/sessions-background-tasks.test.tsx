@@ -76,6 +76,8 @@ async function renderCard(tasks: AgentBackgroundTask[] | null, error?: string | 
         sessions={[]}
         backgroundTasks={tasks}
         backgroundTasksError={error}
+        chatHistory={null}
+        onChatHistoryChange={() => {}}
       />,
     )
   })

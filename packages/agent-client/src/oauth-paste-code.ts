@@ -6,9 +6,8 @@
 // speaking through an ACP client connection. The code itself is written to
 // stdin by ./oauth-login when the user submits it.
 
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-
 import type { OauthLoginResult } from './oauth-login'
+import type { HarnessProcess } from './types'
 
 const BUFFER_CAP = 1_000_000
 
@@ -41,7 +40,7 @@ export function parseJsonRpcLines(raw: string): { id?: number; result?: unknown;
 }
 
 export function drivePasteCodeLogin(
-  child: ChildProcessWithoutNullStreams,
+  child: HarnessProcess,
   spec: { methodId: string; urlPattern: RegExp },
   on: { prompt: (authUrl: string) => void; done: (result: OauthLoginResult) => void },
 ): void {

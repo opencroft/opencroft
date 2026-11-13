@@ -67,6 +67,29 @@ export interface ListRowProps extends Omit<ComponentPropsWithRef<'div'>, 'title'
   className?: string
 }
 
+export interface ListRowContentProps {
+  title: ReactNode
+  secondary?: ReactNode
+  leading?: ReactNode
+}
+
+// What a row shows without the row: the leading slot and the two-line text
+// stack, exactly as ListRow draws them. A surface that reads the same as a row
+// but is not pressed -- a header naming the conversation a row opened -- draws
+// this inside a flex container of its own, so the row and that surface render
+// one element rather than two that match.
+export function ListRowContent({ title, secondary, leading }: ListRowContentProps) {
+  return (
+    <>
+      {leading}
+      <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
+        <span className={LIST_ROW_TITLE_CLASS}>{title}</span>
+        {secondary ? <span className={LIST_ROW_SECONDARY_CLASS}>{secondary}</span> : null}
+      </span>
+    </>
+  )
+}
+
 // The shell a top-level list row is drawn in: a leading slot, a two-line
 // truncating text stack, a trailing slot. Pressable, keyboard-activable, and it
 // marks itself active -- and it owns the touch handling, which is the part that
@@ -165,11 +188,7 @@ export function ListRow({
         className,
       )}
     >
-      {leading}
-      <span className='flex min-w-0 flex-1 flex-col overflow-hidden leading-tight'>
-        <span className={LIST_ROW_TITLE_CLASS}>{title}</span>
-        {secondary ? <span className={LIST_ROW_SECONDARY_CLASS}>{secondary}</span> : null}
-      </span>
+      <ListRowContent leading={leading} title={title} secondary={secondary} />
       {trailing}
     </div>
   )

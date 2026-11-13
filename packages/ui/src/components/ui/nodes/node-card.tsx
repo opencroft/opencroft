@@ -169,6 +169,12 @@ export interface NodeCardHeaderProps {
   /** Slots for the host's edge handles -- the kit draws no connection points. */
   input?: ReactNode
   output?: ReactNode
+  /** Drawn behind the header's content, inside the header box, which is its
+   * containing block. The canvas puts the area a finger drags the node by here,
+   * sized in screen pixels; the header's own controls stay on top of it. The
+   * header stacks above the card's body, so an area that reaches below the
+   * header lies over the body. */
+  dragArea?: ReactNode
   className?: string
 }
 
@@ -182,10 +188,14 @@ export function NodeCardHeader({
   extra,
   input,
   output,
+  dragArea,
   className,
 }: NodeCardHeaderProps) {
+  // At least 44px tall on a coarse pointer, the platforms' minimum touch target,
+  // so a finger can take hold of the header to drag the node.
   return (
-    <div className={cn('flex items-center gap-2 px-4 py-2', className)}>
+    <div className={cn('relative isolate z-10 flex items-center gap-2 px-4 py-2 pointer-coarse:min-h-11', className)}>
+      {dragArea}
       {input}
       <div className='relative shrink-0'>
         <NodeCardIcon icon={icon} iconClassName={iconClassName} />

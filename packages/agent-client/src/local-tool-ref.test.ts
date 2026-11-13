@@ -40,3 +40,14 @@ test('a request that names no tool does not resolve', () => {
   assert.equal(localToolRef(null, 'local'), undefined)
   assert.equal(localToolRef('', 'local'), undefined)
 })
+
+test("Copilot's `<server>-<tool>` resolves through the host's own server, and only with that naming", () => {
+  assert.equal(localToolRef('local-app_call', 'local', 'server-dash-tool'), 'app_call')
+  assert.equal(localToolRef('elsewhere-app_call', 'local', 'server-dash-tool'), undefined)
+  assert.equal(localToolRef('app_call', 'local', 'server-dash-tool'), undefined)
+  assert.equal(localToolRef('local-', 'local', 'server-dash-tool'), undefined)
+  // Each naming reads only its own spelling: a harness that namespaces with
+  // `mcp__` never has a built-in or a foreign tool read as ours by the dash.
+  assert.equal(localToolRef('local-app_call', 'local'), undefined)
+  assert.equal(localToolRef('mcp__local__app_call', 'local', 'server-dash-tool'), undefined)
+})

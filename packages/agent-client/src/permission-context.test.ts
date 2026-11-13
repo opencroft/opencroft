@@ -59,6 +59,53 @@ test('the arguments the call was made with reach the host, and their absence sta
   )
 })
 
+test('a request naming only the bare tool is identified by the call it updates, as it was announced', () => {
+  // Copilot CLI 1.0.95: the request's title is `app_call`, while the tool call
+  // announced under the same id is `local-app_call`.
+  const bare = request({ title: 'app_call', kind: 'other' })
+  const announced = { title: 'local-app_call' }
+  assert.equal(permissionContext(bare, 'local', { announced, naming: 'server-dash-tool' }).localToolName, 'app_call')
+  // Without the announcement, the bare name alone stays unidentified.
+  assert.equal(permissionContext(bare, 'local', { naming: 'server-dash-tool' }).localToolName, undefined)
+  // And an announcement through another server is not ours either.
+  assert.equal(
+    permissionContext(bare, 'local', { announced: { title: 'elsewhere-app_call' }, naming: 'server-dash-tool' })
+      .localToolName,
+    undefined,
+  )
+  // The person still sees the request's own title.
+  assert.equal(permissionContext(bare, 'local', { announced, naming: 'server-dash-tool' }).toolName, 'app_call')
+})
+
+test('with dash naming, a title that reads as a read-only tool of ours identifies nothing', () => {
+  // A shell command's or an edit's title is free text, and `local-get_nodes`
+  // spells a read-only host tool. Read as a reference, it would let the call
+  // run with no card.
+  const shell = request({ title: 'local-get_nodes', kind: 'execute' })
+  assert.equal(
+    permissionContext(shell, 'local', { announced: { title: 'local-get_nodes' }, naming: 'server-dash-tool' })
+      .localToolName,
+    undefined,
+  )
+  assert.equal(permissionContext(shell, 'local', { naming: 'server-dash-tool' }).localToolName, undefined)
+  // The announced call names a tool of ours, but not the one the request is
+  // about.
+  assert.equal(
+    permissionContext(request({ title: 'app_call' }), 'local', {
+      announced: { title: 'local-get_nodes' },
+      naming: 'server-dash-tool',
+    }).localToolName,
+    undefined,
+  )
+})
+
+test("the request's own reference wins over the announced call's", () => {
+  const context = permissionContext(request({ title: 'mcp__local__get_nodes' }), 'local', {
+    announced: { title: 'mcp__local__find_nodes' },
+  })
+  assert.equal(context.localToolName, 'get_nodes')
+})
+
 test('a request with no title and no kind yields neither', () => {
   // Both fields are optional in the protocol, and `null` is a value an agent may
   // actually send. Either arriving as a string would make the host decide about

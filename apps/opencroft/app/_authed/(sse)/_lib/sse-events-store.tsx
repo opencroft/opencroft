@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useRef, useSyncExternalStore } 
 
 import { receiveSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { getStream } from '@/app/_authed/(extension-runtime)/_client/stream'
+import { receiveGroupChatChange } from '@/app/_authed/(group-chats)/_lib/group-chat-changes'
 import type { Comment, DockerContainerSnapshot, PendingApproval, PendingAskUser, SSEEvent } from '@/lib/sse-events'
 
 // ── State ───────────────────────────────────────────────────────────────
@@ -156,6 +157,10 @@ class SSEEventsStore {
         // Held by the session-activity store its readers subscribe to, so a
         // change there re-renders the chat lists and not every SSE reader.
         receiveSessionActivity(event.activity)
+        return
+      case 'group_chat_changed':
+        // Handed to the group chat's own readers, which reload what they show.
+        receiveGroupChatChange(event.groupChatId)
         return
     }
     this.emit()

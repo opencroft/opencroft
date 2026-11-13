@@ -9,21 +9,9 @@
 // outright. A browser reaches agents through a server fn that wraps these,
 // such as the group-chat member picker's directory read.
 
-import {
-  agentInstructionName,
-  agentInstructionText,
-  agentNodeAvatar,
-  agentNodeName,
-  isAgentInstructionNode,
-  isAgentNode,
-} from '@/app/_authed/(agent)/_shared/agent-node-shape'
+import { agentNodeAvatar, agentNodeName, isAgentNode } from '@/app/_authed/(agent)/_shared/agent-node-shape'
+import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-
-export interface AgentInstructionRef {
-  nodeId: string
-  name: string
-  instruction: string
-}
 
 export interface AgentNodeRef {
   nodeId: string
@@ -31,7 +19,6 @@ export interface AgentNodeRef {
   avatar?: string
   spaceSlug: string
   spaceName: string
-  instructions: AgentInstructionRef[]
 }
 
 interface NodeShape {
@@ -40,15 +27,7 @@ interface NodeShape {
   data?: {
     name?: string
     avatar?: string
-    instruction?: string
   }
-}
-
-interface EdgeShape {
-  source?: string
-  sourceHandle?: string
-  target?: string
-  targetHandle?: string
 }
 
 export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
@@ -60,33 +39,9 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
     if (!space) {
       continue
     }
-    // Every graph of the space: agents and their wiring may sit on any of
-    // them, and this answers for the space as a whole.
+    // Every graph of the space: agents may sit on any of them, and this
+    // answers for the space as a whole.
     const nodes = [...space.graphs.values()].flatMap((g) => g.graph.nodes as NodeShape[])
-    const edges = [...space.graphs.values()].flatMap((g) => g.graph.edges as EdgeShape[])
-    const instructionsByAgent = new Map<string, AgentInstructionRef[]>()
-    const instructionsById = new Map<string, NodeShape>()
-    for (const node of nodes) {
-      if (isAgentInstructionNode(node) && node.id) {
-        instructionsById.set(node.id, node)
-      }
-    }
-    for (const edge of edges) {
-      if (!edge.source || !edge.target) {
-        continue
-      }
-      // Instructions connected to agent via instructions-in handle
-      const instr = instructionsById.get(edge.source)
-      if (instr) {
-        const list = instructionsByAgent.get(edge.target) ?? []
-        list.push({
-          nodeId: edge.source,
-          name: agentInstructionName(instr) || 'Instruction',
-          instruction: agentInstructionText(instr),
-        })
-        instructionsByAgent.set(edge.target, list)
-      }
-    }
     for (const node of nodes) {
       if (!isAgentNode(node) || !node.id) {
         continue
@@ -97,11 +52,25 @@ export async function listAgentNodesImpl(): Promise<AgentNodeRef[]> {
         avatar: agentNodeAvatar(node),
         spaceSlug: space.slug,
         spaceName: space.name,
-        instructions: instructionsByAgent.get(node.id) ?? [],
       })
     }
   }
   return out
+}
+
+/**
+ * The agent a session's `mcpIdentity` names: agent-client hands it over as it
+ * was given when the session was opened, the agent node's name slug. Null
+ * whenever the answer is not exactly one agent — no identity, no node whose
+ * name slugifies to it, or more than one: a caller acting for an ambiguous
+ * identity would act for the wrong agent.
+ */
+export async function agentForMcpIdentity(identity: string | undefined): Promise<AgentNodeRef | null> {
+  if (!identity) {
+    return null
+  }
+  const matches = (await listAgentNodesImpl()).filter((node) => slug(node.name) === identity)
+  return matches.length === 1 ? (matches[0] ?? null) : null
 }
 
 /**

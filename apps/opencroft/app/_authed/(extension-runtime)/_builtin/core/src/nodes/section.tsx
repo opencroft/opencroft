@@ -1,12 +1,9 @@
-import { NodeResizer, useReactFlow } from '@opencroft/client/canvas'
-import { Input, Label } from '@opencroft/client/ui'
+import { CanvasFrame } from '@opencroft/client/canvas'
+import { Checkbox, Field, FieldContent, FieldDescription, FieldLabel, Input, Label, Slider } from '@opencroft/client/ui'
 import { Boxes } from 'lucide-react'
-import type { ComponentType, CSSProperties } from 'react'
+import { useId } from 'react'
 
-export interface SectionData {
-  label: string
-  color: string
-}
+import { COLUMN_GAP_STEPS, columnGapSteps, type SectionData } from './section-shared'
 
 const SECTION_COLORS = [
   'oklch(0.6 0.15 250)',
@@ -20,60 +17,9 @@ export function randomSectionColor(): string {
   return SECTION_COLORS[Math.floor(Math.random() * SECTION_COLORS.length)]
 }
 
-const SECTION_GRID = 10
-const snapSection = (v: number) => Math.round(v / SECTION_GRID) * SECTION_GRID
-
-export function ResizableContainer({
-  id,
-  selected,
-  color,
-  icon: Icon,
-  label,
-}: {
-  id: string
-  selected?: boolean
-  color: string
-  icon: ComponentType<{ className?: string; style?: CSSProperties }>
-  label: string
-}) {
-  const { setNodes } = useReactFlow()
-  return (
-    <>
-      <NodeResizer
-        isVisible={selected}
-        minWidth={200}
-        minHeight={160}
-        onResizeEnd={(_event, { width, height }) => {
-          setNodes((nds) =>
-            nds.map((n) =>
-              n.id === id ? { ...n, style: { ...n.style, width: snapSection(width), height: snapSection(height) } } : n,
-            ),
-          )
-        }}
-        lineStyle={{ border: '8px solid transparent', zIndex: 1 }}
-        handleStyle={{ background: 'transparent', border: 'none', width: 16, height: 16, zIndex: 1 }}
-      />
-      <div
-        className='h-full w-full rounded-lg p-3'
-        style={{
-          backgroundColor: `color-mix(in oklch, ${color} 8%, transparent)`,
-          border: `1px dashed color-mix(in oklch, ${color} 40%, transparent)`,
-        }}
-      >
-        <div className='flex items-center gap-1.5'>
-          <Icon className='h-3.5 w-3.5' style={{ color }} />
-          <span className='text-xs font-semibold' style={{ color }}>
-            {label}
-          </span>
-        </div>
-      </div>
-    </>
-  )
-}
-
 export function SectionNode({ id, data, selected }: { id: string; data: SectionData; selected?: boolean }) {
   return (
-    <ResizableContainer
+    <CanvasFrame
       id={id}
       selected={selected}
       color={data.color || 'oklch(0.6 0.15 250)'}
@@ -91,6 +37,8 @@ export function SectionInspector({
   data: SectionData
   updateData: (p: Partial<SectionData>) => void
 }) {
+  const id = useId()
+  const gap = columnGapSteps(data.columnGapSteps)
   return (
     <div className='flex flex-col gap-3'>
       <div className='flex flex-col gap-1'>
@@ -118,6 +66,37 @@ export function SectionInspector({
           ))}
         </div>
       </div>
+      <Field orientation='horizontal'>
+        <Checkbox
+          id={`${id}-autolayout`}
+          checked={data.autolayout === true}
+          onCheckedChange={(checked) => updateData({ autolayout: checked === true })}
+          aria-describedby={`${id}-autolayout-description`}
+        />
+        <FieldContent>
+          <FieldLabel htmlFor={`${id}-autolayout`} className='text-xs'>
+            Autolayout
+          </FieldLabel>
+          <FieldDescription id={`${id}-autolayout-description`} className='text-xs'>
+            Keeps the nodes inside tidied up and the section fitted around them.
+          </FieldDescription>
+        </FieldContent>
+      </Field>
+      {data.autolayout === true && (
+        <Field>
+          <FieldLabel id={`${id}-gap`} className='text-xs'>
+            Column gap: {gap} grid {gap === 1 ? 'step' : 'steps'}
+          </FieldLabel>
+          <Slider
+            aria-labelledby={`${id}-gap`}
+            min={COLUMN_GAP_STEPS.min}
+            max={COLUMN_GAP_STEPS.max}
+            step={1}
+            value={[gap]}
+            onValueChange={(v) => updateData({ columnGapSteps: columnGapSteps(Array.isArray(v) ? v[0] : v) })}
+          />
+        </Field>
+      )}
     </div>
   )
 }

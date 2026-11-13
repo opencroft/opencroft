@@ -171,6 +171,54 @@ test('undo removes the nodes and edges of my step when nothing of theirs refers 
   assert.deepEqual(readGraphFromDoc(mine), { nodes: [node('n1')], edges: [] })
 })
 
+test('undo removes my new node when my own step pointed existing edges and nodes at it', () => {
+  const initial = { nodes: [node('n1'), node('n2')], edges: [{ id: 'e1', source: 'n1', target: 'n2' }] }
+  const { mine, undo } = setup(initial)
+  // A make-subgraph: a new node, an existing node moved into it and an
+  // existing edge re-pointed at it, in one write.
+  edit(mine, ME, (g) => {
+    g.nodes.push(node('group'))
+    g.nodes[1].parentId = 'group'
+    g.edges[0].target = 'group'
+  })
+  assert.deepEqual(undo.undo(), { applied: true, keptNodeIds: [] })
+  assert.deepEqual(readGraphFromDoc(mine), initial)
+})
+
+test('undo removes my new node when a later step of mine changed its references and was undone first', () => {
+  const initial = { nodes: [node('n1'), node('n2')], edges: [{ id: 'e1', source: 'n1', target: 'n2' }] }
+  const { mine, undo } = setup(initial)
+  edit(mine, ME, (g) => {
+    g.nodes.push(node('group'))
+    g.nodes[1].parentId = 'group'
+    g.edges[0].target = 'group'
+  })
+  // An expand: the edge re-pointed back and the group's own fields changed.
+  // Undoing it restores the overwritten fields as new copies of them.
+  edit(mine, ME, (g) => {
+    g.edges[0].target = 'n2'
+    g.nodes[2].type = 'acme.kit.section'
+  })
+  undo.undo()
+  assert.deepEqual(undo.undo(), { applied: true, keptNodeIds: [] })
+  assert.deepEqual(readGraphFromDoc(mine), initial)
+})
+
+test('undo of my new node keeps it when they re-pointed an existing edge at it', () => {
+  const { mine, theirs, undo } = setup({
+    nodes: [node('n1'), node('n2')],
+    edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+  })
+  edit(mine, ME, (g) => {
+    g.nodes.push(node('mine'))
+  })
+  edit(theirs, THEM, (g) => {
+    g.edges[0].target = 'mine'
+  })
+  assert.deepEqual(undo.undo()?.keptNodeIds, ['mine'])
+  assert.ok(nodeById(mine, 'mine'))
+})
+
 test('undo of a move is not blocked by edges they connected to the node', () => {
   const { mine, theirs, undo } = setup({ nodes: [node('n1'), node('n2')], edges: [] })
   edit(mine, ME, (g) => {

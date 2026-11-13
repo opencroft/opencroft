@@ -66,6 +66,12 @@ function positionButtons(): HTMLButtonElement[] {
   return Array.from((group as HTMLElement).querySelectorAll('button'))
 }
 
+// The element the header and the content's column render into: the panel's
+// inner element holds the slot, and the slot holds that element.
+function contentHolder(panel: Element): Element | null | undefined {
+  return panel.firstElementChild?.firstElementChild?.firstElementChild
+}
+
 test('the position switch offers every edge, marks the current one and reports a press', async () => {
   const chosen: string[] = []
   const { unmount } = await mount(
@@ -121,11 +127,11 @@ test('without its header the panel draws no title, no actions and no position sw
       'no position switch, though a handler was given',
     )
     assert.doesNotMatch(dom.container.textContent ?? '', /An action/, 'no actions')
-    // The panel's inner element holds exactly one child -- the content's
-    // column -- where a header would have been a second, before it.
-    const inner = panel.firstElementChild
-    assert.equal(inner?.children.length, 1, 'nothing but the content')
-    assert.match(inner?.textContent ?? '', /The chat, with a header of its own/)
+    // The element holding the header and the content's column has exactly one
+    // child -- the column -- where a header would have been a second, before it.
+    const holder = contentHolder(panel)
+    assert.equal(holder?.children.length, 1, 'nothing but the content')
+    assert.match(holder?.textContent ?? '', /The chat, with a header of its own/)
     assert.match(dom.container.textContent ?? '', /The canvas/, 'and the surface beside it')
   } finally {
     await unmount()
@@ -144,6 +150,9 @@ test('the panel is titled, and both it and the surface are on screen', async () 
     assert.match(text, /A space/, 'the panel carries its title')
     assert.match(text, /The chat/, 'the panel renders what it was given')
     assert.match(text, /The canvas/, 'the surface renders beside it')
+    const panel = dom.container.querySelector('[data-panel][id="dock-panel"]')
+    assert.ok(panel, 'the panel rendered')
+    assert.equal(contentHolder(panel)?.children.length, 2, 'the header, then the content')
   } finally {
     await unmount()
   }

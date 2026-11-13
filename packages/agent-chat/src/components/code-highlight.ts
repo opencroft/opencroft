@@ -161,10 +161,11 @@ function loadGrammar(instance: HighlighterCore, name: string): Promise<boolean> 
  * The classes of a code block's `pre`, on the one `highlight` returns and on
  * the plain one a caller renders before it. The code scrolls sideways instead
  * of wrapping: a wrapped line of code loses the indentation the reader is
- * following. And the `pre` draws no box -- no margin, border, background or
- * rounding -- because the frame around it does, with the language over the
- * code. The classes travel with the markup, so a block looks the same wherever
- * it is installed, whichever stylesheet the host has.
+ * following, so a block wraps only when the reader asks it to. And the `pre`
+ * draws no box -- no margin, border, background or rounding -- because the
+ * frame around it does, with the language over the code. The classes travel
+ * with the markup, so a block looks the same wherever it is installed,
+ * whichever stylesheet the host has.
  */
 export const CODE_PRE_CLASS = 'm-0 rounded-none border-0 bg-transparent overflow-x-auto whitespace-pre'
 

@@ -1,8 +1,6 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { type Mappable, StepMap } from '@tiptap/pm/transform'
 import type { EditorView } from '@tiptap/pm/view'
-
-import type { ChangedRange } from '@/lib/markdown-doc-change'
+import type { ChangedRange } from 'agent-chat/markdown-doc-change'
 
 /*
  * What a change from elsewhere replaced, as this editor drew it.
@@ -26,11 +24,6 @@ export interface ReplacedContent {
   nodes: Node[]
   /** Whether those are whole blocks, which stand between blocks, rather than content in a line. */
   blocks: boolean
-}
-
-/** How positions move through a change from elsewhere: by what it changed, not by its whole-document step. */
-export function changeMapping(range: ChangedRange): Mappable {
-  return new StepMap([range.from, range.endBefore - range.from, range.endAfter - range.from])
 }
 
 /**

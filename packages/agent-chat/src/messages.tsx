@@ -1,6 +1,7 @@
 'use client'
 
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
+import type { AskOutcome } from 'agent-client/types'
 import { cn } from 'cn'
 import { Check, CheckCheck, X } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
@@ -146,9 +147,7 @@ export function PermissionRequest({
     <Flex withGaps className='rounded-md border p-3 text-sm gap-2'>
       <span className='font-medium'>Permission: {message.title}</span>
       {message.resolved ? (
-        <span className='text-xs text-muted-foreground'>
-          Resolved{message.resolvedOptionId ? ` · ${message.resolvedOptionId}` : ' · cancelled'}
-        </span>
+        <span className='text-xs text-muted-foreground'>{permissionOutcome(message)}</span>
       ) : (
         <Flex className='gap-1.5'>
           {allow && (
@@ -194,6 +193,30 @@ export function PermissionRequest({
   )
 }
 
+// What a settled permission request says: the option the reader picked, by
+// its label, or that nobody picked one (its turn ended, or the process that
+// asked is gone).
+function permissionOutcome(message: PermissionMessage): string {
+  if (!message.resolvedOptionId) {
+    return 'Not answered'
+  }
+  const option = message.options.find((candidate) => candidate.id === message.resolvedOptionId)
+  return `Answered: ${option?.label ?? message.resolvedOptionId}`
+}
+
+// What a settled ask says, by how it was settled. An ask whose settling event
+// carries no outcome says only that it is closed, claiming no answer.
+const ASK_OUTCOME_WORDS: Record<AskOutcome, string> = {
+  answered: 'Answered',
+  declined: 'Skipped',
+  turn_ended: 'Not answered: the turn ended',
+  withdrawn: 'Not answered: the question was withdrawn',
+}
+
+export function askOutcomeText(outcome: AskOutcome | undefined): string {
+  return outcome ? ASK_OUTCOME_WORDS[outcome] : 'Closed'
+}
+
 export function AskPrompt({
   message,
   onRespond,
@@ -206,7 +229,7 @@ export function AskPrompt({
     <Flex withGaps className='rounded-md border p-3 text-sm gap-2'>
       <span className='whitespace-pre-wrap wrap-break-word'>{message.message}</span>
       {message.resolved ? (
-        <span className='text-xs text-muted-foreground'>Answered</span>
+        <span className='text-xs text-muted-foreground'>{askOutcomeText(message.outcome)}</span>
       ) : (
         <Flex row className='gap-2'>
           <Input
@@ -252,7 +275,7 @@ export function ToolView({
   if (hideToolCall) {
     return <>{custom}</>
   }
-  const toolCall = <ToolCallBlock name={message.title} args={message.input} result={props.result} />
+  const toolCall = <ToolCallBlock name={message.title} args={message.input} result={props.result} state={props.state} />
   // Nothing custom to show (yet) → just the tool call.
   if (!custom) {
     return toolCall

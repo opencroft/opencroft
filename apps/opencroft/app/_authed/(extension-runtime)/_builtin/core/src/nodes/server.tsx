@@ -1,6 +1,7 @@
 import { invoke } from '@opencroft/client/actions'
-import { inspectorIntent, NodeFrame, OutputHandle, useGraphNodes, useReactFlow } from '@opencroft/client/canvas'
+import { inspectorIntent, NodeFrame, OutputHandle, useGraphNodes } from '@opencroft/client/canvas'
 import { extensionId } from '@opencroft/client/extension'
+import { SecretValueField } from '@opencroft/client/secrets'
 import { Terminal } from '@opencroft/client/terminal'
 import {
   Button,
@@ -35,6 +36,7 @@ export interface ServerData {
   address: string
   username: string
   port: number
+  /** Typed, or `secret:NAME`, resolved server-side where the SSH connection is dialled. */
   password?: string
   keyPath?: string
 }
@@ -46,17 +48,22 @@ interface ServerStats {
   storage: string
 }
 
-function serverConfigFrom(data: Pick<ServerData, 'address' | 'port' | 'username' | 'password' | 'keyPath'>) {
+// `nodeId` is the Server node: a `secret:NAME` password resolves from the Secrets Stores on its graph.
+function serverConfigFrom(
+  nodeId: string,
+  data: Pick<ServerData, 'address' | 'port' | 'username' | 'password' | 'keyPath'>,
+) {
   return {
     address: data.address,
     port: data.port ?? 22,
     username: data.username || 'root',
     password: data.password,
+    credentialsScope: nodeId,
     keyPath: data.keyPath,
   }
 }
 
-function useServerStats(data: ServerData) {
+function useServerStats(nodeId: string, data: ServerData) {
   const [stats, setStats] = useState<ServerStats | null>(null)
   const [loading, setLoading] = useState(false)
   const { address, port, username, password, keyPath } = data
@@ -69,7 +76,7 @@ function useServerStats(data: ServerData) {
     try {
       const out = await invoke<ServerStats>(
         'server.getStats',
-        serverConfigFrom({ address, port, username, password, keyPath }),
+        serverConfigFrom(nodeId, { address, port, username, password, keyPath }),
       )
       setStats(out)
     } catch {
@@ -77,7 +84,7 @@ function useServerStats(data: ServerData) {
     } finally {
       setLoading(false)
     }
-  }, [address, port, username, password, keyPath])
+  }, [nodeId, address, port, username, password, keyPath])
   return { stats, loading, refresh }
 }
 
@@ -143,8 +150,7 @@ function KeyStoreKeySelector({ value, onChange }: { value: string; onChange: (v:
 }
 
 export function ServerNode({ id, data, selected }: { id: string; data: ServerData; selected?: boolean }) {
-  const { stats, loading, refresh } = useServerStats(data)
-  const rf = useReactFlow()
+  const { stats, loading, refresh } = useServerStats(id, data)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
@@ -160,10 +166,9 @@ export function ServerNode({ id, data, selected }: { id: string; data: ServerDat
       if (!data.address) {
         return
       }
-      rf.setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
       inspectorIntent.open(id, tab)
     },
-    [id, rf, data.address],
+    [id, data.address],
   )
 
   const openTerminal = useCallback(() => openInspector('terminal'), [openInspector])
@@ -282,6 +287,7 @@ function HostKeySection({ data }: { data: ServerData }) {
 }
 
 export function ServerInspector({
+  nodeId,
   data,
   updateData,
 }: {
@@ -289,7 +295,7 @@ export function ServerInspector({
   data: ServerData
   updateData: (p: Partial<ServerData>) => void
 }) {
-  const { stats, loading, refresh } = useServerStats(data)
+  const { stats, loading, refresh } = useServerStats(nodeId, data)
   const [installing, setInstalling] = useState(false)
 
   const installKey = useCallback(async () => {
@@ -298,14 +304,14 @@ export function ServerInspector({
     }
     setInstalling(true)
     try {
-      await invoke('server.installKey', serverConfigFrom(data), data.keyPath)
+      await invoke('server.installKey', serverConfigFrom(nodeId, data), data.keyPath)
       toast.success('Public key installed on server')
     } catch (err) {
       toast.error(`Install failed: ${String(err)}`)
     } finally {
       setInstalling(false)
     }
-  }, [data])
+  }, [nodeId, data])
 
   return (
     <div className='flex flex-col gap-3'>
@@ -325,10 +331,11 @@ export function ServerInspector({
         <Label>Port</Label>
         <Input type='number' value={data.port ?? 22} onChange={(e) => updateData({ port: Number(e.target.value) })} />
       </div>
-      <div className='flex flex-col gap-1'>
-        <Label>Password (optional)</Label>
-        <Input type='password' value={data.password ?? ''} onChange={(e) => updateData({ password: e.target.value })} />
-      </div>
+      <SecretValueField
+        label='Password (optional)'
+        value={data.password}
+        onChange={(password) => updateData({ password })}
+      />
       <div className='flex flex-col gap-1'>
         <Label>SSH Key</Label>
         <KeyStoreKeySelector value={data.keyPath ?? ''} onChange={(v) => updateData({ keyPath: v || undefined })} />
@@ -362,6 +369,7 @@ export function ServerInspector({
 }
 
 export function ServerTerminalTab({
+  nodeId,
   data,
 }: {
   nodeId: string
@@ -380,6 +388,7 @@ export function ServerTerminalTab({
           port: data.port || 22,
           username: data.username || 'root',
           password: data.password,
+          credentialsScope: nodeId,
           keyPath: data.keyPath,
         },
       }}
@@ -388,6 +397,7 @@ export function ServerTerminalTab({
 }
 
 export function ServerFilesTab({
+  nodeId,
   data,
 }: {
   nodeId: string
@@ -408,6 +418,7 @@ export function ServerFilesTab({
           port: data.port || 22,
           username: data.username || 'root',
           password: data.password,
+          credentialsScope: nodeId,
           privateKey: data.keyPath,
           basePath: '/',
         },

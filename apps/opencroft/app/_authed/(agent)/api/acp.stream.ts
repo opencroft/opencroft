@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
+import type { ChatEvent } from 'agent-client/types'
 
-import { historyEndEvent, SESSION_GONE_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { type AuthoredChatEvent, historyEndEvent, SESSION_GONE_KIND } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { subagentStepOf, withEntry } from '@/app/_authed/(agent)/_lib/subagent-frames'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import { requireSessionMember, sessionAccessRefusal } from '@/app/_authed/(group-chats)/_server/session-access'
@@ -116,31 +118,48 @@ export const Route = createFileRoute('/_authed/(agent)/api/acp/stream')({
             // the marker is what lets the client number the rest correctly.
             let snapshotPrefix = 0
             let ended = false
-            unsubscribe = agentClient.subscribe(sessionId, (event) => send(withAuthors(event)), {
-              fromIndex: window.startIndex,
-              onReplay: (info) => {
-                snapshotPrefix = info.snapshotPrefix
+            // Each frame named by where it stands: the session log's position,
+            // or for a subagent's step the entry it is in that subagent's log,
+            // as the log holds it now (see withEntry). Read here, as the event
+            // is handed over, not later in the chain: by then the entry may
+            // have grown past this frame and been sent whole by a later one.
+            const framed = (event: ChatEvent, position: number | undefined): AuthoredChatEvent => {
+              if (position !== undefined) {
+                return { ...event, logIndex: position }
+              }
+              const step = subagentStepOf(event)
+              const entry = step && agentClient.getLogEntry(sessionId, step.position, step.subagentSessionId)
+              return entry ? withEntry(event, entry) : event
+            }
+            unsubscribe = agentClient.subscribe(
+              sessionId,
+              (event, position) => send(withAuthors(framed(event, position))),
+              {
+                fromIndex: window.startIndex,
+                onReplay: (info) => {
+                  snapshotPrefix = info.snapshotPrefix
+                },
+                // The session this stream reads has stopped being the session:
+                // it was unloaded, stopped, deleted, or replaced by a reopen
+                // under the same id. Nothing will be emitted into it again, so a
+                // stream left open would be a chat that looks live and never
+                // moves -- a message sent from it reaches the agent, which
+                // works, and none of that ever arrives here. Say so the same way
+                // as for an unknown id, behind whatever is still queued, and end.
+                onEnd: () => {
+                  ended = true
+                  clearInterval(heartbeat)
+                  inOrder = inOrder.then(() => {
+                    try {
+                      controller.enqueue(goneFrame)
+                      controller.close()
+                    } catch {
+                      // Already closed by the reader.
+                    }
+                  })
+                },
               },
-              // The session this stream reads has stopped being the session:
-              // it was unloaded, stopped, deleted, or replaced by a reopen
-              // under the same id. Nothing will be emitted into it again, so a
-              // stream left open would be a chat that looks live and never
-              // moves -- a message sent from it reaches the agent, which
-              // works, and none of that ever arrives here. Say so the same way
-              // as for an unknown id, behind whatever is still queued, and end.
-              onEnd: () => {
-                ended = true
-                clearInterval(heartbeat)
-                inOrder = inOrder.then(() => {
-                  try {
-                    controller.enqueue(goneFrame)
-                    controller.close()
-                  } catch {
-                    // Already closed by the reader.
-                  }
-                })
-              },
-            })
+            )
             // Not for a stream that has already ended -- which it can have by
             // now, if the session went while it was being subscribed to.
             if (!ended) {

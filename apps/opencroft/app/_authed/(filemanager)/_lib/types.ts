@@ -13,6 +13,8 @@ export interface SshConfig {
   port: number
   username: string
   password?: string
+  /** As `SshCredentials.credentialsScope` (`@opencroft/terminal`): the node the credentials are stored on. */
+  credentialsScope?: string
   privateKey?: string
   basePath: string
 }

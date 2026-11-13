@@ -19,7 +19,8 @@
 // events from there, kind and text only.
 
 import { agentSessionEvent, db, transcriptMessage, transcriptMessageCursor } from '@opencroft/db'
-import { boundedSelect } from '@opencroft/db/bounded-select'
+import { boundedSelect, inBudget } from '@opencroft/db/bounded-select'
+import { SESSION_LOG } from 'agent-client/transcript-log'
 import type { ChatEvent } from 'agent-client/types'
 import { and, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 
@@ -29,6 +30,7 @@ import {
   type IndexState,
   type IndexStep,
   indexEvents,
+  type MessageRow,
   type RecordedEvent,
 } from '@/app/_authed/(agent)/_server/transcript-messages'
 
@@ -89,6 +91,7 @@ export async function sessionsBehindIndex(): Promise<string[]> {
       last: sql<number>`max(${agentSessionEvent.position})`.as('last'),
     })
     .from(agentSessionEvent)
+    .where(eq(agentSessionEvent.subagentId, SESSION_LOG))
     .groupBy(agentSessionEvent.sessionKey)
     .as('recorded')
   const rows = await db
@@ -160,14 +163,14 @@ export async function truncateTranscriptIndex(sessionKey: string, cut: number, r
       .from(transcriptMessage)
       .where(eq(transcriptMessage.sessionKey, sessionKey))
     const kept = last?.turn ?? null
-    const cursor = { resumeFrom, turn: kept, openPosition: null, openSegment: 0 }
+    const cursor = { resumeFrom, resumeChars: 0, turn: kept, openPosition: null, openSegment: 0 }
     await tx
       .insert(transcriptMessageCursor)
       .values({ sessionKey, ...cursor })
       .onConflictDoUpdate({ target: transcriptMessageCursor.sessionKey, set: cursor })
     return kept
   })
-  states.set(sessionKey, { resumeFrom, turn, open: null })
+  states.set(sessionKey, { resumeFrom, resumeChars: 0, turn, open: null })
   ownKeys.add(sessionKey)
 }
 
@@ -197,6 +200,103 @@ export async function releaseAfterReplay(sessionKey: string, next: number): Prom
   states.delete(sessionKey)
   await truncateTranscriptIndex(sessionKey, next, next)
 }
+
+/**
+ * Forget the messages of a key that start below `position`: history the
+ * settings trimmed, which a result could no longer open. The cursor and any
+ * reply still being indexed are past it and stay.
+ */
+export async function dropTranscriptIndexBelow(sessionKey: string, position: number): Promise<void> {
+  await db
+    .delete(transcriptMessage)
+    .where(and(eq(transcriptMessage.sessionKey, sessionKey), lt(transcriptMessage.position, position)))
+}
+
+/**
+ * Account for every event before `before` as indexed, writing out a reply left
+ * open: what a rewrite of the key's rows needs first, so that every position
+ * the index names is a question's or a message's first event, and the cursor
+ * stands past the events. Nothing may be streaming under the key. Must run in
+ * the event store's chain for the key.
+ */
+export async function settleTranscriptIndex(sessionKey: string, before: number): Promise<void> {
+  states.delete(sessionKey)
+  ownKeys.delete(sessionKey)
+  await readBack(sessionKey, before)
+}
+
+/** A transaction of `db`: what a caller's single transaction hands in. */
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+/** A key's index from a position on, renumbered: what `applyIndexRemap` writes. */
+export interface IndexRemap {
+  from: number
+  rows: MessageRow[]
+  cursor: { resumeFrom: number; turn: number | null; openPosition: number | null } | null
+}
+
+/**
+ * The index's rows and cursor under a key from `from` on, each position moved
+ * by `remap`: for a rewrite that renumbers the events there. Read before the
+ * rewrite's transaction, after `settleTranscriptIndex`; `remap` must give
+ * distinct messages distinct positions.
+ */
+export async function planIndexRemap(
+  sessionKey: string,
+  from: number,
+  remap: (position: number) => number,
+): Promise<IndexRemap> {
+  const moved = (position: number) => (position >= from ? remap(position) : position)
+  const rows: MessageRow[] = []
+  for await (const row of boundedSelect<{ [K in keyof MessageRow]: MessageRow[K] }>(db, {
+    from: transcriptMessage,
+    fields: {
+      position: transcriptMessage.position,
+      segment: transcriptMessage.segment,
+      role: transcriptMessage.role,
+      turn: transcriptMessage.turn,
+      text: transcriptMessage.text,
+      createdAt: transcriptMessage.createdAt,
+    },
+    key: [transcriptMessage.position, transcriptMessage.segment],
+    where: and(eq(transcriptMessage.sessionKey, sessionKey), gte(transcriptMessage.position, from)),
+  })) {
+    rows.push({ ...row, position: moved(row.position), turn: moved(row.turn) })
+  }
+  const [cursor] = await db
+    .select()
+    .from(transcriptMessageCursor)
+    .where(eq(transcriptMessageCursor.sessionKey, sessionKey))
+  return {
+    from,
+    rows,
+    cursor: cursor
+      ? {
+          resumeFrom: moved(cursor.resumeFrom),
+          turn: cursor.turn === null ? null : moved(cursor.turn),
+          openPosition: cursor.openPosition === null ? null : moved(cursor.openPosition),
+        }
+      : null,
+  }
+}
+
+/** Write a remap planned by `planIndexRemap`, in the caller's transaction. */
+export async function applyIndexRemap(tx: Transaction, sessionKey: string, plan: IndexRemap): Promise<void> {
+  await tx
+    .delete(transcriptMessage)
+    .where(and(eq(transcriptMessage.sessionKey, sessionKey), gte(transcriptMessage.position, plan.from)))
+  // No conflict clause: two messages landing on one position would lose one,
+  // so that fails the caller's transaction instead.
+  for await (const batch of inBudget(plan.rows, (row) => row.text.length, REMAP_ROWS_PER_INSERT)) {
+    await tx.insert(transcriptMessage).values(batch.map((row) => ({ sessionKey, ...row })))
+  }
+  if (plan.cursor) {
+    await tx.update(transcriptMessageCursor).set(plan.cursor).where(eq(transcriptMessageCursor.sessionKey, sessionKey))
+  }
+  states.delete(sessionKey)
+}
+
+const REMAP_ROWS_PER_INSERT = 200
 
 /** Forget everything indexed under a key that is being retired. */
 export async function clearTranscriptIndex(sessionKey: string): Promise<void> {
@@ -238,6 +338,7 @@ async function readBack(sessionKey: string, before: number, written?: { any: boo
   const from: IndexState = cursor
     ? {
         resumeFrom: cursor.resumeFrom,
+        resumeChars: cursor.resumeChars,
         turn: cursor.turn,
         open:
           cursor.openPosition === null
@@ -256,6 +357,7 @@ async function readBack(sessionKey: string, before: number, written?: { any: boo
   // cursor moves past any that carried no text and this is not read again.
   if (step.state.open === null && step.state.resumeFrom < before) {
     step.state.resumeFrom = before
+    step.state.resumeChars = 0
     step.persist = true
   }
   if (step.persist || !cursor) {
@@ -309,6 +411,7 @@ async function readTextEvents(sessionKey: string, from: number, before: number):
     key: [agentSessionEvent.position],
     where: and(
       eq(agentSessionEvent.sessionKey, sessionKey),
+      eq(agentSessionEvent.subagentId, SESSION_LOG),
       gte(agentSessionEvent.position, from),
       lt(agentSessionEvent.position, before),
       inArray(sql`${agentSessionEvent.event}->>'kind'`, ['user', 'agent_message', 'turn_end', 'error']),
@@ -333,8 +436,14 @@ function textEvent(kind: string, text: string): ChatEvent {
 }
 
 async function writeStep(sessionKey: string, step: IndexStep): Promise<void> {
-  const { resumeFrom, turn, open } = step.state
-  const cursor = { resumeFrom, turn, openPosition: open?.position ?? null, openSegment: open?.segment ?? 0 }
+  const { resumeFrom, resumeChars, turn, open } = step.state
+  const cursor = {
+    resumeFrom,
+    resumeChars,
+    turn,
+    openPosition: open?.position ?? null,
+    openSegment: open?.segment ?? 0,
+  }
   await db.transaction(async (tx) => {
     if (step.rows.length > 0) {
       await tx

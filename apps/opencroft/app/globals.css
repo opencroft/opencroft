@@ -55,3 +55,85 @@
 .doc-comment-anchor[data-active='true'] {
   background: color-mix(in oklab, var(--primary) 26%, transparent);
 }
+
+/* The phone's screen stack (app/_shell/stack-transition.ts names the types):
+   a pushed screen slides in from the right over the one it covers, a popped
+   one slides back out to the right, switching roots slides both pages the
+   way the bottom navigation reads, and any other replacement crossfades. Only the
+   page moves; the title bar and the bottom navigation are their own layers
+   (`app-title-bar`, `app-bottom-nav`) and crossfade in place. With reduced
+   motion asked for, every move keeps the browser's plain crossfade. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 240ms;
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  html:active-view-transition-type(stack-push)::view-transition-old(root) {
+    animation-name: stack-under-left;
+  }
+  html:active-view-transition-type(stack-push)::view-transition-new(root) {
+    animation-name: stack-in-right;
+  }
+
+  html:active-view-transition-type(stack-pop)::view-transition-old(root) {
+    z-index: 1;
+    animation-name: stack-out-right;
+  }
+  html:active-view-transition-type(stack-pop)::view-transition-new(root) {
+    animation-name: stack-from-left;
+  }
+
+  /* Roots are peers: both pages move the whole width, side by side. */
+  html:active-view-transition-type(root-next)::view-transition-old(root) {
+    animation-name: root-out-left;
+  }
+  html:active-view-transition-type(root-next)::view-transition-new(root) {
+    animation-name: stack-in-right;
+  }
+  html:active-view-transition-type(root-previous)::view-transition-old(root) {
+    animation-name: stack-out-right;
+  }
+  html:active-view-transition-type(root-previous)::view-transition-new(root) {
+    animation-name: root-in-left;
+  }
+}
+
+@keyframes root-out-left {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes root-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes stack-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes stack-out-right {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes stack-under-left {
+  to {
+    transform: translateX(-25%);
+    opacity: 0.7;
+  }
+}
+
+@keyframes stack-from-left {
+  from {
+    transform: translateX(-25%);
+    opacity: 0.7;
+  }
+}

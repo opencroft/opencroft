@@ -23,6 +23,7 @@ import type { AppActionCaller } from '@/app/_authed/(extension-runtime)/_server/
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
+import { announceDirectoryChange } from '@/app/_authed/(space)/_server/directory-changes'
 import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
 import { registerShutdownStep } from '@/server/shutdown'
 
@@ -275,6 +276,7 @@ export async function transferSpaceAppImpl(ref: string, targetSpaceSlug: string)
   if (loaded) {
     loaded.ctx = await instanceContext(moved)
   }
+  announceDirectoryChange({ subject: 'app', change: 'moved' })
   // Handed back, because the reference the CALLER used may no longer name this
   // instance: an address names it through its space, so the address that
   // reached here stops resolving the moment the move lands. A caller that
@@ -401,6 +403,7 @@ export async function addSpaceAppImpl(
     await fs.rm(instanceDataDir(row.type, row.id), { recursive: true, force: true })
     throw error
   }
+  announceDirectoryChange({ subject: 'app', change: 'added' })
   return row
 }
 
@@ -419,6 +422,7 @@ export async function removeSpaceAppImpl(ref: string): Promise<boolean> {
   await handleInstanceBeforeRemoved(row)
   await handleInstanceRemoved(row)
   await db.delete(spaceApp).where(eq(spaceApp.id, row.id))
+  announceDirectoryChange({ subject: 'app', change: 'removed' })
   return true
 }
 
@@ -480,6 +484,7 @@ export async function renameSpaceAppImpl(instanceId: string, name: string): Prom
   if (loaded) {
     loaded.ctx = await instanceContext(updated)
   }
+  announceDirectoryChange({ subject: 'app', change: 'renamed' })
   return updated
 }
 
@@ -528,6 +533,7 @@ export async function retypeSpaceAppImpl(
     }
     throw error
   }
+  announceDirectoryChange({ subject: 'app', change: 'updated' })
   try {
     await loadInstance(updated)
   } catch (error) {
@@ -756,6 +762,8 @@ export async function listAppActions(app: string, ids?: string[]): Promise<AppAc
 export interface AppHandleInfo {
   instanceId: string
   spaceSlug: string
+  /** The instance's slug; with `spaceSlug`, its address. */
+  slug: string
   /** The App's qualified type. */
   type: string
   /** The App's title — what a picker shows in the node-name position. */
@@ -887,6 +895,7 @@ export async function listAppHandleOwners(handleType?: string): Promise<AppHandl
     const base = {
       instanceId: row.id,
       spaceSlug: slugById.get(row.spaceId) ?? '',
+      slug: row.slug,
       type: row.type,
       title: entry?.title ?? row.type,
     }
@@ -969,6 +978,59 @@ export async function appActionDeclaration(
 }
 
 /**
+ * One app as a graph's Call Action names it: by its identity, which a rename
+ * or a transfer keeps, with where it is now and the actions its App declares.
+ */
+export interface AppCallTarget {
+  instanceId: string
+  address: string
+  spaceSlug: string
+  name: string
+  type: string
+  /** False while the extension providing the App is not installed; `actions` is then empty. */
+  provided: boolean
+  actions: AppActionMeta[]
+}
+
+async function callTargetOf(row: SpaceAppRow, provided: Provided<AppEntry>[]): Promise<AppCallTarget | null> {
+  const address = await appAddressOf(row)
+  if (!address) {
+    return null
+  }
+  const entry = appEntryFor(provided, row)
+  return {
+    instanceId: row.id,
+    address,
+    spaceSlug: address.slice(0, address.indexOf('.')),
+    name: row.name,
+    type: row.type,
+    provided: entry !== undefined,
+    actions: entry?.actions ?? [],
+  }
+}
+
+/** The app one reference names, by address or identity; null when it names none. */
+export async function appCallTarget(ref: string): Promise<AppCallTarget | null> {
+  const row = await resolveAppAddress(ref)
+  return row ? callTargetOf(row, await providedApps()) : null
+}
+
+/** The apps of one space, oldest first. */
+export async function spaceAppCallTargets(spaceSlug: string): Promise<AppCallTarget[]> {
+  const space = (await registry()).getBySlug(spaceSlug)
+  if (!space) {
+    return []
+  }
+  const rows = await db.query.spaceApp.findMany({
+    where: eq(spaceApp.spaceId, space.id),
+    orderBy: asc(spaceApp.createdAt),
+  })
+  const provided = await providedApps()
+  const targets = await Promise.all(rows.map((row) => callTargetOf(row, provided)))
+  return targets.filter((target): target is AppCallTarget => target !== null)
+}
+
+/**
  * Dispatch one App action against one instance — the code path of the
  * `app_call` MCP tool and of an App's own UI (`callAppActionFromUi`). Takes
  * either spelling of an app reference; see `resolveAppAddress`. `caller` is who
@@ -996,19 +1058,28 @@ export async function callAppAction(
   }
   // Lazy: the extension host reaches back into this module (app handles), and
   // the action path is the only one here that needs the host at all.
-  const { groupChatsForCaller } = await import('@/app/_authed/(extension-runtime)/_server/host')
+  const { directoryForCaller, groupChatsForCaller, usageForCaller } = await import(
+    '@/app/_authed/(extension-runtime)/_server/host'
+  )
   const groupChats = groupChatsForCaller(extensionId, caller)
+  const directory = directoryForCaller(extensionId, caller)
+  const usage = usageForCaller(extensionId, caller)
   const ctx = {
     ...(await instanceContext(row)),
     ...(caller && 'agent' in caller ? { callerAgent: caller.agent } : {}),
     ...(caller && 'person' in caller ? { callerPerson: caller.person } : {}),
     signal,
     groupChats: groupChats.api,
+    spaces: directory.spaces,
+    apps: directory.apps,
+    usage: usage.api,
   }
   try {
     return await handler(ctx, params)
   } finally {
     groupChats.end()
+    directory.end()
+    usage.end()
   }
 }
 

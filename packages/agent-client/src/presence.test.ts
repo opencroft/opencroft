@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import {
   DEFAULT_PRESENCE,
+  effectivePresence,
   HOURLY_WINDOW_MAX_MS,
   HOURLY_WINDOW_MIN_MS,
   MINUTES_WINDOW_MAX_MS,
@@ -30,6 +31,27 @@ function command(text: string): QueuedPrompt {
 test('the default is realtime, so a new setting changes nothing that did not ask', () => {
   assert.deepEqual(DEFAULT_PRESENCE, { kind: 'realtime' })
   assert.equal(presenceWindowMs(DEFAULT_PRESENCE), 0)
+})
+
+test('realtime reads as online where the harness cannot steer, and stays realtime where it can', () => {
+  assert.deepEqual(effectivePresence({ kind: 'realtime' }, false), { kind: 'online' })
+  assert.deepEqual(effectivePresence(DEFAULT_PRESENCE, false), { kind: 'online' })
+  assert.deepEqual(effectivePresence({ kind: 'realtime' }, true), { kind: 'realtime' })
+})
+
+test('no other cadence depends on steering', () => {
+  const others = [
+    { kind: 'high-attention' },
+    { kind: 'online' },
+    { kind: 'minutes' },
+    { kind: 'hourly' },
+    { kind: 'daily' },
+    { kind: 'custom', intervalMs: 4_500 },
+  ] as const
+  for (const presence of others) {
+    assert.equal(effectivePresence(presence, false), presence, presence.kind)
+    assert.equal(effectivePresence(presence, true), presence, presence.kind)
+  }
 })
 
 test('the fixed cadences are the intervals they are named for', () => {

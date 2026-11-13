@@ -9,14 +9,18 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 
 import type { Document } from '@hocuspocus/server'
+import { collabDocUpdate, db } from '@opencroft/db'
 import { initProseMirrorDoc, relativePositionToAbsolutePosition, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import { markdownConverter, markdownSchema } from 'agent-chat/markdown-schema'
+import { eq } from 'drizzle-orm'
 import * as Y from 'yjs'
 
 import { STALE_LINEAGE_REASON } from '@/lib/collab-protocol'
 import { MARKDOWN_DOC_FIELD, type MarkdownEditMessage, markdownDocName } from '@/lib/markdown-doc-protocol'
 import { getCollabServer } from '@/server/collab/collab-server'
+import { loadCollabDoc } from '@/server/collab/collab-store'
 import {
+  dropMarkdownDocs,
   editMarkdownDoc,
   flushMarkdownDocs,
   markdownDocLineage,
@@ -28,6 +32,7 @@ import {
 } from '@/server/collab/markdown-docs'
 
 const OWNER = 'test.ext/docs'
+const OTHER_OWNER = 'test.ext/notes'
 const USER = { id: 'user-1', name: 'alice' }
 const AGENT = { kind: 'agent', name: 'agent-a' } as const
 
@@ -115,6 +120,20 @@ test('an edit in the document stores the markdown the editor writes', async () =
   await flushMarkdownDocs(OWNER, key)
   assert.equal(stored.get(key), 'Hello!\n\n- one')
   await doc.close()
+})
+
+test('an edit keeps every hint in the document, over icons as well as text', async () => {
+  const hints =
+    'Ship :hint[**today** :icon[rocket]{color=primary} 🚀]{text="Soon"} now, :hint[:icon[star]]{text="Starred"} and **a :hint[word]{text="W"} here**.'
+  const key = page(`Hello\n\n${hints}`)
+  const doc = await open(key)
+  try {
+    await doc.type('!')
+    await flushMarkdownDocs(OWNER, key)
+    assert.equal(stored.get(key), `Hello!\n\n${hints}`)
+  } finally {
+    await doc.close()
+  }
 })
 
 test('a change to a document nobody has open goes to its storage alone, exactly as made', async () => {
@@ -262,6 +281,39 @@ test('a discarded document drops what it held, and reopens rebuilt from its stor
   assert.equal(reopened.markdown(), 'Published text')
   assert.notEqual(await markdownDocLineage(name, USER), lineage)
   await reopened.close()
+})
+
+test('dropping by key prefix forgets those documents, open or not, unstored, and leaves every other one', async () => {
+  const prefix = `gone-${++counter}/`
+  const openKey = `${prefix}open.md`
+  const closedKey = `${prefix}closed.md`
+  const lookalikeKey = `gone-${counter}-not/page.md`
+  stored.set(openKey, 'Open page')
+  stored.set(closedKey, 'Closed page')
+  stored.set(lookalikeKey, 'Lookalike page')
+  const keptKey = page('Kept page')
+  registerMarkdownDocs(OTHER_OWNER, { read: async (key) => stored.get(key) ?? null, write: async () => {} })
+  for (const key of [closedKey, lookalikeKey, keptKey]) {
+    assert.ok(await markdownDocLineage(markdownDocName(OWNER, key), USER))
+  }
+  assert.ok(await markdownDocLineage(markdownDocName(OTHER_OWNER, openKey), USER))
+  const doc = await open(openKey)
+  await doc.type(' with a draft')
+  await doc.leave()
+  const before = writes
+
+  await dropMarkdownDocs(OWNER, prefix)
+
+  const openName = markdownDocName(OWNER, openKey)
+  assert.equal(getCollabServer().documents.has(openName), false)
+  assert.equal(writes, before)
+  assert.equal(stored.get(openKey), 'Open page')
+  assert.equal(await loadCollabDoc(openName), null)
+  assert.equal(await loadCollabDoc(markdownDocName(OWNER, closedKey)), null)
+  assert.deepEqual(await db.select().from(collabDocUpdate).where(eq(collabDocUpdate.name, openName)), [])
+  assert.ok(await loadCollabDoc(markdownDocName(OWNER, lookalikeKey)))
+  assert.ok(await loadCollabDoc(markdownDocName(OWNER, keptKey)))
+  assert.ok(await loadCollabDoc(markdownDocName(OTHER_OWNER, openKey)))
 })
 
 test('a connection asking in while its document is being closed waits, and is not let in onto the closing copy', async () => {

@@ -39,6 +39,9 @@
   --warning: oklch(0.646 0.222 41.116);
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
+  /* The fill of a field (an input, a text area, a select): a grey of its own
+     beside --muted, so a field reads apart from the surface it sits on. */
+  --field: oklch(0.955 0.002 286.35);
   --ring: oklch(0.623 0.214 259.815);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -81,6 +84,8 @@
   --warning: oklch(0.705 0.213 47.604);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
+  /* --input at 30%. */
+  --field: oklch(1 0 0 / 4.5%);
   --ring: oklch(0.488 0.243 264.376);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);

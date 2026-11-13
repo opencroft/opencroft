@@ -3,6 +3,7 @@
 import { AgentPlanControl, type PlanEntry } from 'agent-chat/components/agent-plan-control'
 import type { ReactNode } from 'react'
 
+import { ChatItemSummary, type ChatStatus } from '../chat/chat-list-item'
 import { BackButton } from '../utils/back-button'
 import { LIST_ROW_SECONDARY_CLASS, LIST_ROW_TITLE_CLASS } from '../utils/list-row'
 
@@ -15,7 +16,6 @@ import { ScrollArea } from '../layout/scroll-area'
 import { StickySection } from '../layouts/sticky-section'
 import { ArtifactSplit } from './artifact-split'
 import { type Artifact, ArtifactMenu } from './thread-artifacts'
-import { type ChatStatus, ThreadAgentCluster } from './thread-agent-cluster'
 import { type ThreadWork, type ThreadWorkItem, ThreadWorkControl } from './thread-work-control'
 
 // Re-exported for hosts that reach the work types through the framing they
@@ -79,14 +79,14 @@ export interface GroupChatThreadFramingProps {
 // surface itself is reused unchanged (a group-chat thread is an ordinary agent
 // session -- see agent-chat/chat-conversation); what is worth designing is the
 // context above it: who the thread is with and whether they are doing anything
-// about it (the agent cluster -- avatar, breadcrumb, name and status -- leads
-// the header), the session's background tasks (the trailing work control),
+// about it (the chat list row's own content -- avatar, `Chat / Thread`, name
+// and status -- leads the header), the session's background tasks (the trailing work control),
 // and a back affordance that matters most on minimal widths where the
 // conversation is a leaf view. No locks -- this states where the reader is,
 // never who is allowed in.
 //
 // Both header pieces are siblings this composes rather than draws: the dock
-// window puts the same cluster and the same control in the header it already
+// window puts the same summary and the same control in the header it already
 // has, so a thread reads identically whichever surface it is open in.
 //
 // The composer is a slot here rather than the host's business because this
@@ -183,14 +183,16 @@ export function GroupChatThreadFraming({
         <>
           {onBack ? <BackButton onClick={onBack} /> : null}
           {agent ? (
-            // The agent leads, in a chat list row's own terms -- the cluster is
-            // the row's avatar, dot, breadcrumb and "Name · Status" line, so a
-            // row and the header a press on it opens say one thing in one type.
-            <ThreadAgentCluster
-              agent={agent}
+            // The agent leads, as the chat list row's own content without the
+            // row -- avatar, dot, `Chat / Thread` and "Name · Status" -- so a
+            // row and the header a press on it opens are one element.
+            <ChatItemSummary
+              title={threadTitle || 'Thread'}
+              breadcrumb={groupChatName}
+              description={agent.name}
+              avatarUrl={agent.avatarUrl}
+              avatarName={agent.name}
               status={status}
-              groupChatName={groupChatName}
-              threadTitle={threadTitle}
               className='flex-1'
             />
           ) : (

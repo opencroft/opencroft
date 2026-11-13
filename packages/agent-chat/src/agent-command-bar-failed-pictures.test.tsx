@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 
 import type { AgentCommandBarSession, UseAgentCommandBarOptions } from './agent-command-bar'
-import { installTestDom } from './test-dom'
+import { installComposerDom, pressKey, settle, composerText as textOf, typeText } from './test-composer'
 import { failedPicturesNotice } from './use-composer-pictures'
 
 let root: import('react-dom/client').Root | null = null
@@ -26,7 +26,7 @@ let createRoot: typeof import('react-dom/client').createRoot
 let useAgentCommandBar: typeof import('./agent-command-bar').useAgentCommandBar
 
 before(async () => {
-  container = installTestDom()
+  container = installComposerDom()
   // jsdom has no object URLs; the chip only needs a string to draw.
   let urls = 0
   URL.createObjectURL = () => {
@@ -76,6 +76,7 @@ async function mount(upload: Upload, extra: Partial<AgentCommandBarSession> = {}
   const next = createRoot(container)
   root = next
   await act(async () => next.render(<Bar {...options} />))
+  await settle()
   return sent
 }
 
@@ -93,13 +94,7 @@ async function attach(...files: File[]) {
 }
 
 async function type(text: string) {
-  const textarea = container.querySelector('textarea')
-  assert.ok(textarea, 'no composer rendered')
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-  await act(async () => {
-    setter?.call(textarea, text)
-    textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
-  })
+  await typeText(container, text)
 }
 
 async function press(label: string) {
@@ -115,14 +110,9 @@ async function press(label: string) {
 }
 
 async function pressEnter() {
-  const textarea = container.querySelector('textarea')
-  assert.ok(textarea, 'no composer rendered')
-  await act(async () => {
-    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-  })
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  })
+  // The send waits for uploads in flight before it decides, which `pressKey`
+  // lets it do.
+  await pressKey(container, 'Enter')
 }
 
 function alertText(): string | null {
@@ -130,7 +120,7 @@ function alertText(): string | null {
 }
 
 function composerText(): string {
-  return container.querySelector('textarea')?.value ?? ''
+  return textOf(container)
 }
 
 test('a send with a picture that failed to attach is refused, keeps the words, and says which picture and why', async () => {

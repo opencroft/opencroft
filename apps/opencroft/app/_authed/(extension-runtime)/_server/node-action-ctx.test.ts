@@ -6,6 +6,7 @@ import '@opencroft/db/test-env'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 import { buildCtx, type GraphNodeLike } from './node-actions-impl'
 
@@ -32,14 +33,22 @@ test('the action is told its node type bare, under the deprecated name too', () 
   assert.equal(ctx.typeId, 'gauge')
 })
 
-// A frame the node sits inside, one of the extension's own and one of another
-// extension's, and a source wired into the node: graph data the action reads.
-const frame = (id: string, type: string) => ({ id, type, position: { x: 0, y: 0 }, style: { width: 100, height: 100 } })
+// The frames the node is inside, one of the extension's own inside one of
+// another extension's, a frame over it that it is not inside, and a source
+// wired into the node: graph data the action reads.
+const frame = (id: string, type: string, x: number, parentId?: string) => ({
+  id,
+  type,
+  position: { x, y: x },
+  style: { width: 100, height: 100 },
+  ...(parentId ? { parentId } : {}),
+})
 const wiredGraph = {
   nodes: [
-    { ...node },
-    frame('own-frame', 'acme.widgets.panel'),
-    frame('core-frame', 'builtin.core.section'),
+    { ...node, parentId: 'own-frame' },
+    frame('own-frame', 'acme.widgets.panel', 10, 'core-frame'),
+    frame('core-frame', 'builtin.core.section', 100),
+    frame('over-it', 'builtin.core.section', 110),
     { id: 'src-1', type: 'builtin.core.prompt', position: { x: 500, y: 500 }, data: { text: 'hi' } },
   ],
   edges: [{ source: 'src-1', target: 'app-1', sourceHandle: 'text-out', targetHandle: 'text-in' }],
@@ -54,6 +63,17 @@ test('graph data handed to the action carries the stored, qualified types', () =
   assert.deepEqual(
     ctx.containingNodes().map((container) => container.type),
     ['acme.widgets.panel', 'builtin.core.section'],
+  )
+})
+
+test('containingNodes is the frames the node is inside, innermost first, each where it is drawn', () => {
+  const ctx = buildCtx(wiredGraph, node, EXTENSION_ID, {}, 'space', {}, undefined)
+  assert.deepEqual(
+    ctx.containingNodes().map(({ id, position }) => ({ id, position })),
+    [
+      { id: 'own-frame', position: { x: 110, y: 110 } },
+      { id: 'core-frame', position: { x: 100, y: 100 } },
+    ],
   )
 })
 
@@ -109,4 +129,47 @@ test('an input source names the qualified handle type it came through, under bot
   const source = ctx.inputSource('text-in')
   assert.equal(source?.handleType, 'builtin.core.text-stream')
   assert.equal(source?.contextType, 'builtin.core.text-stream')
+})
+
+// A primitive input reads the wired value, else the typed one, else the
+// declared default; an input of any other type reads only what is wired.
+const VALUE_HANDLES: ExtensionHandle[] = [
+  { id: 'width', handleType: 'builtin.core.number', role: 'target', default: 1024, integer: true },
+  { id: 'title', handleType: 'builtin.core.string', role: 'target' },
+  { id: 'text-in', handleType: 'builtin.core.text-stream', role: 'target' },
+]
+
+function valueCtx(data: Record<string, unknown>) {
+  const valued = { ...node, data }
+  return buildCtx(
+    { nodes: [valued], edges: [] },
+    valued,
+    EXTENSION_ID,
+    {},
+    'space',
+    {},
+    undefined,
+    undefined,
+    new Set(),
+    VALUE_HANDLES,
+  )
+}
+
+test('ctx.input reads a primitive input wired, else typed, else its default', () => {
+  const wired = { sourceNodeId: 'src-1', sourceHandleId: 'n', handleType: 'builtin.core.number', value: 800.6 }
+  assert.equal(valueCtx({ inputs: { width: 640 }, __resolvedContexts: { width: wired } }).input('width'), 801)
+  assert.equal(valueCtx({ inputs: { width: 640 } }).input('width'), 640)
+  assert.equal(valueCtx({}).input('width'), 1024)
+  // A number wired into a text input reads as its text.
+  assert.equal(valueCtx({ __resolvedContexts: { title: wired } }).input('title'), '800.6')
+  // inputSource still describes the edge only.
+  assert.equal(valueCtx({ inputs: { width: 640 } }).inputSource('width'), undefined)
+})
+
+test('ctx.input reads nothing for a wired primitive input whose source exposes nothing', () => {
+  assert.equal(valueCtx({ inputs: { width: 640 }, __unresolvedInputs: ['width'] }).input('width'), undefined)
+})
+
+test('ctx.input of a non-primitive input ignores data.inputs', () => {
+  assert.equal(valueCtx({ inputs: { 'text-in': 'typed' } }).input('text-in'), undefined)
 })

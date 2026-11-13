@@ -1,10 +1,18 @@
 'use client'
 
 import { AGENT_PROVIDERS } from 'agent-client/agent-providers'
+import { IMAGE_INPUT_OPTIONS, imageInputChoice, imageInputFromChoice } from 'agent-client/image-input'
 import type { AgentProfile } from 'agent-client/profiles'
 import { reasoningEfforts } from 'agent-client/reasoning'
-import { adaptersForProvider, findAdapter, findProvider, responsesApiOptIn } from 'agent-client/resolve'
-import type { AgentSelection } from 'agent-client/types'
+import {
+  adaptersForProvider,
+  findAdapter,
+  findProvider,
+  NATIVE_API_LABELS,
+  nativeApisOffered,
+  responsesApiOptIn,
+} from 'agent-client/resolve'
+import type { AgentSelection, NativeApi } from 'agent-client/types'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from 'ui/components/ui/button'
 import { Checkbox } from 'ui/components/ui/checkbox'
@@ -139,6 +147,7 @@ export function AgentPresetForm({
   // what `knownContextWindow` will do with an empty field. That has to match
   // that function exactly, and `findAdapter(...).kind` is the test it makes.
   const isNative = findAdapter(selection.adapterId)?.kind === 'native'
+  const nativeApis = provider ? nativeApisOffered(provider, selection) : []
   // Reasoning support: detected from the model for the native harness; for ACP
   // agents it's advertised at session start, so offer a generic scale.
   const reasoningOptions = isNative
@@ -366,6 +375,63 @@ export function AgentPresetForm({
             }}
             placeholder='Provider default'
           />
+        </Field>
+      )}
+
+      {/* Offered only where there is a choice: a provider with one API runs on it. */}
+      {isNative && nativeApis.length > 1 && (
+        <Field>
+          <FieldLabel>API</FieldLabel>
+          <Select
+            value={selection.nativeApi && nativeApis.includes(selection.nativeApi) ? selection.nativeApi : nativeApis[0]}
+            onValueChange={(value) => {
+              if (value !== null) {
+                onSelectionChange({ nativeApi: value as NativeApi })
+              }
+            }}
+            items={nativeApis.map((api) => ({ value: api, label: NATIVE_API_LABELS[api] }))}
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {nativeApis.map((api) => (
+                <SelectItem key={api} value={api}>
+                  {NATIVE_API_LABELS[api]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      )}
+
+      {isNative && (
+        <Field>
+          <FieldLabel>Image input</FieldLabel>
+          <Select
+            value={imageInputChoice(selection.imageInput)}
+            onValueChange={(value) => {
+              if (value !== null) {
+                onSelectionChange({ imageInput: imageInputFromChoice(value) })
+              }
+            }}
+            items={IMAGE_INPUT_OPTIONS}
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {IMAGE_INPUT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FieldDescription>
+            Whether the model is shown the images tools return. Ask the endpoint uses the model list's input modalities; a
+            model it reports nothing about gets a text note in place of the image.
+          </FieldDescription>
         </Field>
       )}
 

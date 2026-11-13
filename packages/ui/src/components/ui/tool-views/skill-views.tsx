@@ -6,7 +6,7 @@ import { useMemo } from 'react'
 import { ApprovalDiff, ApprovalFields, FieldRow, Note } from './approval-fields'
 import { lineDiff } from './diff-view'
 import { editSides, textEdit, useSkillBody } from './edit-sides'
-import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpRow, OpText } from './op-block'
+import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpRow, OpText, toolViewState } from './op-block'
 
 // Views of the skill tools. A skill is a name, a one-line description and a
 // markdown body; each view says which skill, whether the call creates it or
@@ -30,7 +30,8 @@ function DescriptionRow({ description }: { description: string }) {
   )
 }
 
-export function SkillWriteView({ args, requestId, mode, result }: ToolViewProps) {
+export function SkillWriteView({ args, requestId, mode, result, state: given }: ToolViewProps) {
+  const state = toolViewState({ state: given, result })
   const name = args.name as string | undefined
   const description = (args.description as string | undefined) ?? ''
   const body = (args.body as string | undefined) ?? ''
@@ -69,7 +70,7 @@ export function SkillWriteView({ args, requestId, mode, result }: ToolViewProps)
       <DiffOpBlock
         verb={verb}
         detail={name}
-        result={result}
+        state={state}
         lead={<DescriptionRow description={description} />}
         diffs={[diff]}
       />
@@ -80,8 +81,7 @@ export function SkillWriteView({ args, requestId, mode, result }: ToolViewProps)
       verb={verb}
       detail={name}
       meta={<OpMeta text={linesLabel(body)} />}
-      isError={result?.isError}
-      pending={!result}
+      state={state}
       overflowing={exceedsClamp(`${description}\n${body}`)}
     >
       {outcome === 'updated' && (
@@ -98,7 +98,7 @@ export function SkillWriteView({ args, requestId, mode, result }: ToolViewProps)
   )
 }
 
-export function SkillEditView({ args, requestId, mode, result }: ToolViewProps) {
+export function SkillEditView({ args, requestId, mode, result, state }: ToolViewProps) {
   const name = args.name as string | undefined
   const edit = textEdit(args)
   const live = useSkillBody(name, requestId)
@@ -116,5 +116,5 @@ export function SkillEditView({ args, requestId, mode, result }: ToolViewProps) 
       </ApprovalFields>
     )
   }
-  return <DiffOpBlock verb='Edit skill' detail={name} result={result} diffs={[diff]} />
+  return <DiffOpBlock verb='Edit skill' detail={name} state={toolViewState({ state, result })} diffs={[diff]} />
 }

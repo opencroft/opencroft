@@ -30,6 +30,7 @@ export * from './storage'
 export * from './streams'
 export * from './terminal'
 export * from './ui'
+export * from './values'
 export {
   /**
    * @deprecated The whole `@ext/host` + `@ext/ui` surface in one namespace.

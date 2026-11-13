@@ -11,8 +11,9 @@
 // title field disappears) and shares its agent selection with the live
 // thread's own picker through the controlled props.
 
+import { useChatComposer } from 'agent-chat/chat-composer'
 import { cn } from 'cn'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -22,6 +23,7 @@ import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/
 import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
+import { mentionCandidates } from '@/app/_authed/(group-chats)/_lib/mention-candidates'
 import { type MemberRef, startGroupChatThread } from '@/app/_authed/(group-chats)/_server/actions'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
@@ -70,6 +72,7 @@ export function GroupChatStartThreadComposer({
   const memberAgents = members
     .filter((m) => m.kind === 'agent')
     .map((m) => ({ nodeId: m.id, name: m.name, avatarUrl: m.avatarUrl }))
+  const mentions = useMemo(() => mentionCandidates(members), [members])
 
   // Remembered per group chat -- who you usually address in one chat says
   // nothing about another. Falls back to the first member whenever the
@@ -86,10 +89,10 @@ export function GroupChatStartThreadComposer({
       : (memberAgents[0]?.nodeId ?? null)
   const selectedAgent = selectedAgentNodeId !== undefined ? selectedAgentNodeId : derivedAgent
 
+  // The text to put back, and a revision bumped on every put-back: the
+  // composer loads text only on a new revision, so what was typed stays where
+  // it is while the reader types.
   const [value, setValue] = useState('')
-  // Bumped on every put-back, so the text lands even when `value` never moved:
-  // a refusal decided before any await restores in the same batch as the
-  // composer's clear-on-send, and the bar resyncs only on a change it can see.
   const [valueRevision, setValueRevision] = useState(0)
   const putBack = (text: string) => {
     setValue(text)
@@ -104,10 +107,9 @@ export function GroupChatStartThreadComposer({
   // (the group-chat screen has none), which makes this a no-op there.
   const selectionScope = useOptionalSelection()
 
-  // The text comes from the composer rather than from this component's own
-  // state, because clear-on-send has already emptied `value` by the time this
-  // runs -- see the kit composer's `onSubmit`. It arrives trimmed, and EMPTY
-  // when the thread is being started without a message at all.
+  // The text comes from the composer's send, trimmed, and EMPTY when the
+  // thread is being started without a message at all. The composer has
+  // already cleared itself by the time this runs (clear-on-send).
   const submit = async (text: string) => {
     if (!selectedAgent) {
       putBack(text)
@@ -162,6 +164,20 @@ export function GroupChatStartThreadComposer({
     }
   }
 
+  const composer = useChatComposer({
+    value,
+    valueRevision,
+    onValueChange: () => {
+      if (error) {
+        setError(undefined)
+      }
+    },
+    onSend: (text) => void submit(text),
+    placeholder: placeholder ?? 'Message…',
+    sending: submitting,
+    mentions,
+  })
+
   return (
     // The wrapper mirrors the kit composer's own root (min-w-0 flex-1 column)
     // so it takes the composer's place inside a CommandBarFrame without
@@ -180,18 +196,10 @@ export function GroupChatStartThreadComposer({
         agents={memberAgents}
         selectedAgentNodeId={selectedAgent}
         onSelectAgent={onSelectAgent ?? setRememberedAgent}
-        value={value}
-        valueRevision={valueRevision}
-        onValueChange={(next) => {
-          setValue(next)
-          if (error) {
-            setError(undefined)
-          }
-        }}
+        composer={composer}
         // No onTitleChange, no title field — see fixedTitle above.
         title={fixedTitle === undefined ? title : undefined}
         onTitleChange={fixedTitle === undefined ? setTitle : undefined}
-        onSubmit={(text) => void submit(text)}
         // Offered on BOTH start surfaces, and not behind a prop: each of them
         // is a screen for starting a new chat, and the reason to start one
         // empty -- reaching the agent's settings, which only exist once its
@@ -201,7 +209,6 @@ export function GroupChatStartThreadComposer({
         submitting={submitting}
         error={error}
         onDismissError={() => setError(undefined)}
-        placeholder={placeholder}
         // Offered wherever there is a scope to keep the answer in, selected or
         // not: it is the only way back from held-back, and the reader may
         // settle it before selecting anything. Tying it to the quotation's own

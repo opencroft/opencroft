@@ -39,8 +39,24 @@ import type { AgentConnection } from 'agent-client/connection'
 import type { AgentSelection } from 'agent-client/types'
 import { eq, inArray } from 'drizzle-orm'
 
+import { agentPlacement } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-placement-shared'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import type { SessionActivitySnapshot } from '@/lib/sse-events'
+
+// Agents run only through a terminal. An agent placed nowhere is moved, when
+// its session opens, to the fixture space's one Localhost node, in its
+// workspace folder under `data/agent-workspace` (placement-migration.ts); a
+// mock connection is keyed on that placement.
+const TEST_LOCALHOST = 'localhost-test'
+function onTestLocalhost(workspaceSlug: string): Pick<AgentSelection, 'cwd' | 'harnessHome' | 'shell'> {
+  const terminal = `${TEST_LOCALHOST}/terminal`
+  const terminalFolder = join(process.cwd(), 'data', 'agent-workspace', workspaceSlug)
+  const placement = agentPlacement({ name: workspaceSlug, terminal, terminalFolder }, workspaceSlug, {
+    cwd: process.cwd(),
+    join,
+  })
+  return { cwd: placement.cwd, harnessHome: placement.harnessHome, shell: terminal }
+}
 
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-session-access-test-'))
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
@@ -87,6 +103,7 @@ await db.insert(space).values({
   name: 'Test Space',
   data: JSON.stringify({
     nodes: [
+      { id: TEST_LOCALHOST, type: 'builtin.core.localhost', data: {} },
       {
         id: 'agent-session',
         type: 'builtin.core.agent',
@@ -114,7 +131,7 @@ await db.insert(space).values({
     adapterId: 'openclaw',
     model: 'test-model',
     apiKey: process.env.OPENCROFT_OPENCLAW_GATEWAY_TOKEN || '',
-    cwd: join(process.cwd(), 'data', 'agent-workspace', slug('Agent Session')),
+    ...onTestLocalhost(slug('Agent Session')),
     baseUrl: process.env.OPENCROFT_OPENCLAW_GATEWAY_URL,
   }
   const store = (globalThis as typeof globalThis & { __acpStore?: { connections: Map<string, unknown> } }).__acpStore

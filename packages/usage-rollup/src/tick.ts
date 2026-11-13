@@ -1,8 +1,7 @@
 // Orchestration only -- deliberately no @opencroft/terminal or graph/space
-// import here. WHICH containers exist and HOW to exec into one is host
-// knowledge: the caller
-// resolves both and hands them in, so this stays testable without a live
-// docker socket or a loaded space registry.
+// import here. WHICH places agents run in and HOW to exec in one is host
+// knowledge: the caller resolves both and hands them in, so this stays
+// testable without a live terminal or a loaded space registry.
 
 import { composeDailyRollupMessage } from './message'
 import { buildRollupCommand } from './rollup-script'
@@ -10,9 +9,10 @@ import { getUsageRollupConfig, listRollupRowsForDay, upsertRollupRows } from './
 import type { RollupRow } from './types'
 
 export interface UsageRollupTickDeps {
-  /** Distinct containers to scan (agent nodes can share one). */
-  containerNames: string[]
-  execInContainer: (containerName: string, command: string) => Promise<string>
+  /** Distinct places agents run in, to scan (agent nodes can share one): the host's ids for them. */
+  places: string[]
+  /** Runs `command` in `place` and resolves its stdout. */
+  execIn: (place: string, command: string) => Promise<string>
   now?: Date
 }
 
@@ -22,7 +22,7 @@ export interface PendingDelivery {
 }
 
 export interface UsageRollupTickResult {
-  scannedContainers: number
+  scannedPlaces: number
   rowsUpserted: number
   pendingDelivery: PendingDelivery | null
 }
@@ -61,33 +61,33 @@ export function dueDeliveryDay(
   return today
 }
 
-/** Execs the rollup script in every container and merges their (day, agent, model) rows. */
+/** Execs the rollup script in every place and merges their (day, agent, model) rows. */
 export async function collectRollupRows(
-  deps: Pick<UsageRollupTickDeps, 'containerNames' | 'execInContainer'>,
+  deps: Pick<UsageRollupTickDeps, 'places' | 'execIn'>,
   sinceDay: string,
 ): Promise<RollupRow[]> {
   const command = buildRollupCommand(sinceDay)
   const byKey = new Map<string, RollupRow>()
-  for (const containerName of deps.containerNames) {
+  for (const place of deps.places) {
     let output: string
     try {
-      output = await deps.execInContainer(containerName, command)
+      output = await deps.execIn(place, command)
     } catch (err) {
-      console.error(`[usage-rollup] exec failed for container ${containerName}`, err)
+      console.error(`[usage-rollup] exec failed in ${place}`, err)
       continue
     }
     let parsed: RollupRow[]
     try {
       parsed = JSON.parse(output) as RollupRow[]
     } catch (err) {
-      console.error(`[usage-rollup] could not parse rollup output from ${containerName}`, err)
+      console.error(`[usage-rollup] could not parse rollup output from ${place}`, err)
       continue
     }
     for (const row of parsed) {
       const key = `${row.day}${String.fromCharCode(0)}${row.agent}${String.fromCharCode(0)}${row.model}`
       const existing = byKey.get(key)
       if (existing) {
-        // Belt-and-suspenders: containers are expected to own disjoint
+        // Belt-and-suspenders: places are expected to own disjoint
         // /home/node/.claude/projects trees, but if two ever overlap for the
         // same bucket, sum rather than let the second exec silently win.
         existing.requests += row.requests
@@ -106,21 +106,21 @@ export async function collectRollupRows(
 }
 
 /**
- * One scheduler tick: re-derive yesterday+today's rows from every container,
+ * One scheduler tick: re-derive yesterday+today's rows from every place,
  * persist them, and decide whether today's rollup is due in chat. Does NOT
  * send the message or mark it delivered -- the caller does that (and only
  * commits lastDeliveredDay once the send actually succeeds), since chat
  * delivery is host/group-chat knowledge this package does not have.
  *
  * `enabled: false` gates the WHOLE tick, not just the chat message -- it
- * stops the container scans too, so turning the rollup off actually stops
- * exec'ing into every agent container every 15 minutes instead of only
- * silencing its output.
+ * stops the scans too, so turning the rollup off actually stops exec'ing
+ * into every agent's place every 15 minutes instead of only silencing its
+ * output.
  */
 export async function runUsageRollupTick(deps: UsageRollupTickDeps): Promise<UsageRollupTickResult> {
   const config = await getUsageRollupConfig()
   if (!config.enabled) {
-    return { scannedContainers: 0, rowsUpserted: 0, pendingDelivery: null }
+    return { scannedPlaces: 0, rowsUpserted: 0, pendingDelivery: null }
   }
 
   const now = deps.now ?? new Date()
@@ -137,5 +137,5 @@ export async function runUsageRollupTick(deps: UsageRollupTickDeps): Promise<Usa
     pendingDelivery = { day: deliverDay, message: composeDailyRollupMessage(deliverDay, dayRows) }
   }
 
-  return { scannedContainers: deps.containerNames.length, rowsUpserted: rows.length, pendingDelivery }
+  return { scannedPlaces: deps.places.length, rowsUpserted: rows.length, pendingDelivery }
 }

@@ -10,7 +10,7 @@ import { useSettingsLocation } from '@/app/_authed/(settings)/_lib/settings-loca
 // Anything but the audit tab's id reads as the default, Sessions, which is
 // carried as absence.
 export default function AgentsSettings() {
-  const { tab, openTab } = useSettingsLocation()
+  const { tab, openTab } = useSettingsLocation('/administration')
   const shownTab: AgentsSettingsTab = tab === 'audit' ? 'audit' : 'sessions'
 
   return (

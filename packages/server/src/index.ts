@@ -12,6 +12,7 @@ import * as legacyApi from './legacy'
 export * from '@opencroft/core'
 
 export * from './actions'
+export * from './agents'
 export * from './apps'
 export * from './chat'
 export * from './collab'
@@ -25,10 +26,13 @@ export * from './people'
 export * from './routes'
 export * from './secrets'
 export * from './settings'
+export * from './spaces'
 export * from './storage'
 export * from './system'
 export * from './terminal'
 export * from './tools'
+export * from './usage'
+export * from './values'
 export {
   /**
    * @deprecated The host's whole surface in one namespace. Import each name

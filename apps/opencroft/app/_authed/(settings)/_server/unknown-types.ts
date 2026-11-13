@@ -15,7 +15,7 @@ import { retypeSpaceAppImpl } from '@/app/_authed/(apps)/_server/runtime'
 import { extensionIdOfType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import type { GraphEdgeRecord, GraphNodeRecord } from '@/app/_authed/(extension-runtime)/_server/host'
 import { loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { fetchAllRegistries, getRegistrySources } from '@/app/_authed/(extension-runtime)/_server/registry'
+import { loadRegistries } from '@/app/_authed/(extension-runtime)/_server/registry'
 import {
   type ExtensionHandle,
   type ExtensionManifest,
@@ -183,17 +183,16 @@ function declaredHandles(manifest: ExtensionManifest): Array<{ owner: string; ha
   return declared
 }
 
-// A registry that fails to fetch is left out of fetchAllRegistries' result
-// rather than reported, so the ones missing from it are the unreachable ones.
+// A registry with no listing, not even a stale one, is an unreachable one.
 async function readRegistries(): Promise<RegistryListing> {
-  const [sources, fetched] = await Promise.all([getRegistrySources(), fetchAllRegistries()])
+  const outcomes = await loadRegistries()
   return {
-    extensions: fetched.flatMap((reg) =>
-      reg.manifest.extensions.map((extension) => ({ id: extension.id, registryName: reg.source.name })),
+    extensions: outcomes.flatMap(({ registry }) =>
+      registry
+        ? registry.manifest.extensions.map((extension) => ({ id: extension.id, registryName: registry.source.name }))
+        : [],
     ),
-    unreachable: sources
-      .filter((source) => !fetched.some((reg) => reg.source.url === source.url))
-      .map((source) => source.name),
+    unreachable: outcomes.filter((outcome) => !outcome.registry).map((outcome) => outcome.source.name),
   }
 }
 

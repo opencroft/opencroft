@@ -7,16 +7,15 @@
 //
 // Pinned against the real composer rather than described, because the halves
 // live in two different kit components -- the permission is a prop on the start
-// composer, the gate it turns into is inside the command bar -- and neither
-// package has a DOM to exercise them in. This is the only place the pair is
-// reachable at once.
+// composer, the gate it turns into is inside the command bar -- and the
+// composer's Enter is the chat composer's. This is the only place all three
+// are reachable at once.
 //
-// The last test is the regression the message PARAMETER closed. The host used
-// to keep its own copy of the last non-empty text, to survive the command bar
-// clearing the composer before reporting the send. That was correct exactly as
-// long as an empty submit was impossible: the moment one became possible, a
-// person who typed something, deleted it and then started an empty thread would
-// have sent the deleted text.
+// The last test pins that the send hands over what the composer holds, never a
+// copy the host kept. A host's copy of the last non-empty text outlives the
+// composer clearing itself, so with an empty send on offer, a person who typed
+// something, deleted it and then started an empty thread would send the
+// deleted text.
 
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
@@ -26,9 +25,12 @@ import type { ReactNode } from 'react'
 import { installDomEnvironment } from '@/test-support/dom-environment'
 
 const dom = await installDomEnvironment()
+const { addComposerStubs, pressKey, settle } = await import('agent-chat/test-composer')
+addComposerStubs()
 
 const { act, useState } = await import('react')
 const { createRoot } = await import('react-dom/client')
+const { useChatComposer } = await import('agent-chat/chat-composer')
 const { StartThreadComposer } = await import('ui/group-chat/start-thread-composer')
 
 after(() => dom.cleanup())
@@ -38,8 +40,7 @@ const AGENTS = [{ nodeId: 'agent-1', name: 'Ada' }]
 const EMPTY_LABEL = 'Start the thread without a message'
 
 // Captured during render, so a test can put text in the composer and take it
-// out again without simulating keystrokes into a controlled textarea. What is
-// under test is the props contract, and this drives it directly.
+// out again the way a host loads it, without typing it.
 let setText: ((value: string) => void) | null = null
 
 interface SurfaceProps {
@@ -48,17 +49,21 @@ interface SurfaceProps {
 }
 
 function Surface({ allowEmptyStart, onSubmit }: SurfaceProps): ReactNode {
-  const [value, setValue] = useState('')
-  setText = setValue
+  const [text, setState] = useState({ value: '', revision: 0 })
+  setText = (value) => setState((current) => ({ value, revision: current.revision + 1 }))
+  const composer = useChatComposer({
+    value: text.value,
+    valueRevision: text.revision,
+    onValueChange: () => {},
+    onSend: onSubmit,
+  })
   return (
     <StartThreadComposer
       agents={AGENTS}
       selectedAgentNodeId='agent-1'
       onSelectAgent={() => {}}
-      value={value}
-      onValueChange={setValue}
+      composer={composer}
       allowEmptyStart={allowEmptyStart}
-      onSubmit={onSubmit}
     />
   )
 }
@@ -78,6 +83,7 @@ async function mount(options: { allowEmptyStart: boolean; onSubmit: (message: st
   await act(async () => {
     root.render(<Surface allowEmptyStart={options.allowEmptyStart} onSubmit={options.onSubmit} />)
   })
+  await settle()
   const send = () => {
     const found = dom.container.querySelector(`button[aria-label="Send"], button[aria-label="${EMPTY_LABEL}"]`)
     assert.ok(found, 'the send button is on screen')
@@ -88,6 +94,7 @@ async function mount(options: { allowEmptyStart: boolean; onSubmit: (message: st
     type: async (text: string) => {
       assert.ok(setText, 'the surface rendered')
       await act(async () => setText?.(text))
+      await settle()
     },
     click: async () => {
       await act(async () => {
@@ -95,11 +102,7 @@ async function mount(options: { allowEmptyStart: boolean; onSubmit: (message: st
       })
     },
     enter: async () => {
-      const textarea = dom.container.querySelector('textarea')
-      assert.ok(textarea, 'the composer has a message field')
-      await act(async () => {
-        textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      })
+      await pressKey(dom.container, 'Enter')
     },
     unmount: async () => {
       await act(async () => root.unmount())

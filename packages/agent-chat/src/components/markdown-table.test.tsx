@@ -149,6 +149,15 @@ test('a block of cells shows the controls of all its rows and columns', async ()
   assert.deepEqual(insertsShown(), { columns: [100, 200, 300], rows: [0, 20, 40] })
 })
 
+test('the controls are drawn in a layer of their own, so the table takes no room for them', async () => {
+  await mount(cells(1, 1))
+  assert.equal(labelled('Row 2').length, 1)
+  // Where the table stands there is the frame and nothing around it.
+  assert.equal(container.childElementCount, 1)
+  assert.ok(container.firstElementChild?.matches(':has(> table)'))
+  assert.equal(container.querySelector('[aria-label]'), null)
+})
+
 test('a + inserts at its own boundary', async () => {
   const commands = await mount(cells(1, 1))
   await press(labelled('Insert column here')[1])

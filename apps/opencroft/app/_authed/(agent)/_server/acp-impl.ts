@@ -27,12 +27,14 @@ import { join } from 'node:path'
 
 import { getSessionUser } from '@opencroft/auth/server'
 import { getRequest } from '@tanstack/react-start/server'
-import { supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
+import { type RecordedLogOpts, supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
 import type { AttachmentRef } from 'agent-client/attachments'
 import { usableContextWindow } from 'agent-client/context-window'
-import { ActionRequiredError } from 'agent-client/errors'
+import { ActionRequiredError, isResourceNotFound } from 'agent-client/errors'
+import type { RecordsWindow } from 'agent-client/pagination'
 import { rebuildTurn, type TurnEdit } from 'agent-client/queue-tags'
-import type { AgentSelection, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
+import { takesEndpointHeaders } from 'agent-client/resolve'
+import type { AgentSelection, NativeApi, Presence, PromptOrigin, QueueMode, SessionMeta } from 'agent-client/types'
 
 import type { AuthoredRecordsWindow } from '@/app/_authed/(agent)/_lib/acp-stream'
 import type { PromptOriginInput } from '@/app/_authed/(agent)/_lib/prompt-origin'
@@ -49,6 +51,7 @@ import {
   writePersistedSession,
 } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { terminalPlacement } from '@/app/_authed/(agent)/_server/agent-terminal'
 import { withAuthors } from '@/app/_authed/(agent)/_server/attach-authors'
 import {
   AttachmentRejected,
@@ -60,28 +63,46 @@ import {
 } from '@/app/_authed/(agent)/_server/attachment-store'
 import { queryChatUsageTokensBySession } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { gatewayDefaults } from '@/app/_authed/(agent)/_server/gateway-defaults'
+import {
+  clearStalePlacementError,
+  migrateAgentPlacements,
+  needsTerminal,
+} from '@/app/_authed/(agent)/_server/placement-migration'
 import { dropWaitingEntries, queueStore } from '@/app/_authed/(agent)/_server/queue-store'
 import {
-  appendSessionEvent,
+  attachSessionLogs,
   clearSessionEvents,
-  readRecordedPosition,
-  readSessionEvents,
+  enginePositionOf,
+  prepareSessionLogs,
+  type RecordedLogs,
+  readSessionLogs,
+  recordForkedSession,
   recordReplay,
   rerecordEditedSession,
   retireSessionTranscript,
+  type SessionLogsSnapshot,
 } from '@/app/_authed/(agent)/_server/session-event-store'
 import { locateTurn, type TurnLocation } from '@/app/_authed/(agent)/_server/transcript-locate'
 import { indexedMessageAt } from '@/app/_authed/(agent)/_server/transcript-search'
 import {
-  forceBypassMode,
+  configLockedByYolo,
+  forceBypass,
   installYoloModeEnforcement,
-  modeLockedByYolo,
 } from '@/app/_authed/(agent)/_server/yolo-mode-enforcement'
 import { splitEnvelope, stripDeliveryStamp } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
 import { backgroundTasks } from '@/app/_authed/(background-tasks)/_server/service'
-import { agentPlacement } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-placement-shared'
+import {
+  type HeaderPair,
+  profileSendsHeaders,
+  resolveHeaders,
+} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-headers-shared'
+import {
+  agentPlacement,
+  FolderMissingError,
+} from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-placement-shared'
 import { type ContextUsage, toContextUsage } from '@/app/_authed/(extension-runtime)/_server/session-context-usage'
+import { isYoloMode } from '@/app/_authed/(mcp)/_server/yolo'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { authorForPerson } from '@/app/_server/message-author'
 import { secrets } from '@/server/secrets'
@@ -94,12 +115,17 @@ interface AgentNodeData {
   apiKeySecret?: string
   defaultModeId?: string
   baseUrl?: string
+  endpointHeaders?: HeaderPair[]
   responsesApi?: boolean
   systemPrompt?: string
   reasoningEffort?: string
   temperature?: number
   contextWindow?: number
+  imageInput?: boolean
+  nativeApi?: NativeApi
   containerName?: string
+  terminal?: string
+  terminalFolder?: string
 }
 
 export interface OpenedSession {
@@ -211,11 +237,25 @@ export async function agentConfiguredWindowByNodeId(agentNodeId: string): Promis
   return usableContextWindow(agent?.contextWindow)
 }
 
-async function resolveSecret(key: string): Promise<string> {
+// The agent's `apiKeySecret`, from the Secrets Stores on the agent node's own graph.
+async function resolveSecret(key: string, agentNodeId: string): Promise<string> {
   if (!key) {
     return ''
   }
-  return (await secrets.resolve(key)) ?? ''
+  return (await secrets.resolve(key, { nodeId: agentNodeId })) ?? ''
+}
+
+// The agent's `endpointHeaders`, each value typed or `secret:NAME` from the
+// Secrets Stores on its graph, when its profile sends them at all.
+async function resolveEndpointHeaders(
+  agent: AgentNodeData,
+  adapterId: string,
+  agentNodeId: string,
+): Promise<Record<string, string> | undefined> {
+  if (!profileSendsHeaders(takesEndpointHeaders(adapterId), agent.baseUrl) || !agent.endpointHeaders?.length) {
+    return undefined
+  }
+  return resolveHeaders(agent.endpointHeaders, (value) => secrets.resolveValue(value, { nodeId: agentNodeId }))
 }
 
 // Same live-or-last-known resolution host.ts's listSessions uses, for one
@@ -281,7 +321,7 @@ export async function ensureLocalSessionImpl(data: { agentNodeId: string; tabKey
  *    but it never has to, because we watched it happen.
  *
  *  - **From the harness's replay.** The fallback, for a session recorded before
- *    this existed, one whose recording aged out of the cap, or an agent that
+ *    this existed, one whose recording the history settings removed, or an agent that
  *    cannot reattach without replaying. Lossy in the way above, and still far
  *    better than opening an empty chat.
  *
@@ -297,23 +337,48 @@ export async function ensureLocalSessionImpl(data: { agentNodeId: string; tabKey
  * took the key, and the conversation opened empty from then on, its only
  * record deleted by an attempt that could not have succeeded. It is thrown
  * instead, with the recording intact, and the next open tries again.
+ *
+ * One failure is not worth trying again: the harness answering that it does
+ * not have the session at all (ACP resource-not-found), because its store lost
+ * it. That is the harness's settled answer about its own store, so every later
+ * attempt meets the same answer and the chat could never be opened or sent to
+ * again. It is still thrown from here, recording intact; the caller opens a new
+ * session under the same key that carries the recording as its history (see
+ * openLocalSession).
  */
+// How the recorded logs seed a session besides the entries themselves: where
+// the tail stands in the log and what lies below it (agent-client's
+// RecordedLogOpts).
+function seedOf(recorded: RecordedLogs): RecordedLogOpts {
+  return {
+    subagentLogs: recorded.subagentLogs,
+    start: recorded.start,
+    turnsBefore: recorded.turnsBefore,
+    before: recorded.before,
+  }
+}
+
 async function reopenPersistedSession(
   tabKey: string,
   sessionId: string,
   selection: AgentSelection,
 ): Promise<SessionMeta | null> {
-  const recorded = await readSessionEvents(tabKey).catch((error: unknown) => {
+  const recorded = await readSessionLogs(tabKey).catch((error: unknown) => {
     // A transcript that cannot be read is the state every session was in
     // before this existed, so the replay below still has its turn.
     console.error('Failed to read the persisted transcript for tab', tabKey, error)
-    return []
+    return null
   })
-  if (recorded.length > 0) {
-    const restored = await agentClient.restoreSession(sessionId, selection, recorded).catch((error: unknown) => {
-      console.error('Failed to restore the recorded session for tab; its transcript is kept', tabKey, error)
-      throw error
-    })
+  if (recorded && recorded.events.length > 0) {
+    // Before the restore: the session writes from here on at the positions
+    // its logs were read from.
+    attachSessionLogs(tabKey, sessionId, recorded.bases)
+    const restored = await agentClient
+      .restoreSession(sessionId, selection, recorded.events, undefined, seedOf(recorded))
+      .catch((error: unknown) => {
+        console.error('Failed to restore the recorded session for tab; its transcript is kept', tabKey, error)
+        throw error
+      })
     if (restored) {
       return restored
     }
@@ -428,21 +493,45 @@ async function residentSession(data: { agentNodeId: string; tabKey: string }): P
   return null
 }
 
+/**
+ * The agent node's data, moved to a terminal first when it is still placed
+ * the way agents ran before terminals (placement-migration.ts). An agent left
+ * without a terminal is refused: it runs through one or not at all.
+ */
+async function placedAgentData(agentNodeId: string): Promise<AgentNodeData> {
+  let agent = await findNodeData<AgentNodeData>(agentNodeId)
+  if (agent && needsTerminal(agent as Record<string, unknown>)) {
+    const [line] = await migrateAgentPlacements(agentNodeId)
+    agent = await findNodeData<AgentNodeData>(agentNodeId)
+    if (agent && needsTerminal(agent as Record<string, unknown>)) {
+      const why = line?.startsWith('left ') ? ` (${line.replace(/^left .*?: /, '')})` : ''
+      throw new ActionRequiredError(
+        `This agent has no terminal to run through${why}: choose a terminal in its profile.`,
+      )
+    }
+  }
+  if (!agent) {
+    throw new ActionRequiredError('Agent node not found')
+  }
+  await clearStalePlacementError(agentNodeId, agent as Record<string, unknown>)
+  return agent
+}
+
 async function openLocalSession(data: { agentNodeId: string; tabKey: string }): Promise<OpenedSession> {
   const resident = await residentSession(data)
   if (resident) {
     return resident
   }
-  const agent = await findNodeData<AgentNodeData>(data.agentNodeId)
-  if (!agent) {
-    throw new ActionRequiredError('Agent node not found')
-  }
+  const agent = await placedAgentData(data.agentNodeId)
   // Each agent gets a persistent workspace and a harness home of its own,
   // keyed by its slug — shared with the account sign-in, which must write a
   // harness login where these sessions read it.
-  const placement = agentPlacement(agent, data.agentNodeId, { cwd: process.cwd(), join })
+  const placement = await terminalPlacement(
+    agentPlacement(agent, data.agentNodeId, { cwd: process.cwd(), join }),
+  ).catch((error: unknown) => {
+    throw error instanceof FolderMissingError ? new ActionRequiredError(error.message) : error
+  })
   const adapterId = agent.adapterId ?? 'claude'
-  const containerName = placement.containerName
   const gateway = gatewayDefaults(adapterId)
   const selection: AgentSelection = {
     providerId: agent.providerId ?? '',
@@ -451,12 +540,14 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     // An OpenClaw agent's token and base URL fall back to the deployment's
     // OPENCROFT_OPENCLAW_GATEWAY_* vars when its node leaves them unset; no other harness
     // takes them (see gateway-defaults).
-    apiKey: (await resolveSecret(agent.apiKeySecret ?? '')) || gateway.apiKey || '',
-    // A container workdir is created in the container on spawn.
+    apiKey: (await resolveSecret(agent.apiKeySecret ?? '', data.agentNodeId)) || gateway.apiKey || '',
+    // A terminal workdir is created there on spawn.
     cwd: placement.cwd,
     harnessHome: placement.harnessHome,
-    containerName,
+    // The terminal target is the shell's id (agent-client-instance.ts).
+    shell: placement.terminal,
     baseUrl: agent.baseUrl || gateway.baseUrl,
+    headers: await resolveEndpointHeaders(agent, adapterId, data.agentNodeId),
     responsesApi: agent.responsesApi,
     systemPrompt: agent.systemPrompt,
     reasoningEffort: agent.reasoningEffort,
@@ -466,6 +557,8 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     // every surface, and understating capacity can trigger a compaction the
     // session did not need.
     contextWindow: agent.contextWindow,
+    imageInput: agent.imageInput,
+    nativeApi: agent.nativeApi,
     // The tab key is already a stable session key (a group-chat thread's
     // stored sessionKey); forward it so an ACP bridge can bind this session
     // to a stable gateway session/agent instead of an ephemeral
@@ -475,16 +568,12 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
     // surface this agent's own MCP Connection node(s) without a global entry.
     mcpIdentity: placement.slug,
   }
-  // Host spawn cwd must exist or spawn fails with ENOENT; the container path is
-  // created inside the container when the harness is exec'd.
-  if (!containerName) {
+  // Only the Custom harness, which runs in this process, has no terminal; its
+  // workspace is here. A terminal path is created there when the harness is
+  // exec'd.
+  if (!placement.terminal) {
     await mkdir(selection.cwd, { recursive: true })
   }
-  // Whether this agent takes mid-turn prompts as live-turn input — decided by
-  // the adapter (single source: agent-client's table), surfaced to the client
-  // so it can pick the right permission-rejection flow.
-  const canSteer = supportsMidTurnInput(selection)
-
   // Cold start (the in-memory tab→session map is lost on a server restart): if
   // this tab's ACP session id was persisted, resume it by replaying history
   // (session/load) so the conversation comes back, and fall through to a fresh
@@ -497,15 +586,35 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   // the next delivery for the same key off to create a SECOND session, with no
   // way to know the first was already on the job.
   const persisted = await readPersistedSession(data.tabKey)
+  // The recorded conversation a new session carries on, when the session it was
+  // recorded under cannot be reopened (below).
+  let history: RecordedLogs | undefined
   if (persisted) {
     const resumed = await reopenPersistedSession(data.tabKey, persisted.id, selection).catch(async (error: unknown) => {
       // A failed reopen is thrown to keep a conversation's recording for the
-      // next attempt (see reopenPersistedSession). A session never prompted has
-      // no conversation to keep, and a harness may never have stored it at all,
-      // in which case every attempt fails the same way and the thread can
-      // neither be opened nor sent to. A fresh session is what it was.
-      if (persisted.prompted) {
+      // next attempt (see reopenPersistedSession) -- unless the harness
+      // answered that it does not have the session, which no later attempt can
+      // change. Then a new session takes the key and the recording stays, as
+      // the history above it.
+      //
+      // A session never prompted has nothing of its own to keep, and a harness
+      // may never have stored it at all, in which case every attempt fails the
+      // same way and the thread can neither be opened nor sent to. A fresh
+      // session is what it was. Its recording can still hold a conversation:
+      // the one an earlier new session carried, if that session went before
+      // its first prompt. That is carried again rather than cleared.
+      if (persisted.prompted && !isResourceNotFound(error)) {
         throw error
+      }
+      const recorded = await readSessionLogs(data.tabKey)
+      if (recorded.events.some((event) => event.kind === 'user')) {
+        console.warn(
+          'The harness does not have the recorded session for tab; a new session carries its transcript',
+          data.tabKey,
+          persisted.id,
+        )
+        history = recorded
+        return null
       }
       await clearSessionEvents(data.tabKey).catch((clearError: unknown) => {
         console.error('Failed to clear the transcript of a never-prompted session for tab', data.tabKey, clearError)
@@ -519,9 +628,10 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
       // implies "has history" — a session created and then orphaned before its
       // first prompt must still receive its opening context, or the agent
       // wakes up in a conversation with no idea what it is for.
-      // Asked only now: the capability is the HARNESS's answer at initialize,
-      // so it cannot be resolved from the selection before the connection is
-      // up — unlike canSteer above, which the adapter table decides.
+      // Both asked only now: each is the HARNESS's answer at initialize (the
+      // steering one unless the adapter forces it), so neither can be resolved
+      // from the selection before the connection is up.
+      const canSteer = supportsMidTurnInput(selection)
       const canAttachImages = supportsImagePrompt(selection)
       tabSessions.set(data.tabKey, {
         id: resumed.id,
@@ -566,19 +676,37 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
       }
     }
     // The pointer resolved but the session is gone — the agent can no longer
-    // load it. Falling through to a fresh session is the only option, and that
-    // session has none of the dead one's history, so it is `created` and gets
-    // the full opening context. A dispatch must never land in a context-less
-    // void because a pointer went stale.
+    // load it. Falling through to a fresh session is the only option, and the
+    // agent holds none of the dead one's context (a carried `history` is the
+    // reader's, shown above the new session's start), so it is `created` and
+    // gets the full opening context. A dispatch must never land in a
+    // context-less void because a pointer went stale.
   }
 
-  const meta = await agentClient.createSession(selection, agent.defaultModeId)
+  // A carried history stays where it is stored: the new session's entry 0 is
+  // its first row, so it writes on after it.
+  if (history) {
+    prepareSessionLogs(data.tabKey, history.bases)
+  }
+  const meta = await agentClient
+    .createSession(selection, agent.defaultModeId, undefined, history?.events, history ? seedOf(history) : undefined)
+    .catch((error: unknown) => {
+      // No session took them, and the next one opened here may carry nothing.
+      prepareSessionLogs(data.tabKey, null)
+      throw error
+    })
+  if (history) {
+    attachSessionLogs(data.tabKey, meta.id, history.bases)
+  }
   // canFork is the engine's own resolution: the native harness rewinds its own
   // message store, and an external ACP agent that advertised `session/fork`
   // forks its transcript through the engine (see agent-client's forkSession).
   const canFork = meta.canFork ?? false
   // After createSession, not before: the harness has handshaken by now, which
-  // is the only moment its promptCapabilities are knowable.
+  // is the only moment its promptCapabilities and its steering are knowable.
+  // Asked earlier, a harness that advertises steering reads as one that cannot
+  // whenever its connection is not up yet.
+  const canSteer = supportsMidTurnInput(selection)
   const canAttachImages = supportsImagePrompt(selection)
   tabSessions.set(data.tabKey, {
     id: meta.id,
@@ -607,15 +735,15 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
 // A session opened while YOLO is on starts pinned to bypass, and the toggle
 // listener is installed here rather than at import time so nothing subscribes in
 // a process that never opens a session. Failures are logged, not thrown: the
-// session itself opened fine, and an agent that will not take the mode (mid-turn,
-// or not offering bypass at all) must not turn that into a failed open.
+// session itself opened fine, and an agent that will not take the setting
+// (mid-turn, or not offering bypass at all) must not turn that into a failed open.
 async function pinModeIfYolo(sessionId: string): Promise<void> {
   installYoloModeEnforcement()
-  if (!modeLockedByYolo()) {
+  if (!isYoloMode()) {
     return
   }
-  await forceBypassMode(sessionId).catch((error: unknown) => {
-    console.error('Failed to pin session to bypass mode under YOLO', sessionId, error)
+  await forceBypass(sessionId).catch((error: unknown) => {
+    console.error('Failed to pin session to bypass under YOLO', sessionId, error)
   })
 }
 
@@ -692,14 +820,17 @@ export async function promptLocalImpl(data: {
 // different faults.
 function logTurnNotFound(action: 'edit' | 'fork', data: { sessionId: string; eventIndex: number }): void {
   const events = agentClient.getSessionEvents(data.sessionId)
-  const at = events ? events[data.eventIndex] : undefined
+  const start = agentClient.getLogStart(data.sessionId) ?? 0
+  const at = events ? events[data.eventIndex - start] : undefined
   console.error(
     `${action} refused: turn not found at the requested position`,
     JSON.stringify({
       sessionId: data.sessionId,
       eventIndex: data.eventIndex,
+      // What the session holds of its log: from `logStart`, `logLength` entries.
+      logStart: start,
       logLength: events?.length ?? null,
-      foundKind: at?.kind ?? (events ? 'none' : 'unknown-session'),
+      foundKind: at?.kind ?? (events ? (data.eventIndex < start ? 'below-held' : 'none') : 'unknown-session'),
     }),
   )
 }
@@ -811,9 +942,6 @@ export async function editTurnLocalImpl(data: {
     return null
   }
   await adoptFork(data.tabKey, meta.id)
-  // The session as it was, for placing the edited turn in the recording below.
-  // Taken before the source is deleted.
-  const sourceLog = [...(agentClient.getSessionEvents(data.sessionId) ?? [])]
   // Edit REPLACES the conversation, it does not branch it: ACP gives us no way
   // to rewind a session in place (even the native harness forks to a fresh id —
   // see unstable_forkSession), so the edit is a fork the tab adopts, and the
@@ -827,20 +955,22 @@ export async function editTurnLocalImpl(data: {
   await agentClient.deleteSession(data.sessionId).catch((error: unknown) => {
     console.error(`edit: failed to delete the pre-edit session ${data.sessionId}`, error)
   })
-  // REPLACE the persisted transcript rather than append to it. The fork is
-  // trimmed at the edited turn, so the rows under this key still describe turns
-  // that no longer exist -- appending after them would replay the edited-away
-  // tail and then the edit, which is the edit round trip failing in a
-  // quieter way. `rerecordEditedSession` drains the buffer, waits out the
-  // in-flight writes and records the fork's own event copy in place of the old
-  // rows, so it does not depend on the source session still existing; the
-  // search index drops the edited-away turns and keeps everything older.
+  // CUT the persisted transcript at the edited turn rather than append to it.
+  // The fork is trimmed there, so the rows under this key from there on still
+  // describe turns that no longer exist -- appending after them would replay
+  // the edited-away tail and then the edit, which is the edit round trip
+  // failing in a quieter way. `rerecordEditedSession` drains the buffer, waits
+  // out the in-flight writes, drops the rows from the edited turn on and
+  // writes the fork's own logs over what it holds, so it does not depend on
+  // the source session still existing; the history below stays where it is,
+  // and the search index drops the edited-away turns and keeps everything
+  // older.
   //
   // AFTER the delete, deliberately. The source is keyed too until then, so it is
   // the one thing that could emit into a key this is in the middle of clearing;
   // with it gone, and the fork idle until the prompt below, nothing is emitting
   // into the window being replaced.
-  await rerecordEditedSession(data.tabKey, sourceLog, data.eventIndex, agentClient.getSessionEvents(meta.id) ?? [])
+  await rerecordEditedSession(data.tabKey, data.sessionId, data.eventIndex, forkLogs(meta.id))
   // Handed over verbatim, which is what `system` means here: `text` is already
   // a finished delivery body — tags, and the interrupt note if the turn opened
   // with one. A `message` send would tag it AGAIN, wrapping one new tag naming
@@ -875,14 +1005,15 @@ export async function locateRecordedTurnImpl(
   sessionKey: string,
   position: number,
 ): Promise<TurnLocation> {
-  const recorded = await readRecordedPosition(sessionKey, position)
-  // The whole log: a window of more turns than the session can hold.
-  const log = agentClient.getEventsWindow(sessionId, { turns: Number.MAX_SAFE_INTEGER })?.events
-  if (!recorded || !log) {
+  const reader = agentClient.logReader(sessionId)
+  if (!reader) {
     return { kind: 'gone' }
   }
-  const indexed = recorded.event ? null : await indexedMessageAt(sessionKey, position)
-  return locateTurn(log, recorded, indexed)
+  return locateTurn(
+    reader,
+    await enginePositionOf(sessionKey, sessionId, position),
+    async () => (await indexedMessageAt(sessionKey, position)) !== null,
+  )
 }
 
 /**
@@ -901,7 +1032,26 @@ export async function sessionHistoryPageImpl(
   beforeIndex: number,
   records: number,
 ): Promise<AuthoredRecordsWindow | null> {
-  const window = agentClient.getRecordsWindow(sessionId, { beforeIndex, records })
+  return withWindowAuthors(await agentClient.getRecordsPage(sessionId, { beforeIndex, records }))
+}
+
+/**
+ * A window of one subagent's own log, for its section: the newest records
+ * without `beforeIndex`, a page above it with one. Authored like a page of the
+ * session's, for the same reason.
+ */
+export async function subagentHistoryPageImpl(
+  sessionId: string,
+  subagentSessionId: string,
+  beforeIndex: number | undefined,
+  records: number,
+): Promise<AuthoredRecordsWindow | null> {
+  return withWindowAuthors(
+    await agentClient.getSubagentRecordsPage(sessionId, subagentSessionId, { beforeIndex, records }),
+  )
+}
+
+async function withWindowAuthors(window: RecordsWindow | null): Promise<AuthoredRecordsWindow | null> {
   if (!window) {
     return null
   }
@@ -919,6 +1069,17 @@ export async function sessionHistoryPageImpl(
     ...(window.header && header
       ? ({ header: { index: window.header.index, event: header } } satisfies Pick<AuthoredRecordsWindow, 'header'>)
       : {}),
+  }
+}
+
+// A fork's logs as the engine seeded them, for recording: they were copied
+// into it, not emitted, so no write of them reached the store.
+function forkLogs(sessionId: string): SessionLogsSnapshot {
+  return {
+    sessionId,
+    start: agentClient.getLogStart(sessionId) ?? 0,
+    events: agentClient.getSessionEvents(sessionId) ?? [],
+    subagentLogs: agentClient.getSubagentLogs(sessionId) ?? new Map(),
   }
 }
 
@@ -974,16 +1135,18 @@ export async function forkTurnLocalImpl(data: {
     logTurnNotFound('fork', data)
     return null
   }
+  const sourceKey = agentClient.listSessions().find((session) => session.id === data.sessionId)?.sessionKey
   const meta = await agentClient.forkSession(data.sessionId, turn.turnIndex, { sessionKey: data.sessionKey })
   if (!meta) {
     return null
   }
-  const events = agentClient.getSessionEvents(meta.id)
-  if (events) {
-    for (const event of events) {
-      appendSessionEvent(data.sessionKey, event)
-    }
-  }
+  // The history older than what the source holds is copied from its own
+  // recording.
+  await recordForkedSession(
+    data.sessionKey,
+    forkLogs(meta.id),
+    sourceKey ? { sessionKey: sourceKey, sessionId: data.sessionId } : undefined,
+  )
   await writePersistedSession(data.sessionKey, meta.id, true)
   return { sessionId: meta.id }
 }
@@ -1018,11 +1181,12 @@ async function resolvePromptOrigin(origin: PromptOriginInput): Promise<PromptOri
  * mode/…). Applies to this session only — never written back into the
  * profile the session was started from.
  *
- * While YOLO is on, every session is pinned to bypass and mode changes are
- * refused here rather than applied and then quietly undone by the enforcement
- * pass. The refusal is returned as data rather than thrown: a caller that
- * cannot tell refused from applied can only present the change as having
- * worked.
+ * While YOLO is on, every session is pinned to bypass and changes to the
+ * option that holds it (the mode, or the adapter's declared option — see
+ * yolo-mode-enforcement) are refused here rather than applied and then quietly
+ * undone by the enforcement pass. The refusal is returned as data rather than
+ * thrown: a caller that cannot tell refused from applied can only present the
+ * change as having worked.
  */
 export async function setLocalConfigOptionImpl(data: {
   sessionId: string
@@ -1033,7 +1197,7 @@ export async function setLocalConfigOptionImpl(data: {
   // option built from the same list — and this is the one door that changes
   // either, so the YOLO lock holds here or the selector becomes a way around
   // it.
-  if (data.configId === 'mode' && modeLockedByYolo()) {
+  if (configLockedByYolo(data.sessionId, data.configId)) {
     return { ok: false, reason: 'yolo-locked' }
   }
   await agentClient.setConfigOption(data.sessionId, data.configId, data.value)
@@ -1205,6 +1369,10 @@ export async function forgetLocalSessionImpl(tabKey: string): Promise<void> {
   // and anything still held for it must survive with it. Rows left behind by a
   // tab that is gone are orphans nothing would ever load or delete.
   await queueStore.clear(tabKey)
+  // Its in-process background tasks end with it, for the same reason: a stopped
+  // process keeps them, and the reopen picks them up again. Ending a host
+  // question's task is also what withdraws the question.
+  await backgroundTasks.retireSessionKey(tabKey)
   // The recorded transcript and its search index go with it, for the same
   // reason and with the same distinction: stopping a process keeps them,
   // retiring the tab does not. Retired here and only here -- clearing the events

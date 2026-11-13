@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 
 import { remoteExec, resolveTerminalContext, shellQuote } from '@/app/_authed/(mcp)/_server/tools'
+import { adminOnly } from '@/app/_authed/(settings)/_server/admin-middleware'
 import { approvalStore } from '@/lib/approval-store'
 import { askUserStore } from '@/lib/ask-user-store'
 import type { PendingApproval, PendingAskUser } from '@/lib/sse-events'
@@ -36,7 +37,10 @@ export const getAutoApprove = createServerFn({ strict: { output: false } }).hand
   return approvalStore.getAutoApprove()
 })
 
+// Admin-only: the flag is process-wide and skips approval for every external
+// MCP caller, like the YOLO override, which is an administrator's too.
 export const setAutoApprove = createServerFn({ method: 'POST', strict: { output: false } })
+  .middleware([adminOnly])
   .inputValidator((value: boolean) => value)
   .handler(async ({ data: value }): Promise<boolean> => {
     approvalStore.setAutoApprove(value)

@@ -56,6 +56,8 @@ export async function resolve(specifier, context, next) {
 )
 
 const dom = await installDomEnvironment()
+const { addComposerStubs, composerText, typeText } = await import('agent-chat/test-composer')
+addComposerStubs()
 
 // On the jsdom window and not copied onto the global object: the context ring's
 // popover schedules and measures through them.
@@ -171,20 +173,13 @@ async function endHistory(): Promise<void> {
 // actual value, and printing a jsdom element walks the whole document until the
 // process runs out of memory, so the failure is never reported.
 const loader = () => dom.container.querySelector('svg[aria-label="Loading"]') !== null
-const composer = () => dom.container.querySelector('textarea')
-const hasComposer = () => composer() !== null
+const hasComposer = () => dom.container.querySelector('[data-slot="agent-command-bar-composer"]') !== null
 const button = (name: RegExp) =>
   [...document.querySelectorAll('button')].find((b) => name.test(b.getAttribute('aria-label') ?? b.textContent ?? ''))
 const hasButton = (name: RegExp) => button(name) !== undefined
 
 async function type(text: string): Promise<void> {
-  const textarea = composer()
-  assert.ok(textarea !== null, 'a composer to type into')
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-  await act(async () => {
-    setter?.call(textarea, text)
-    textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
-  })
+  await typeText(dom.container, text)
 }
 
 async function press(name: RegExp): Promise<void> {
@@ -214,9 +209,9 @@ test('what was typed survives a Clear, which opens the same conversation again',
   await press(/^Press again to clear$/)
   await settle()
   assert.ok(loader(), 'the conversation is opening again')
-  assert.equal(composer()?.value, 'typed before the clear', 'the composer stays through it')
+  assert.equal(composerText(dom.container), 'typed before the clear', 'the composer stays through it')
   await endHistory()
-  assert.equal(composer()?.value, 'typed before the clear')
+  assert.equal(composerText(dom.container), 'typed before the clear')
 })
 
 test('a different thread opens without a composer, from its first render', async () => {
@@ -261,8 +256,12 @@ test('the queue the thread was read with shows under the loader until the open a
   assert.equal(loader(), true, 'still opening')
   assert.equal(shows(), true, 'the waiting message is under the loader')
   assert.equal(hasComposer(), false)
-  // A preview: no session to remove it from or deliver it into yet.
-  assert.equal(dom.container.querySelectorAll('button').length, 0, 'no remove or deliver control')
+  // A preview: no session to remove it from or deliver it into yet. Its own
+  // action menu (copy, reply) acts on the words alone, so it may stay.
+  const controls = [...dom.container.querySelectorAll('button')].filter(
+    (button) => button.getAttribute('aria-label') !== 'Message actions',
+  )
+  assert.equal(controls.length, 0, 'no remove or deliver control')
   // The stream's replay carries no queue: the message was delivered meanwhile.
   await endHistory()
   assert.equal(hasComposer(), true)

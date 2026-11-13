@@ -80,10 +80,11 @@ export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
             requestId={item.id}
             mode='history'
             result={item.result}
+            state={item.state}
             diffs={item.diffs}
           />
         ) : (
-          <GenericToolView tool={item.name} args={args} result={item.result} />
+          <GenericToolView tool={item.name} args={args} result={item.result} state={item.state} />
         )}
       </AppToolViewHost>
     </RenderBoundary>

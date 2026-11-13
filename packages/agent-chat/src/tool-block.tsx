@@ -6,6 +6,8 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'ui/components/ui/dialog'
 import { Flex } from 'ui/components/ui/layout/flex'
 
+import { TOOL_STATE_WORDS, type ToolCallState, toolViewState } from './tool-views'
+
 export interface ToolCallResult {
   text: string
   isError?: boolean
@@ -16,8 +18,10 @@ export interface ToolCallBlockProps {
   name: string
   // Tool input, rendered as pretty JSON when expanded.
   args?: unknown
-  // Tool output; absent while the call is still running.
+  // Tool output; absent while the call has produced none.
   result?: ToolCallResult
+  // Where the call stands (see ToolCallState). Absent: read from `result`.
+  state?: ToolCallState
 }
 
 // Tool name -> the single argument worth previewing inline next to the name.
@@ -51,10 +55,20 @@ export function previewArg(name: string, args: unknown): string | null {
   return value
 }
 
+function Running() {
+  return (
+    <Flex row align='center' className='gap-1.5 text-muted-foreground'>
+      <Loader2 className='size-3 animate-spin' />
+      <span>{TOOL_STATE_WORDS.running.noOutput}</span>
+    </Flex>
+  )
+}
+
 // The args/output content shared between the inline (clamped) preview and the
 // fullscreen dialog — identical markup, just constrained differently by the
-// caller's wrapping element.
-function ToolCallContent({ args, result }: { args?: unknown; result?: ToolCallResult }) {
+// caller's wrapping element. A running call shows its output so far with the
+// spinner under it.
+function ToolCallContent({ args, result, state }: { args?: unknown; result?: ToolCallResult; state: ToolCallState }) {
   return (
     <>
       <ToolRow label='args'>
@@ -62,26 +76,25 @@ function ToolCallContent({ args, result }: { args?: unknown; result?: ToolCallRe
       </ToolRow>
       <div className='border-t' />
       <ToolRow label='output'>
-        {result ? (
+        {result?.text ? (
           <pre className='whitespace-pre text-[11px] text-muted-foreground'>{result.text}</pre>
-        ) : (
-          <Flex row align='center' className='gap-1.5 text-muted-foreground'>
-            <Loader2 className='size-3 animate-spin' />
-            <span>running…</span>
-          </Flex>
-        )}
+        ) : state !== 'running' ? (
+          <span className='text-muted-foreground'>{TOOL_STATE_WORDS[state].noOutput}</span>
+        ) : null}
+        {state === 'running' && <Running />}
       </ToolRow>
     </>
   )
 }
 
-// A collapsible tool-call row: a one-line header (name + arg preview + running /
-// error state) that expands to reveal a clamped preview of the full args and
-// output. Clicking the preview (once expanded) opens the same content raw
+// A collapsible tool-call row: a one-line header (name + arg preview + where
+// the call stands) that expands to reveal a clamped preview of the full args
+// and output. Clicking the preview (once expanded) opens the same content raw
 // (uncapped, scrollable) in a fullscreen dialog — the preview itself never
 // scrolls, since it already sits inside a scrolling transcript.
-export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
-  const isError = result?.isError === true
+export function ToolCallBlock({ name, args, result, state: given }: ToolCallBlockProps) {
+  const state = toolViewState({ state: given, result })
+  const label = TOOL_STATE_WORDS[state].label
   const [open, setOpen] = useState(false)
   const [fullOpen, setFullOpen] = useState(false)
   const preview = previewArg(name, args)
@@ -100,7 +113,7 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
     }
     const el = contentRef.current
     setOverflowing(el ? el.scrollHeight > el.clientHeight : false)
-  }, [open, args, result])
+  }, [open, args, result, state])
 
   return (
     <Flex className='w-full min-w-0 gap-1.5'>
@@ -114,8 +127,10 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
         />
         <span className='font-mono font-medium break-all'>{name}</span>
         {preview && <span className='font-mono text-muted-foreground min-w-0 flex-1 break-all'>{preview}</span>}
-        {!result && !open && <Loader2 className='size-3 animate-spin text-muted-foreground' />}
-        {isError && <span className='text-destructive'>error</span>}
+        {state === 'running' && !open && <Loader2 className='size-3 animate-spin text-muted-foreground' />}
+        {label && (
+          <span className={state === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{label}</span>
+        )}
       </button>
       {open && (
         <>
@@ -124,7 +139,7 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
             onClick={() => setFullOpen(true)}
             className={cn(
               'w-full rounded-md border bg-muted/30 text-left text-xs overflow-hidden cursor-pointer',
-              isError && 'border-destructive/60',
+              state === 'failed' && 'border-destructive/60',
             )}
           >
             <div
@@ -137,7 +152,7 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
                 overflowing && 'shadow-[inset_0_-12px_8px_-8px_rgba(0,0,0,0.35)]',
               )}
             >
-              <ToolCallContent args={args} result={result} />
+              <ToolCallContent args={args} result={result} state={state} />
             </div>
           </button>
           <Dialog open={fullOpen} onOpenChange={setFullOpen}>
@@ -149,7 +164,7 @@ export function ToolCallBlock({ name, args, result }: ToolCallBlockProps) {
                 </DialogTitle>
               </DialogHeader>
               <div className='min-h-0 flex-1 overflow-auto text-xs'>
-                <ToolCallContent args={args} result={result} />
+                <ToolCallContent args={args} result={result} state={state} />
               </div>
             </DialogContent>
           </Dialog>

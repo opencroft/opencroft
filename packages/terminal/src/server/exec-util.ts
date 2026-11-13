@@ -1,4 +1,5 @@
 /** Shared helpers for building shell-safe commands and collecting bounded process output. */
+import type { ExecOptions, ExecResult } from '../types'
 
 export const DEFAULT_TIMEOUT_MS = 120_000
 export const DEFAULT_MAX_OUTPUT_BYTES = 5 * 1024 * 1024
@@ -94,6 +95,15 @@ export class OutputCollector {
   }
 
   toString(): string {
-    return Buffer.concat(this.chunks).toString('utf8')
+    return this.toBuffer().toString('utf8')
   }
+
+  toBuffer(): Buffer {
+    return Buffer.concat(this.chunks)
+  }
+}
+
+/** A result's stdout as the call asked for it: text, or bytes for `binaryStdout`. */
+export function stdoutFields(stdout: OutputCollector, opts: ExecOptions): Pick<ExecResult, 'stdout' | 'stdoutBytes'> {
+  return opts.binaryStdout ? { stdout: '', stdoutBytes: stdout.toBuffer() } : { stdout: stdout.toString() }
 }

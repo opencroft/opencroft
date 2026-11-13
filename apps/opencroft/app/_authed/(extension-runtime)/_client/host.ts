@@ -1,16 +1,9 @@
 'use client'
 
-import { Terminal } from '@opencroft/terminal/client'
-import {
-  Handle,
-  NodeResizer,
-  Position,
-  useEdges,
-  useNodeId,
-  useNodes,
-  useReactFlow,
-  useUpdateNodeInternals,
-} from '@xyflow/react'
+import type { NodeError } from '@opencroft/core'
+import * as values from '@opencroft/core/values'
+import { connectionFromContext, Terminal } from '@opencroft/terminal/client'
+import { Handle, Position, useNodeId, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import { CodeBlock } from 'agent-chat/components/code-block'
 import { CodeBlockEditor } from 'agent-chat/components/code-block-editor'
 import { codeColours } from 'agent-chat/components/code-highlight'
@@ -35,18 +28,30 @@ import {
   useOpenApp,
 } from '@/app/_authed/(apps)/_components/app-router'
 import { callAppActionFromUi } from '@/app/_authed/(apps)/_server/actions'
+import { CanvasFrame } from '@/app/_authed/(dashboard)/_canvas/canvas-frame'
 import { CommandBar, CommandBarMenu, CommandBarMenuItem } from '@/app/_authed/(dashboard)/_canvas/command-bar'
 import { inspectorIntent, useInspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
 import { NodeCard, NodeCardContent, NodeCardHeader } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { NodeFrame, useNodeAccent } from '@/app/_authed/(dashboard)/_canvas/node-frame'
+import { NodeResizer } from '@/app/_authed/(dashboard)/_canvas/node-resizer'
 import { useOverlay } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
-import { useNodeContext } from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
+import { NodeDragArea } from '@/app/_authed/(dashboard)/_canvas/touch-move-mode'
+import { WindowShell } from '@/app/_authed/(dashboard)/_canvas/window-shell'
+import {
+  useInputValue,
+  useLiveNodeData,
+  useNodeContext,
+} from '@/app/_authed/(dashboard)/_extension-system/use-node-context'
+import { useGraphEdges, useGraphNodes } from '@/app/_authed/(extension-runtime)/_client/canvas-graph'
 import { ChatDock, useChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
 import { ChatSelector } from '@/app/_authed/(extension-runtime)/_client/chat-selector'
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import { GraphCanvasLoading } from '@/app/_authed/(extension-runtime)/_client/graph-canvas-loading'
 import { describeGraphRefs, subscribeGraphRefs } from '@/app/_authed/(extension-runtime)/_client/graph-refs'
+import { InlineValue, InputValueTip, useValueInputHandle } from '@/app/_authed/(extension-runtime)/_client/inline-value'
+import { useUpdateNodeData } from '@/app/_authed/(extension-runtime)/_client/node-data-writer'
 import { NodeRef } from '@/app/_authed/(extension-runtime)/_client/node-ref'
+import { PinTip } from '@/app/_authed/(extension-runtime)/_client/pin-tip'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
 import { SelectionProvider, useSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
@@ -60,6 +65,7 @@ import {
 import { TerminalList } from '@/app/_authed/(extension-runtime)/_client/terminal-list'
 import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-ref'
 import { TerminalSelector } from '@/app/_authed/(extension-runtime)/_client/terminal-selector'
+import { useContainingNodes } from '@/app/_authed/(extension-runtime)/_client/use-containing-nodes'
 import { resolveCodeTypeRef } from '@/app/_authed/(extension-runtime)/_declared-types'
 import { extensionIdOfType, extensionUrl } from '@/app/_authed/(extension-runtime)/_extension-id'
 import {
@@ -71,6 +77,7 @@ import type { ExtensionHandle, ExtensionHandleType, ResolvedContext } from '@/ap
 import { FileBrowser } from '@/app/_authed/(filemanager)/_components/file-browser'
 import { FileManagerProvider } from '@/app/_authed/(filemanager)/_components/filemanager-provider'
 import { SecretSelector } from '@/app/_authed/(secrets-store)/_components/secret-selector'
+import { SecretValueField, SecretValueTable } from '@/app/_authed/(secrets-store)/_components/secret-value-field'
 import {
   useDockerContainers,
   useDockerSnapshotReceived,
@@ -78,6 +85,7 @@ import {
 } from '@/app/_authed/(sse)/_lib/sse-events-store'
 import { useUrlParam } from '@/app/_lib/use-url-param'
 import { AppSidebar } from '@/app/_shell/app-sidebar'
+import { AppViewport } from '@/app/_shell/app-viewport'
 import { CodeEditor } from '@/components/code-editor'
 import { MarkdownEditor } from '@/components/markdown-editor'
 
@@ -167,9 +175,12 @@ export interface NodeDefinition<D = Record<string, unknown>> {
   icon?: string
   accent?: string
   handles?: DeclaredHandle[]
+  /** See `NodeDefinition.defaultData` in `@opencroft/client/canvas`. */
   defaultData?: D
   component: React.ComponentType<ExtensionComponentProps<D>>
   inspector?: React.ComponentType<ExtensionInspectorProps<D>>
+  /** See `NodeDefinition.inspectorFullHeight` in `@opencroft/client/canvas`. */
+  inspectorFullHeight?: boolean
   /** Additional inspector tabs beyond the default "Details" tab */
   inspectorTabs?: InspectorTab<D>[]
   /** Entries this node type contributes to its right-click context menu, after the built-in Copy/Delete actions. */
@@ -191,6 +202,26 @@ export interface NodeDefinition<D = Record<string, unknown>> {
     nodeId: string,
     contexts: Record<string, ResolvedContext>,
   ) => unknown
+  /**
+   * What is wrong with the node that the open canvas can tell from its data
+   * and wiring alone, such as a required output left unconnected. Shown with
+   * the errors stored on the node (its card's indicator, its Errors tab), and
+   * only on the canvas: an agent reading the node does not see these.
+   *
+   * @deprecated Export a check from the server module's `nodeChecks`
+   * (`NodeCheck` in `@opencroft/server/graph`) instead. It is told the same
+   * node and edges, and its findings are stored on the node, so agents see
+   * them too. Report anything an action finds with `graph.setNodeErrors`.
+   */
+  errors?: (node: { id: string; data: D }, edges: readonly NodeErrorEdge[]) => NodeError[]
+}
+
+/** An edge as `NodeDefinition.errors` is told it. */
+export interface NodeErrorEdge {
+  source: string
+  target: string
+  sourceHandle?: string | null
+  targetHandle?: string | null
 }
 
 /** A node as the client registry holds it: its type and handle types qualified, under their current keys only. */
@@ -318,6 +349,11 @@ export interface HandlePinProps {
   id?: string
   color?: string
   children?: React.ReactNode
+  /**
+   * What passes through the pin, shown as a tooltip on it: on hover, and on
+   * touch from a press on the pin to the next press elsewhere.
+   */
+  tip?: React.ReactNode
 }
 
 function handlePinStyle(side: 'left' | 'right', color: string): React.CSSProperties {
@@ -368,7 +404,7 @@ function useHandleTypeColor(type: string): string | undefined {
   return extensionRegistry.getHandleType(resolved)?.color
 }
 
-export function OutputHandle({ type, id, color, children }: HandlePinProps) {
+export function OutputHandle({ type, id, color, children, tip }: HandlePinProps) {
   const handleId = id ?? type
   const typeColor = useHandleTypeColor(type)
   const fill = color ?? typeColor ?? 'var(--primary)'
@@ -377,34 +413,51 @@ export function OutputHandle({ type, id, color, children }: HandlePinProps) {
     'div',
     { className: 'flex items-center gap-1 justify-end -mr-4 min-h-5' },
     children,
-    React.createElement(Handle, {
-      type: 'source',
-      position: Position.Right,
-      id: handleId,
-      className: 'inline-handle',
-      style: handlePinStyle('right', fill),
-      onDoubleClick,
+    React.createElement(PinTip, {
+      pin: React.createElement(Handle, {
+        type: 'source',
+        position: Position.Right,
+        id: handleId,
+        className: 'inline-handle',
+        style: handlePinStyle('right', fill),
+        onDoubleClick,
+      }),
+      tip,
     }),
   )
 }
 
-export function InputHandle({ type, id, color, children }: HandlePinProps) {
+/** The pin of an input that takes several types: a theme token, neutral on both themes. */
+const SEVERAL_TYPES_PIN = 'var(--muted-foreground)'
+
+export function InputHandle({ type, id, color, children, tip }: HandlePinProps) {
   const handleId = id ?? type
   const typeColor = useHandleTypeColor(type)
-  const fill = color ?? typeColor ?? 'var(--primary)'
+  const valueInput = useValueInputHandle(handleId)
+  // An input that takes several types has a neutral pin whatever is connected:
+  // its tooltip says what it takes, and the edge into it has its source's colour.
+  const several = valueInput !== undefined && values.takesSeveralTypes(valueInput)
+  const fill = color ?? (several ? SEVERAL_TYPES_PIN : typeColor) ?? 'var(--primary)'
   const onDoubleClick = useHandleDisconnect(handleId, 'target')
+  // An input that takes a plain value says in its tooltip what it takes and what it receives.
+  const pinTip = tip ?? (valueInput ? React.createElement(InputValueTip, { handleId }) : undefined)
   return React.createElement(
     'div',
     { className: 'flex items-center gap-1 justify-start -ml-4 min-h-5' },
-    React.createElement(Handle, {
-      type: 'target',
-      position: Position.Left,
-      id: handleId,
-      className: 'inline-handle',
-      style: handlePinStyle('left', fill),
-      onDoubleClick,
+    React.createElement(PinTip, {
+      pin: React.createElement(Handle, {
+        type: 'target',
+        position: Position.Left,
+        id: handleId,
+        className: 'inline-handle',
+        style: handlePinStyle('left', fill),
+        onDoubleClick,
+      }),
+      tip: pinTip,
     }),
     children,
+    // An input that takes a plain value gets its field after what the node draws beside the pin.
+    React.createElement(InlineValue, { handleId }),
   )
 }
 
@@ -574,8 +627,8 @@ export const extensionHostApi = {
   useInspectorIntent,
   useOverlay,
   useUrlParam,
-  useGraphNodes: useNodes,
-  useGraphEdges: useEdges,
+  useGraphNodes,
+  useGraphEdges,
   useReactFlow,
   useUpdateNodeInternals,
   Handle,
@@ -649,26 +702,36 @@ export const extensionClientModules = {
     AppActions: TitleBarPortal,
     AppToolbar: TitleBarToolbar,
     AppSidebar,
+    AppViewport,
     useUrlParam,
     useIsMobile,
   },
   canvas: {
     NodeFrame,
+    CanvasFrame,
+    useContainingNodes,
     useNodeAccent,
     NodeCard,
     NodeCardHeader,
     NodeCardContent,
     NodeResizer,
+    NodeDragArea,
+    WindowShell,
     InputHandle,
     OutputHandle,
     Handle,
     Position,
     useNodeContext,
+    useInputValue,
+    useLiveNodeData,
+    handleTypeOf: (type: string): ExtensionHandleType | undefined => extensionRegistry.getHandleType(type),
+    enumHandleTypes: (): ExtensionHandleType[] => extensionRegistry.enumHandleTypes(),
+    useUpdateNodeData,
     inspectorIntent,
     useInspectorIntent,
     useOverlay,
-    useGraphNodes: useNodes,
-    useGraphEdges: useEdges,
+    useGraphNodes,
+    useGraphEdges,
     useReactFlow,
     useUpdateNodeInternals,
     GraphCanvas,
@@ -697,11 +760,12 @@ export const extensionClientModules = {
     MarkdownDiffView: HostMarkdownDiffView,
     MermaidDiagram,
   },
-  secrets: { SecretSelector },
+  secrets: { SecretSelector, SecretValueField, SecretValueTable },
   storage: {},
   streams: { getStream, subscribe, broadcast },
-  terminal: { Terminal, TerminalSelector, TerminalRef, TerminalList },
+  terminal: { Terminal, TerminalSelector, TerminalRef, TerminalList, connectionFromContext },
   ui: { ...uiKit },
+  values: { ...values },
 }
 
 export type ExtensionClientModules = typeof extensionClientModules

@@ -4,8 +4,15 @@ import path from 'node:path'
 import { readEnv } from '@opencroft/instance'
 
 import type { InstallAuth } from '@/app/_authed/(extension-runtime)/_server/extension-rows'
-import { getSecretValue } from '@/app/_authed/(secrets-store)/_server/actions'
-import { runGit, withGitAuth } from './git-exec'
+import {
+  credentialProblem,
+  listStoredRegistries,
+  type RegistryInput,
+  repositoryProblem,
+  storedRegistryAuth,
+} from '@/app/_authed/(extension-runtime)/_server/registry-settings'
+import { resolveAuth as resolveInstallAuth } from '@/app/_authed/(extension-runtime)/_server/source-repository'
+import { remoteFailure, runGit, withGitAuth } from './git-exec'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -29,13 +36,19 @@ export interface RegistryManifest {
   extensions: RegistryExtension[]
 }
 
+/** Where a registry is configured: always there, OPENCROFT_EXTENSION_REGISTRIES, or Settings. */
+export type RegistryOrigin = 'default' | 'environment' | 'settings'
+
 export interface RegistrySource {
   /** Display name for the registry */
   name: string
   /** Git URL or owner/repo shorthand */
   url: string
-  /** Secret store ID for auth credentials */
-  authStoreId?: string
+  origin: RegistryOrigin
+  /** The stored registry's id, for one added in Settings. */
+  id?: string
+  /** The Secrets Store keys it signs in with, the same an install from it records. */
+  auth?: InstallAuth
   /** Inline username from env (e.g. user:token@owner/repo) */
   username?: string
   /** Inline token from env */
@@ -127,32 +140,84 @@ function parseRegistryEntry(entry: string): ParsedRegistryEntry {
 function parseRegistriesEnv(): RegistrySource[] {
   const raw = readEnv('OPENCROFT_EXTENSION_REGISTRIES')?.trim()
   if (!raw) {
-    return [{ name: 'OpenCroft', url: DEFAULT_REGISTRY }]
+    return []
   }
-
-  const entries = raw
+  return raw
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  // Always include the default registry first
-  const sources: RegistrySource[] = [{ name: 'OpenCroft', url: DEFAULT_REGISTRY }]
-
-  for (const entry of entries) {
-    const parsed = parseRegistryEntry(entry)
-    // Skip if it's the default
-    if (parsed.url === DEFAULT_REGISTRY || parsed.url === `https://github.com/${DEFAULT_REGISTRY}.git`) {
-      continue
-    }
-    sources.push({
-      name: parsed.name,
-      url: parsed.url,
-      username: parsed.username,
-      token: parsed.token,
-      authStoreId: parsed.authStoreId,
+    .map((entry) => {
+      const parsed = parseRegistryEntry(entry)
+      return {
+        name: parsed.name,
+        url: parsed.url,
+        origin: 'environment' as const,
+        username: parsed.username,
+        token: parsed.token,
+        ...(parsed.authStoreId ? { auth: { type: 'secret' as const, storeId: parsed.authStoreId } } : {}),
+      }
     })
-  }
+}
 
+/** What two registry addresses are compared by: `owner/repo` and its GitHub URL are one registry. */
+export function registryKey(url: string): string {
+  return resolveGitUrl(url).toLowerCase()
+}
+
+/**
+ * Every registry, in the order a lookup reads them: the default, then the
+ * environment's, then the ones added in Settings. A registry named twice is
+ * read once, where it comes first.
+ */
+export async function getRegistrySources(): Promise<RegistrySource[]> {
+  const stored = (await listStoredRegistries()).map(
+    (registry): RegistrySource => ({
+      name: registry.repository,
+      url: registry.repository,
+      origin: 'settings',
+      id: registry.id,
+      auth: storedRegistryAuth(registry),
+    }),
+  )
+  const sources: RegistrySource[] = []
+  const seen = new Set<string>()
+  for (const source of [
+    { name: 'OpenCroft', url: DEFAULT_REGISTRY, origin: 'default' as const },
+    ...parseRegistriesEnv(),
+    ...stored,
+  ]) {
+    const key = registryKey(source.url)
+    if (!seen.has(key)) {
+      seen.add(key)
+      sources.push(source)
+    }
+  }
   return sources
+}
+
+/**
+ * Why a registry can't be stored as given, or undefined: its repository, its
+ * credential picks, or a registry already listed at the same address. `input.id`
+ * is the stored registry being edited, which may keep its own address.
+ */
+export async function storedRegistryProblem(input: RegistryInput): Promise<string | undefined> {
+  const problem = repositoryProblem(input.repository) ?? (await credentialProblem(input))
+  if (problem) {
+    return problem
+  }
+  const key = registryKey(input.repository)
+  const taken = (await getRegistrySources()).find(
+    (source) => registryKey(source.url) === key && !(source.origin === 'settings' && source.id === input.id),
+  )
+  if (taken) {
+    const where = {
+      default: 'is the default registry',
+      environment: 'comes from the environment',
+      settings: 'is listed',
+    }
+    return `${input.repository} ${where[taken.origin]} already.`
+  }
+  return undefined
 }
 
 // ── Auth ────────────────────────────────────────────────────────────
@@ -162,18 +227,8 @@ async function resolveAuth(source: RegistrySource): Promise<{ username: string; 
   if (source.token) {
     return { username: source.username ?? 'x-access-token', token: source.token }
   }
-  // Fallback to Secrets Store
-  if (!source.authStoreId) {
-    return null
-  }
-  const [token, username] = await Promise.all([
-    getSecretValue({ data: { storeId: source.authStoreId, key: 'token' } }),
-    getSecretValue({ data: { storeId: source.authStoreId, key: 'username' } }),
-  ])
-  if (!token) {
-    return null
-  }
-  return { username: username ?? 'x-access-token', token }
+  // The same resolution an install from this registry runs, so the two sign in alike.
+  return resolveInstallAuth(source.auth)
 }
 
 // ── URL Resolution ──────────────────────────────────────────────────
@@ -255,16 +310,25 @@ async function fetchRegistryManifest(source: RegistrySource): Promise<ResolvedRe
       const cloneArgs = source.ref
         ? ['clone', '--depth', '1', '--branch', source.ref, '--single-branch', authedUrl, tmpDir]
         : ['clone', '--depth', '1', authedUrl, tmpDir]
-      await runGit(cloneArgs, { maxBuffer: 4 * 1024 * 1024, env })
-      manifestJson = await fs.readFile(path.join(tmpDir, 'registry.json'), 'utf-8')
+      await runGit(cloneArgs, { maxBuffer: 4 * 1024 * 1024, env }).catch((err) => {
+        throw remoteFailure(err, gitUrl)
+      })
+      manifestJson = await fs.readFile(path.join(tmpDir, 'registry.json'), 'utf-8').catch(() => {
+        throw new Error('The repository has no registry.json at its root.')
+      })
     } finally {
       await cleanup()
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
     }
   }
 
-  const parsed = JSON.parse(manifestJson) as RegistryManifest
-  if (!Array.isArray(parsed.extensions)) {
+  let parsed: RegistryManifest
+  try {
+    parsed = JSON.parse(manifestJson) as RegistryManifest
+  } catch {
+    throw new Error('registry.json is not valid JSON.')
+  }
+  if (!Array.isArray(parsed?.extensions)) {
     throw new Error(`Invalid registry.json: missing "extensions" array`)
   }
 
@@ -277,38 +341,69 @@ async function fetchRegistryManifest(source: RegistrySource): Promise<ResolvedRe
 
 // ── Public API ──────────────────────────────────────────────────────
 
-export async function getRegistrySources(): Promise<RegistrySource[]> {
-  return parseRegistriesEnv()
+/** One registry as a read of it went: its listing (a stale one when the read failed), or why there is none. */
+export interface RegistryOutcome {
+  source: RegistrySource
+  registry?: ResolvedRegistry
+  /** Why the latest read failed, in a sentence that names no credential. */
+  error?: string
 }
 
-export async function fetchAllRegistries(forceRefresh = false): Promise<ResolvedRegistry[]> {
-  const sources = parseRegistriesEnv()
-  const cache = registryCache()
-  const results: ResolvedRegistry[] = []
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
 
-  for (const source of sources) {
+export async function loadRegistries(forceRefresh = false): Promise<RegistryOutcome[]> {
+  const cache = registryCache()
+  const outcomes: RegistryOutcome[] = []
+
+  for (const source of await getRegistrySources()) {
     const cacheKey = source.url
     const cached = cache.get(cacheKey)
 
     if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
-      results.push(cached.registry)
+      outcomes.push({ source, registry: cached.registry })
       continue
     }
 
     try {
       const registry = await fetchRegistryManifest(source)
       cache.set(cacheKey, { registry, expiresAt: Date.now() + CACHE_TTL_MS })
-      results.push(registry)
+      outcomes.push({ source, registry })
     } catch (err) {
-      console.error(`[registry] Failed to fetch ${source.url}:`, err)
+      console.error(`[registry] Failed to fetch ${source.url}:`, errorText(err))
       // Return stale cache if available
-      if (cached) {
-        results.push(cached.registry)
-      }
+      outcomes.push({ source, ...(cached ? { registry: cached.registry } : {}), error: errorText(err) })
     }
   }
 
-  return results
+  return outcomes
+}
+
+export async function fetchAllRegistries(forceRefresh = false): Promise<ResolvedRegistry[]> {
+  return (await loadRegistries(forceRefresh)).flatMap((outcome) => (outcome.registry ? [outcome.registry] : []))
+}
+
+/**
+ * Read a registry as it would be stored, without storing or caching it: how
+ * many extensions it lists, or why it can't be read.
+ */
+export async function checkRegistry(input: RegistryInput): Promise<{ extensions: number } | { error: string }> {
+  const problem = repositoryProblem(input.repository) ?? (await credentialProblem(input))
+  if (problem) {
+    return { error: problem }
+  }
+  try {
+    const { manifest } = await fetchRegistryManifest({
+      name: input.repository,
+      url: input.repository,
+      origin: 'settings',
+      auth: storedRegistryAuth({ ...input, id: input.id ?? '' }),
+    })
+    return { extensions: manifest.extensions.length }
+  } catch (err) {
+    return { error: errorText(err) }
+  }
 }
 
 export async function searchRegistries(query?: string): Promise<(RegistryExtension & { registryName: string })[]> {
@@ -369,17 +464,6 @@ export function parseExtensionsEnv(): ExtensionSpec[] {
 }
 
 /**
- * Build install-time auth from a registry source so the extension repo
- * reuses the same credentials used to fetch the registry manifest.
- */
-function sourceInstallAuth(source: RegistrySource): InstallAuth | undefined {
-  if (source.authStoreId) {
-    return { type: 'secret', storeId: source.authStoreId }
-  }
-  return undefined
-}
-
-/**
  * The first registry entry with this extension id, with the registry it came
  * from and that registry's credentials, which the extension's repository
  * reuses. Ids may repeat across registries; the first registry wins. An entry
@@ -405,7 +489,7 @@ export async function findRegistryExtension(
         repository: ext.repository,
         ...(branch ? { branch: branch.trim() } : {}),
         registryName: reg.source.name,
-        auth: sourceInstallAuth(reg.source),
+        auth: reg.source.auth,
       }
     }
   }

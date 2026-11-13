@@ -1,5 +1,6 @@
 export { dataDir } from './data-dir'
 export { RENAMED_ENV, type RenamedEnvName, readEnv } from './env'
+export { instanceId } from './instance-id'
 export {
   ensureInstanceKey,
   INSTANCE_KEY_NAMES,

@@ -4,6 +4,7 @@ import type { Node, NodeProps } from '@xyflow/react'
 import { memo } from 'react'
 
 import { useExtensionsSettled } from '@/app/_authed/(dashboard)/_canvas/extensions-ready-context'
+import { GridSizedBox } from '@/app/_authed/(dashboard)/_canvas/grid-sized-box'
 import { NODE_CARD_MAX_WIDTH } from '@/app/_authed/(dashboard)/_canvas/node-card'
 import { NodeAccentProvider } from '@/app/_authed/(dashboard)/_canvas/node-frame'
 import { UnresolvedNode } from '@/app/_authed/(dashboard)/_canvas/unresolved-node'
@@ -24,6 +25,14 @@ function nodeName(data: NodeData | undefined): string | undefined {
 }
 
 function NodeWrapperImpl(props: NodeWrapperProps) {
+  return (
+    <GridSizedBox nodeId={props.id}>
+      <NodeBody {...props} />
+    </GridSizedBox>
+  )
+}
+
+function NodeBody(props: NodeWrapperProps) {
   const resolved = extensionRegistry.resolveNode(props.type)
   const extensionsSettled = useExtensionsSettled()
   if (!resolved) {
@@ -49,14 +58,37 @@ function NodeWrapperImpl(props: NodeWrapperProps) {
 // entry is a wrapper that resolves its component during render, so it does not
 // have to be rebuilt when its extension arrives, and a registered type with no
 // node on the canvas is never looked up. Building from the graph's types alone
-// means this map does not change when extensions settle — which is what stops
-// the flow library discarding and recreating every node at that moment.
+// means this map does not change when extensions settle.
+//
+// Each type's entry is the same component for the life of the page (see
+// wrapperOf), so a map built for a new set of types keeps the components of
+// the types it shares with the old one. The flow library looks a node's
+// component up in the map on every render, and React keeps a node mounted only
+// while that lookup returns the same component. A wrapper made anew for each
+// map would remount every node on the canvas, resetting its state and
+// replaying a window's opening animation, whenever a type appeared or the last
+// node of one went away.
 export function buildNodeTypes(types: readonly string[]) {
-  const entries: Record<string, React.ComponentType<NodeProps<Node<NodeData>>>> = {}
+  const entries: Record<string, NodeComponent> = {}
   for (const type of types) {
-    const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={type} />
-    Wrapped.displayName = `ExtensionNode(${type})`
-    entries[type] = memo(Wrapped)
+    entries[type] = wrapperOf(type)
   }
   return entries
+}
+
+type NodeComponent = React.ComponentType<NodeProps<Node<NodeData>>>
+
+// One per type ever drawn on this page: a handful of small closures.
+const wrappers = new Map<string, NodeComponent>()
+
+function wrapperOf(type: string): NodeComponent {
+  const known = wrappers.get(type)
+  if (known) {
+    return known
+  }
+  const Wrapped = (props: NodeProps<Node<NodeData>>) => <NodeWrapperImpl {...props} type={type} />
+  Wrapped.displayName = `ExtensionNode(${type})`
+  const wrapper = memo(Wrapped)
+  wrappers.set(type, wrapper)
+  return wrapper
 }

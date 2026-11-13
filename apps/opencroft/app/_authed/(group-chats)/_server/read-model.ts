@@ -27,6 +27,7 @@ import {
   countThreadsInGroupChat,
   findThreadBySlug,
   findThreadInGroupChat,
+  findThreadsForUser,
   getGroupChat,
   lastKnownContextUsage,
   listGroupChatsForUser,
@@ -34,9 +35,11 @@ import {
   listThreadsInGroupChat,
 } from '@/app/_authed/(group-chats)/_server/model'
 import type { ThreadList } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
+import { spacesOfChats } from '@/app/_authed/(group-chats)/_server/thread-space'
 import { listAgentDirectory } from '@/app/_authed/(space)/_server/agents-impl'
 import { agentAvatarUrl } from '@/app/_server/agent-avatar'
 import { userAvatarUrl } from '@/app/_server/user-avatar'
+import { type ExistingAccount, ensureCurrentUsernames, principalKey } from '@/app/_server/usernames'
 
 /** A participant in a group chat — a person or an agent, rendered alike. */
 export interface MemberRef {
@@ -45,6 +48,10 @@ export interface MemberRef {
   id: string
   name: string
   avatarUrl: string | null
+  /** The handle the account goes by now, what a mention of it writes. A
+   *  member without one is given one when this is read; null for a member
+   *  whose node or account no longer exists. */
+  username: string | null
 }
 
 /** The single agent a thread is a session with. */
@@ -60,6 +67,25 @@ export interface GroupChatListEntry {
   topic: string
   members: MemberRef[]
   threadCount: number
+  /** The space this is the chat of (see `spaceIdOfChat`); absent for a chat that is no space's. */
+  space?: { id: string; name: string }
+}
+
+/**
+ * A thread as the Recent list shows it: where it is and who it is with, and
+ * what its row shows about it -- the session key and the last stored context
+ * reading the row state is derived from (see `GroupChatThreadEntry` and
+ * `GroupChatThreadListEntry`), and the draft flag.
+ */
+export interface RecentThreadView {
+  id: string
+  groupChatId: string
+  groupChatName: string
+  title: string | null
+  agent: AgentRef
+  sessionKey: string
+  hasDraft: boolean
+  lastContextUsage: ContextUsage | null
 }
 
 export interface GroupChatDetailView {
@@ -151,7 +177,7 @@ function missingAgent(nodeId: string): AgentRef {
   return { nodeId, name: 'Unknown agent', avatarUrl: null }
 }
 
-function missingUser(userId: string): MemberRef {
+function missingUser(userId: string): Omit<MemberRef, 'username'> {
   return { kind: 'user', id: userId, name: 'Unknown user', avatarUrl: null }
 }
 
@@ -187,7 +213,7 @@ async function agentMemberIds(request: Request, groupChatId: string): Promise<Se
   return new Set(rows.flatMap((r) => (r.principalType === 'agent' && r.agentNodeId ? [r.agentNodeId] : [])))
 }
 
-async function usersById(userIds: string[]): Promise<Map<string, MemberRef>> {
+async function usersById(userIds: string[]): Promise<Map<string, Omit<MemberRef, 'username'>>> {
   if (userIds.length === 0) {
     return new Map()
   }
@@ -200,18 +226,51 @@ async function usersById(userIds: string[]): Promise<Map<string, MemberRef>> {
   )
 }
 
-function toMemberRefs(
-  rows: Array<{ principalType: string; userId: string | null; agentNodeId: string | null }>,
+type MemberRow = { principalType: string; userId: string | null; agentNodeId: string | null }
+
+/**
+ * The handles of the people and agents among these rows, keyed by
+ * `principalKey`.
+ *
+ * Only members that resolve get one: an agent the directory knows, or an
+ * existing account. A deleted node or account gets none, even with a handle
+ * still on record, so a mention can't offer it.
+ *
+ * A member that resolves but has no handle yet is given one here
+ * (`ensureCurrentUsernames`): a chat's member list is what a mention names.
+ */
+async function memberUsernames(
+  rows: MemberRow[],
   agents: Map<string, AgentRef>,
-  users: Map<string, MemberRef>,
+  users: Map<string, Omit<MemberRef, 'username'>>,
+): Promise<Map<string, string>> {
+  const members: ExistingAccount[] = []
+  for (const row of rows) {
+    const agent = row.principalType === 'agent' && row.agentNodeId ? agents.get(row.agentNodeId) : undefined
+    if (agent) {
+      members.push({ kind: 'agent', id: agent.nodeId, name: agent.name })
+    } else if (row.principalType !== 'agent' && row.userId && users.has(row.userId)) {
+      members.push({ kind: 'user', id: row.userId })
+    }
+  }
+  return ensureCurrentUsernames(members)
+}
+
+function toMemberRefs(
+  rows: MemberRow[],
+  agents: Map<string, AgentRef>,
+  users: Map<string, Omit<MemberRef, 'username'>>,
+  usernames: Map<string, string>,
 ): MemberRef[] {
   const out: MemberRef[] = []
   for (const row of rows) {
     if (row.principalType === 'agent' && row.agentNodeId) {
       const agent = agents.get(row.agentNodeId) ?? missingAgent(row.agentNodeId)
-      out.push({ kind: 'agent', id: agent.nodeId, name: agent.name, avatarUrl: agent.avatarUrl })
+      const username = usernames.get(principalKey({ kind: 'agent', id: agent.nodeId })) ?? null
+      out.push({ kind: 'agent', id: agent.nodeId, name: agent.name, avatarUrl: agent.avatarUrl, username })
     } else if (row.userId) {
-      out.push(users.get(row.userId) ?? missingUser(row.userId))
+      const username = usernames.get(principalKey({ kind: 'user', id: row.userId })) ?? null
+      out.push({ ...(users.get(row.userId) ?? missingUser(row.userId)), username })
     }
     // A 'system' grant row (a scheduled pipeline's or webhook's delivery
     // authorization — see groupChatMember in the schema) carries neither id
@@ -258,6 +317,7 @@ export async function listGroupChatsForUserView(request: Request): Promise<Group
 
   const agents = await agentsByNodeId()
   const users = await usersById(memberRows.flatMap((r) => (r.userId ? [r.userId] : [])))
+  const usernames = await memberUsernames(memberRows, agents, users)
 
   const membersByChat = new Map<string, typeof memberRows>()
   for (const row of memberRows) {
@@ -270,13 +330,52 @@ export async function listGroupChatsForUserView(request: Request): Promise<Group
     threadCounts.set(row.groupChatId, (threadCounts.get(row.groupChatId) ?? 0) + 1)
   }
 
-  return chats.map((chat) => ({
-    id: chat.id,
-    name: chat.name,
-    topic: chat.topic,
-    members: toMemberRefs(membersByChat.get(chat.id) ?? [], agents, users),
-    threadCount: threadCounts.get(chat.id) ?? 0,
-  }))
+  const spaces = await spacesOfChats(chats)
+
+  return chats.map((chat) => {
+    const chatSpace = spaces.get(chat.id)
+    return {
+      id: chat.id,
+      name: chat.name,
+      topic: chat.topic,
+      members: toMemberRefs(membersByChat.get(chat.id) ?? [], agents, users, usernames),
+      threadCount: threadCounts.get(chat.id) ?? 0,
+      ...(chatSpace ? { space: { id: chatSpace.id, name: chatSpace.name } } : {}),
+    }
+  })
+}
+
+/**
+ * Of the given thread ids, the ones the caller can still read, for the
+ * Recent list: a deleted thread, and one in a chat the caller has left, are
+ * not in the answer. Order is the caller's, kept from `threadIds`.
+ */
+export async function resolveRecentThreadsView(request: Request, threadIds: string[]): Promise<RecentThreadView[]> {
+  const rows = await findThreadsForUser(request, threadIds)
+  if (rows.length === 0) {
+    return []
+  }
+  const agents = await agentsByNodeId()
+  const lastContextByKey = await lastKnownContextUsage(rows)
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  return threadIds.flatMap((id) => {
+    const row = byId.get(id)
+    if (!row) {
+      return []
+    }
+    return [
+      {
+        id: row.id,
+        groupChatId: row.groupChatId,
+        groupChatName: row.groupChatName,
+        title: row.title,
+        agent: agents.get(row.agentNodeId) ?? missingAgent(row.agentNodeId),
+        sessionKey: row.sessionKey,
+        hasDraft: Boolean(row.draft?.trim()),
+        lastContextUsage: lastContextByKey.get(row.sessionKey) ?? null,
+      },
+    ]
+  })
 }
 
 /** One group chat's header data: its name and topic, and who is taking part. */
@@ -285,11 +384,12 @@ export async function getGroupChatDetailView(request: Request, groupChatId: stri
   const memberRows = await listMembers(request, groupChatId)
   const agents = await agentsByNodeId()
   const users = await usersById(memberRows.flatMap((r) => (r.userId ? [r.userId] : [])))
+  const usernames = await memberUsernames(memberRows, agents, users)
   return {
     id: chat.id,
     name: chat.name,
     topic: chat.topic,
-    members: toMemberRefs(memberRows, agents, users),
+    members: toMemberRefs(memberRows, agents, users, usernames),
     archivedThreadCount: await countThreadsInGroupChat(request, groupChatId, 'archive'),
   }
 }

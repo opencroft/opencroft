@@ -3,28 +3,22 @@
 // their authorization (the thread membership of whoever asks); these functions
 // only answer for a session key the caller is already allowed to see.
 //
-// A loaded session is read from its in-memory log, an offline one from its
-// stored transcript, without starting it. An `index` is a position in
-// whichever of the two was read, and the two agree only while the session
-// is small:
-//  - The in-memory log is never trimmed, but the transcript keeps only its
-//    newest MAX_EVENTS_PER_SESSION positions (session-event-store.ts) and is
-//    read back from offset 0. Once a log outgrows the cap, an offline index
-//    is the loaded one minus everything the cap has dropped.
-//  - A reopen seeds the log from the transcript and appends a closure for
-//    each permission request or question left open (agent-client's
-//    restorableEvents). Those closures are never emitted, so never recorded:
-//    each turn after them sits that many positions lower in the transcript.
-// So an index is good for the state it was read in. A caller whose
-// `sessionStatus` changed between offline and not lists the turns again.
+// A loaded session is read through the engine (what it holds, and below that
+// its stored transcript), an offline one from its stored transcript, without
+// starting it. Either way the log is read a page at a time, never whole. An
+// `index` is a log position, the stored one less the transcript's first:
+// what a reopen numbers the engine's log by, so a loaded and an offline read
+// agree while the history settings leave the transcript's front alone. One
+// that trims it renumbers the next reopen, so a caller whose `sessionStatus`
+// changed between offline and not lists the turns again.
 
 import { foldEvents, isSnapshotEvent } from 'agent-client/fold'
-import { pageBeforeByTurns, tailByTurns } from 'agent-client/pagination'
+import { type LogReader, turnAtFromReader, turnsWindowFromReader } from 'agent-client/pagination'
 import type { ChatEvent } from 'agent-client/types'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
-import { readSessionEvents } from '@/app/_authed/(agent)/_server/session-event-store'
+import { storedLogReader } from '@/app/_authed/(agent)/_server/session-event-store'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 
 export interface TurnSummary {
@@ -71,16 +65,16 @@ const DEFAULT_TURNS = 10
 // each turn's text truncated.
 const MAX_TURNS = 50
 
-// The session's event log and whether its last turn is still running: the
-// loaded session's own log, or else the stored transcript, which no process is
-// adding to.
-async function sessionLog(sessionKey: string): Promise<{ events: ChatEvent[]; turnActive: boolean }> {
+// The session's event log, as a reader, and whether its last turn is still
+// running: the loaded session's own log, or else the stored transcript, which
+// no process is adding to.
+async function sessionLog(sessionKey: string): Promise<{ reader: LogReader; turnActive: boolean }> {
   const meta = agentClient.listSessions().find((m) => m.sessionKey === sessionKey)
-  const events = meta ? agentClient.getSessionEvents(meta.id) : null
-  if (meta && events) {
-    return { events, turnActive: agentClient.hasActiveTurn(meta.id) }
+  const reader = meta ? agentClient.logReader(meta.id) : null
+  if (meta && reader) {
+    return { reader, turnActive: agentClient.hasActiveTurn(meta.id) }
   }
-  return { events: await readSessionEvents(sessionKey), turnActive: false }
+  return { reader: await storedLogReader(sessionKey), turnActive: false }
 }
 
 // The turn-paging core shared by every surface that lists a session's turns
@@ -93,10 +87,7 @@ export async function turnsPageForSessionKey(
   const turns = params.turns && params.turns > 0 ? Math.min(Math.floor(params.turns), MAX_TURNS) : DEFAULT_TURNS
   const sessionStatus = deriveSessionStatus(sessionKey, sessionActivitySets())
   const log = await sessionLog(sessionKey)
-  const window =
-    params.beforeIndex === undefined
-      ? tailByTurns(log.events, turns)
-      : pageBeforeByTurns(log.events, params.beforeIndex, turns)
+  const window = await turnsWindowFromReader(log.reader, { beforeIndex: params.beforeIndex, turns })
   // Only the tail window (no beforeIndex) can end on the session's current,
   // still-running turn — any older page is by definition already over.
   const tailInProgress = params.beforeIndex === undefined && log.turnActive
@@ -122,17 +113,13 @@ export async function turnForSessionKey(sessionKey: string, index: number): Prom
   if (!Number.isInteger(index) || index < 0) {
     return missing
   }
-  const { events, turnActive } = await sessionLog(sessionKey)
-  if (index >= events.length) {
+  const { reader, turnActive } = await sessionLog(sessionKey)
+  const found = await turnAtFromReader(reader, index)
+  const group = found ? splitIntoTurns(found.events, found.startIndex)[0] : undefined
+  if (!found || !group) {
     return missing
   }
-  const groups = splitIntoTurns(events, 0)
-  const position = groups.findLastIndex((group) => group.index <= index)
-  if (position === -1) {
-    return missing
-  }
-  const group = groups[position]
-  const inProgress = position === groups.length - 1 && turnActive
+  const inProgress = found.last && turnActive
   const turn = buildTurnSummary(group.index, group.events, inProgress, FULL_TURN_MAX_CHARS)
   const truncated = turn.promptLength > FULL_TURN_MAX_CHARS || (turn.finalMessageLength ?? 0) > FULL_TURN_MAX_CHARS
   return { turn, maxChars: FULL_TURN_MAX_CHARS, truncated, sessionStatus }

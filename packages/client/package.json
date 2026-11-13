@@ -22,7 +22,8 @@
     "./storage": "./src/storage.ts",
     "./streams": "./src/streams.ts",
     "./terminal": "./src/terminal.ts",
-    "./ui": "./src/ui.ts"
+    "./ui": "./src/ui.ts",
+    "./values": "./src/values.ts"
   },
   "dependencies": {
     "@opencroft/core": "*",

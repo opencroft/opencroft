@@ -12,6 +12,7 @@
     "./ext": "./src/ext.ts",
     "./components/*": "./src/components/*.tsx",
     "./hooks/*": "./src/hooks/*.ts",
+    "./layouts/app-launcher-groups": "./src/components/ui/layouts/app-launcher-groups.ts",
     "./*": "./src/components/ui/*.tsx",
     "./theme.css": "./src/theme.css"
   },

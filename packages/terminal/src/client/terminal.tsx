@@ -5,6 +5,8 @@ import type { Terminal as Xterm } from '@xterm/xterm'
 import * as React from 'react'
 
 import type { TerminalConfig } from '../types'
+import { measureDevicePixels } from './device-pixels'
+import { markScrollsItself, SCROLLS_ITSELF } from './scrolls-itself'
 import { openingMessage, sessionGoneMessage, type TerminalSource, tabScopedSource } from './session-messages'
 import { browserTabId } from './tab-identity'
 import { terminalTheme } from './theme'
@@ -280,16 +282,24 @@ export function Terminal(props: TerminalProps) {
         term.loadAddon(fit)
         term.open(el)
         fit.fit()
+        // A pager, an editor or a mouse-driven app takes the wheel itself, with no scrollback to
+        // overflow; the mark tells a host page so.
+        markScrollsItself(term, el)
 
-        import('@xterm/addon-webgl').then(({ WebglAddon }) => {
-          try {
-            if (!disposed) {
-              term.loadAddon(new WebglAddon())
+        // The WebGL renderer draws where it can size its canvas. Elsewhere, and from the moment its
+        // context is lost, xterm's DOM renderer draws instead.
+        Promise.all([import('@xterm/addon-webgl'), measureDevicePixels(el)])
+          .then(([{ WebglAddon }, devicePixelsMatch]) => {
+            if (disposed || !devicePixelsMatch) {
+              return
             }
-          } catch {
-            // Fallback to canvas
-          }
-        })
+            const webgl = new WebglAddon()
+            webgl.onContextLoss(() => webgl.dispose())
+            term.loadAddon(webgl)
+          })
+          .catch(() => {
+            // No WebGL2, or its chunk did not load: the DOM renderer stays.
+          })
 
         contextMenuHandler = (e: MouseEvent) => {
           e.preventDefault()
@@ -453,12 +463,16 @@ export function Terminal(props: TerminalProps) {
         /* ignore */
       }
       termRef.current = null
+      el.removeAttribute(SCROLLS_ITSELF)
     }
   }, [reconnectTick, command, attachKey, fontSize])
 
   return (
     <div className='relative flex flex-col h-full w-full bg-black p-2'>
-      <div ref={containerRef} className='flex-1 min-h-0' />
+      {/* xterm positions its own layers with z-indexes (the link layer at 2, helpers at 5). The
+          isolated container keeps them inside it, so the status overlay drawn after it stays on
+          top and its reconnect button takes the click. */}
+      <div ref={containerRef} className='flex-1 min-h-0 isolate' />
       {status !== 'connected' && !(logView && status === 'disconnected') ? (
         <div className='absolute inset-0 flex items-center justify-center pointer-events-none'>
           <div className='flex flex-col items-center gap-2 px-3 py-2 rounded-md bg-black/70 text-xs text-muted-foreground pointer-events-auto'>

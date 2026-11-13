@@ -23,6 +23,38 @@ test("a tool call's reported diffs are carried onto its detail item", () => {
   assert.deepEqual(item.diffs, diffs)
 })
 
+test("a new session and a completed compaction each draw a rule where the agent's context restarts", () => {
+  const blocks = buildKitBlocks([
+    { id: '1', kind: 'user', text: 'first' },
+    { id: '2', kind: 'assistant', text: 'one' },
+    { id: '3', kind: 'session_start' },
+    { id: '4', kind: 'user', text: 'second' },
+    { id: '5', kind: 'tool', toolCallId: 'compaction:k1', title: 'Compact conversation', status: 'completed' },
+    { id: '6', kind: 'assistant', text: 'two' },
+    { id: '7', kind: 'tool', toolCallId: 'compaction:k2', title: 'Compact conversation', status: 'failed' },
+  ])
+  assert.deepEqual(
+    blocks.map((block) => (block.kind === 'context-start' ? `${block.id} (${block.reason})` : block.id)),
+    ['u:1', 't:2', 'c:3 (new-session)', 'u:4', 't:5', 'c:5 (compaction)', 't:6'],
+  )
+})
+
+test('rules with nothing between them draw as one, the last', () => {
+  const blocks = buildKitBlocks([
+    { id: '1', kind: 'user', text: 'first' },
+    { id: '2', kind: 'assistant', text: 'one' },
+    { id: '3', kind: 'session_start' },
+    { id: '4', kind: 'session_start' },
+    { id: '5', kind: 'assistant', text: '' },
+    { id: '6', kind: 'session_start' },
+    { id: '7', kind: 'user', text: 'second' },
+  ])
+  assert.deepEqual(
+    blocks.map((block) => (block.kind === 'context-start' ? `${block.id} (${block.reason})` : block.id)),
+    ['u:1', 't:2', 'c:6 (new-session)', 'u:7'],
+  )
+})
+
 test('a tool call that reported no diffs gets no diffs key', () => {
   const [item] = toolItems([
     { id: 'u', kind: 'user', text: 'go' },

@@ -13,9 +13,13 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import { cn } from 'cn'
 
 import { CodeBlock } from './code-block'
+import { fenceLanguage } from './code-highlight'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
 import { DATA_IMAGE_MAX_BYTES, isDataImage, readDataImage } from './markdown-data-image'
 import { DIRECTIVE_ELEMENTS } from './markdown-directives'
+import { MarkdownGrid } from './markdown-grid'
+import { isMarkdownGridLayout } from './markdown-grid-layouts'
+import { MarkdownHint } from './markdown-hint'
 import { MarkdownIcon } from './markdown-icon'
 import {
   getMarkdownReferences,
@@ -24,7 +28,7 @@ import {
   subscribeMarkdownReferences,
 } from './markdown-references'
 import { MarkdownSpoiler } from './markdown-spoiler'
-import { markdownDirectiveSyntax, markdownSyntax } from './markdown-syntax'
+import { markdownDirectiveSyntax, markdownSyntax, remarkLineBreaks } from './markdown-syntax'
 import { MarkdownTable } from './markdown-table'
 import { MarkdownTabs } from './markdown-tabs'
 import { MermaidDiagram } from './mermaid-diagram'
@@ -128,9 +132,13 @@ function fencedCode(node: ExtraProps['node']): { code: string; language?: string
   const language = Array.isArray(classes)
     ? classes.map(String).find((name) => name.startsWith('language-'))?.slice('language-'.length)
     : undefined
+  // The class carries only the info string's first word. The rest (the meta,
+  // where a fence names its file: `ts title="app.ts"`) travels on the element's
+  // data, and is joined back so the block reads the info string whole.
+  const meta = only.data?.meta?.trim()
   // Markdown always ends a fence's content with a newline. Keeping it would add
   // an empty last line to every block, and put one on the clipboard too.
-  return { code: text.replace(/\n$/, ''), language }
+  return { code: text.replace(/\n$/, ''), language: meta ? `${language ?? ''} ${meta}` : language }
 }
 
 function MarkdownPre({ node, children, ...props }: ComponentProps<'pre'> & ExtraProps) {
@@ -141,7 +149,7 @@ function MarkdownPre({ node, children, ...props }: ComponentProps<'pre'> & Extra
   // A `mermaid` fence is a picture somebody wrote in text. Rendering it as code
   // would be technically true and useless, which is why the language decides
   // what the block IS rather than only how it is coloured.
-  if (fence.language === 'mermaid') {
+  if (fenceLanguage(fence.language) === 'mermaid') {
     return <MermaidDiagram chart={fence.code} />
   }
   return <CodeBlock code={fence.code} language={fence.language} />
@@ -180,8 +188,28 @@ function TabElement({ children }: TabElementProps) {
   return <>{children}</>
 }
 
+type ColumnElementProps = BlockProps<object>
+
+function GridElement({ layout, children }: BlockProps<{ layout?: string }>) {
+  // Claimed only with one of the grid's layouts and a column for each of its
+  // blocks; every element child is a column, as with tabs.
+  const blocks = Children.toArray(children)
+    .filter((child): child is ReactElement<ColumnElementProps> => isValidElement(child))
+    .map((column) => column.props.children)
+  return isMarkdownGridLayout(layout) ? <MarkdownGrid layout={layout} blocks={blocks} /> : blocks
+}
+
+// Never rendered on its own: `GridElement` reads a column's content.
+function ColumnElement({ children }: ColumnElementProps) {
+  return <>{children}</>
+}
+
 function IconElement({ name, color }: BlockProps<{ name?: string; color?: string }>) {
   return <MarkdownIcon name={name ?? ''} color={color} />
+}
+
+function HintElement({ text, children }: BlockProps<{ text?: string }>) {
+  return <MarkdownHint text={text ?? ''}>{children}</MarkdownHint>
 }
 
 // A GFM table, drawn as the editor draws it. Every attribute the renderer put
@@ -260,7 +288,10 @@ export const markdownDirectiveBlocks = {
     [DIRECTIVE_ELEMENTS.spoiler]: SpoilerElement,
     [DIRECTIVE_ELEMENTS.tabs]: TabsElement,
     [DIRECTIVE_ELEMENTS.tab]: TabElement,
+    [DIRECTIVE_ELEMENTS.grid]: GridElement,
+    [DIRECTIVE_ELEMENTS.column]: ColumnElement,
     [DIRECTIVE_ELEMENTS.icon]: IconElement,
+    [DIRECTIVE_ELEMENTS.hint]: HintElement,
     [REFERENCE_ELEMENT]: ReferenceElement,
     table: TableElement,
   } as Components,
@@ -274,13 +305,26 @@ const markdownComponents: Components = {
 }
 
 const remarkPlugins = [...markdownSyntax, ...referencePlugins]
+// After the references, which read the source positions of the text they
+// split; the line breaks are only drawn.
+const lineBreakPlugins = [...remarkPlugins, remarkLineBreaks]
 
 // What survives in an inline rendering: the spans a sentence can carry. A
 // block construct is unwrapped to its text rather than dropped, so nothing the
 // author wrote goes missing -- it only stops being a paragraph, list or heading,
 // which a label or a one-line hint has no room for (and `<label>` does not
 // permit: its content model is phrasing content only).
-const inlineElements = ['a', 'strong', 'em', 'del', 'code', 'br', REFERENCE_ELEMENT, DIRECTIVE_ELEMENTS.icon]
+const inlineElements = [
+  'a',
+  'strong',
+  'em',
+  'del',
+  'code',
+  'br',
+  REFERENCE_ELEMENT,
+  DIRECTIVE_ELEMENTS.icon,
+  DIRECTIVE_ELEMENTS.hint,
+]
 
 export interface MarkdownProps {
   /** The markdown source. */
@@ -309,6 +353,12 @@ export interface MarkdownProps {
    * their content. For phrasing-only contexts such as a `<label>`.
    */
   inline?: boolean
+  /**
+   * A line break inside a paragraph is drawn as one, as a chat message is
+   * written: for a person's own messages. Without it markdown's rule holds,
+   * where a single line break is a space, as an agent's reply is written.
+   */
+  lineBreaks?: boolean
 }
 
 /**
@@ -318,12 +368,12 @@ export interface MarkdownProps {
  * the same voice as the conversation rather than as a second treatment of the
  * same markdown.
  *
- * Documentation blocks written as directives -- callouts, `details` spoilers
- * and `tabs` -- render as those blocks, and `:icon[name]{color=…}` as an icon
- * in the line; any other directive renders as its plain content. Identifiers the installed reference source recognises render
+ * Documentation blocks written as directives -- callouts, `details` spoilers,
+ * `tabs` and `grid` columns -- render as those blocks, `:icon[name]{color=…}` as an icon
+ * in the line and `:hint[content]{text="…"}` as a note over its content; any other directive renders as its plain content. Identifiers the installed reference source recognises render
  * as that source draws them; code never does.
  */
-export function Markdown({ text, className, typography = 'chat', inline = false }: MarkdownProps) {
+export function Markdown({ text, className, typography = 'chat', inline = false, lineBreaks = false }: MarkdownProps) {
   // Read for the re-render alone: the plugin reads the source itself, and a
   // new source -- recognisers arriving after the first paint -- has to run it
   // again.
@@ -332,7 +382,7 @@ export function Markdown({ text, className, typography = 'chat', inline = false 
   return (
     <Wrapper className={cn('prose-chat', typography === 'inherit' && 'prose-chat-inherit', className)}>
       <ReactMarkdown
-        remarkPlugins={remarkPlugins}
+        remarkPlugins={lineBreaks ? lineBreakPlugins : remarkPlugins}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
         {...(inline ? { allowedElements: inlineElements, unwrapDisallowed: true } : {})}

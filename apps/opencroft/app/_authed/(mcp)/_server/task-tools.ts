@@ -16,6 +16,12 @@
  * never starts a task, never says that one started: the id exists only between
  * the platform and the caller. That is what lets a declaration alone put any
  * tool or action in the background.
+ *
+ * One exception, outside this family: a session's `ask_user` (tools-bridge.ts,
+ * sessionAskUserTool) starts its own task. Its question has to wait for as long
+ * as the person takes, while a declared task runs under a caller-chosen limit
+ * that defaults to an hour, and its call answers with words of its own that
+ * tell the agent to end its turn, not the generic start message.
  */
 
 import type { ExecutionMode } from '@opencroft/core'

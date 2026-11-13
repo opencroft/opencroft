@@ -25,27 +25,31 @@ const row = (position: number, role: 'user' | 'agent', turn: number, text: strin
   text,
   createdAt: AT,
 })
+// A state with nothing written inside an entry and nothing open.
+const settled = (resumeFrom: number, turn: number | null): IndexState => ({
+  resumeFrom,
+  resumeChars: 0,
+  turn,
+  open: null,
+})
 
 test('a question is written as soon as it is recorded', () => {
   const step = indexEvents(INITIAL_STATE, [at(0, { kind: 'user', text: 'how do I deploy' })])
   assert.deepEqual(step.rows, [row(0, 'user', 0, 'how do I deploy')])
-  assert.deepEqual(step.state, { resumeFrom: 1, turn: 0, open: null })
+  assert.deepEqual(step.state, settled(1, 0))
   assert.equal(step.persist, true)
 })
 
 test('a reply is held while it streams, and a batch of only its chunks writes nothing', () => {
-  const step = indexEvents({ resumeFrom: 1, turn: 0, open: null }, [
+  const step = indexEvents(settled(1, 0), [
     at(1, reply('Run the dep')),
     at(2, { kind: 'tool_call', toolCallId: 'call-1', title: 'Read file', status: 'pending' }),
     at(3, reply('loy script.')),
   ])
   assert.deepEqual(step.rows, [])
   assert.equal(step.persist, false)
-  assert.deepEqual(step.state, {
-    resumeFrom: 1,
-    turn: 0,
-    open: { position: 1, segment: 0, text: 'Run the deploy script.', createdAt: AT },
-  })
+  assert.equal(step.state.resumeFrom, 1)
+  assert.deepEqual(step.state.open, { position: 1, segment: 0, text: 'Run the deploy script.', createdAt: AT })
 })
 
 test('a reply is written whole when its turn ends, tool calls and thoughts left out', () => {
@@ -57,34 +61,72 @@ test('a reply is written whole when its turn ends, tool calls and thoughts left 
     at(4, turnEnd),
   ])
   assert.deepEqual(step.rows, [row(0, 'user', 0, 'how do I deploy'), row(1, 'agent', 0, 'Run the deploy script.')])
-  assert.deepEqual(step.state, { resumeFrom: 5, turn: 0, open: null })
+  assert.equal(step.state.resumeFrom, 5)
+  assert.equal(step.state.resumeChars, 0)
+  assert.equal(step.state.open, null)
+})
+
+test('an entry rewritten as its reply grows adds only what it grew by', () => {
+  // The engine's compacted log rewrites one entry per run, so a later write of
+  // position 1 carries the whole text again.
+  const first = indexEvents(settled(1, 0), [at(1, reply('Run the'))])
+  const second = indexEvents(first.state, [at(1, reply('Run the deploy')), at(1, reply('Run the deploy script.'))])
+  const ended = indexEvents(second.state, [at(2, turnEnd)])
+  assert.deepEqual(ended.rows, [row(1, 'agent', 0, 'Run the deploy script.')])
+})
+
+test('an entry written in segments from inside it is taken up again where the rows stop', () => {
+  // What a process reading back finds: rows written up to a point inside the
+  // entry at 1, and the entry as recorded, whole.
+  const whole = `${'x'.repeat(SEGMENT_CHARS)} and the rest`
+  const step = indexEvents({ ...settled(1, 0), resumeChars: SEGMENT_CHARS }, [at(1, reply(whole)), at(2, turnEnd)])
+  assert.deepEqual(
+    step.rows.map((r) => r.text),
+    [' and the rest'],
+  )
+})
+
+test('a reply that grows in place past a segment is written once, in full', () => {
+  let state: IndexState = settled(1, 0)
+  let text = ''
+  let written = ''
+  for (let i = 0; i < 6_000; i++) {
+    text += ` w${i.toString(36).padStart(5, '0')}`
+    const step = indexEvents(state, [at(1, reply(text))])
+    written += step.rows.map((r) => r.text).join('')
+    state = step.state
+  }
+  written += indexEvents(state, [at(2, turnEnd)])
+    .rows.map((r) => r.text)
+    .join('')
+  assert.ok(text.length > 2 * SEGMENT_CHARS, 'precondition: more than one segment')
+  assert.equal(written, text)
 })
 
 test('an error ends a reply as a turn_end does', () => {
-  const step = indexEvents({ resumeFrom: 1, turn: 0, open: null }, [
+  const step = indexEvents(settled(1, 0), [
     at(1, reply('half an answer')),
-    at(2, { kind: 'error', message: 'the agent stopped' }),
+    at(2, { kind: 'error', message: 'stopped' }),
   ])
   assert.deepEqual(step.rows, [row(1, 'agent', 0, 'half an answer')])
   assert.equal(step.state.open, null)
 })
 
 test('a reply that never gets a turn_end or an error is ended by the next question', () => {
-  const step = indexEvents({ resumeFrom: 1, turn: 0, open: null }, [
-    at(1, reply('cut off mid')),
-    at(2, { kind: 'user', text: 'are you there' }),
-  ])
+  const step = indexEvents(settled(1, 0), [at(1, reply('cut off mid')), at(2, { kind: 'user', text: 'are you there' })])
   assert.deepEqual(step.rows, [row(1, 'agent', 0, 'cut off mid'), row(2, 'user', 2, 'are you there')])
-  assert.deepEqual(step.state, { resumeFrom: 3, turn: 2, open: null })
+  assert.equal(step.state.resumeFrom, 3)
+  assert.equal(step.state.turn, 2)
+  assert.equal(step.state.open, null)
 })
 
 test('a turn_end with nothing open still moves the resume point past the turn', () => {
-  const step = indexEvents({ resumeFrom: 3, turn: 0, open: null }, [at(7, turnEnd)])
-  assert.deepEqual(step, { rows: [], state: { resumeFrom: 8, turn: 0, open: null }, persist: true })
+  const step = indexEvents(settled(3, 0), [at(7, turnEnd)])
+  assert.deepEqual(step, { rows: [], state: settled(8, 0), persist: true })
 })
 
 test('text after a reply has ended starts a new message in the same turn', () => {
-  const step = indexEvents({ resumeFrom: 1, turn: 0, open: null }, [
+  const step = indexEvents(settled(1, 0), [
     at(1, reply('first')),
     at(2, turnEnd),
     at(3, reply('an afterthought')),
@@ -114,7 +156,7 @@ test('a delivered question is indexed as the words its messages carry, without t
 
 test('events before the resume point are already accounted for, and skipped', () => {
   // History recorded again below the resume point (an edit's fork, a replay).
-  const step = indexEvents({ resumeFrom: 10, turn: 4, open: null }, [
+  const step = indexEvents(settled(10, 4), [
     at(7, { kind: 'user', text: 'already indexed' }),
     at(8, reply('also already indexed')),
     at(9, turnEnd),
@@ -126,11 +168,13 @@ test('events before the resume point are already accounted for, and skipped', ()
 test('the state passed in is not changed', () => {
   const before: IndexState = {
     resumeFrom: 1,
+    resumeChars: 0,
     turn: 0,
     open: { position: 1, segment: 0, text: 'so far', createdAt: AT },
+    taken: { position: 1, chars: 6 },
   }
   const copy = structuredClone(before)
-  indexEvents(before, [at(2, reply(' and more')), at(3, turnEnd)])
+  indexEvents(before, [at(1, reply('so far and')), at(2, reply(' and more')), at(3, turnEnd)])
   assert.deepEqual(before, copy)
 })
 
@@ -138,7 +182,7 @@ test('the state passed in is not changed', () => {
 
 test('held text past the segment size is written out at the next word break, and the reply goes on', () => {
   const open = { position: 1, segment: 0, text: 'x'.repeat(SEGMENT_CHARS - 2), createdAt: AT }
-  const step = indexEvents({ resumeFrom: 1, turn: 0, open }, [
+  const step = indexEvents({ ...settled(1, 0), open }, [
     at(5, reply('abc')),
     at(6, reply(' def')),
     at(7, reply(' ghi')),
@@ -146,17 +190,15 @@ test('held text past the segment size is written out at the next word break, and
   // The chunk starting with a space after a full segment is where it is cut:
   // the events before it are written, and the reply resumes from it.
   assert.deepEqual(step.rows, [row(1, 'agent', 0, `${'x'.repeat(SEGMENT_CHARS - 2)}abc`)])
-  assert.deepEqual(step.state, {
-    resumeFrom: 6,
-    turn: 0,
-    open: { position: 1, segment: 1, text: ' def ghi', createdAt: AT },
-  })
+  assert.equal(step.state.resumeFrom, 6)
+  assert.equal(step.state.resumeChars, 0)
+  assert.deepEqual(step.state.open, { position: 1, segment: 1, text: ' def ghi', createdAt: AT })
   const ended = indexEvents(step.state, [at(8, turnEnd)])
   assert.deepEqual(ended.rows, [row(1, 'agent', 0, ' def ghi', 1)])
 })
 
 test('a reply streamed in small chunks never holds much more than twice the segment size', () => {
-  let state: IndexState = { resumeFrom: 1, turn: 0, open: null }
+  let state: IndexState = settled(1, 0)
   let written = ''
   let longestHeld = 0
   const words = Array.from({ length: 30_000 }, (_, i) => ` w${i}`)
@@ -177,7 +219,7 @@ test('a reply in large chunks is written in full segments, not a full one and a 
   // Chunks cut anywhere in a word: the held text passes the segment size
   // mid-chunk and is written out at the next chunk that starts a word.
   const text = ` ${Array.from({ length: 40_000 }, (_, i) => `w${i.toString(36)}`).join(' ')}`
-  let state: IndexState = { resumeFrom: 1, turn: 0, open: null }
+  let state: IndexState = settled(1, 0)
   const lengths: number[] = []
   let position = 1
   for (let i = 0; i < text.length; i += 4000) {
@@ -201,7 +243,7 @@ test('a reply in large chunks is written in full segments, not a full one and a 
 
 test('one chunk larger than a segment is written as several segments at once', () => {
   const text = Array.from({ length: 12_000 }, (_, i) => `word${i}`).join(' ')
-  const step = indexEvents({ resumeFrom: 1, turn: 0, open: null }, [at(1, reply(text))])
+  const step = indexEvents(settled(1, 0), [at(1, reply(text))])
   assert.ok(step.rows.length > 1, 'more than one segment')
   assert.deepEqual(
     step.rows.map((r) => r.segment),
@@ -209,7 +251,9 @@ test('one chunk larger than a segment is written as several segments at once', (
   )
   assert.equal(step.rows.map((r) => r.text).join(''), text)
   assert.deepEqual(step.state.open, { position: 1, segment: step.rows.length, text: '', createdAt: AT })
-  assert.equal(step.state.resumeFrom, 2)
+  // Written through the whole of the entry at 1, which may still grow.
+  assert.equal(step.state.resumeFrom, 1)
+  assert.equal(step.state.resumeChars, text.length)
 })
 
 test('a long question is split into segments at word breaks', () => {
@@ -235,12 +279,12 @@ test('a text with no word break is cut at twice the segment size, keeping a surr
 
 test('ending an open reply writes what it holds and closes it', () => {
   const open = { position: 4, segment: 2, text: 'the rest', createdAt: AT }
-  const step = endOpenReply({ resumeFrom: 9, turn: 3, open }, 12)
+  const step = endOpenReply({ ...settled(9, 3), open }, 12)
   assert.deepEqual(step.rows, [row(4, 'agent', 3, 'the rest', 2)])
-  assert.deepEqual(step.state, { resumeFrom: 12, turn: 3, open: null })
+  assert.deepEqual(step.state, settled(12, 3))
 })
 
 test('ending when nothing is open changes nothing', () => {
-  const state: IndexState = { resumeFrom: 9, turn: 3, open: null }
+  const state = settled(9, 3)
   assert.deepEqual(endOpenReply(state, 12), { rows: [], state, persist: false })
 })

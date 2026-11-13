@@ -1,3 +1,4 @@
+import type { ToolCallState, ToolViewProps } from 'agent-chat/tool-views'
 import { Loader2 } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useState } from 'react'
 
@@ -10,6 +11,24 @@ import { useToolViewHost } from './tool-view-host'
 // Lines of body text that fit the preview's height — the threshold callers use
 // to decide whether to pass `overflowing`.
 export const CLAMP_LINES = 8
+
+// The word a header puts beside a call that settled without completing, and
+// what the output row says while a call has no output. The same wording as
+// agent-chat's ToolCallBlock (TOOL_STATE_WORDS there), held here as well
+// because a kit component takes only types from agent-chat: the kit's preview
+// runtime holds no agent-chat module to import a value from.
+const STATE_WORDS: Readonly<Record<ToolCallState, { label?: string; noOutput: string }>> = {
+  running: { noOutput: 'running…' },
+  completed: { noOutput: 'No output' },
+  failed: { label: 'failed', noOutput: 'No output' },
+  cancelled: { label: 'stopped', noOutput: 'Stopped before it finished' },
+}
+
+// Where a view's call stands: the host's `state`, or, from a host that does
+// not say, a call with a result read as settled (as ToolViewProps describes).
+export function toolViewState({ state, result }: Pick<ToolViewProps, 'state' | 'result'>): ToolCallState {
+  return state ?? (result ? (result.isError ? 'failed' : 'completed') : 'running')
+}
 
 // A one-line header (label) with the target shown as a small clickable line
 // underneath, and the body always expanded below — matching agent-chat's
@@ -32,8 +51,7 @@ export function OpBlock({
   detail,
   meta,
   target,
-  isError,
-  pending,
+  state = 'completed',
   overflowing,
   preview,
   children,
@@ -46,14 +64,15 @@ export function OpBlock({
   // count.
   meta?: ReactNode
   target?: string
-  isError?: boolean
-  // True while the call hasn't resolved yet — shows a spinner in the header,
-  // same as agent-chat's ToolCallBlock.
-  pending?: boolean
+  // Where the call stands: a spinner in the header while it runs, and a word
+  // for one that failed or was stopped, the same as agent-chat's
+  // ToolCallBlock.
+  state?: ToolCallState
   overflowing?: boolean
   preview?: ReactNode
   children?: ReactNode
 }) {
+  const label = STATE_WORDS[state].label
   const [fullOpen, setFullOpen] = useState(false)
   const openFull = () => children && setFullOpen(true)
   const onPreviewKey = (event: KeyboardEvent) => {
@@ -74,8 +93,12 @@ export function OpBlock({
           {detail && <> {detail}</>}
         </span>
         {meta}
-        {pending && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
-        {isError && <span className='text-destructive shrink-0'>error</span>}
+        {state === 'running' && <Loader2 className='size-3 shrink-0 animate-spin text-muted-foreground' />}
+        {label && (
+          <span className={cn('shrink-0', state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
+            {label}
+          </span>
+        )}
       </button>
       {target && <TargetLine target={target} />}
       {children && (
@@ -90,7 +113,7 @@ export function OpBlock({
           onKeyDown={onPreviewKey}
           className={cn(
             'w-full min-w-0 rounded-md border bg-muted/30 text-left text-xs overflow-hidden cursor-pointer',
-            isError && 'border-destructive/60',
+            state === 'failed' && 'border-destructive/60',
           )}
         >
           <div
@@ -140,7 +163,7 @@ export function DiffOpBlock({
   verb,
   detail,
   target,
-  result,
+  state,
   lead,
   diffs,
   part = 'Edit',
@@ -148,7 +171,7 @@ export function DiffOpBlock({
   verb: string
   detail?: string
   target?: string
-  result?: { isError?: boolean }
+  state: ToolCallState
   lead?: ReactNode
   diffs: readonly (readonly DiffLine[])[]
   part?: string
@@ -160,8 +183,7 @@ export function DiffOpBlock({
       detail={detail}
       target={target}
       meta={diffs.length > 0 && <DiffStat diff={all} />}
-      isError={result?.isError}
-      pending={!result}
+      state={state}
       overflowing={diffs.reduce((rows, diff) => rows + diffRowCount(diff), 0) > CLAMP_LINES}
     >
       {lead}
@@ -241,18 +263,24 @@ function Elided({ children }: { children: ReactNode }) {
   return <div className='text-[11px] text-muted-foreground/70'>{children}</div>
 }
 
-// What a call returned, or where it stands while it has not: a spinner until a
-// result arrives, a word when it arrived empty.
-export function OpOutput({ result, tail }: { result?: { text: string }; tail?: number }) {
-  if (!result) {
-    return (
-      <Flex row align='center' className='gap-1.5 text-muted-foreground'>
-        <Loader2 className='size-3 animate-spin' />
-        <span>running…</span>
-      </Flex>
-    )
-  }
-  return result.text ? <OpText text={result.text} tail={tail} /> : <span className='text-muted-foreground'>No output</span>
+// What a call returned, and where it stands: the output so far with a spinner
+// under it while the call runs, or a word for a call that has none (STATE_WORDS).
+export function OpOutput({ result, state, tail }: { result?: { text: string }; state: ToolCallState; tail?: number }) {
+  return (
+    <>
+      {result?.text ? (
+        <OpText text={result.text} tail={tail} />
+      ) : state !== 'running' ? (
+        <span className='text-muted-foreground'>{STATE_WORDS[state].noOutput}</span>
+      ) : null}
+      {state === 'running' && (
+        <Flex row align='center' className='gap-1.5 text-muted-foreground'>
+          <Loader2 className='size-3 animate-spin' />
+          <span>{STATE_WORDS.running.noOutput}</span>
+        </Flex>
+      )}
+    </>
+  )
 }
 
 // Named values — a call's arguments, a node's changed properties — as

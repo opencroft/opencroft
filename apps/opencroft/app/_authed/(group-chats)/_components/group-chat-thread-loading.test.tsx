@@ -53,7 +53,7 @@ function assertLoaderAlone(container: HTMLElement): void {
   // walks the whole document and the run dies before it reports.
   const has = (selector: string) => container.querySelector(selector) !== null
   assert.equal(has('svg[aria-label="Loading"]'), true, 'the loader is shown while the thread opens')
-  assert.equal(has('textarea'), false, 'no composer under the loader')
+  assert.equal(has('[data-slot="agent-command-bar-composer"]'), false, 'no composer under the loader')
   assert.equal(has('.sticky'), false, 'no pinned composer area under the loader')
 }
 

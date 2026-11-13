@@ -11,6 +11,9 @@ export interface GraphRefInfo {
   /** The name its owner gave it; '' when it has none (the caller falls back to the type's name). */
   name: string
   spaceSlug: string
+  /** For an App instance: its slug, and its address `<spaceSlug>.<slug>` when its space exists. */
+  slug?: string
+  address?: string
   /**
    * Asked as a terminal target on an App instance: what the App calls that
    * handle (its `handleLabel` hook), keyed by handle id. Absent when the App
@@ -56,12 +59,15 @@ export async function describeGraphRefsImpl(ids: string[]): Promise<Record<strin
     if (row) {
       spaceSlugById ??= new Map(registry.list().map((space) => [space.id, space.slug]))
       const handleLabels = handleId ? await appHandleLabels(row, [handleId]) : {}
+      const spaceSlug = spaceSlugById.get(row.spaceId) ?? ''
       result[asked] = {
         id,
         kind: 'app',
         type: `app:${row.type}`,
         name: row.name || row.type,
-        spaceSlug: spaceSlugById.get(row.spaceId) ?? '',
+        spaceSlug,
+        slug: row.slug,
+        ...(spaceSlug ? { address: `${spaceSlug}.${row.slug}` } : {}),
         ...(Object.keys(handleLabels).length > 0 ? { handleLabels } : {}),
       }
       continue

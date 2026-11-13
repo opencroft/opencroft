@@ -14,9 +14,11 @@ import {
   renameSpaceAppImpl,
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
-import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
+import type { AppMeta, SpaceAppEntry, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
+import type { SecretKeyReferences } from '@/app/_authed/(secrets-store)/_lib/secret-references'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 import { directoryUserOf } from '@/app/_server/user-directory'
+import { referencesLostWithGraph } from '@/server/secret-store-removal'
 
 // The page gate guards navigation, not these RPC endpoints, which are
 // callable in their own right. Checked inline because every live caller is a
@@ -116,6 +118,28 @@ export const listSpaceApps = createServerFn({ strict: { output: false } })
     const provided = await providedTypes()
     return rows.map((row) => toInstance(row, provided))
   })
+
+/**
+ * Every space's Apps by name and address, in one query, for a search across
+ * spaces. Parameter values stay out: a list of where to go has no use for
+ * them. An App whose space is not in the registry is left out, as no address
+ * reaches it.
+ */
+export const listAllSpaceApps = createServerFn({ strict: { output: false } }).handler(
+  async (): Promise<SpaceAppEntry[]> => {
+    await requireSession()
+    const r = await registry()
+    const slugById = new Map(r.list().map((space) => [space.id, space.slug]))
+    const rows = await db.query.spaceApp.findMany({
+      columns: { id: true, spaceId: true, type: true, name: true, slug: true },
+      orderBy: asc(spaceApp.createdAt),
+    })
+    return rows.flatMap((row) => {
+      const spaceSlug = slugById.get(row.spaceId)
+      return spaceSlug ? [{ spaceSlug, id: row.id, type: row.type, name: row.name, slug: row.slug }] : []
+    })
+  },
+)
 
 /**
  * Add an instance of an App to a space. The same App can be added many times
@@ -222,6 +246,22 @@ export const callAppActionFromUi = createServerFn({ method: 'POST', strict: { ou
     return callAppAction(String(data.instanceId), String(data.action), data.params ?? {}, {
       person: directoryUserOf(user),
     })
+  })
+
+/**
+ * What removing one App instance breaks by taking secrets with it: for a graph, the Apps of the
+ * space that name a secret of a Secrets Store on it. Empty for every other App.
+ */
+export const listAppRemovalSecretReferences = createServerFn({ method: 'POST' })
+  .inputValidator((data: { spaceSlug: string; instanceId: string }) => data)
+  .handler(async ({ data }): Promise<SecretKeyReferences[]> => {
+    await requireSession()
+    const spaceId = await resolveSpaceId(data.spaceSlug)
+    const row = await db.query.spaceApp.findFirst({
+      columns: { id: true },
+      where: and(eq(spaceApp.id, data.instanceId), eq(spaceApp.spaceId, spaceId)),
+    })
+    return row ? referencesLostWithGraph(row.id) : []
   })
 
 /**

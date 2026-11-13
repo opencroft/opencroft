@@ -91,6 +91,8 @@ export interface GroupChatDetailScreenProps extends GroupChatDetailData {
   groupChatId: string
   /** The back affordance, when this screen nests inside something. */
   onBack?: () => void
+  /** Whether the back affordance shows from md up as well -- see GroupChatDetail. */
+  showBackFromMd?: boolean
   /** Take the header: when given, the screen draws none of its own and
    *  reports what it would have held, and null on the way out. */
   onHeader?: (header: GroupChatDetailHeader | null) => void
@@ -139,6 +141,7 @@ export function GroupChatDetailScreen({
   pins,
   layout: loadedLayout,
   onBack,
+  showBackFromMd,
   onHeader,
   onOpenThread,
   onThreadStarted,
@@ -471,6 +474,7 @@ export function GroupChatDetailScreen({
       <GroupChatDetail
         className={className}
         onBack={onBack}
+        showBackFromMd={showBackFromMd}
         name={chat.name}
         searchField={header.title ?? undefined}
         actions={header.actions ?? undefined}

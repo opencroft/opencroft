@@ -15,6 +15,8 @@ import {
   graphNodes,
   jsonEqual,
   readGraphFromDoc,
+  sameEdge,
+  sameNode,
 } from '@/app/_authed/(space)/_lib/graph-doc'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 
@@ -91,6 +93,36 @@ test('writing the graph the doc already holds produces no update', () => {
   let updates = 0
   doc.on('update', () => updates++)
   applyGraphToDoc(doc, sample())
+  assert.equal(updates, 0)
+})
+
+// Key-value rows a user put in order (an environment's variables, a
+// container's labels) are kept as an object in that order.
+test('a data value whose keys only moved is written, and its new order reaches another doc', () => {
+  const graph = (env: Record<string, string>): GraphData => ({
+    nodes: [{ id: 'app', type: 'acme.kit.app', data: { label: 'App', env } }],
+    edges: [],
+  })
+  const doc = new Y.Doc()
+  applyGraphToDoc(doc, graph({ FIRST: '1', SECOND: '2', THIRD: '3' }))
+  applyGraphToDoc(doc, graph({ THIRD: '3', FIRST: '1', SECOND: '2' }))
+  const copy = new Y.Doc()
+  Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
+  for (const read of [readGraphFromDoc(doc), readGraphFromDoc(copy)]) {
+    assert.deepEqual(Object.keys((read.nodes[0].data as { env: object }).env), ['THIRD', 'FIRST', 'SECOND'])
+  }
+})
+
+test("a node whose fields or data keys come in another order is not rewritten: the doc's maps keep no order", () => {
+  const doc = new Y.Doc()
+  applyGraphToDoc(doc, sample())
+  const shuffled = sample()
+  const { id, type, position, parentId, data } = shuffled.nodes[1]
+  const { label, code, entries } = data as Record<string, unknown>
+  shuffled.nodes[1] = { data: { entries, code, label }, parentId, position, type, id }
+  let updates = 0
+  doc.on('update', () => updates++)
+  applyGraphToDoc(doc, shuffled)
   assert.equal(updates, 0)
 })
 
@@ -225,8 +257,24 @@ test('applyGraphChange applies a change to a newer graph and keeps what only the
   assert.ok(result.nodes.some((n) => n.id === 'node-new'))
 })
 
-test('jsonEqual ignores key order and undefined fields but not array order', () => {
-  assert.equal(jsonEqual({ a: 1, b: [1, 2], c: undefined }, { b: [1, 2], a: 1 }), true)
+test('jsonEqual counts key order and array order and ignores undefined fields', () => {
+  assert.equal(jsonEqual({ a: 1, c: undefined, b: [1, 2] }, { a: 1, b: [1, 2] }), true)
+  assert.equal(jsonEqual({ a: 1, b: 2 }, { b: 2, a: 1 }), false)
+  assert.equal(jsonEqual({ v: { a: 1, b: 2 } }, { v: { b: 2, a: 1 } }), false)
   assert.equal(jsonEqual({ b: [2, 1] }, { b: [1, 2] }), false)
   assert.equal(jsonEqual({ a: null }, { a: {} }), false)
+})
+
+test("sameNode ignores the order of a node's fields and data keys but not of a value's keys", () => {
+  const node = { id: 'n', type: 't', data: { label: 'L', env: { A: '1', B: '2' } } }
+  assert.equal(sameNode(node, { data: { env: { A: '1', B: '2' }, label: 'L' }, type: 't', id: 'n' }), true)
+  assert.equal(sameNode(node, { id: 'n', type: 't', data: { label: 'L', env: { B: '2', A: '1' } } }), false)
+  assert.equal(sameNode(node, undefined), false)
+  assert.equal(sameNode(undefined, undefined), true)
+})
+
+test("sameEdge counts the order of an edge's data keys, which the doc stores whole", () => {
+  const edge = { id: 'e', source: 'a', target: 'b', data: { x: 1, y: 2 } }
+  assert.equal(sameEdge(edge, { target: 'b', source: 'a', id: 'e', data: { x: 1, y: 2 } }), true)
+  assert.equal(sameEdge(edge, { id: 'e', source: 'a', target: 'b', data: { y: 2, x: 1 } }), false)
 })

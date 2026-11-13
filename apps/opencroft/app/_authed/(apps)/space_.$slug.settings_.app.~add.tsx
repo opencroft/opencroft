@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
+import { TitleBarTitle } from 'ui/layouts/title-bar'
 
 import { AddApp } from '@/app/_authed/(apps)/_components/add-app'
 import { listApps } from '@/app/_authed/(apps)/_server/actions'
@@ -55,7 +56,11 @@ function Page() {
   const meta = apps.find((entry) => entry.type === app)
   return (
     <ScrollPage>
-      <ScrollHeader>
+      {/* On a phone the title bar names the page and leads with its Back. */}
+      <TitleBarTitle>
+        <span className='md:hidden'>{meta ? `Add ${meta.title}` : 'Add app'}</span>
+      </TitleBarTitle>
+      <ScrollHeader className='max-md:hidden'>
         <Flex row withGaps align='center' className='w-full'>
           <Link to='/space/$slug/settings' params={{ slug }} search={{ section: 'apps' }}>
             <Button variant='ghost' size='icon'>

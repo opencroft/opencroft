@@ -3,23 +3,27 @@
 import { useSession } from '@opencroft/auth/client'
 import { useCallback, useSyncExternalStore } from 'react'
 
-import type { ThreadList } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
-
-// Whether each folder of a thread list is open, as this person last left it.
+// Whether each folder of a list is open, as this person last left it.
 //
-// The folders themselves are shared by everyone in the chat; whether one is
-// open is not. So it lives in the browser, under a key that names the person,
-// the chat and the list, and one member collapsing a folder changes nothing for
-// anyone else. A folder with no entry is one this person never toggled, and
-// the list draws it at its default.
+// A chat's thread folders are shared by everyone in the chat; whether one is
+// open is not. So it lives in the browser, under a key that names the person
+// and the list, and one member collapsing a folder changes nothing for anyone
+// else. Recent's folders are kept the same way, beside the thread lists'. A
+// folder with no entry is one this person never toggled, and the list draws
+// it at its default.
 
 /** Folder id to open, for the folders this person has toggled. */
 export type FolderOpenById = Readonly<Record<string, boolean>>
 
 const NOTHING_TOGGLED: FolderOpenById = {}
 
-export function folderOpenKey(userId: string, groupChatId: string, list: ThreadList): string {
-  return `opencroft.groupChat.folderOpen.${userId}.${groupChatId}.${list}`
+/**
+ * `listKey` names the list: `<groupChatId>.<active|archive>` for a chat's
+ * thread lists, `recent` for Recent. A chat id never ends without a list part,
+ * so the two kinds cannot meet.
+ */
+export function folderOpenKey(userId: string, listKey: string): string {
+  return `opencroft.groupChat.folderOpen.${userId}.${listKey}`
 }
 
 // Writes from this tab. Another tab's writes arrive as `storage` events.
@@ -85,13 +89,13 @@ export function writeFolderOpen(key: string, folderId: string, open: boolean): v
  * session is known there is nobody to remember for: nothing is read, and a
  * toggle stays on screen without being stored.
  */
-export function useFolderOpenCache(
-  groupChatId: string,
-  list: ThreadList,
-): { folderOpen: FolderOpenById; setFolderOpen: (folderId: string, open: boolean) => void } {
+export function useFolderOpenCache(listKey: string): {
+  folderOpen: FolderOpenById
+  setFolderOpen: (folderId: string, open: boolean) => void
+} {
   const { data: session } = useSession()
   const userId = session?.user.id
-  const key = userId ? folderOpenKey(userId, groupChatId, list) : null
+  const key = userId ? folderOpenKey(userId, listKey) : null
   const folderOpen = useSyncExternalStore(
     subscribe,
     () => (key ? readFolderOpen(key) : NOTHING_TOGGLED),

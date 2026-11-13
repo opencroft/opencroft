@@ -3,7 +3,11 @@ import path from 'node:path'
 
 import type { AppEntry, AppHandle } from '@opencroft/core'
 
-import { qualifyDeclared, qualifyHandleTypes } from '@/app/_authed/(extension-runtime)/_declared-types'
+import {
+  checkEnumHandles,
+  qualifyDeclared,
+  qualifyHandleTypes,
+} from '@/app/_authed/(extension-runtime)/_declared-types'
 import { MANIFEST_FILE } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
 import { extDir } from '@/app/_authed/(extension-runtime)/_server/paths'
 import type { ExtensionHandle, ExtensionManifest, NodeMetadata } from '@/app/_authed/(extension-runtime)/_types'
@@ -44,7 +48,11 @@ export async function readManifest(extensionId: string): Promise<ExtensionManife
  * Throws, naming the extension, for a declaration the runtime cannot qualify:
  * a declared type that is not a bare slug (a dot in it would make the
  * qualified form ambiguous), one bare type declared twice among the nodes or
- * among the Apps, or a handle type that is neither bare nor qualified.
+ * among the Apps, a handle type that is neither bare nor qualified, an
+ * `accepts` that is on a source handle, names a type that is not a value
+ * type, or leaves out the handle's own `handleType`, an enum whose cases are
+ * missing, malformed or declared twice, or an input of one of its own enums
+ * that declares more than `inline` and a `default` that is one of its cases.
  */
 export function normalizeManifest(declared: DeclaredManifest, extensionId: string): ExtensionManifest {
   const { contexts, handleTypes, nodes, provides, ...rest } = declared
@@ -55,6 +63,7 @@ export function normalizeManifest(declared: DeclaredManifest, extensionId: strin
   }
   if (nodes) {
     manifest.nodes = qualifyDeclared(extensionId, 'node type', 'typeId', nodes)
+    checkEnumHandles(extensionId, manifest.handleTypes, manifest.nodes)
   }
   if (provides) {
     const apps = provides.apps as DeclaredApp[] | undefined

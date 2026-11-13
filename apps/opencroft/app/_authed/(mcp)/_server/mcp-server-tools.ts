@@ -4,22 +4,29 @@ import { checkMcpServer } from 'agent-client/mcp-check'
 import type { KeyValue, McpServerConfig, McpTransport } from 'agent-client/mcp-types'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
-import { isConnectionNodeName, readMcpServers, writeMcpServers } from '@/app/_authed/(agent)/_server/mcp-store'
+import {
+  isConnectionNodeName,
+  readMcpServers,
+  resolveMcpServerSecrets,
+  writeMcpServers,
+} from '@/app/_authed/(agent)/_server/mcp-store'
 import { withApprovalRequired } from '@/app/_authed/(approvals)/_server/with-approval'
-import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
+import type { ToolCallerContext, ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
 import { fail, jsonResult, textResult } from '@/app/_authed/(mcp)/_server/tool-shared'
+import { secretNameOf } from '@/app/_authed/(secrets-store)/_lib/secret-values'
+import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 
 export const definitions = [
   {
     name: 'mcp_list',
     description:
-      'List the globally-configured MCP servers available to local agents. Definitions are global (shared by every local agent). Secret values (header/env values and any URL credentials) are redacted.',
+      'List the globally-configured MCP servers available to local agents. Definitions are global (shared by every local agent). Typed header/env values and any URL credentials are redacted; a value that names a stored secret reads as `secret:<NAME>`.',
     inputSchema: { type: 'object' as const, properties: {} },
   },
   {
     name: 'mcp_set',
     description:
-      'Create or update a global MCP server by name (upsert). Provided fields override the existing entry; omitted fields are preserved. stdio transport requires `command`; http/sse require `url`. Definitions are global.',
+      "Create or update a global MCP server by name (upsert). Provided fields override the existing entry; omitted fields are preserved. stdio transport requires `command`; http/sse require `url`. Definitions are global. A header or env value is typed text or `secret:<NAME>`, the name of a secret in a Secrets Store; prefer the name for any credential. It is looked up for each agent that mounts the server, in the Secrets Stores of that agent's graph.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -62,7 +69,7 @@ export const definitions = [
   {
     name: 'mcp_test',
     description:
-      'Test connectivity to an MCP server without saving. Pass a full config (same fields as mcp_set) to test an unsaved one, or just `name` to test an already-saved server. Returns ok + tool count, or an error.',
+      'Test connectivity to an MCP server without saving. Pass a full config (same fields as mcp_set) to test an unsaved one, or just `name` to test an already-saved server. Secrets it names are looked up for you, the calling agent. Returns ok + tool count, or an error.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -163,14 +170,33 @@ function redactUrl(url?: string): string | undefined {
   }
 }
 
-// Never echo secret values (header/env values, URL credentials) back to agents.
+// A reference to a stored secret (`secret:<NAME>`) is only a name and is shown
+// as it is; any typed value may be a credential and is masked.
+function redactValue(entry: KeyValue): KeyValue {
+  return { name: entry.name, value: secretNameOf(entry.value ?? '') === undefined ? SECRET_MASK : entry.value }
+}
+
+// Never echo secret values (typed header/env values, URL credentials) back to agents.
 function redactMcpServer(server: McpServerConfig): McpServerConfig {
   return {
     ...server,
     url: redactUrl(server.url),
-    headers: server.headers?.map((h) => ({ name: h.name, value: SECRET_MASK })),
-    env: server.env?.map((e) => ({ name: e.name, value: SECRET_MASK })),
+    headers: server.headers?.map(redactValue),
+    env: server.env?.map(redactValue),
   }
+}
+
+// The agent node a call is made for, for looking up the secrets a server
+// names: the node the surface identified, else the one agent of that name.
+async function callerAgentNodeId(caller: ToolCallerContext): Promise<string | null> {
+  if (caller.agentNodeId) {
+    return caller.agentNodeId
+  }
+  if (!caller.agent) {
+    return null
+  }
+  const matches = (await listAgentNodesImpl()).filter((node) => node.name === caller.agent)
+  return matches.length === 1 ? (matches[0]?.nodeId ?? null) : null
 }
 
 export const handlers: Record<string, ToolHandler> = {
@@ -220,7 +246,7 @@ export const handlers: Record<string, ToolHandler> = {
     return textResult(`MCP server "${name}" removed.`)
   }),
 
-  mcp_test: async (args) => {
+  mcp_test: async (args, caller) => {
     const name = typeof args.name === 'string' ? args.name.trim() : ''
     if (!name) {
       fail(-32602, 'Missing required param: name')
@@ -236,6 +262,12 @@ export const handlers: Record<string, ToolHandler> = {
       }
       config = existing
     }
-    return jsonResult(await checkMcpServer(config))
+    let resolved: McpServerConfig
+    try {
+      resolved = await resolveMcpServerSecrets(config, await callerAgentNodeId(caller))
+    } catch (err) {
+      return jsonResult({ ok: false, error: err instanceof Error ? err.message : String(err) })
+    }
+    return jsonResult(await checkMcpServer(resolved))
   },
 }

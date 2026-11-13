@@ -1,4 +1,4 @@
-import { InputHandle, inspectorIntent, NodeFrame, useReactFlow } from '@opencroft/client/canvas'
+import { InputHandle, inspectorIntent, NodeFrame } from '@opencroft/client/canvas'
 import { Button } from '@opencroft/client/ui'
 import { Copy, ScrollText, Trash2 } from 'lucide-react'
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef } from 'react'
@@ -22,17 +22,11 @@ function formatTime(ms: number): string {
 }
 
 export function LogNode({ id, data, selected }: { id: string; data: LogData; selected?: boolean }) {
-  const { setNodes } = useReactFlow()
   const entries = data.entries ?? []
 
-  const focus = useCallback(() => {
-    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === id })))
-  }, [id, setNodes])
-
   const openOutput = useCallback(() => {
-    focus()
     inspectorIntent.open(id, 'details')
-  }, [id, focus])
+  }, [id])
 
   const subtitle = `${entries.length} entries`
 
@@ -140,4 +134,6 @@ export function LogInspector({
   )
 }
 
-export const LOG_HANDLES = [{ id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Text' }]
+export const LOG_HANDLES = [
+  { id: 'text-in', handleType: 'text-stream', role: 'target' as const, label: 'Text', multiple: true },
+]

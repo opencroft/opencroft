@@ -1,8 +1,9 @@
-import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
+import { type ChatMessage, isCompletedCompaction, isTerminalToolStatus } from 'agent-client/fold'
 
+import type { ChatContextStartReason } from './components/chat-context-divider'
 import type { Block } from './components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
-import { formatToolValue } from './tool-views'
+import { formatToolValue, toolCallState } from './tool-views'
 import { toUserParts } from './user-parts'
 
 // Re-exported rather than redeclared: the component that renders these is what
@@ -42,7 +43,23 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
     runId = null
   }
 
+  // A context start ends the details run it falls in, and the replies after it
+  // in the same turn open a run of their own, named by the message they start
+  // at like any other. Rules with nothing drawn between them are one change of
+  // context for the reader, so the last stands for them all.
+  const contextStart = (id: string, reason: ChatContextStartReason) => {
+    flush()
+    if (blocks.at(-1)?.kind === 'context-start') {
+      blocks.pop()
+    }
+    blocks.push({ id: `c:${id}`, kind: 'context-start', reason })
+  }
+
   for (const message of messages) {
+    if (message.kind === 'session_start') {
+      contextStart(message.id, 'new-session')
+      continue
+    }
     if (message.kind === 'user') {
       flush()
       // A turn that renders nothing still ends the run above it, so the flush
@@ -76,14 +93,18 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
           id: message.toolCallId,
           name: message.title,
           args: message.input,
-          // A call that hasn't produced output yet has no result at all, which
-          // is how the renderer tells "still running" from "returned nothing".
+          // A call that has produced no output yet has no result at all; one
+          // that has may still be running, which `state` says.
           result:
             isTerminalToolStatus(message.status) || message.output !== undefined
               ? { text: formatToolValue(message.output), isError: message.status === 'failed' }
               : undefined,
+          state: toolCallState(message.status),
           ...(message.diffs ? { diffs: message.diffs } : {}),
         })
+        if (isCompletedCompaction(message.toolCallId, message.status)) {
+          contextStart(message.id, 'compaction')
+        }
         break
       case 'notice':
         details.push({

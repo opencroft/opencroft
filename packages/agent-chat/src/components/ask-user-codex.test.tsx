@@ -86,11 +86,12 @@ test('a secret question renders a password input, an ordinary one does not', () 
   const [secret] = inputs({ type: 'object', properties: { token } })
   assert.match(secret, /type="password"/)
   assert.match(secret, /autoComplete="off"/)
-  const plain = inputs({ type: 'object', properties: { target, target_note } })
-  // The radio group's own hidden inputs aside, the note box is plain text.
-  const note = plain.find((input) => /placeholder="Custom answer \(optional\)"/.test(input))
-  assert.ok(note)
-  assert.doesNotMatch(note, /type="password"/)
+  const html = renderToStaticMarkup(
+    <AskUser schema={{ type: 'object', properties: { target, target_note } }} onSubmit={noop} />,
+  )
+  // The note box is free text: a textarea, and no input carries the mask.
+  assert.match(html, /<textarea[^>]*placeholder="Custom answer \(optional\)"/)
+  assert.doesNotMatch(html, /type="password"/)
 })
 
 test('a secret note renders its own box as a password input', () => {

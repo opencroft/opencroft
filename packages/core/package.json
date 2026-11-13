@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node ../../scripts/run-tests.mjs",
     "typecheck": "node ../../scripts/run-typecheck.mjs src"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./values": "./src/values/index.ts"
+  },
+  "dependencies": {
+    "re2js": "^2.9.1"
   }
 }

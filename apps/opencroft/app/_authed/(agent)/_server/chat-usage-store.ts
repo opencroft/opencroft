@@ -1,7 +1,7 @@
 import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
 import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { SessionCost, TurnQuota, TurnTokenUsage } from 'agent-client/types'
-import { and, eq, gte, lte, sql, sum } from 'drizzle-orm'
+import { and, count, eq, gte, inArray, lt, lte, sql, sum } from 'drizzle-orm'
 import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
 
 import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
@@ -212,6 +212,87 @@ export async function queryChatUsageTurnsBySessionKey(
     },
     cost: row.costAmount !== null && row.costCurrency ? { amount: row.costAmount, currency: row.costCurrency } : null,
   }))
+}
+
+/**
+ * The recorded spend of some sessions, summed per (session key, UTC day,
+ * cost currency): the cells a usage summary regroups. A cell's `currency` is
+ * null for its unpriced turns, whose `costAmount` is then null too; a turn
+ * with an amount and no currency counts as unpriced, as in
+ * `queryChatUsageTurnsBySessionKey`.
+ */
+export interface ChatUsageCell {
+  sessionKey: string
+  day: string
+  currency: string | null
+  turns: number
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
+  costAmount: number | null
+}
+
+/**
+ * The cells of the turns of `sessionKeys` that ended at or after `since` and
+ * before `until`, and, given `spaceId`, were recorded in that space. Tokens are
+ * each turn's whole spend, subagents included (see turnTokens).
+ */
+export async function queryChatUsageCells(input: {
+  sessionKeys: readonly string[]
+  since: Date
+  until?: Date
+  spaceId?: string
+}): Promise<ChatUsageCell[]> {
+  if (input.sessionKeys.length === 0) {
+    return []
+  }
+  const tokens = turnTokens()
+  const currency = sql<
+    string | null
+  >`case when ${chatUsageTurn.costAmount} is null then null else ${chatUsageTurn.costCurrency} end`
+  const rows = await db
+    .select({
+      sessionKey: chatUsageTurn.sessionKey,
+      day: chatUsageTurn.day,
+      currency,
+      turns: count().mapWith(Number),
+      input: sum(tokens.input).mapWith(Number),
+      output: sum(tokens.output).mapWith(Number),
+      cacheRead: sum(tokens.cacheRead).mapWith(Number),
+      cacheWrite: sum(tokens.cacheWrite).mapWith(Number),
+      total: sum(tokens.total).mapWith(Number),
+      // Undecoded: NULL for the unpriced group, a driver string otherwise.
+      costAmount: sum(chatUsageTurn.costAmount),
+    })
+    .from(chatUsageTurn)
+    .innerJoin(tokens, eq(tokens.turnId, chatUsageTurn.id))
+    .where(
+      and(
+        inArray(chatUsageTurn.sessionKey, [...input.sessionKeys]),
+        gte(chatUsageTurn.createdAt, input.since),
+        input.until ? lt(chatUsageTurn.createdAt, input.until) : undefined,
+        input.spaceId ? eq(chatUsageTurn.spaceId, input.spaceId) : undefined,
+      ),
+    )
+    .groupBy(chatUsageTurn.sessionKey, chatUsageTurn.day, currency)
+  return rows.flatMap((row) =>
+    row.sessionKey === null
+      ? []
+      : [
+          {
+            sessionKey: row.sessionKey,
+            day: row.day,
+            currency: row.currency,
+            turns: row.turns,
+            tokens: {
+              input: row.input,
+              output: row.output,
+              cacheRead: row.cacheRead,
+              cacheWrite: row.cacheWrite,
+              total: row.total,
+            },
+            costAmount: row.currency === null || row.costAmount === null ? null : Number(row.costAmount),
+          },
+        ],
+  )
 }
 
 /**

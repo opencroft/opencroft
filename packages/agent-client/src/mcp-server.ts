@@ -9,11 +9,22 @@ import { accessFor, type ResolvedPermissions, skillKey, toolKey } from './permis
 import type { SkillDef } from './skills'
 import { type ToolResult, toCallToolResult } from './tool-result'
 
+/**
+ * What a tool call carries besides its arguments. `signal` aborts when the
+ * caller is gone: over MCP, when the client cancelled the request or the HTTP
+ * request behind it closed (a client giving up at its own request timeout does
+ * both). A handler that waits on something open-ended — a person's answer —
+ * stops waiting on it. Absent where nothing can cancel the call.
+ */
+export interface ToolCallContext {
+  signal?: AbortSignal
+}
+
 export interface LocalTool {
   name: string
   description: string
   inputSchema: ZodRawShape
-  handler: (args: Record<string, unknown>) => Promise<ToolResult> | ToolResult
+  handler: (args: Record<string, unknown>, context?: ToolCallContext) => Promise<ToolResult> | ToolResult
   /**
    * True when calling this tool cannot change any state.
    *
@@ -218,7 +229,12 @@ async function buildServer(
         // itself because it can.
         ...(tool.readOnly === undefined ? {} : { annotations: { readOnlyHint: tool.readOnly } }),
       },
-      async (args) => toCallToolResult(await tool.handler(args)) as CallToolResult,
+      // The SDK aborts `extra.signal` on the client's cancellation and when the
+      // transport closes, which handle() below does when the response closes:
+      // each request has its own transport here, so a cancel notification
+      // (a request of its own) never reaches this call, and the closed
+      // connection is the signal that does.
+      async (args, extra) => toCallToolResult(await tool.handler(args, { signal: extra.signal })) as CallToolResult,
     )
   }
   return server
@@ -253,6 +269,14 @@ function callerForRequest(options: McpServerOptions, req: IncomingMessage): Tool
   return options.callerFor(token)
 }
 
+/**
+ * The header a host sets on every request it relays to this server from
+ * outside the machine (a harness behind a RemoteShell reaching it at an
+ * address the host serves). Such a request arrives over loopback, and without
+ * the header would be trusted as a local caller.
+ */
+export const MCP_FORWARDED_HEADER = 'x-agent-client-forwarded'
+
 function isLoopbackAddress(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
 }
@@ -265,7 +289,11 @@ async function handle(running: RunningServer, req: IncomingMessage, res: ServerR
   // server was loopback-only; now that it's reachable from other containers on
   // the same network, only a loopback caller keeps that trust — everyone else
   // must carry a token that actually resolves.
-  if (!permissions && !isLoopbackAddress(req.socket.remoteAddress)) {
+  //
+  // A host that relays requests from elsewhere to this server (see
+  // MCP_FORWARDED_HEADER) reaches it over loopback; the header says the caller
+  // is not, so it is held to the same rule.
+  if (!permissions && (!isLoopbackAddress(req.socket.remoteAddress) || req.headers[MCP_FORWARDED_HEADER] !== undefined)) {
     res.statusCode = 403
     res.end()
     return

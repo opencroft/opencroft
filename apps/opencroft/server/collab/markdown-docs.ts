@@ -24,11 +24,11 @@ import {
   updateYFragment,
   yXmlFragmentToProsemirrorJSON,
 } from '@tiptap/y-tiptap'
+import { changedRange } from 'agent-chat/markdown-doc-change'
 import { markdownConverter, markdownSchema } from 'agent-chat/markdown-schema'
 import * as Y from 'yjs'
 
 import { STALE_LINEAGE_REASON } from '@/lib/collab-protocol'
-import { changedRange } from '@/lib/markdown-doc-change'
 import {
   MARKDOWN_DOC_FIELD,
   MARKDOWN_DOC_PREFIX,
@@ -44,7 +44,13 @@ import {
   getCollabServer,
   registerCollabDocType,
 } from '@/server/collab/collab-server'
-import { createCollabDoc, deleteCollabDoc, loadCollabDoc, writeCollabSnapshot } from '@/server/collab/collab-store'
+import {
+  createCollabDoc,
+  deleteCollabDoc,
+  deleteCollabDocsStartingWith,
+  loadCollabDoc,
+  writeCollabSnapshot,
+} from '@/server/collab/collab-store'
 import { keyedLock } from '@/server/collab/keyed-lock'
 
 /** Where one kind of markdown document is stored, keyed by whatever its owner keys them by. */
@@ -61,7 +67,7 @@ export interface MarkdownDocStorage {
  * Bumped when the editor's schema changes in a way a stored document cannot
  * follow: every stored document is then rebuilt from its stored markdown.
  */
-export const MARKDOWN_DOC_SCHEMA_VERSION = 1
+export const MARKDOWN_DOC_SCHEMA_VERSION = 2
 
 /** The markdown a document was last read from or written as, and how the document built from it writes. */
 interface Base {
@@ -405,11 +411,53 @@ async function closeDocument(name: string, document: Document): Promise<void> {
  * old copy open a fresh one. `discard` also forgets the stored documents of
  * `keys`, so they are rebuilt even where their markdown did not change.
  */
-export async function whileMarkdownDocsClosed<T>(
+export function whileMarkdownDocsClosed<T>(
   owner: string,
   keys: string[] | null,
   change: () => Promise<T>,
   { discard = false }: { discard?: boolean } = {},
+): Promise<T> {
+  return whileClosed(
+    owner,
+    (key) => !keys || keys.includes(key),
+    async () => {
+      const result = await change()
+      if (discard) {
+        for (const key of keys ?? []) {
+          await deleteCollabDoc(markdownDocName(owner, key))
+        }
+      }
+      return result
+    },
+    { discard },
+  )
+}
+
+/**
+ * Drops every document of `owner` whose key starts with `keyPrefix`, for when
+ * their storage is going away: each open one is closed without being stored,
+ * and every stored one is deleted, open or not. A document read from the
+ * storage afterwards is built afresh from it.
+ */
+export function dropMarkdownDocs(owner: string, keyPrefix: string): Promise<void> {
+  return whileClosed(
+    owner,
+    (key) => key.startsWith(keyPrefix),
+    () => deleteCollabDocsStartingWith(markdownDocName(owner, keyPrefix)),
+    { discard: true },
+  )
+}
+
+/**
+ * Runs `change` while none of `owner`'s documents whose key `matches` is
+ * open: each is stored first, unless `discard`, and closed. Every document of
+ * `owner` waits to be opened until `change` is done.
+ */
+async function whileClosed<T>(
+  owner: string,
+  matches: (key: string) => boolean,
+  change: () => Promise<T>,
+  { discard }: { discard: boolean },
 ): Promise<T> {
   const previous = state.closed.get(owner)
   let reopen = () => {}
@@ -425,7 +473,7 @@ export async function whileMarkdownDocsClosed<T>(
     const server = getCollabServer()
     for (const [name, document] of [...server.documents]) {
       const parsed = parseMarkdownDocName(name)
-      if (parsed?.owner !== owner || (keys && !keys.includes(parsed.key))) {
+      if (parsed?.owner !== owner || !matches(parsed.key)) {
         continue
       }
       if (!discard) {
@@ -435,13 +483,7 @@ export async function whileMarkdownDocsClosed<T>(
       dropped.push(name)
       await closeDocument(name, document)
     }
-    const result = await change()
-    if (discard) {
-      for (const key of keys ?? []) {
-        await deleteCollabDoc(markdownDocName(owner, key))
-      }
-    }
-    return result
+    return await change()
   } finally {
     for (const name of dropped) {
       state.dropping.delete(name)

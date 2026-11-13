@@ -3,10 +3,10 @@
 //
 // The menu replaced a hover pencil, and the two fail differently: a stale
 // pencil is one dead button, while a menu that renders for a message it cannot
-// act on, or omits the copy action for the one message that holds the words,
-// hides its omissions inside a closed popover. These tests hold the four
-// behaviours the menu must have — edit, copy, fork, and the turn boundary
-// that decides which message carries them — against the actual markup.
+// act on, or omits the copy action for a message that holds the words, hides
+// its omissions inside a closed popover. These tests hold where the menu is
+// drawn against the actual markup; what each one offers, opened, is in
+// `./chat-turn-message-menu.test.tsx`.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -42,14 +42,14 @@ function render(parts: ChatUserMessagePart[], handlers: { onEdit?: () => void; o
   )
 }
 
-test('the ending message carries the action menu; a mid-turn message carries none', () => {
+test('every message carries its own action menu, mid-turn and ending alike', () => {
   const html = render(TURN, { onEdit: () => {}, onFork: () => {} })
-  assert.equal(html.split(MENU_TRIGGER_ARIA).length - 1, 1, 'exactly one menu, on the message that hands over')
+  assert.equal(html.split(MENU_TRIGGER_ARIA).length - 1, 2, 'one menu per message')
 })
 
-test('a conversation whose host offers neither edit nor fork renders no menu', () => {
+test('a conversation whose host offers neither edit nor fork still gives each message its menu', () => {
   const html = render(TURN, {})
-  assert.ok(!html.includes(MENU_TRIGGER_ARIA), 'no handlers, no menu trigger')
+  assert.equal(html.split(MENU_TRIGGER_ARIA).length - 1, 2, 'copy and reply act on any message')
 })
 
 test('the pencil trigger is gone: edit lives in the menu now', () => {

@@ -116,6 +116,10 @@ declare module '@ext/host' {
   import * as iconsNamespace from 'lucide-react'
 
   export {
+    /** @deprecated Import `agentInstructions` from `@opencroft/server/agents`. */
+    agentInstructions,
+  } from '@opencroft/server/agents'
+  export {
     /** @deprecated Import `apps` from `@opencroft/server/apps`. */
     apps,
   } from '@opencroft/server/apps'
@@ -148,6 +152,8 @@ declare module '@ext/host' {
     users,
   } from '@opencroft/server/people'
   export {
+    /** @deprecated Import `credentialRedactor` from `@opencroft/server/secrets`. */
+    credentialRedactor,
     /** @deprecated Import `secrets` from `@opencroft/server/secrets`. */
     secrets,
   } from '@opencroft/server/secrets'
@@ -155,6 +161,10 @@ declare module '@ext/host' {
     /** @deprecated Import `settings` from `@opencroft/server/settings`. */
     settings,
   } from '@opencroft/server/settings'
+  export {
+    /** @deprecated Import `spaces` from `@opencroft/server/spaces`. */
+    spaces,
+  } from '@opencroft/server/spaces'
   export {
     /** @deprecated Import `cacheDir` from `@opencroft/server/storage`. */
     cacheDir,
@@ -172,12 +182,16 @@ declare module '@ext/host' {
     execFile,
     /** @deprecated Import `fs` from `@opencroft/server/system`. */
     fs,
+    /** @deprecated Import `instanceId` from `@opencroft/server/system`. */
+    instanceId,
     /** @deprecated Import `os` from `@opencroft/server/system`. */
     os,
     /** @deprecated Import `path` from `@opencroft/server/system`. */
     path,
   } from '@opencroft/server/system'
   export {
+    /** @deprecated Import `agentRefusalOf` from `@opencroft/server/terminal`. */
+    agentRefusalOf,
     /** @deprecated Import `execContext` from `@opencroft/server/terminal`. */
     execContext,
     /** @deprecated Import `ssh` from `@opencroft/server/terminal`. */
@@ -185,6 +199,142 @@ declare module '@ext/host' {
     /** @deprecated Import `terminal` from `@opencroft/server/terminal`. */
     terminal,
   } from '@opencroft/server/terminal'
+  export {
+    /** @deprecated Import `usage` from `@opencroft/server/usage`. */
+    usage,
+  } from '@opencroft/server/usage'
+  export {
+    /** @deprecated Import `AWAITING_RUN_KEY` from `@opencroft/server/values`. */
+    AWAITING_RUN_KEY,
+    /** @deprecated Import `acceptedTypesPhrase` from `@opencroft/server/values`. */
+    acceptedTypesPhrase,
+    /** @deprecated Import `awaitingRunOf` from `@opencroft/server/values`. */
+    awaitingRunOf,
+    /** @deprecated Import `BOOLEAN_TYPE` from `@opencroft/server/values`. */
+    BOOLEAN_TYPE,
+    /** @deprecated Import `compilePattern` from `@opencroft/server/values`. */
+    compilePattern,
+    /** @deprecated Import `DEFAULT_FILE_COLLISION` from `@opencroft/server/values`. */
+    DEFAULT_FILE_COLLISION,
+    /** @deprecated Import `evaluateExpression` from `@opencroft/server/values`. */
+    evaluateExpression,
+    /** @deprecated Import `expressionTypes` from `@opencroft/server/values`. */
+    expressionTypes,
+    /** @deprecated Import `FILE_COLLISIONS` from `@opencroft/server/values`. */
+    FILE_COLLISIONS,
+    /** @deprecated Import `FILE_NAME_DEFAULT_FORMATS` from `@opencroft/server/values`. */
+    FILE_NAME_DEFAULT_FORMATS,
+    /** @deprecated Import `FILE_NAME_TOKENS` from `@opencroft/server/values`. */
+    FILE_NAME_TOKENS,
+    /** @deprecated Import `fileCollision` from `@opencroft/server/values`. */
+    fileCollision,
+    /** @deprecated Import `fileSaveSettings` from `@opencroft/server/values`. */
+    fileSaveSettings,
+    /** @deprecated Import `formatFileName` from `@opencroft/server/values`. */
+    formatFileName,
+    /** @deprecated Import `formatFilePath` from `@opencroft/server/values`. */
+    formatFilePath,
+    /** @deprecated Import `formatFolder` from `@opencroft/server/values`. */
+    formatFolder,
+    /** @deprecated Import `formatTemplate` from `@opencroft/server/values`. */
+    formatTemplate,
+    /** @deprecated Import `handleTakes` from `@opencroft/server/values`. */
+    handleTakes,
+    /** @deprecated Import `handleTypesConnect` from `@opencroft/server/values`. */
+    handleTypesConnect,
+    /** @deprecated Import `INPUT_TYPES_KEY` from `@opencroft/server/values`. */
+    INPUT_TYPES_KEY,
+    /** @deprecated Import `inputTypeOf` from `@opencroft/server/values`. */
+    inputTypeOf,
+    /** @deprecated Import `inputTypesOf` from `@opencroft/server/values`. */
+    inputTypesOf,
+    /** @deprecated Import `inputValue` from `@opencroft/server/values`. */
+    inputValue,
+    /** @deprecated Import `isEnumHandle` from `@opencroft/server/values`. */
+    isEnumHandle,
+    /** @deprecated Import `isObjectValue` from `@opencroft/server/values`. */
+    isObjectValue,
+    /** @deprecated Import `isPrimitiveType` from `@opencroft/server/values`. */
+    isPrimitiveType,
+    /** @deprecated Import `isPrimitiveValue` from `@opencroft/server/values`. */
+    isPrimitiveValue,
+    /** @deprecated Import `isValueHandle` from `@opencroft/server/values`. */
+    isValueHandle,
+    /** @deprecated Import `isValueType` from `@opencroft/server/values`. */
+    isValueType,
+    /** @deprecated Import `joinFilePath` from `@opencroft/server/values`. */
+    joinFilePath,
+    /** @deprecated Import `literalTemplate` from `@opencroft/server/values`. */
+    literalTemplate,
+    /** @deprecated Import `MAX_EXPRESSION_LENGTH` from `@opencroft/server/values`. */
+    MAX_EXPRESSION_LENGTH,
+    /** @deprecated Import `MAX_PATTERN_GROUPS` from `@opencroft/server/values`. */
+    MAX_PATTERN_GROUPS,
+    /** @deprecated Import `MAX_PATTERN_LENGTH` from `@opencroft/server/values`. */
+    MAX_PATTERN_LENGTH,
+    /** @deprecated Import `NO_ENUMS` from `@opencroft/server/values`. */
+    NO_ENUMS,
+    /** @deprecated Import `NUMBER_TYPE` from `@opencroft/server/values`. */
+    NUMBER_TYPE,
+    /** @deprecated Import `nextSaveCount` from `@opencroft/server/values`. */
+    nextSaveCount,
+    /** @deprecated Import `nodeName` from `@opencroft/server/values`. */
+    nodeName,
+    /** @deprecated Import `OBJECT_TYPE` from `@opencroft/server/values`. */
+    OBJECT_TYPE,
+    /** @deprecated Import `PRIMITIVE_TYPES` from `@opencroft/server/values`. */
+    PRIMITIVE_TYPES,
+    /** @deprecated Import `parseExpression` from `@opencroft/server/values`. */
+    parseExpression,
+    /** @deprecated Import `parsePath` from `@opencroft/server/values`. */
+    parsePath,
+    /** @deprecated Import `parseTemplate` from `@opencroft/server/values`. */
+    parseTemplate,
+    /** @deprecated Import `RESOLVED_CONTEXTS_KEY` from `@opencroft/server/values`. */
+    RESOLVED_CONTEXTS_KEY,
+    /** @deprecated Import `readPath` from `@opencroft/server/values`. */
+    readPath,
+    /** @deprecated Import `readValue` from `@opencroft/server/values`. */
+    readValue,
+    /** @deprecated Import `resolvedInputsOf` from `@opencroft/server/values`. */
+    resolvedInputsOf,
+    /** @deprecated Import `STRING_TYPE` from `@opencroft/server/values`. */
+    STRING_TYPE,
+    /** @deprecated Import `SWITCH_CONDITION_TYPES` from `@opencroft/server/values`. */
+    SWITCH_CONDITION_TYPES,
+    /** @deprecated Import `switchCaseOutput` from `@opencroft/server/values`. */
+    switchCaseOutput,
+    /** @deprecated Import `switchCasesOf` from `@opencroft/server/values`. */
+    switchCasesOf,
+    /** @deprecated Import `switchConditionType` from `@opencroft/server/values`. */
+    switchConditionType,
+    /** @deprecated Import `switchOutput` from `@opencroft/server/values`. */
+    switchOutput,
+    /** @deprecated Import `takesSeveralTypes` from `@opencroft/server/values`. */
+    takesSeveralTypes,
+    /** @deprecated Import `typedValueOf` from `@opencroft/server/values`. */
+    typedValueOf,
+    /** @deprecated Import `typedValueProblem` from `@opencroft/server/values`. */
+    typedValueProblem,
+    /** @deprecated Import `typeGroupOf` from `@opencroft/server/values`. */
+    typeGroupOf,
+    /** @deprecated Import `UNRESOLVED_INPUTS_KEY` from `@opencroft/server/values`. */
+    UNRESOLVED_INPUTS_KEY,
+    /** @deprecated Import `VALUE_TYPES` from `@opencroft/server/values`. */
+    VALUE_TYPES,
+    /** @deprecated Import `valueAsText` from `@opencroft/server/values`. */
+    valueAsText,
+    /** @deprecated Import `wiredValueOf` from `@opencroft/server/values`. */
+    wiredValueOf,
+    /** @deprecated Import `withEnumCases` from `@opencroft/server/values`. */
+    withEnumCases,
+    /** @deprecated Import `withInputType` from `@opencroft/server/values`. */
+    withInputType,
+    /** @deprecated Import `withTypesNow` from `@opencroft/server/values`. */
+    withTypesNow,
+    /** @deprecated Import `withWiredInputs` from `@opencroft/server/values`. */
+    withWiredInputs,
+  } from '@opencroft/server/values'
   export {
     /** @deprecated Use `import { toast } from 'sonner'`. */
     toast,
@@ -230,6 +380,8 @@ declare module '@ext/host' {
     UrlParamWriteOptions,
   } from '@opencroft/client/app'
   export type {
+    /** @deprecated Import `CanvasFrameProps` from `@opencroft/client/canvas`. */
+    CanvasFrameProps,
     /** @deprecated Import `CommandBarNode` from `@opencroft/client/canvas`. */
     CommandBarNode,
     /** @deprecated Import `CommandModeDefinition` from `@opencroft/client/canvas`. */
@@ -238,6 +390,8 @@ declare module '@ext/host' {
     CommandModeProps,
     /** @deprecated Import `CommandModeShortcut` from `@opencroft/client/canvas`. */
     CommandModeShortcut,
+    /** @deprecated Import `ContainingNode` from `@opencroft/client/canvas`. */
+    ContainingNode,
     /** @deprecated Import `ExtensionComponentProps` from `@opencroft/client/canvas`. */
     ExtensionComponentProps,
     /** @deprecated Import `ExtensionContextType` from `@opencroft/client/canvas`. */
@@ -260,10 +414,14 @@ declare module '@ext/host' {
     NodeContextMenuItem,
     /** @deprecated Import `NodeDefinition` from `@opencroft/client/canvas`. */
     NodeDefinition,
+    /** @deprecated Import `NodeErrorEdge` from `@opencroft/client/canvas`. */
+    NodeErrorEdge,
     /** @deprecated Import `OverlayControl` from `@opencroft/client/canvas`. */
     OverlayControl,
     /** @deprecated Import `ResolvedContext` from `@opencroft/client/canvas`. */
     ResolvedContext,
+    /** @deprecated Import `WindowShellProps` from `@opencroft/client/canvas`. */
+    WindowShellProps,
   } from '@opencroft/client/canvas'
   export type {
     /** @deprecated Import `AgentChatInputControl` from `@opencroft/client/chat`. */
@@ -362,8 +520,14 @@ declare module '@ext/host' {
     MermaidDiagramProps,
   } from '@opencroft/client/markdown'
   export type {
+    /** @deprecated Import `NamedValue` from `@opencroft/client/secrets`. */
+    NamedValue,
     /** @deprecated Import `SecretSelectorProps` from `@opencroft/client/secrets`. */
     SecretSelectorProps,
+    /** @deprecated Import `SecretValueFieldProps` from `@opencroft/client/secrets`. */
+    SecretValueFieldProps,
+    /** @deprecated Import `SecretValueTableProps` from `@opencroft/client/secrets`. */
+    SecretValueTableProps,
   } from '@opencroft/client/secrets'
   export type {
     /** @deprecated Import `ExtensionStorage` from `@opencroft/client/storage`. */
@@ -418,6 +582,16 @@ declare module '@ext/host' {
     ApiTokenListProps,
     /** @deprecated Import `ApiTokenRevealProps` from `@opencroft/client/ui`. */
     ApiTokenRevealProps,
+    /** @deprecated Import `CallActionActionOption` from `@opencroft/client/ui`. */
+    CallActionActionOption,
+    /** @deprecated Import `CallActionAppOption` from `@opencroft/client/ui`. */
+    CallActionAppOption,
+    /** @deprecated Import `CallActionNodeOption` from `@opencroft/client/ui`. */
+    CallActionNodeOption,
+    /** @deprecated Import `CallActionTargetProps` from `@opencroft/client/ui`. */
+    CallActionTargetProps,
+    /** @deprecated Import `CallActionTargetValue` from `@opencroft/client/ui`. */
+    CallActionTargetValue,
     /** @deprecated Import `CarouselApi` from `@opencroft/client/ui`. */
     CarouselApi,
     /** @deprecated Import `ChartConfig` from `@opencroft/client/ui`. */
@@ -430,6 +604,12 @@ declare module '@ext/host' {
     ControlledInputProps,
     /** @deprecated Import `ControlledTextareaProps` from `@opencroft/client/ui`. */
     ControlledTextareaProps,
+    /** @deprecated Import `EnvironmentTableProps` from `@opencroft/client/ui`. */
+    EnvironmentTableProps,
+    /** @deprecated Import `EnvironmentValue` from `@opencroft/client/ui`. */
+    EnvironmentValue,
+    /** @deprecated Import `EnvironmentVariable` from `@opencroft/client/ui`. */
+    EnvironmentVariable,
     /** @deprecated Import `ExampleFrameProps` from `@opencroft/client/ui`. */
     ExampleFrameProps,
     /** @deprecated Import `FixedAreaProps` from `@opencroft/client/ui`. */
@@ -446,12 +626,32 @@ declare module '@ext/host' {
     GridSizeSwitcherProps,
     /** @deprecated Import `ImageAreaProps` from `@opencroft/client/ui`. */
     ImageAreaProps,
+    /** @deprecated Import `ImageComparisonProps` from `@opencroft/client/ui`. */
+    ImageComparisonProps,
+    /** @deprecated Import `ImageComparisonSide` from `@opencroft/client/ui`. */
+    ImageComparisonSide,
     /** @deprecated Import `JustifyContent` from `@opencroft/client/ui`. */
     JustifyContent,
     /** @deprecated Import `MenuLayoutProps` from `@opencroft/client/ui`. */
     MenuLayoutProps,
+    /** @deprecated Import `MenuWidth` from `@opencroft/client/ui`. */
+    MenuWidth,
     /** @deprecated Import `NamedSectionProps` from `@opencroft/client/ui`. */
     NamedSectionProps,
+    /** @deprecated Import `NodeRow` from `@opencroft/client/ui`. */
+    NodeRow,
+    /** @deprecated Import `NodeRowListProps` from `@opencroft/client/ui`. */
+    NodeRowListProps,
+    /** @deprecated Import `NodeRowSlot` from `@opencroft/client/ui`. */
+    NodeRowSlot,
+    /** @deprecated Import `NodeValue` from `@opencroft/client/ui`. */
+    NodeValue,
+    /** @deprecated Import `NodeValueInputProps` from `@opencroft/client/ui`. */
+    NodeValueInputProps,
+    /** @deprecated Import `NodeValueKind` from `@opencroft/client/ui`. */
+    NodeValueKind,
+    /** @deprecated Import `NodeValueOption` from `@opencroft/client/ui`. */
+    NodeValueOption,
     /** @deprecated Import `PageProps` from `@opencroft/client/ui`. */
     PageProps,
     /** @deprecated Import `PopupContentProps` from `@opencroft/client/ui`. */
@@ -468,6 +668,16 @@ declare module '@ext/host' {
     RunHistoryEntry,
     /** @deprecated Import `RunStatus` from `@opencroft/client/ui`. */
     RunStatus,
+    /** @deprecated Import `SaveFileCollision` from `@opencroft/client/ui`. */
+    SaveFileCollision,
+    /** @deprecated Import `SaveFileFieldsProps` from `@opencroft/client/ui`. */
+    SaveFileFieldsProps,
+    /** @deprecated Import `SaveFileFolderListing` from `@opencroft/client/ui`. */
+    SaveFileFolderListing,
+    /** @deprecated Import `SaveFilePreview` from `@opencroft/client/ui`. */
+    SaveFilePreview,
+    /** @deprecated Import `SaveFileToken` from `@opencroft/client/ui`. */
+    SaveFileToken,
     /** @deprecated Import `ScheduleMode` from `@opencroft/client/ui`. */
     ScheduleMode,
     /** @deprecated Import `ScheduleRule` from `@opencroft/client/ui`. */
@@ -478,6 +688,8 @@ declare module '@ext/host' {
     ScheduleUnit,
     /** @deprecated Import `ScrollAreaScrollbars` from `@opencroft/client/ui`. */
     ScrollAreaScrollbars,
+    /** @deprecated Import `SecretInputProps` from `@opencroft/client/ui`. */
+    SecretInputProps,
     /** @deprecated Import `SimpleSchedule` from `@opencroft/client/ui`. */
     SimpleSchedule,
     /** @deprecated Import `StatusIndicatorProps` from `@opencroft/client/ui`. */
@@ -489,6 +701,80 @@ declare module '@ext/host' {
     /** @deprecated Import `UpcomingRun` from `@opencroft/client/ui`. */
     UpcomingRun,
   } from '@opencroft/client/ui'
+  export type {
+    /** @deprecated Import `AcceptedTypes` from `@opencroft/client/values`. */
+    AcceptedTypes,
+    /** @deprecated Import `CompiledPattern` from `@opencroft/client/values`. */
+    CompiledPattern,
+    /** @deprecated Import `EnumCasesField` from `@opencroft/client/values`. */
+    EnumCasesField,
+    /** @deprecated Import `EnumCasesOf` from `@opencroft/client/values`. */
+    EnumCasesOf,
+    /** @deprecated Import `EvaluateExpressionResult` from `@opencroft/client/values`. */
+    EvaluateExpressionResult,
+    /** @deprecated Import `ExpressionError` from `@opencroft/client/values`. */
+    ExpressionError,
+    /** @deprecated Import `ExpressionNode` from `@opencroft/client/values`. */
+    ExpressionNode,
+    /** @deprecated Import `ExpressionType` from `@opencroft/client/values`. */
+    ExpressionType,
+    /** @deprecated Import `ExpressionTypes` from `@opencroft/client/values`. */
+    ExpressionTypes,
+    /** @deprecated Import `FileCollision` from `@opencroft/client/values`. */
+    FileCollision,
+    /** @deprecated Import `FileNameToken` from `@opencroft/client/values`. */
+    FileNameToken,
+    /** @deprecated Import `FileSaveSettings` from `@opencroft/client/values`. */
+    FileSaveSettings,
+    /** @deprecated Import `FormatTemplateResult` from `@opencroft/client/values`. */
+    FormatTemplateResult,
+    /** @deprecated Import `GroupType` from `@opencroft/client/values`. */
+    GroupType,
+    /** @deprecated Import `InlineValueFields` from `@opencroft/client/values`. */
+    InlineValueFields,
+    /** @deprecated Import `ObjectValue` from `@opencroft/client/values`. */
+    ObjectValue,
+    /** @deprecated Import `ParsedExpression` from `@opencroft/client/values`. */
+    ParsedExpression,
+    /** @deprecated Import `ParsedTemplate` from `@opencroft/client/values`. */
+    ParsedTemplate,
+    /** @deprecated Import `ParseExpressionResult` from `@opencroft/client/values`. */
+    ParseExpressionResult,
+    /** @deprecated Import `ParsePathResult` from `@opencroft/client/values`. */
+    ParsePathResult,
+    /** @deprecated Import `Pattern` from `@opencroft/client/values`. */
+    Pattern,
+    /** @deprecated Import `PatternGroup` from `@opencroft/client/values`. */
+    PatternGroup,
+    /** @deprecated Import `PatternMatch` from `@opencroft/client/values`. */
+    PatternMatch,
+    /** @deprecated Import `PrimitiveValue` from `@opencroft/client/values`. */
+    PrimitiveValue,
+    /** @deprecated Import `ReadPathResult` from `@opencroft/client/values`. */
+    ReadPathResult,
+    /** @deprecated Import `ReplaceResult` from `@opencroft/client/values`. */
+    ReplaceResult,
+    /** @deprecated Import `ResolvedInputEntry` from `@opencroft/client/values`. */
+    ResolvedInputEntry,
+    /** @deprecated Import `SwitchCase` from `@opencroft/client/values`. */
+    SwitchCase,
+    /** @deprecated Import `SwitchOutputResult` from `@opencroft/client/values`. */
+    SwitchOutputResult,
+    /** @deprecated Import `SwitchSettings` from `@opencroft/client/values`. */
+    SwitchSettings,
+    /** @deprecated Import `TemplateError` from `@opencroft/client/values`. */
+    TemplateError,
+    /** @deprecated Import `TemplatePlaceholder` from `@opencroft/client/values`. */
+    TemplatePlaceholder,
+    /** @deprecated Import `Value` from `@opencroft/client/values`. */
+    Value,
+    /** @deprecated Import `ValueHandle` from `@opencroft/client/values`. */
+    ValueHandle,
+    /** @deprecated Import `ValueOption` from `@opencroft/client/values`. */
+    ValueOption,
+    /** @deprecated Import `WiredValue` from `@opencroft/client/values`. */
+    WiredValue,
+  } from '@opencroft/client/values'
 
   /**
    * @deprecated The whole host: the server host in server code, the client host
@@ -543,6 +829,8 @@ declare module '@ext/ui' {
     useOpenApp,
   } from '@opencroft/client/app'
   export type {
+    /** @deprecated Import `CanvasFrameProps` from `@opencroft/client/canvas`. */
+    CanvasFrameProps,
     /** @deprecated Import `CommandBarNode` from `@opencroft/client/canvas`. */
     CommandBarNode,
     /** @deprecated Import `CommandModeDefinition` from `@opencroft/client/canvas`. */
@@ -551,6 +839,8 @@ declare module '@ext/ui' {
     CommandModeProps,
     /** @deprecated Import `CommandModeShortcut` from `@opencroft/client/canvas`. */
     CommandModeShortcut,
+    /** @deprecated Import `ContainingNode` from `@opencroft/client/canvas`. */
+    ContainingNode,
     /** @deprecated Import `ExtensionComponentProps` from `@opencroft/client/canvas`. */
     ExtensionComponentProps,
     /** @deprecated Import `ExtensionContextType` from `@opencroft/client/canvas`. */
@@ -573,10 +863,14 @@ declare module '@ext/ui' {
     NodeContextMenuItem,
     /** @deprecated Import `NodeDefinition` from `@opencroft/client/canvas`. */
     NodeDefinition,
+    /** @deprecated Import `NodeErrorEdge` from `@opencroft/client/canvas`. */
+    NodeErrorEdge,
     /** @deprecated Import `OverlayControl` from `@opencroft/client/canvas`. */
     OverlayControl,
     /** @deprecated Import `ResolvedContext` from `@opencroft/client/canvas`. */
     ResolvedContext,
+    /** @deprecated Import `WindowShellProps` from `@opencroft/client/canvas`. */
+    WindowShellProps,
   } from '@opencroft/client/canvas'
   export {
     /** @deprecated Import `CommandBar` from `@opencroft/client/canvas`. */
@@ -713,8 +1007,14 @@ declare module '@ext/ui' {
     markdownDirectiveBlocks,
   } from '@opencroft/client/markdown'
   export type {
+    /** @deprecated Import `NamedValue` from `@opencroft/client/secrets`. */
+    NamedValue,
     /** @deprecated Import `SecretSelectorProps` from `@opencroft/client/secrets`. */
     SecretSelectorProps,
+    /** @deprecated Import `SecretValueFieldProps` from `@opencroft/client/secrets`. */
+    SecretValueFieldProps,
+    /** @deprecated Import `SecretValueTableProps` from `@opencroft/client/secrets`. */
+    SecretValueTableProps,
   } from '@opencroft/client/secrets'
   export {
     /** @deprecated Import `SecretSelector` from `@opencroft/client/secrets`. */
@@ -785,6 +1085,16 @@ declare module '@ext/ui' {
     ApiTokenListProps,
     /** @deprecated Import `ApiTokenRevealProps` from `@opencroft/client/ui`. */
     ApiTokenRevealProps,
+    /** @deprecated Import `CallActionActionOption` from `@opencroft/client/ui`. */
+    CallActionActionOption,
+    /** @deprecated Import `CallActionAppOption` from `@opencroft/client/ui`. */
+    CallActionAppOption,
+    /** @deprecated Import `CallActionNodeOption` from `@opencroft/client/ui`. */
+    CallActionNodeOption,
+    /** @deprecated Import `CallActionTargetProps` from `@opencroft/client/ui`. */
+    CallActionTargetProps,
+    /** @deprecated Import `CallActionTargetValue` from `@opencroft/client/ui`. */
+    CallActionTargetValue,
     /** @deprecated Import `CarouselApi` from `@opencroft/client/ui`. */
     CarouselApi,
     /** @deprecated Import `ChartConfig` from `@opencroft/client/ui`. */
@@ -797,6 +1107,12 @@ declare module '@ext/ui' {
     ControlledInputProps,
     /** @deprecated Import `ControlledTextareaProps` from `@opencroft/client/ui`. */
     ControlledTextareaProps,
+    /** @deprecated Import `EnvironmentTableProps` from `@opencroft/client/ui`. */
+    EnvironmentTableProps,
+    /** @deprecated Import `EnvironmentValue` from `@opencroft/client/ui`. */
+    EnvironmentValue,
+    /** @deprecated Import `EnvironmentVariable` from `@opencroft/client/ui`. */
+    EnvironmentVariable,
     /** @deprecated Import `ExampleFrameProps` from `@opencroft/client/ui`. */
     ExampleFrameProps,
     /** @deprecated Import `FixedAreaProps` from `@opencroft/client/ui`. */
@@ -813,12 +1129,32 @@ declare module '@ext/ui' {
     GridSizeSwitcherProps,
     /** @deprecated Import `ImageAreaProps` from `@opencroft/client/ui`. */
     ImageAreaProps,
+    /** @deprecated Import `ImageComparisonProps` from `@opencroft/client/ui`. */
+    ImageComparisonProps,
+    /** @deprecated Import `ImageComparisonSide` from `@opencroft/client/ui`. */
+    ImageComparisonSide,
     /** @deprecated Import `JustifyContent` from `@opencroft/client/ui`. */
     JustifyContent,
     /** @deprecated Import `MenuLayoutProps` from `@opencroft/client/ui`. */
     MenuLayoutProps,
+    /** @deprecated Import `MenuWidth` from `@opencroft/client/ui`. */
+    MenuWidth,
     /** @deprecated Import `NamedSectionProps` from `@opencroft/client/ui`. */
     NamedSectionProps,
+    /** @deprecated Import `NodeRow` from `@opencroft/client/ui`. */
+    NodeRow,
+    /** @deprecated Import `NodeRowListProps` from `@opencroft/client/ui`. */
+    NodeRowListProps,
+    /** @deprecated Import `NodeRowSlot` from `@opencroft/client/ui`. */
+    NodeRowSlot,
+    /** @deprecated Import `NodeValue` from `@opencroft/client/ui`. */
+    NodeValue,
+    /** @deprecated Import `NodeValueInputProps` from `@opencroft/client/ui`. */
+    NodeValueInputProps,
+    /** @deprecated Import `NodeValueKind` from `@opencroft/client/ui`. */
+    NodeValueKind,
+    /** @deprecated Import `NodeValueOption` from `@opencroft/client/ui`. */
+    NodeValueOption,
     /** @deprecated Import `PageProps` from `@opencroft/client/ui`. */
     PageProps,
     /** @deprecated Import `PopupContentProps` from `@opencroft/client/ui`. */
@@ -835,6 +1171,16 @@ declare module '@ext/ui' {
     RunHistoryEntry,
     /** @deprecated Import `RunStatus` from `@opencroft/client/ui`. */
     RunStatus,
+    /** @deprecated Import `SaveFileCollision` from `@opencroft/client/ui`. */
+    SaveFileCollision,
+    /** @deprecated Import `SaveFileFieldsProps` from `@opencroft/client/ui`. */
+    SaveFileFieldsProps,
+    /** @deprecated Import `SaveFileFolderListing` from `@opencroft/client/ui`. */
+    SaveFileFolderListing,
+    /** @deprecated Import `SaveFilePreview` from `@opencroft/client/ui`. */
+    SaveFilePreview,
+    /** @deprecated Import `SaveFileToken` from `@opencroft/client/ui`. */
+    SaveFileToken,
     /** @deprecated Import `ScheduleMode` from `@opencroft/client/ui`. */
     ScheduleMode,
     /** @deprecated Import `ScheduleRule` from `@opencroft/client/ui`. */
@@ -845,6 +1191,8 @@ declare module '@ext/ui' {
     ScheduleUnit,
     /** @deprecated Import `ScrollAreaScrollbars` from `@opencroft/client/ui`. */
     ScrollAreaScrollbars,
+    /** @deprecated Import `SecretInputProps` from `@opencroft/client/ui`. */
+    SecretInputProps,
     /** @deprecated Import `SimpleSchedule` from `@opencroft/client/ui`. */
     SimpleSchedule,
     /** @deprecated Import `StatusIndicatorProps` from `@opencroft/client/ui`. */
@@ -883,6 +1231,8 @@ declare module '@ext/ui' {
     AlertDialog,
     /** @deprecated Import `AlertDialogAction` from `@opencroft/client/ui`. */
     AlertDialogAction,
+    /** @deprecated Import `AlertDialogBody` from `@opencroft/client/ui`. */
+    AlertDialogBody,
     /** @deprecated Import `AlertDialogCancel` from `@opencroft/client/ui`. */
     AlertDialogCancel,
     /** @deprecated Import `AlertDialogContent` from `@opencroft/client/ui`. */
@@ -959,6 +1309,8 @@ declare module '@ext/ui' {
     Calendar,
     /** @deprecated Import `CalendarDayButton` from `@opencroft/client/ui`. */
     CalendarDayButton,
+    /** @deprecated Import `CallActionTarget` from `@opencroft/client/ui`. */
+    CallActionTarget,
     /** @deprecated Import `Card` from `@opencroft/client/ui`. */
     Card,
     /** @deprecated Import `CardAction` from `@opencroft/client/ui`. */
@@ -1089,10 +1441,14 @@ declare module '@ext/ui' {
     ControlledInput,
     /** @deprecated Import `ControlledTextarea` from `@opencroft/client/ui`. */
     ControlledTextarea,
+    /** @deprecated Import `concealedTextClass` from `@opencroft/client/ui`. */
+    concealedTextClass,
     /** @deprecated Import `createIFrameRoute` from `@opencroft/client/ui`. */
     createIFrameRoute,
     /** @deprecated Import `Dialog` from `@opencroft/client/ui`. */
     Dialog,
+    /** @deprecated Import `DialogBody` from `@opencroft/client/ui`. */
+    DialogBody,
     /** @deprecated Import `DialogClose` from `@opencroft/client/ui`. */
     DialogClose,
     /** @deprecated Import `DialogContent` from `@opencroft/client/ui`. */
@@ -1177,6 +1533,8 @@ declare module '@ext/ui' {
     EmptyMedia,
     /** @deprecated Import `EmptyTitle` from `@opencroft/client/ui`. */
     EmptyTitle,
+    /** @deprecated Import `EnvironmentTable` from `@opencroft/client/ui`. */
+    EnvironmentTable,
     /** @deprecated Import `ExampleFrame` from `@opencroft/client/ui`. */
     ExampleFrame,
     /** @deprecated Import `Field` from `@opencroft/client/ui`. */
@@ -1221,6 +1579,8 @@ declare module '@ext/ui' {
     IFrame,
     /** @deprecated Import `ImageArea` from `@opencroft/client/ui`. */
     ImageArea,
+    /** @deprecated Import `ImageComparison` from `@opencroft/client/ui`. */
+    ImageComparison,
     /** @deprecated Import `Input` from `@opencroft/client/ui`. */
     Input,
     /** @deprecated Import `InputGroup` from `@opencroft/client/ui`. */
@@ -1263,6 +1623,8 @@ declare module '@ext/ui' {
     ItemSeparator,
     /** @deprecated Import `ItemTitle` from `@opencroft/client/ui`. */
     ItemTitle,
+    /** @deprecated Import `inRowOrder` from `@opencroft/client/ui`. */
+    inRowOrder,
     /** @deprecated Import `Kbd` from `@opencroft/client/ui`. */
     Kbd,
     /** @deprecated Import `KbdGroup` from `@opencroft/client/ui`. */
@@ -1327,6 +1689,10 @@ declare module '@ext/ui' {
     NavigationMenuPositioner,
     /** @deprecated Import `NavigationMenuTrigger` from `@opencroft/client/ui`. */
     NavigationMenuTrigger,
+    /** @deprecated Import `NodeRowList` from `@opencroft/client/ui`. */
+    NodeRowList,
+    /** @deprecated Import `NodeValueInput` from `@opencroft/client/ui`. */
+    NodeValueInput,
     /** @deprecated Import `navigationMenuTriggerStyle` from `@opencroft/client/ui`. */
     navigationMenuTriggerStyle,
     /** @deprecated Import `Page` from `@opencroft/client/ui`. */
@@ -1389,6 +1755,10 @@ declare module '@ext/ui' {
     ResizablePanel,
     /** @deprecated Import `ResizablePanelGroup` from `@opencroft/client/ui`. */
     ResizablePanelGroup,
+    /** @deprecated Import `reorderedIds` from `@opencroft/client/ui`. */
+    reorderedIds,
+    /** @deprecated Import `SaveFileFields` from `@opencroft/client/ui`. */
+    SaveFileFields,
     /** @deprecated Import `Schedules` from `@opencroft/client/ui`. */
     Schedules,
     /** @deprecated Import `ScrollArea` from `@opencroft/client/ui`. */
@@ -1407,6 +1777,8 @@ declare module '@ext/ui' {
     ScrollToBottomButton,
     /** @deprecated Import `SearchableDropdown` from `@opencroft/client/ui`. */
     SearchableDropdown,
+    /** @deprecated Import `SecretInput` from `@opencroft/client/ui`. */
+    SecretInput,
     /** @deprecated Import `Select` from `@opencroft/client/ui`. */
     Select,
     /** @deprecated Import `SelectContent` from `@opencroft/client/ui`. */
@@ -1501,6 +1873,8 @@ declare module '@ext/ui' {
     StatusIndicator,
     /** @deprecated Import `Switch` from `@opencroft/client/ui`. */
     Switch,
+    /** @deprecated Import `secretFieldAttributes` from `@opencroft/client/ui`. */
+    secretFieldAttributes,
     /** @deprecated Import `Table` from `@opencroft/client/ui`. */
     Table,
     /** @deprecated Import `TableBody` from `@opencroft/client/ui`. */
@@ -1564,4 +1938,78 @@ declare module '@ext/ui' {
     /** @deprecated Import `validateCron` from `@opencroft/client/ui`. */
     validateCron,
   } from '@opencroft/client/ui'
+  export type {
+    /** @deprecated Import `AcceptedTypes` from `@opencroft/client/values`. */
+    AcceptedTypes,
+    /** @deprecated Import `CompiledPattern` from `@opencroft/client/values`. */
+    CompiledPattern,
+    /** @deprecated Import `EnumCasesField` from `@opencroft/client/values`. */
+    EnumCasesField,
+    /** @deprecated Import `EnumCasesOf` from `@opencroft/client/values`. */
+    EnumCasesOf,
+    /** @deprecated Import `EvaluateExpressionResult` from `@opencroft/client/values`. */
+    EvaluateExpressionResult,
+    /** @deprecated Import `ExpressionError` from `@opencroft/client/values`. */
+    ExpressionError,
+    /** @deprecated Import `ExpressionNode` from `@opencroft/client/values`. */
+    ExpressionNode,
+    /** @deprecated Import `ExpressionType` from `@opencroft/client/values`. */
+    ExpressionType,
+    /** @deprecated Import `ExpressionTypes` from `@opencroft/client/values`. */
+    ExpressionTypes,
+    /** @deprecated Import `FileCollision` from `@opencroft/client/values`. */
+    FileCollision,
+    /** @deprecated Import `FileNameToken` from `@opencroft/client/values`. */
+    FileNameToken,
+    /** @deprecated Import `FileSaveSettings` from `@opencroft/client/values`. */
+    FileSaveSettings,
+    /** @deprecated Import `FormatTemplateResult` from `@opencroft/client/values`. */
+    FormatTemplateResult,
+    /** @deprecated Import `GroupType` from `@opencroft/client/values`. */
+    GroupType,
+    /** @deprecated Import `InlineValueFields` from `@opencroft/client/values`. */
+    InlineValueFields,
+    /** @deprecated Import `ObjectValue` from `@opencroft/client/values`. */
+    ObjectValue,
+    /** @deprecated Import `ParsedExpression` from `@opencroft/client/values`. */
+    ParsedExpression,
+    /** @deprecated Import `ParsedTemplate` from `@opencroft/client/values`. */
+    ParsedTemplate,
+    /** @deprecated Import `ParseExpressionResult` from `@opencroft/client/values`. */
+    ParseExpressionResult,
+    /** @deprecated Import `ParsePathResult` from `@opencroft/client/values`. */
+    ParsePathResult,
+    /** @deprecated Import `Pattern` from `@opencroft/client/values`. */
+    Pattern,
+    /** @deprecated Import `PatternGroup` from `@opencroft/client/values`. */
+    PatternGroup,
+    /** @deprecated Import `PatternMatch` from `@opencroft/client/values`. */
+    PatternMatch,
+    /** @deprecated Import `PrimitiveValue` from `@opencroft/client/values`. */
+    PrimitiveValue,
+    /** @deprecated Import `ReadPathResult` from `@opencroft/client/values`. */
+    ReadPathResult,
+    /** @deprecated Import `ReplaceResult` from `@opencroft/client/values`. */
+    ReplaceResult,
+    /** @deprecated Import `ResolvedInputEntry` from `@opencroft/client/values`. */
+    ResolvedInputEntry,
+    /** @deprecated Import `SwitchCase` from `@opencroft/client/values`. */
+    SwitchCase,
+    /** @deprecated Import `SwitchOutputResult` from `@opencroft/client/values`. */
+    SwitchOutputResult,
+    /** @deprecated Import `SwitchSettings` from `@opencroft/client/values`. */
+    SwitchSettings,
+    /** @deprecated Import `TemplateError` from `@opencroft/client/values`. */
+    TemplateError,
+    /** @deprecated Import `TemplatePlaceholder` from `@opencroft/client/values`. */
+    TemplatePlaceholder,
+    /** @deprecated Import `Value` from `@opencroft/client/values`. */
+    Value,
+    /** @deprecated Import `ValueHandle` from `@opencroft/client/values`. */
+    ValueHandle,
+    /** @deprecated Import `ValueOption` from `@opencroft/client/values`. */
+    ValueOption,
+    /** @deprecated Import `WiredValue` from `@opencroft/client/values`. */
+    WiredValue,
+  } from '@opencroft/client/values'
 }

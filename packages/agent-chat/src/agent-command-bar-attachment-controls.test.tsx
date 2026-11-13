@@ -97,7 +97,7 @@ test('the control sits below the composer, in the action row', () => {
   // interchangeable from the call site and are not.
   const markup = render({ attachmentControls: CONTROL })
   const control = markup.indexOf(CONTROL)
-  const composer = markup.indexOf('<textarea')
+  const composer = markup.indexOf('data-slot="agent-command-bar-composer"')
 
   assert.notEqual(composer, -1, `no composer in:\n${markup}`)
   assert.ok(control > composer, 'the control belongs to the row under the input, not the row over it')

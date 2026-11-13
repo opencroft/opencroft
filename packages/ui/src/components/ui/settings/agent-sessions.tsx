@@ -1,8 +1,9 @@
-'use client'
-
-import { Moon, ShieldAlert } from 'lucide-react'
+import { Moon, ScrollText, ShieldAlert } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
 
 import { Badge } from 'ui/components/ui/badge'
+import { Button } from '../button'
+import { Input } from '../input'
 import { Spinner } from 'ui/components/ui/spinner'
 import { Switch } from '../switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../table'
@@ -44,6 +45,15 @@ export interface AgentBackgroundTask {
   finishedAt?: number | null
 }
 
+// How much chat history each session keeps. Null keeps everything, which is
+// the default for both.
+export interface AgentChatHistory {
+  // At most this many events of each session's chat.
+  maxEntries: number | null
+  // Nothing from turns that started more than this many days ago.
+  cleanupAfterDays: number | null
+}
+
 export interface AgentSessionsProps {
   // Sleep mode holds all agent deliveries: running turns finish, new messages
   // enqueue and are kept, nothing is delivered until the instance wakes.
@@ -67,6 +77,12 @@ export interface AgentSessionsProps {
   // Why the list could not be read. Set, it replaces the list and its count,
   // for the same reason.
   backgroundTasksError?: string | null
+  // The chat history settings as stored; null until the host has read them,
+  // and drawn as not read yet rather than as off.
+  chatHistory: AgentChatHistory | null
+  // Saving new settings, with both fields: the host stores them and hands
+  // back what was stored as `chatHistory`.
+  onChatHistoryChange: (next: AgentChatHistory) => void
   className?: string
 }
 
@@ -236,6 +252,138 @@ function BackgroundTasksCard({ tasks, error }: { tasks: AgentBackgroundTask[] | 
   )
 }
 
+// A setting's field: empty for none, else a whole number of 1 or more.
+function fieldOf(value: number | null): string {
+  return value === null ? '' : String(value)
+}
+
+function parseField(text: string): number | null | undefined {
+  const trimmed = text.trim()
+  if (trimmed === '') {
+    return null
+  }
+  const value = Number(trimmed)
+  return Number.isInteger(value) && value >= 1 ? value : undefined
+}
+
+// The chat history settings: a limit per session, and a cleanup after a
+// number of days that a switch turns on. Both off keeps every session's whole
+// history. Each says what it removes, because what it removes does not come
+// back. Edited here and saved together; a new value from the host (a save
+// coming back, another admin's) replaces the edit.
+function ChatHistoryCard({
+  settings,
+  onChange,
+}: {
+  settings: AgentChatHistory | null
+  onChange: (next: AgentChatHistory) => void
+}) {
+  const id = useId()
+  const [limit, setLimit] = useState('')
+  const [cleanupOn, setCleanupOn] = useState(false)
+  const [days, setDays] = useState('')
+  useEffect(() => {
+    setLimit(fieldOf(settings?.maxEntries ?? null))
+    setCleanupOn(settings?.cleanupAfterDays != null)
+    setDays(fieldOf(settings?.cleanupAfterDays ?? null))
+  }, [settings])
+
+  const maxEntries = parseField(limit)
+  const cleanupAfterDays = cleanupOn ? parseField(days) : null
+  const valid = maxEntries !== undefined && cleanupAfterDays !== undefined && !(cleanupOn && cleanupAfterDays === null)
+  const changed =
+    settings !== null &&
+    (maxEntries !== settings.maxEntries || cleanupAfterDays !== settings.cleanupAfterDays)
+
+  return (
+    <div className='rounded-lg border p-4 space-y-4'>
+      <div className='flex items-center gap-3'>
+        <ScrollText className='size-5 text-muted-foreground' aria-hidden='true' />
+        <div>
+          <div className='text-sm font-medium'>Chat history</div>
+          <div className='text-xs text-muted-foreground'>
+            Every session keeps its whole chat history, archived threads included, unless one of these is set.
+            A chat opens on its newest messages and loads older ones as the reader scrolls up.
+          </div>
+        </div>
+        {!settings && <Spinner className='ml-auto' />}
+      </div>
+
+      <div className='flex items-center justify-between gap-4'>
+        <div>
+          <label htmlFor={`${id}-limit`} className='text-sm'>
+            Limit per session
+          </label>
+          <div className='text-xs text-muted-foreground'>
+            Keeps the newest events of each session's chat and removes the older ones, a whole turn at a time;
+            the newest turn always stays. Removed messages no longer show in search. Empty keeps everything.
+          </div>
+        </div>
+        <Input
+          id={`${id}-limit`}
+          type='number'
+          min={1}
+          inputMode='numeric'
+          placeholder='No limit'
+          value={limit}
+          onChange={(event) => setLimit(event.target.value)}
+          disabled={!settings}
+          aria-invalid={maxEntries === undefined}
+          className='w-32 shrink-0'
+        />
+      </div>
+
+      <div className='flex items-center justify-between gap-4'>
+        <div>
+          <label htmlFor={`${id}-days`} className='text-sm'>
+            Clean up after
+          </label>
+          <div className='text-xs text-muted-foreground'>
+            Removes the turns that started more than this many days ago from every session's chat, archived
+            threads included; the newest turn of each always stays. Removed messages no longer show in search.
+          </div>
+        </div>
+        <div className='flex shrink-0 items-center gap-2'>
+          <Switch
+            checked={cleanupOn}
+            onCheckedChange={setCleanupOn}
+            disabled={!settings}
+            aria-label='Clean up old chat history'
+          />
+          <Input
+            id={`${id}-days`}
+            type='number'
+            min={1}
+            inputMode='numeric'
+            placeholder='Days'
+            value={days}
+            onChange={(event) => setDays(event.target.value)}
+            disabled={!settings || !cleanupOn}
+            aria-invalid={cleanupOn && cleanupAfterDays == null}
+            className='w-20'
+          />
+          <span className='text-sm text-muted-foreground'>days</span>
+        </div>
+      </div>
+
+      <div className='flex items-center justify-end gap-3'>
+        {!valid && <span className='text-xs text-destructive'>Use a whole number of 1 or more.</span>}
+        <Button
+          size='sm'
+          disabled={!changed || !valid}
+          onClick={() => {
+            if (valid && maxEntries !== undefined && cleanupAfterDays !== undefined) {
+              onChange({ maxEntries, cleanupAfterDays })
+            }
+          }}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 // What the instance's agents are running, and the two switches that act on
 // all of them at once:
 //
@@ -247,6 +395,8 @@ function BackgroundTasksCard({ tasks, error }: { tasks: AgentBackgroundTask[] | 
 //   - Two instance-wide modes, drawn as different things because they are:
 //     sleep mode (amber) holds deliveries but keeps them, YOLO mode (red)
 //     skips approvals and cannot be taken back for what already ran.
+//   - How much chat history every session keeps: all of it unless a limit or
+//     a cleanup period is set.
 //
 // Presentation only: sessions, tasks and mode flags arrive as props, toggles
 // leave as callbacks, and the polling that keeps them live stays with the
@@ -260,6 +410,8 @@ export function AgentSessions({
   sessions,
   backgroundTasks,
   backgroundTasksError,
+  chatHistory,
+  onChatHistoryChange,
   className,
 }: AgentSessionsProps) {
   return (
@@ -317,6 +469,8 @@ export function AgentSessions({
           className='shrink-0 data-checked:bg-red-500'
         />
       </div>
+
+      <ChatHistoryCard settings={chatHistory} onChange={onChatHistoryChange} />
 
       <div className='rounded-lg border'>
         <div className='flex items-center justify-between px-4 py-3 border-b'>

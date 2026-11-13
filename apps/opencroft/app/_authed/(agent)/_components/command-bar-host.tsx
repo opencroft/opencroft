@@ -7,7 +7,9 @@ import {
   type CommandBarUsage,
   useAgentCommandBar,
 } from 'agent-chat/agent-command-bar'
+import type { MentionCandidate } from 'agent-chat/components/mention-autocomplete'
 import type { CompactRenderState } from 'agent-chat/use-compact-control'
+import { bypassRouteOf } from 'agent-client/resolve'
 import type { Presence } from 'agent-client/types'
 import type { ReactNode, Ref } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -87,6 +89,9 @@ interface AgentCommandBarHostProps {
   canAttachImages?: boolean
   /** Forwarded to the package hook's `composerRef`. */
   composerRef?: Ref<AgentComposerHandle>
+  /** Who a message here can mention, forwarded to the package hook. Must be
+   *  identity-stable when nothing changed; it feeds the memoized bar. */
+  mentions?: MentionCandidate[]
 }
 
 // The approval button's wording. It lives here rather than in the package
@@ -96,7 +101,7 @@ interface AgentCommandBarHostProps {
 // concept, autoApprove/autoApproveLocked, not opencroft vocabulary). Module-
 // level so the reference is stable — it feeds the memoized bar.
 const APPROVAL_TITLES = {
-  yolo: 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /settings?section=agents)',
+  yolo: 'YOLO Mode — all MCP tool approvals skipped (set via OPENCROFT_YOLO_MODE env or /administration?section=agents)',
   on: 'Auto-approve ON — all MCP tool calls approved automatically (click to require approval)',
   off: 'Auto-approve OFF — MCP tool calls require approval (click to auto-approve)',
 }
@@ -129,6 +134,7 @@ export function AgentCommandBarHost({
   presence,
   canAttachImages = false,
   composerRef,
+  mentions,
 }: AgentCommandBarHostProps) {
   const [autoApprove, setAutoApproveState] = useState(false)
   const [yoloMode, setYoloMode] = useState(false)
@@ -141,13 +147,21 @@ export function AgentCommandBarHost({
       .catch(() => {})
   }, [])
 
-  // YOLO pins every session to its bypass permission mode and refuses changes
-  // server-side, so the mode control has to say so rather than look live and
-  // silently do nothing. The wording is this app's: agent-chat only carries the
-  // reason through to a tooltip, it has no idea what YOLO is.
+  // YOLO pins every session to its bypass and refuses changes server-side, so
+  // the mode control has to say so rather than look live and silently do
+  // nothing. The wording is this app's: agent-chat only carries the reason
+  // through to a tooltip, it has no idea what YOLO is.
+  //
+  // Only where bypass IS a mode. An adapter whose bypass is a config option of
+  // its own (Copilot's `allow_all`) keeps its mode free. That option is one of
+  // the bar's generic settings rows, which take no lock reason, so a change to
+  // it is refused server-side and the row simply keeps showing the held value.
   const lockedConfigOptions = useMemo(
-    () => (yoloMode ? { mode: 'YOLO mode is on — every session is pinned to Bypass Permissions.' } : undefined),
-    [yoloMode],
+    () =>
+      yoloMode && bypassRouteOf(session.adapterId ?? '').kind === 'mode'
+        ? { mode: 'YOLO mode is on — every session is pinned to Bypass Permissions.' }
+        : undefined,
+    [yoloMode, session.adapterId],
   )
 
   const autoApproveRef = useRef(autoApprove)
@@ -235,6 +249,7 @@ export function AgentCommandBarHost({
     pictures,
     presence,
     composerRef,
+    mentions,
   })
 
   return barNode

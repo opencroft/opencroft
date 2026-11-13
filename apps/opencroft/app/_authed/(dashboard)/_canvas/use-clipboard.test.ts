@@ -10,22 +10,32 @@
 // against a real DOM and a real React hook (not a reimplementation of the
 // logic under test).
 import assert from 'node:assert/strict'
-import test, { after } from 'node:test'
+import test, { after, beforeEach } from 'node:test'
 
 import type { Node } from '@xyflow/react'
 
+import type { CanvasView } from '@/app/_authed/(dashboard)/_canvas/use-clipboard'
+import { SUBGRAPH_TYPE } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/subgraph-shared'
 import { installDomEnvironment } from '@/test-support/dom-environment'
 
 const dom = await installDomEnvironment()
 
 const { act, createElement, Fragment, useRef, useState } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { useClipboard } = await import('./use-clipboard')
+const { forgetCopiedNodes, useClipboard } = await import('./use-clipboard')
 
 after(() => dom.cleanup())
+// Each test starts on a page where nothing has been copied yet.
+beforeEach(() => forgetCopiedNodes())
 
 function makeNode(id: string, x: number, y: number, selected = false): Node {
   return { id, type: 'default', position: { x, y }, data: {}, selected }
+}
+
+const FRAME_TYPE = 'test.frame'
+
+function makeFrame(id: string, x: number, y: number, selected = false): Node {
+  return { ...makeNode(id, x, y, selected), type: FRAME_TYPE, style: { width: 400, height: 300 } }
 }
 
 interface ClipboardHandle {
@@ -66,6 +76,7 @@ function installFakeClipboard(): { setReadFailure: (fail: boolean) => void; setW
 async function mountHarness(
   initialNodes: ReturnType<typeof makeNode>[],
   findTakenIds: (ids: string[]) => Promise<string[]> = async () => [],
+  view: () => CanvasView = () => ({ centre: { x: 0, y: 0 }, transform: [0, 0, 1] }),
 ) {
   const handleRef = { current: null as ClipboardHandle | null }
 
@@ -81,6 +92,8 @@ async function mountHarness(
       setNodes: (updater) => setNodesState((nds) => updater(nds)),
       setEdges: (updater) => setEdgesState((eds) => updater(eds as never)),
       onChange: () => {},
+      view,
+      isFrame: (n) => n.type === FRAME_TYPE,
     })
 
     // Written directly on every render rather than via a ref prop -- this
@@ -194,19 +207,179 @@ test('copy then paste at a target position lands the group there, keeping relati
   assert.equal(ys[1] - ys[0], 30)
 })
 
-test('paste with no target falls back to the small fixed offset (the keyboard-shortcut path)', async () => {
+function sized(id: string, x: number, y: number, width: number, height: number): Node {
+  return { ...makeNode(id, x, y, true), measured: { width, height } }
+}
+
+test('paste with no target centres the group on the viewport, keeping its layout', async () => {
   installFakeClipboard()
-  const h = await mountHarness([makeNode('a', 10, 10, true)])
+  const view: CanvasView = { centre: { x: 1000, y: 2000 }, transform: [0, 0, 1] }
+  const h = await mountHarness(
+    [sized('a', -5000, -5000, 100, 40), sized('b', -4900, -4900, 100, 40)],
+    undefined,
+    () => view,
+  )
   await act(async () => {
     await h.copy()
   })
   await act(async () => {
     await h.paste()
   })
-  const pasted = h.nodes().find((n) => n.id !== 'a')
+  const pasted = h.nodes().filter((n) => n.id !== 'a' && n.id !== 'b')
+  // The group's box is 200 by 140, so its centre (1000, 2000) puts its top-left at (900, 1930).
+  assert.deepEqual(
+    pasted.map((n) => n.position),
+    [
+      { x: 900, y: 1930 },
+      { x: 1000, y: 2030 },
+    ],
+  )
+})
+
+test('pasting again into the same view moves each copy one grid step on, and a pan starts over', async () => {
+  installFakeClipboard()
+  let view: CanvasView = { centre: { x: 0, y: 0 }, transform: [0, 0, 1] }
+  const h = await mountHarness([sized('a', 500, 500, 100, 100)], undefined, () => view)
+  await act(async () => {
+    await h.copy()
+  })
+  for (let i = 0; i < 3; i++) {
+    await act(async () => {
+      await h.paste()
+    })
+  }
+  view = { centre: { x: 300, y: 300 }, transform: [-300, -300, 1] }
+  await act(async () => {
+    await h.paste()
+  })
+  assert.deepEqual(
+    h
+      .nodes()
+      .slice(1)
+      .map((n) => n.position),
+    [
+      { x: -50, y: -50 },
+      { x: -40, y: -40 },
+      { x: -30, y: -30 },
+      { x: 250, y: 250 },
+    ],
+  )
+})
+
+// Pasting selects the copy, which opens the inspector beside the canvas and
+// narrows the pane: its centre moves though the person moved nothing.
+test('a pane that only changes size between pastes still steps each copy on from the last', async () => {
+  installFakeClipboard()
+  let view: CanvasView = { centre: { x: 700, y: 450 }, transform: [0, 0, 1] }
+  const h = await mountHarness([sized('a', 5000, 5000, 100, 100)], undefined, () => view)
+  await act(async () => {
+    await h.copy()
+  })
+  await act(async () => {
+    await h.paste()
+  })
+  view = { centre: { x: 490, y: 450 }, transform: [0, 0, 1] }
+  await act(async () => {
+    await h.paste()
+  })
+  view = { centre: { x: 700, y: 450 }, transform: [0, 0, 1] }
+  await act(async () => {
+    await h.paste()
+  })
+  assert.deepEqual(
+    h
+      .nodes()
+      .slice(1)
+      .map((n) => n.position),
+    [
+      { x: 650, y: 400 },
+      { x: 660, y: 410 },
+      { x: 670, y: 420 },
+    ],
+  )
+})
+
+test('a copy in one editor makes Paste available in another', async () => {
+  installFakeClipboard()
+  const source = await mountHarness([makeNode('a', 0, 0, true)])
+  const target = await mountHarness([])
+  assert.equal(target.hasCopiedNodes(), false)
+  await act(async () => {
+    await source.copy()
+  })
+  assert.equal(target.hasCopiedNodes(), true)
+})
+
+test('a child copied without its parent is pasted top-level, where it was drawn', async () => {
+  installFakeClipboard()
+  const parent = makeNode('frame', 1000, 1000, false)
+  const child: Node = { ...makeNode('child', 20, 30, true), parentId: 'frame', extent: 'parent' }
+  const h = await mountHarness([parent, child])
+  await act(async () => {
+    await h.copy()
+  })
+  await act(async () => {
+    await h.paste({ x: 200, y: 100 })
+  })
+  const pasted = h.nodes()[2]
   assert.ok(pasted)
-  assert.equal(pasted.position.x, 30)
-  assert.equal(pasted.position.y, 30)
+  assert.equal(pasted.parentId, undefined)
+  assert.equal(pasted.extent, undefined)
+  assert.deepEqual(pasted.position, { x: 200, y: 100 })
+})
+
+test('a child pasted with its parent keeps its place inside it', async () => {
+  installFakeClipboard()
+  const parent = makeNode('frame', 1000, 1000, true)
+  // Below the frame's title band, so the frame holds it as it is.
+  const child: Node = { ...makeNode('child', 20, 40, true), parentId: 'frame' }
+  const h = await mountHarness([parent, child])
+  await act(async () => {
+    await h.copy()
+  })
+  await act(async () => {
+    await h.paste({ x: 200, y: 100 })
+  })
+  const [pastedParent, pastedChild] = h.nodes().slice(2)
+  assert.ok(pastedParent && pastedChild)
+  assert.deepEqual(pastedParent.position, { x: 200, y: 100 })
+  assert.equal(pastedChild.parentId, pastedParent.id)
+  assert.deepEqual(pastedChild.position, { x: 20, y: 40 })
+})
+
+test('a node pasted onto a frame goes into it, at its place relative to the frame', async () => {
+  installFakeClipboard()
+  const h = await mountHarness([makeFrame('f', 1000, 1000), makeNode('a', 0, 0, true)])
+  await act(async () => {
+    await h.copy()
+  })
+  await act(async () => {
+    await h.paste({ x: 1100, y: 1050 })
+  })
+  const pasted = h.nodes().find((n) => !['f', 'a'].includes(n.id))
+  assert.equal(pasted?.parentId, 'f')
+  assert.deepEqual(pasted?.position, { x: 100, y: 50 })
+})
+
+test('a clipboard without parents pastes its frames holding what lies in them', async () => {
+  installFakeClipboard()
+  // What a copy made before frames had members holds: every position absolute, no parentId.
+  await navigator.clipboard.writeText(
+    JSON.stringify({
+      format: 'opencroft/nodes',
+      nodes: [makeFrame('old-frame', 0, 0), makeNode('old-node', 40, 60)],
+      edges: [],
+    }),
+  )
+  const h = await mountHarness([])
+  await act(async () => {
+    await h.paste({ x: 500, y: 500 })
+  })
+  const [frame, node] = h.nodes()
+  assert.equal(frame?.parentId, undefined)
+  assert.deepEqual(frame?.position, { x: 500, y: 500 })
+  assert.equal(node?.parentId, frame?.id)
+  assert.deepEqual(node?.position, { x: 40, y: 60 })
 })
 
 test('a clipboard write rejection (e.g. denied permission on mobile) does not throw and leaves hasCopiedNodes false', async () => {
@@ -346,6 +519,53 @@ test("cut then paste keeps the nodes' ids", async () => {
   assert.deepEqual(
     h.nodes().map((n) => n.id),
     ['keep', 'a'],
+  )
+})
+
+test('cutting a frame leaves its members where they are drawn, in the frame it was in', async () => {
+  installFakeClipboard()
+  const member: Node = { ...makeNode('m', 20, 30), parentId: 'cut' }
+  const inner: Node = { ...makeFrame('cut', 100, 100, true), parentId: 'outer' }
+  const h = await mountHarness([makeFrame('outer', 1000, 1000), inner, member])
+  await pressOn(h.element('canvas'), 'KeyX', 'x')
+  const left = h.nodes().find((n) => n.id === 'm')
+  assert.equal(left?.parentId, 'outer')
+  assert.deepEqual(left?.position, { x: 120, y: 130 })
+})
+
+test('cut takes a subgraph with everything inside it, and paste brings it all back under the same ids', async () => {
+  installFakeClipboard()
+  const sub: Node = { ...makeNode('sub', 300, 300, true), type: SUBGRAPH_TYPE }
+  const inside: Node = { ...makeNode('inside', -40, 60), parentId: 'sub' }
+  const nested: Node = { ...makeNode('nested', 500, 500), type: SUBGRAPH_TYPE, parentId: 'sub' }
+  const deep: Node = { ...makeNode('deep', 20, 30), parentId: 'nested' }
+  const h = await mountHarness([sub, inside, nested, deep, makeNode('a', 0, 0)])
+  await pressOn(h.element('canvas'), 'KeyX', 'x')
+  assert.deepEqual(
+    h.nodes().map((n) => n.id),
+    ['a'],
+  )
+  await act(async () => {
+    await h.paste({ x: 10, y: 10 })
+  })
+  const byId = new Map(h.nodes().map((n) => [n.id, n]))
+  assert.deepEqual(
+    ['inside', 'nested', 'deep'].map((id) => [byId.get(id)?.parentId, byId.get(id)?.position]),
+    [
+      ['sub', { x: -40, y: 60 }],
+      ['sub', { x: 500, y: 500 }],
+      ['nested', { x: 20, y: 30 }],
+    ],
+    'inside, every node keeps its parent and its place on its canvas',
+  )
+  assert.deepEqual(byId.get('sub')?.position, { x: 10, y: 10 })
+  assert.deepEqual(
+    h
+      .nodes()
+      .filter((n) => n.selected)
+      .map((n) => n.id),
+    ['sub'],
+    'what the subgraph holds is off this canvas, and not selected',
   )
 })
 

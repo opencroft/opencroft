@@ -10,8 +10,8 @@
 //     a strip of empty height, and an empty element is exactly as invisible to
 //     a typecheck as a full one.
 //
-// The sibling `.test.ts` file covers the exported constants and the buffer
-// rule, which are pure. These need markup, hence a second file.
+// The sibling `.test.ts` file covers the exported constants, which are pure.
+// These need markup, hence a second file.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -25,10 +25,11 @@ import { AgentCommandBar } from './agent-command-bar'
 // the slot's content, so the content itself should add no elements to count.
 const ATTACHED = '[[attached]]'
 
+// What the composer puts in its slot, as a landmark of its own.
+const COMPOSER = { input: <textarea />, hasText: false, submit: () => {} }
+
 function render(attachments?: ReactNode): string {
-  return renderToStaticMarkup(
-    <AgentCommandBar value='' onValueChange={() => {}} onSend={() => {}} attachments={attachments} />,
-  )
+  return renderToStaticMarkup(<AgentCommandBar composer={COMPOSER} attachments={attachments} />)
 }
 
 // The wrapper the row draws around whatever it is given. Matched from the

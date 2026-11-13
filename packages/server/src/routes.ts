@@ -2,7 +2,9 @@
  * `@opencroft/server/routes` — the extension's HTTP routes, exported as
  * `routes` from its server module.
  */
+import type { HostAppsApi } from './apps'
 import type { HostUser } from './people'
+import type { HostSpacesApi } from './spaces'
 
 /**
  * A public HTTP handler, served at `<urlBase>/http/<path>`, where `urlBase`
@@ -16,6 +18,10 @@ export type ExtensionRouteHandler = (request: Request) => Response | Promise<Res
 export interface ExtensionRouteContext {
   /** The signed-in person: the same `HostUser` an App action receives as `callerPerson`. */
   person: HostUser
+  /** The spaces the person may see, as an App action's `ctx.spaces`. Bound for this request and unusable once its handler settles. */
+  spaces: HostSpacesApi
+  /** `apps`, with `directory` seeing what `spaces` sees. Bound like it. */
+  apps: HostAppsApi
 }
 
 /**

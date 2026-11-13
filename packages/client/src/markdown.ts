@@ -14,6 +14,12 @@ export interface MarkdownProps {
    * that everything rendered this way reads as one voice.
    */
   className?: string
+  /**
+   * A single line break inside a paragraph is drawn as a line break rather
+   * than a space. For text written in `MarkdownEditor`'s `agent` dialect, which
+   * keeps its lines.
+   */
+  lineBreaks?: boolean
 }
 
 /**
@@ -80,16 +86,45 @@ export declare const MermaidDiagram: FC<MermaidDiagramProps>
 /**
  * A group of toolbar controls. Named rather than listed one by one so a surface
  * can ask for less without enumerating buttons it does not know about yet.
- * `blockMenu` is the Blocks menu: callouts, spoiler, tabs, table and divider.
+ * `sections` is the Sections menu: blocks side by side in one of the grid's
+ * layouts. `blockMenu` is the Insert menu: callouts, spoiler, tabs, table and
+ * divider.
  */
-export type MarkdownEditorToolbarGroup = 'history' | 'marks' | 'headings' | 'blocks' | 'links' | 'table' | 'blockMenu'
+export type MarkdownEditorToolbarGroup =
+  | 'history'
+  | 'marks'
+  | 'headings'
+  | 'blocks'
+  | 'links'
+  | 'sections'
+  | 'blockMenu'
 
 /** A document the caller holds as markdown. */
 export interface MarkdownEditorOwnDocument {
-  /** The markdown being edited. Controlled — the caller holds it. */
+  /**
+   * The markdown being edited. Controlled — the caller holds it. A new value
+   * the editor does not already hold (someone else's write) is taken in place:
+   * only what differs is replaced, a caret outside it stays put, and undo
+   * reverts this person's own edits, not the change that arrived.
+   */
   value: string
   /** The markdown after an edit. Fires for edits, never for loading `value`. */
   onChange: (markdown: string) => void
+  /**
+   * How the markdown is written and read. Read once, when the editor is
+   * created.
+   *
+   * `document` (default): the documents' markdown, for a page of text. A line
+   * break inside a paragraph reads as a space, as a page draws it.
+   *
+   * `agent`: for text read as written -- by an agent that takes it raw -- as
+   * well as drawn. A line break is written as a newline and read back as one,
+   * and a character is escaped with a backslash only where `Markdown` would
+   * read it as syntax (`\<word>` for a word in angle brackets, which `Markdown`
+   * would drop as a tag). Pasted text is read the same way, a Shift-paste as
+   * typed. Draw such text with `Markdown` and `lineBreaks`.
+   */
+  dialect?: 'document' | 'agent'
   collab?: never
 }
 
@@ -105,6 +140,8 @@ export interface MarkdownEditorSharedDocument {
   collab: { document: string }
   value?: never
   onChange?: never
+  /** A shared document is written in the `document` dialect, the server host's. */
+  dialect?: never
 }
 
 export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
@@ -112,8 +149,29 @@ export type MarkdownEditorProps = MarkdownEditorSurfaceProps &
 
 /** How the editor looks and behaves, whichever document it edits. */
 export interface MarkdownEditorSurfaceProps {
+  /**
+   * `toolbar` (default): a box with the toolbar on top. Multi-line text always
+   * uses it.
+   * `field`: a flat input field with no frame and no toolbar, for content that
+   * may well be a single line, such as a message in a messenger or a comment
+   * on a task. Right-click is the browser's own menu, with its spelling
+   * suggestions. Selected text gets a bar with Bold, Italic, Inline code, Link
+   * and `⋯`, which turns the bar into a list of everything else the toolbar
+   * offers except Undo and Redo, and the table's actions in a table. The bar is
+   * above the selection, or below it on a touch screen, where the platform's
+   * own selection menu is above. Using it never takes focus from the text. The
+   * `toolbar*` props do not apply to it.
+   */
+  variant?: 'toolbar' | 'field'
   /** Shown while the document is empty. Read once, when the editor is created. */
   placeholder?: string
+  /**
+   * The document starts with its title: the first block is always a level-1
+   * heading, shown as "Title" while empty, which can be emptied but not
+   * removed or made another kind of block. Read once, when the editor is
+   * created.
+   */
+  titleHeading?: boolean
   /** Editable by default; `false` shows the same prose read-only. */
   editable?: boolean
   /** Put the caret at the end of the document on mount. */

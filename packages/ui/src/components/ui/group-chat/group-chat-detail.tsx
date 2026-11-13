@@ -13,6 +13,12 @@ export interface GroupChatDetailProps {
    * holds this screen. Draws the shared BackButton, so this is literally the
    * same control the list and the thread screen use rather than a matching one. */
   onBack?: () => void
+  /** Draw the Back from md up as well as below it. False for a host that
+   * shows this chat beside the chat list from md up: the list is on screen
+   * there with a Back of its own, so a second one beside it would be one too
+   * many. Below md, where this chat fills the screen, the Back is drawn
+   * either way. */
+  showBackFromMd?: boolean
   /** What this chat is called. The title, plain: renaming happens where the
    * chats are listed, from a row's menu, not on this screen. */
   name: string
@@ -65,6 +71,7 @@ export interface GroupChatDetailProps {
 // because everything that needed room moved behind a control.
 export function GroupChatDetail({
   onBack,
+  showBackFromMd = true,
   name,
   searchField,
   actions,
@@ -83,7 +90,7 @@ export function GroupChatDetail({
           rather than each having its own. */}
       {headerless ? null : (
         <header className='flex shrink-0 items-center gap-2 border-b border-border px-4 py-2'>
-          {onBack ? <BackButton onClick={onBack} /> : null}
+          {onBack ? <BackButton onClick={onBack} className={showBackFromMd ? undefined : 'md:hidden'} /> : null}
           {searchField ? (
             <div className='min-w-0 flex-1'>{searchField}</div>
           ) : (

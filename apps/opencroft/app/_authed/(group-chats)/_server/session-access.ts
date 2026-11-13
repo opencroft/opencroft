@@ -58,7 +58,7 @@ export async function sessionAccessRefusal(check: Promise<unknown>): Promise<Res
 
 // For a server function, which has nowhere to return a Response: it THROWS
 // one, and the framework sends a thrown Response as the HTTP response — the
-// same mechanism requireSessionServerFn relies on.
+// same mechanism the server-function session gate relies on.
 async function orRefuse<T>(check: Promise<T>): Promise<T> {
   try {
     return await check

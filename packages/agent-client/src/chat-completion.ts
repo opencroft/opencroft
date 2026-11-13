@@ -17,7 +17,7 @@
 
 import { generateText, type LanguageModelUsage, type ModelMessage, streamText } from 'ai'
 
-import { reasoningProviderOptions, resolveModel } from './endpoint'
+import { callProviderOptions, maxOutputTokens, resolveModel } from './endpoint'
 import { isNativeSelection } from './resolve'
 import type { AgentSelection } from './types'
 
@@ -143,7 +143,8 @@ function buildRequest(request: ChatCompletionRequest) {
     system: (request.system ?? selection.systemPrompt)?.trim() || undefined,
     messages: toModelMessages(request.messages),
     temperature: request.temperature ?? selection.temperature,
-    providerOptions: reasoningProviderOptions(
+    maxOutputTokens: maxOutputTokens(selection),
+    providerOptions: callProviderOptions(
       selection,
       request.effort ?? selection.reasoningEffort,
       request.model || selection.model,

@@ -109,34 +109,62 @@ export class GraphUndo {
     }
   }
 
-  // Nodes this step created that an edge or a child node from outside the step
-  // now points at.
+  // Nodes this step created that an edge end or a child's parent, set outside
+  // the step, now points at. A reference the step set itself -- an existing
+  // edge re-pointed at its new node, an existing node moved into it -- is
+  // reverted by the same undo, so it keeps nothing.
   private createdAndSinceReferenced(step: StackItem): Set<string> {
-    const madeHere = (type: { _item: Y.Item | null }) =>
-      type._item !== null && Y.isDeleted(step.insertions, type._item.id)
+    const stepItems = this.itemsOf(step)
+    const madeHere = (item: Y.Item | null | undefined) => item != null && stepItems.has(item)
     const created = new Set<string>()
     for (const [id, node] of this.nodes.entries()) {
-      if (madeHere(node)) {
+      if (madeHere(node._item)) {
         created.add(id)
       }
     }
     const referenced = new Set<string>()
+    const pointsAtCreated = (element: Y.Map<unknown>, key: string) => {
+      const value = element.get(key)
+      if (typeof value === 'string' && created.has(value) && !madeHere(element._map.get(key))) {
+        referenced.add(value)
+      }
+    }
     for (const edge of this.edges.values()) {
-      if (!madeHere(edge)) {
-        for (const end of [edge.get('source'), edge.get('target')]) {
-          if (typeof end === 'string' && created.has(end)) {
-            referenced.add(end)
+      pointsAtCreated(edge, 'source')
+      pointsAtCreated(edge, 'target')
+    }
+    for (const node of this.nodes.values()) {
+      pointsAtCreated(node, 'parentId')
+    }
+    return referenced
+  }
+
+  // The items `step` inserted, each as it stands now. Y.UndoManager restores
+  // a value or element that a later step overwrote or deleted as a new item
+  // (inside a new map, for a deleted element), linked from the old one through
+  // `redone`; such a copy stands for what the step wrote.
+  private itemsOf(step: StackItem): Set<Y.Item> {
+    const items = new Set<Y.Item>()
+    const store = this.nodes.doc?.store
+    if (!store) {
+      return items
+    }
+    for (const [client, ranges] of step.insertions.clients) {
+      for (const { clock, len } of ranges) {
+        for (let at = clock; at < clock + len; ) {
+          const struct = Y.getItem(store, Y.createID(client, at))
+          at = struct.id.clock + struct.length
+          if (struct instanceof Y.Item) {
+            let current = struct
+            while (current.redone) {
+              current = Y.getItem(store, current.redone) as Y.Item
+            }
+            items.add(current)
           }
         }
       }
     }
-    for (const node of this.nodes.values()) {
-      const parent = node.get('parentId')
-      if (!madeHere(node) && typeof parent === 'string' && created.has(parent)) {
-        referenced.add(parent)
-      }
-    }
-    return referenced
+    return items
   }
 
   // The id of the node an item belongs to -- the node entry itself, or any

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { backoffMs, dockerNodeIds, isDue, nextFailureState } from './docker-ps-poller'
+import { backoffMs, containersEqual, dockerNodeIds, isDue, nextFailureState } from './docker-ps-poller'
 
 // ── nextFailureState ────────────────────────────────────────────────────
 
@@ -98,4 +98,29 @@ test("the polled nodes are the docker extension's own docker nodes, under whatev
 
 test('with no docker extension nothing is polled', () => {
   assert.deepEqual(dockerNodeIds([{ id: 'd-1', type: 'some-owner.containers.docker' }], null), [])
+})
+
+// ── containersEqual ──────────────────────────────────────────────────────
+
+const row = { id: 'c-1', name: 'web-1', service: 'web', status: 'Up 3 days', running: true }
+
+// A row as the extension returns it: the declared fields plus one of its own.
+function withLabel(label: string) {
+  return { ...row, label }
+}
+
+test('rows with the same fields and values are equal', () => {
+  assert.equal(containersEqual([withLabel('x')], [withLabel('x')]), true)
+})
+
+test('a field the type does not declare makes stored rows unequal to rows that carry it', () => {
+  assert.equal(containersEqual([row], [withLabel('x')]), false)
+})
+
+test('a change in a field the type does not declare makes rows unequal', () => {
+  assert.equal(containersEqual([withLabel('x')], [withLabel('y')]), false)
+})
+
+test('a change in a declared field makes rows unequal', () => {
+  assert.equal(containersEqual([row], [{ ...row, status: 'Up 4 days' }]), false)
 })

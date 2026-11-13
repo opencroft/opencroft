@@ -11,7 +11,7 @@ export interface HarnessFailure {
   /** The spawn-level error, when the process never started at all. */
   spawnError?: Error
   /** Exit code / signal, when the process started and then exited. */
-  exit?: { code: number | null; signal: NodeJS.Signals | null }
+  exit?: { code: number | null; signal: string | null }
 }
 
 // Longest stderr excerpt to carry into the message. Enough for a daemon error

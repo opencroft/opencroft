@@ -96,24 +96,13 @@ function collectDockerNodeIds(dockerExtensionId: string | null): string[] {
   return ids
 }
 
-function containersEqual(a: DockerContainerSnapshot[], b: DockerContainerSnapshot[]): boolean {
-  if (a.length !== b.length) {
-    return false
-  }
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i]
-    const y = b[i]
-    if (
-      x.id !== y.id ||
-      x.name !== y.name ||
-      x.service !== y.service ||
-      x.status !== y.status ||
-      x.running !== y.running
-    ) {
-      return false
-    }
-  }
-  return true
+// Compares every field `docker.ps` returned, not only the ones DockerContainerSnapshot declares:
+// the extension's rows carry more, which its own UI reads. The stored snapshot outlives an update
+// of the extension, so a field the new version adds must replace the stored rows on the next tick,
+// even when no declared field changed. Rows from one producer serialise their keys in one order;
+// a different order only costs an extra broadcast.
+export function containersEqual(a: DockerContainerSnapshot[], b: DockerContainerSnapshot[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
 function sortContainers(list: DockerContainerSnapshot[]): DockerContainerSnapshot[] {

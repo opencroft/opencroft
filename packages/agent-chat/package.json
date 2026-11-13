@@ -24,7 +24,9 @@
     "./components/*": "./src/components/*.tsx",
     "./server": "./src/server/index.ts",
     "./server/*": "./src/server/*.ts",
-    "./markdown-schema": "./src/markdown-editor-schema.ts",
+    "./markdown-schema": "./src/components/markdown-editor-schema.ts",
+    "./markdown-doc-change": "./src/components/markdown-doc-change.ts",
+    "./markdown-mentions": "./src/components/markdown-mentions.ts",
     "./*": "./src/*.tsx"
   },
   "dependencies": {
@@ -33,6 +35,7 @@
     "@shikijs/langs": "^4.4.3",
     "@shikijs/themes": "^4.4.3",
     "@tiptap/core": "^3.31.4",
+    "@tiptap/extension-code": "^3.31.4",
     "@tiptap/extension-code-block": "^3.31.4",
     "@tiptap/extension-hard-break": "^3.31.4",
     "@tiptap/extension-link": "^3.31.4",

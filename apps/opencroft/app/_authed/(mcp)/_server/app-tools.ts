@@ -14,6 +14,7 @@ import {
   removeSpaceAppImpl,
   transferSpaceAppImpl,
 } from '@/app/_authed/(apps)/_server/runtime'
+import { refusedProblemsOf } from '@/app/_authed/(extension-runtime)/_node-data-problems'
 import { presentAction } from '@/app/_authed/(mcp)/_server/execution-mode'
 import { callAction } from '@/app/_authed/(mcp)/_server/task-tools'
 import type { ToolHandler } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -72,7 +73,7 @@ export const definitions = [
   {
     name: 'app_call',
     description:
-      'Invoke an action on one app. The action runs server-side in the providing extension, scoped to that app (its parameters and private data). Use app_list to find the app and its action ids, and app_actions for what an action takes. A graph is an app too: its nodes and edges are read and changed through the `graph` actions (listNodes, findNodes, getNodes, createNodes, writeNodeProperty, connectNodes, …) on its address `<space>.<graph>` — list_spaces gives every graph’s address.',
+      'Invoke an action on one app. The action runs server-side in the providing extension, scoped to that app (its parameters and private data). Use app_list to find the app and its action ids, and app_actions for what an action takes. A graph is an app too: its nodes and edges are read and changed through the `graph` actions (listNodes, findNodes, getNodes, listNodeTypes, createNodes, writeNodeProperty, connectNodes, …) on its address `<space>.<graph>` — list_spaces gives every graph’s address.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -217,7 +218,22 @@ export const handlers: Record<string, ToolHandler> = {
         // Caller handed over, never required — same reasoning as `call` above.
         run: (actionParams, signal) =>
           callAppAction(app, action, actionParams, caller.agent ? { agent: caller.agent } : undefined, signal),
+      }).catch((err: unknown) => {
+        // A graph write refused for invalid node data is answered as its
+        // problems (node, field, title, detail, next step), as `call` answers
+        // a failed node action. Any other refusal reaches the caller as its message.
+        const problems = refusedProblemsOf(err)
+        if (!problems) {
+          throw err
+        }
+        return { refused: problems }
       })
+      if ('refused' in outcome) {
+        return {
+          ...jsonResult({ error: 'Invalid node data. Nothing was written.', problems: outcome.refused }),
+          isError: true,
+        }
+      }
       if ('started' in outcome) {
         return textResult(outcome.started)
       }

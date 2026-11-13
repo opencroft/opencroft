@@ -71,6 +71,7 @@ Every variable OpenCroft reads is named `OPENCROFT_*`.
 | --- | --- |
 | `OPENCROFT_AUTH_SECRET` | Secret that signs session cookies. When unset, one is generated on first start and kept in the key file (see [Instance keys](#instance-keys)). Use at least 32 random characters and keep it stable; changing it signs everyone out. |
 | `OPENCROFT_SECRETS_KEY` | Passphrase used to encrypt stored secrets. When unset, one is generated on first start and kept in the key file (see [Instance keys](#instance-keys)). Keep it stable; stored secrets cannot be read under another key. |
+| `OPENCROFT_KEYSTORE_SECRET` | Passphrase the Key Store's SSH private keys are encrypted under in the database. Read from the environment only, never generated or written to a file. When unset, keys held in the database cannot be read or created, and the error names this variable; everything else runs. Every instance that shares a database needs the same value. |
 | `OPENCROFT_DATABASE_URL` | A `postgres://` or `postgresql://` connection string to use an external PostgreSQL server. When unset, the embedded PGlite database is used. |
 | `OPENCROFT_PGLITE_PATH` | Directory for the embedded database. Default: `data/pglite` under the app's working directory. |
 | `OPENCROFT_DB_MIGRATIONS_DIR` | Directory the database migrations are read from. Default: `migrations` in `packages/db`; the Docker image sets it to where it keeps them. |
@@ -149,8 +150,10 @@ for each key separately. A key file written by an earlier version holds its
 keys under their former names (`BETTER_AUTH_SECRET`, `SECRETS_KEY`); they are
 still read, and the file is not rewritten.
 
-While either key comes from the file, every start logs this warning, and the
-setup screen and Settings → Backup & Restore show it to administrators:
+While either key comes from the file, every start logs this warning, and a
+line across the top of the setup screen and of every settings page an
+administrator opens says "Instance keys are stored in the data volume", with
+the warning behind its Details:
 
 > Instance keys are stored in `<path>` in the data volume. Anyone with this
 > volume or its backups can use them. For production, set
@@ -179,7 +182,8 @@ characters each (`openssl rand -base64 32`), and no file is written.
 instance needs the same `OPENCROFT_SECRETS_KEY` and `OPENCROFT_AUTH_SECRET`
 as the instance it came from; Settings → Backup & Restore says where the
 current ones come from, and says so when stored secrets cannot be decrypted
-with the current `OPENCROFT_SECRETS_KEY`.
+with the current `OPENCROFT_SECRETS_KEY`. The Key Store's SSH keys in it also
+need the same `OPENCROFT_KEYSTORE_SECRET`, which is never in the key file.
 
 **Upgrading an instance that ran without a secrets key:** earlier versions
 fell back to a built-in passphrase published in this repository. On its first

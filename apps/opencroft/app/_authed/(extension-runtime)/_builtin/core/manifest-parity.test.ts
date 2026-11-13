@@ -39,7 +39,7 @@ test('the source extraction sees the whole client declaration', () => {
   assert.ok(nodes.includes('localhost') && nodes.includes('section'), `node types read: ${nodes.join(', ')}`)
   const handles = clientHandleTypes()
   assert.ok(
-    handles.includes('terminal-context') && handles.includes('agent-instruction'),
+    handles.includes('terminal-context') && handles.includes('object'),
     `handle types read: ${handles.join(', ')}`,
   )
 })

@@ -1,6 +1,6 @@
 import type { Edge, Node } from '@xyflow/react'
 
-import { jsonEqual } from '@/app/_authed/(space)/_lib/graph-doc'
+import { sameEdge, sameNode } from '@/app/_authed/(space)/_lib/graph-doc'
 import type { GraphData } from '@/app/_authed/(space)/_server/types'
 
 // The line between the graph and one tab's view of it. `selected` and
@@ -39,10 +39,12 @@ export function liveGraphOf(nodes: Node[], edges: Edge[], base: GraphData): Grap
  * written and a drag in progress survive. One it changed takes the new version
  * under this tab's selection and measured size, unless it is being dragged
  * here. One it removed goes; one this tab added and has not written yet stays,
- * as do comment nodes, which are never part of the graph.
+ * as do comment nodes, which are never part of the graph. One this tab removed
+ * and has not written yet stays removed, even when the change was to it: the
+ * removal wins, as it does when the write reaches the document.
  */
 export function mergeRemoteNodes(before: GraphData, after: GraphData, current: Node[]): Node[] {
-  const merged = mergeElements(before.nodes, after.nodes, current, (incoming, mine) =>
+  const merged = mergeElements(before.nodes, after.nodes, current, sameNode, (incoming, mine) =>
     mine?.dragging
       ? mine
       : ({
@@ -60,6 +62,7 @@ export function mergeRemoteEdges(before: GraphData, after: GraphData, current: E
     before.edges,
     after.edges,
     current,
+    sameEdge,
     (incoming, mine) => ({ ...incoming, selected: mine?.selected ?? false }) as Edge,
   )
 }
@@ -68,15 +71,23 @@ function mergeElements<T extends { id: string; type?: string }>(
   before: Record<string, unknown>[],
   after: Record<string, unknown>[],
   current: T[],
+  same: (a: Record<string, unknown> | undefined, b: Record<string, unknown>) => boolean,
   take: (incoming: Record<string, unknown>, mine: T | undefined) => T,
 ): T[] {
   const was = new Map(before.map((e) => [e.id, e]))
   const now = new Set(after.map((e) => e.id))
   const mine = new Map(current.map((e) => [e.id, e]))
-  const merged = after.map((incoming) => {
+  // The tab's state is derived from `before`, so an element `before` holds and
+  // the tab does not is one the tab removed and has not written yet. Taking
+  // the incoming copy would put it back and advance the base past it, and the
+  // removal would never be written.
+  const merged = after.flatMap((incoming) => {
     const own = mine.get(incoming.id as string)
-    const unchanged = own && was.has(incoming.id) && jsonEqual(was.get(incoming.id), incoming)
-    return unchanged ? own : take(incoming, own)
+    if (!own && was.has(incoming.id)) {
+      return []
+    }
+    const unchanged = own && was.has(incoming.id) && same(was.get(incoming.id), incoming)
+    return [unchanged ? own : take(incoming, own)]
   })
   const unwritten = current.filter((e) => e.type !== 'comment' && !now.has(e.id) && !was.has(e.id))
   return [...merged, ...unwritten]

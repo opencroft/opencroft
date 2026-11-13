@@ -61,6 +61,8 @@ export interface ChatDockProps {
 /**
  * The whole chrome around an embedded thread — corner launcher, the three
  * docks plus the floating window, the mobile cover and its Back behaviour.
+ * Where the panel sits is remembered in the reader's browser per App type, so
+ * an App gets its own position without passing anything.
  */
 export declare const ChatDock: FC<ChatDockProps>
 

@@ -3,9 +3,13 @@
 import { useEdges as useConnections, useInternalNode, useNodeId } from '@xyflow/react'
 import type { LucideIcon } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { NodeFrame as KitNodeFrame, type NodeStatus } from 'ui/nodes/node-frame'
 
+import { inspectorIntent } from '@/app/_authed/(dashboard)/_canvas/inspector-intent'
+import { NODE_ERRORS_TAB } from '@/app/_authed/(dashboard)/_canvas/node-errors-tab'
+import { type HandleRole, staleHandleIds } from '@/app/_authed/(dashboard)/_canvas/stale-handles'
+import { NodeDragArea } from '@/app/_authed/(dashboard)/_canvas/touch-move-mode'
+import { useNodeErrors } from '@/app/_authed/(dashboard)/_canvas/use-node-errors'
 import { InputHandle, OutputHandle } from '@/app/_authed/(extension-runtime)/_client/host'
 
 const NodeAccentContext = createContext<string>('var(--muted-foreground)')
@@ -20,7 +24,7 @@ export function useNodeAccent(): string {
 
 interface StaleHandle {
   id: string
-  role: 'source' | 'target'
+  role: HandleRole
 }
 
 interface ErrorHandleIdsContextValue {
@@ -57,48 +61,18 @@ function ErrorHandleIdsProvider({ children }: { children: ReactNode }) {
   return <ErrorHandleIdsContext.Provider value={value}>{children}</ErrorHandleIdsContext.Provider>
 }
 
-function useStaleHandles(role: 'source' | 'target'): StaleHandle[] {
+function useStaleHandles(role: HandleRole): StaleHandle[] {
   const nodeId = useNodeId()
   const internal = useInternalNode(nodeId ?? '')
   const connections = useConnections()
   const errorCtx = useContext(ErrorHandleIdsContext)
-  return useMemo(() => {
-    if (!nodeId) {
-      return []
-    }
-    const handles = internal?.internals?.handleBounds?.[role]
-    if (!handles) {
-      return []
-    }
-    const registered = new Set<string>()
-    const errorIds = errorCtx?.ids ?? new Set<string>()
-    for (const h of handles) {
-      if (!h.id) {
-        continue
-      }
-      if (errorIds.has(`${role}:${h.id}`)) {
-        continue
-      }
-      registered.add(h.id)
-    }
-    const seen = new Set<string>()
-    const result: StaleHandle[] = []
-    for (const conn of connections) {
-      const handleId = role === 'source' ? conn.sourceHandle : conn.targetHandle
-      const matchesNode = role === 'source' ? conn.source === nodeId : conn.target === nodeId
-      if (!matchesNode || !handleId) {
-        continue
-      }
-      if (seen.has(handleId)) {
-        continue
-      }
-      seen.add(handleId)
-      if (!registered.has(handleId)) {
-        result.push({ id: handleId, role })
-      }
-    }
-    return result
-  }, [nodeId, internal, connections, role, errorCtx])
+  return useMemo(
+    () =>
+      staleHandleIds(internal?.internals?.handleBounds, role, connections, nodeId, errorCtx?.ids ?? new Set()).map(
+        (id) => ({ id, role }),
+      ),
+    [nodeId, internal, connections, role, errorCtx],
+  )
 }
 
 function StaleHandleLabel({ id }: { id: string }) {
@@ -168,17 +142,21 @@ interface NodeFrameProps {
   extra?: ReactNode
   selected: boolean
   loading?: boolean
-  errors?: string[]
+  /**
+   * @deprecated Ignored. The frame reads the node's errors itself: those
+   * stored on the node and those its type's `errors` derives.
+   */
+  errors?: unknown
   input?: ReactNode
   output?: ReactNode
   children?: ReactNode
 }
 
 // What is NOT here is as deliberate as what is. The canvas keeps the accent
-// context, the connection handles and the stale-handle detection, because
-// each of those reads live graph state -- and the kit's own NodeFrame cannot
-// depend on a graph to render, since that is exactly what makes it usable in
-// a preview. They arrive as a prop and a footer slot instead.
+// context, the connection handles, the stale-handle detection and the node's
+// errors, because each of those reads live graph state -- and the kit's own
+// NodeFrame cannot depend on a graph to render, since that is exactly what
+// makes it usable in a preview. They arrive as props and a footer slot instead.
 export function NodeFrame(props: NodeFrameProps) {
   return (
     <ErrorHandleIdsProvider>
@@ -187,14 +165,25 @@ export function NodeFrame(props: NodeFrameProps) {
   )
 }
 
-function NodeFrameInner({ children, ...props }: NodeFrameProps) {
+function NodeFrameInner({ children, errors: _ignored, ...props }: NodeFrameProps) {
   const accent = useNodeAccent()
+  const nodeId = useNodeId()
+  const node = useInternalNode(nodeId ?? '')
+  const errors = useNodeErrors(node ? { id: node.id, type: node.type, data: node.data } : null)
+  const showErrors = useCallback(() => {
+    if (nodeId) {
+      inspectorIntent.open(nodeId, NODE_ERRORS_TAB)
+    }
+  }, [nodeId])
   return (
     <KitNodeFrame
       {...props}
       accent={accent}
+      error={errors.length > 0}
+      onShowErrors={showErrors}
+      showErrorsClassName='nodrag nopan'
+      dragArea={<NodeDragArea />}
       footer={<StaleHandlesBody />}
-      onCopyError={() => toast.success('Copied error to clipboard')}
     >
       {children}
     </KitNodeFrame>

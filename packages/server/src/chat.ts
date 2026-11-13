@@ -41,7 +41,25 @@ export interface HostGroupChat {
   slug: string
   name: string
   agents: Array<{ nodeId: string; name: string }>
+  /**
+   * The slug of the space this is the chat of, the one its chat panel shows;
+   * absent for a chat made on its own. A space's chat is the one at the
+   * space's address, and it stays that space's through a rename of either.
+   */
+  space?: string
 }
+
+/**
+ * What a thread's session is doing, read from the same session states the
+ * chat's thread status rings show, in the words agent presence uses for the
+ * same states. `working`: a turn or its background work is in flight.
+ * `waiting`: a turn is blocked on a person (a permission request or a
+ * question), as the chat's Waiting. `compacting`: its context is being
+ * compacted. `idle`: the session is live and nothing runs, a message queued
+ * for a later turn included. `offline`: no live session. `archived`: the
+ * thread is in the chat's archive, whatever its session does.
+ */
+export type HostThreadStatus = 'working' | 'waiting' | 'compacting' | 'idle' | 'offline' | 'archived'
 
 /** A thread as the bound sender sees it. `threadId` is what `EmbeddedAgentChat` takes as `thread.threadId`. */
 export interface HostGroupChatThread {
@@ -54,6 +72,20 @@ export interface HostGroupChatThread {
   createdAt: Date
   /** True while the thread is archived: it refuses every send until unarchived. */
   archived: boolean
+  /** The thread-list folder it is filed in, by the name a person sees; null at the top level. For an archived thread, its folder in the archive. */
+  folder: string | null
+  status: HostThreadStatus
+  /** The context its session holds: the figure the chat's context ring shows, with `asOf` for a session not loaded now; null when it never reported one. */
+  contextUsage: HostThreadContext | null
+  /** ISO time of the last event its session had; null when it never had one. */
+  lastTurnAt: string | null
+}
+
+/** One page of `groupChats.activity`, most recently active thread first. */
+export interface HostThreadActivityPage {
+  threads: HostGroupChatThread[]
+  /** Pass as `cursor` for the next page; null on the last one. */
+  nextCursor: string | null
 }
 
 /** One turn of a thread's session, summarised — the same shape `group_chat_turns` returns. */
@@ -168,7 +200,8 @@ export interface HostSessionOptionsResult {
  * grants it in the chat's members list. A chat or thread the sender cannot
  * reach refuses with "Not available", whichever of the two it was.
  *
- * A system identity may open threads and post; it cannot read transcripts.
+ * A system identity may open threads, post, and read what its chats' threads
+ * are doing (`activity`); it cannot read transcripts.
  * Reading is `HostAgentGroupChatsApi.turns`, offered only when an agent is the
  * sender and so only over chats that agent belongs to.
  */
@@ -229,6 +262,34 @@ export interface HostGroupChatsApi {
    * other thread refuses with "Not available", as for `usage`.
    */
   compact(ref: string): Promise<HostCompactResult>
+  /**
+   * The threads of the chats the sender is a member of, or of the one `chat`
+   * (id or slug) names, with what each session is doing: metadata only, never
+   * the transcript. In a `ctx.groupChats` a signed-in person called with, the
+   * chats are the PERSON's. Most recently active first (`lastTurnAt`, then
+   * never-active threads); `since` (ISO) keeps the threads active at or after
+   * it. Archived threads only with `includeArchived`. `limit` defaults to 100,
+   * at most 500; page on with `nextCursor`. A thread that becomes active while
+   * you page moves to the front, so a later page does not repeat it:
+   * `subscribeActivity` reports it. A `chat` the reader is not in refuses
+   * with "Not available".
+   */
+  activity(options?: {
+    chat?: string
+    since?: string
+    limit?: number
+    cursor?: string
+    includeArchived?: boolean
+  }): Promise<HostThreadActivityPage>
+  /**
+   * Hear a thread's row each time its `status` or its live context reading
+   * changes, or it appears, with no polling; `lastTurnAt` alone moving is not
+   * a change. It hears only the threads of chats that `activity`'s reader is
+   * a member of when the change happens. Returns the unsubscribe. A subscription made
+   * from the server module ends when the module is unloaded; one made through
+   * an App action's `ctx` ends when that action does.
+   */
+  subscribeActivity(listener: (thread: HostGroupChatThread) => void | Promise<void>): () => void
 }
 
 /** `groupChats` acting as the agent that invoked an App action: the same calls, plus reading. */
@@ -246,9 +307,11 @@ export interface HostPersonGroupChat extends HostGroupChat {
 /**
  * `groupChats` for an App action a signed-in person invoked from the App's UI.
  * Sending is unchanged — the inherited calls act as the extension's own system
- * identity, as they do for any call no agent made — and two calls act as the
- * PERSON, so a UI can offer the person's own chats and let them grant this
- * extension into one.
+ * identity, as they do for any call no agent made — and four calls act as the
+ * PERSON, so a UI can offer the person's own chats, let them grant this
+ * extension into one, and show what the threads of their chats are doing:
+ * `personChats`, `grantExtension`, and the inherited `activity` and
+ * `subscribeActivity`, which read the person's chats here.
  */
 export interface HostPersonGroupChatsApi extends HostGroupChatsApi {
   /** The chats the person is a member of, with their agent members and the extension's grant state. */

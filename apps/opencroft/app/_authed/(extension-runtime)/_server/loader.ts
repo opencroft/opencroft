@@ -10,6 +10,8 @@ import type {
   NodeActionAccessMap,
   NodeActions,
 } from '@opencroft/server/actions'
+import type { NodeChecks, NodeDataValidators } from '@opencroft/server/graph'
+import type { NodeCredentialProperties } from '@opencroft/server/secrets'
 
 import {
   buildExtension,
@@ -17,9 +19,10 @@ import {
   SERVER_ENTRY_CANDIDATES,
 } from '@/app/_authed/(extension-runtime)/_server/compiler'
 import { listAllExtensionIds, MANIFEST_FILE } from '@/app/_authed/(extension-runtime)/_server/extension-folders'
-import { createHost } from '@/app/_authed/(extension-runtime)/_server/host'
+import { createHost, subscriptionHolder } from '@/app/_authed/(extension-runtime)/_server/host'
 import { readManifest } from '@/app/_authed/(extension-runtime)/_server/manifest'
 import { CLIENT_ICONS_FILE, extDir, extDistFile } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { outsideRun } from '@/app/_authed/(extension-runtime)/_server/run-scope'
 import { sourceMtime, statMaybe } from '@/app/_authed/(extension-runtime)/_server/source-mtime'
 import { compileErrorLocation, type ExtensionManifest } from '@/app/_authed/(extension-runtime)/_types'
 import { toastStore } from '@/lib/toast-store'
@@ -34,6 +37,12 @@ interface ServerModuleExports {
   nodeActions?: NodeActions
   /** Per-node-action authorization policy, keyed like `nodeActions`, declared alongside it; an action it does not list is 'signed-in'. */
   nodeActionAccess?: NodeActionAccessMap
+  /** Keyed by the extension's own bare node type. */
+  nodeDataValidators?: NodeDataValidators
+  /** Keyed by the extension's own bare node type. */
+  nodeChecks?: NodeChecks
+  /** Keyed by the extension's own bare node type. */
+  nodeCredentialProperties?: NodeCredentialProperties
   routes?: opencroft.ExtensionRoutes
   tools?: Record<string, opencroft.ExtensionToolHandler>
   /** Per-App server lifecycle hooks, keyed by the App's bare type. */
@@ -49,6 +58,12 @@ interface CachedModule extends ServerModuleExports {
   context: opencroft.ExtensionContext
   registeredTypes: opencroft.Type[]
   registeredNodes: opencroft.Node[]
+  /**
+   * Ends the subscriptions this evaluation made through its host and still
+   * holds. Optional because the cache lives on `globalThis` and outlives a
+   * reload of this file, so it can hold modules a loader without it evaluated.
+   */
+  endSubscriptions?: () => void
 }
 
 interface ExtensionRegistrations {
@@ -199,7 +214,8 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     }
   }
 
-  const host = createHost(extensionId)
+  const subscriptions = subscriptionHolder()
+  const host = createHost(extensionId, subscriptions.hold)
   const prevGlobal = (globalThis as { __extensionServerApi?: unknown }).__extensionServerApi
   ;(globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = { host }
   try {
@@ -232,6 +248,9 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const exposeOutput = exported.exposeOutput ?? exported.default?.exposeOutput
     const nodeActions = exported.nodeActions ?? exported.default?.nodeActions
     const nodeActionAccess = exported.nodeActionAccess ?? exported.default?.nodeActionAccess ?? {}
+    const nodeDataValidators = exported.nodeDataValidators ?? exported.default?.nodeDataValidators
+    const nodeChecks = exported.nodeChecks ?? exported.default?.nodeChecks
+    const nodeCredentialProperties = exported.nodeCredentialProperties ?? exported.default?.nodeCredentialProperties
     const routes = exported.routes ?? exported.default?.routes
     const tools = exported.tools ?? exported.default?.tools
     const apps = exported.apps ?? exported.default?.apps
@@ -245,6 +264,9 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       exposeOutput,
       nodeActions,
       nodeActionAccess,
+      nodeDataValidators,
+      nodeChecks,
+      nodeCredentialProperties,
       routes,
       tools,
       apps,
@@ -253,13 +275,22 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       context: reg.context,
       registeredTypes: reg.types,
       registeredNodes: reg.nodes,
+      endSubscriptions: subscriptions.end,
     }
+  } catch (error) {
+    // A module that threw while evaluating is never cached, so no unload will
+    // come for what it subscribed to before throwing.
+    subscriptions.end()
+    throw error
   } finally {
     ;(globalThis as { __extensionServerApi?: unknown }).__extensionServerApi = prevGlobal
   }
 }
 
+// Unloads whatever evaluation of the extension is cached first, a dependency
+// re-activated for its dependent included, so two never stand at once.
 async function activate(extensionId: string): Promise<CachedModule> {
+  runUnload(extensionId)
   const manifest = await readManifest(extensionId)
   manifestCache().set(extensionId, manifest)
 
@@ -293,7 +324,9 @@ export function getExtensionModule(extensionId: string): Promise<CachedModule> {
   if (inFlight) {
     return inFlight
   }
-  const promise = getExtensionModuleExclusive(extensionId).finally(() => {
+  // Outside every run: what activation leaves running outlives the request
+  // whose dispatch asked first (`run-scope.ts`).
+  const promise = outsideRun(() => getExtensionModuleExclusive(extensionId)).finally(() => {
     if (getModuleLocks.get(extensionId) === promise) {
       getModuleLocks.delete(extensionId)
     }
@@ -309,7 +342,6 @@ async function getExtensionModuleExclusive(extensionId: string): Promise<CachedM
     if (srcMtime <= cached.updatedAt) {
       return cached
     }
-    runUnload(extensionId)
   }
   return activate(extensionId)
 }
@@ -422,27 +454,36 @@ export async function clientIconNames(extensionId: string): Promise<string[]> {
   }
 }
 
+// Takes the module out of the cache: an unloaded module is never served again.
+// The extension's own `unload` runs first, and whatever it left subscribed is
+// ended right after it is called: a module recompiled without unsubscribing
+// would otherwise keep one more listener alive on every recompile.
 function runUnload(extensionId: string): void {
   const mod = moduleCache().get(extensionId)
-  if (!mod?.unload) {
+  if (!mod) {
     return
   }
-  void mod.unload(mod.context)
+  moduleCache().delete(extensionId)
+  try {
+    if (mod.unload) {
+      void mod.unload(mod.context)
+    }
+  } finally {
+    mod.endSubscriptions?.()
+  }
 }
 
 export function flushCache(extensionId?: string): void {
   if (extensionId) {
     runUnload(extensionId)
-    moduleCache().delete(extensionId)
     manifestCache().delete(extensionId)
     manifestMtimeCache.delete(extensionId)
     unbuildable.delete(extensionId)
     return
   }
-  for (const id of moduleCache().keys()) {
+  for (const id of [...moduleCache().keys()]) {
     runUnload(id)
   }
-  moduleCache().clear()
   manifestCache().clear()
   manifestMtimeCache.clear()
   unbuildable.clear()

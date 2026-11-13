@@ -4,6 +4,7 @@ import { and, asc, desc, eq, type SQL } from 'drizzle-orm'
 
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
 import { sessionActivitySets } from '@/app/_authed/(agent)/_server/session-activity'
+import { readTranscriptRetention, writeTranscriptRetention } from '@/app/_authed/(agent)/_server/transcript-retention'
 import { deriveSessionStatus, type SessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
 import { type BackgroundTaskList, backgroundTaskList } from '@/app/_authed/(background-tasks)/_server/task-list'
 import type { AuditStatus } from '@/app/_authed/(mcp)/_server/audit'
@@ -119,6 +120,26 @@ export const updateSleepMode = createServerFn({ method: 'POST' })
     setSleep(enabled)
     return getSleepModeInfo()
   })
+
+// ── Chat history ───────────────────────────────────────────────────────────
+
+export interface ChatHistorySettings {
+  // At most this many events of each session's own chat; null keeps all.
+  maxEntries: number | null
+  // Remove turns that started more than this many days ago; null keeps all.
+  cleanupAfterDays: number | null
+}
+
+export const getChatHistorySettings = createServerFn()
+  .middleware([adminOnly])
+  .handler(async (): Promise<ChatHistorySettings> => readTranscriptRetention())
+
+// Instance-wide and it removes recorded history, so admin-only like the levers
+// above.
+export const updateChatHistorySettings = createServerFn({ method: 'POST' })
+  .middleware([adminOnly])
+  .inputValidator((settings: ChatHistorySettings) => settings)
+  .handler(async ({ data }): Promise<ChatHistorySettings> => writeTranscriptRetention(data))
 
 // ── Live sessions (everything except Offline) ──────────────────────────────
 

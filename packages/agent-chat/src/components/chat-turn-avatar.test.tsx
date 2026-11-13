@@ -76,9 +76,11 @@ function said(author: string, account?: ChatAuthorAccount, text = 'the build is 
 }
 
 // The avatar renders an `<Avatar>` box with a `<User>` icon inside it; the blank
-// that holds a run's left edge is a plain span. Matching on the svg is what
-// tells them apart -- the blank has no children at all.
-const AVATAR = /<svg/
+// that holds a run's left edge is a plain span. Matching on that icon is what
+// tells them apart -- the blank has no children at all -- and, unlike any svg,
+// it is not the icon of each message's action menu.
+const AVATAR = /lucide-user\b/
+const AVATARS = new RegExp(AVATAR.source, 'g')
 
 // The blank itself, which is the thing a run must NOT be full of. `size-8` alone
 // would match the avatar too, since both are the same size by design.
@@ -130,7 +132,7 @@ test('a run draws one face, and no blanks under it', () => {
     <ChatUserMessage parts={[said('ada', ADA), said('ada', ADA)]} renderers={renderers} />,
   )
 
-  assert.equal(html.match(/<svg/g)?.length, 1, 'the second message continues the run rather than repeating the face')
+  assert.equal(html.match(AVATARS)?.length, 1, 'the second message continues the run rather than repeating the face')
   assert.equal(
     html.match(BLANK),
     null,
@@ -143,7 +145,7 @@ test('a change of sender inside one delivery draws a second face', () => {
     <ChatUserMessage parts={[said('ada', ADA), said('bo', BO)]} renderers={renderers} />,
   )
 
-  assert.equal(html.match(/<svg/g)?.length, 2, 'two senders, two faces')
+  assert.equal(html.match(AVATARS)?.length, 2, 'two senders, two faces')
   assert.equal(segments(html).length, 2)
 })
 

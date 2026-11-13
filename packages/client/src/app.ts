@@ -129,9 +129,12 @@ export declare const AppToolbar: FC<{ children: ReactNode }>
 export interface AppSidebarProps {
   /**
    * How the sidebar sits beside the App on a wide screen. `push` (the default)
-   * moves the App aside; `overlay` floats above the App and leaves it its full
-   * width, for content with no edge to push, such as a canvas. On a phone the
-   * sidebar is a sheet either way.
+   * moves the whole App aside. `overlay` floats above the App's viewport
+   * without moving it, while the App's UI area still makes room for the
+   * sidebar, so nothing the App lays out lies under it; what the App renders
+   * in `AppViewport` stays where it is and reaches under the sidebar. For
+   * content with no edge to push, such as a canvas. On a phone the sidebar is
+   * a sheet either way.
    */
   mode?: 'push' | 'overlay'
   children: ReactNode
@@ -142,6 +145,21 @@ export interface AppSidebarProps {
  * title bar shows the button that opens and closes it.
  */
 export declare const AppSidebar: FC<AppSidebarProps>
+
+/**
+ * Content that fills the App's whole viewport, behind the App's UI: the
+ * App's content area including the strip an overlay sidebar lies over. It
+ * stays put when that sidebar opens or closes, and when the App's own panels
+ * move, so it is for what must not move with them, such as an endless canvas.
+ * Rendered anywhere in the App, it fills the viewport all the same, as long
+ * as no positioned element (`relative`, `absolute`, …) sits between it and the
+ * App's root.
+ *
+ * The App's UI that overlaps it must stack above it: positioned, and later in
+ * the page or with a z-index. What the App frames on it (fitting or centring a
+ * view) belongs in the part its UI leaves uncovered.
+ */
+export declare const AppViewport: FC<{ children: ReactNode }>
 
 export interface UrlParamWriteOptions {
   /**

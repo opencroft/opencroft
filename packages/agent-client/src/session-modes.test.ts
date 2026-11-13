@@ -9,6 +9,7 @@ import {
   classifyModes,
   modeIdForCanonical,
   mostSupervisedModeId,
+  offeredModeId,
   SUPERVISION_ORDER,
 } from './session-modes'
 import type { SessionMode } from './types'
@@ -52,6 +53,58 @@ test("Claude Code's `default` classifies as manual, not as a fallback", () => {
   // the adapter table.
   assert.equal(canonicalModeId('claude', 'default'), 'manual-edits')
   assert.equal(canonicalModeId('some-other-agent', 'default'), undefined)
+})
+
+// OpenCode's primary agents, advertised as its modes.
+const OPENCODE_MODES: SessionMode[] = [
+  { id: 'build', name: 'build' },
+  { id: 'plan', name: 'plan' },
+]
+
+test("OpenCode's `build` classifies as Auto, for OpenCode only", () => {
+  assert.deepEqual(
+    classifyModes('opencode', OPENCODE_MODES).map((mode) => mode.canonical?.id),
+    ['auto', 'plan'],
+  )
+  assert.equal(modeIdForCanonical('opencode', OPENCODE_MODES, 'auto'), 'build')
+  assert.equal(canonicalModeId('some-other-agent', 'build'), undefined)
+  assert.equal(canonicalModeId('claude', 'build'), undefined)
+})
+
+// Copilot CLI 1.0.95's `session/new` modes, ids and names as sent.
+const COPILOT_MODES: SessionMode[] = [
+  { id: 'https://agentclientprotocol.com/protocol/session-modes#agent', name: 'Agent' },
+  { id: 'https://agentclientprotocol.com/protocol/session-modes#plan', name: 'Plan' },
+  { id: 'https://agentclientprotocol.com/protocol/session-modes#autopilot', name: 'Autopilot' },
+]
+
+test("Copilot's agent and plan classify as Manual Edits and Plan; autopilot stays its own", () => {
+  for (const adapterId of ['copilot', 'copilot-subscription']) {
+    assert.deepEqual(
+      classifyModes(adapterId, COPILOT_MODES).map((mode) => mode.canonical?.id),
+      ['manual-edits', 'plan', undefined],
+    )
+    // Copilot's bypass is its `allow_all` option, not a mode.
+    assert.equal(modeIdForCanonical(adapterId, COPILOT_MODES, 'bypass'), undefined)
+    assert.equal(mostSupervisedModeId(adapterId, COPILOT_MODES), COPILOT_MODES[0]?.id)
+  }
+  // The URLs are Copilot's spelling, not a shared one.
+  assert.equal(canonicalModeId('claude', 'https://agentclientprotocol.com/protocol/session-modes#agent'), undefined)
+})
+
+test('a requested mode reaches an agent by its own id, or by what it means', () => {
+  // Copilot's own id, and `plan` (Claude Code's id and ours), land on its plan.
+  const plan = COPILOT_MODES[1]?.id
+  assert.equal(offeredModeId('copilot', COPILOT_MODES, plan ?? ''), plan)
+  assert.equal(offeredModeId('copilot', COPILOT_MODES, 'plan'), plan)
+  assert.equal(offeredModeId('copilot', COPILOT_MODES, 'manual-edits'), COPILOT_MODES[0]?.id)
+  // A mode the session does not offer has nowhere to go...
+  assert.equal(offeredModeId('copilot', COPILOT_MODES, 'bypassPermissions'), undefined)
+  // ...and another agent's adapter-only spelling means nothing here.
+  assert.equal(offeredModeId('copilot', COPILOT_MODES, 'default'), undefined)
+  // Claude Code's exact ids are taken as they are.
+  assert.equal(offeredModeId('claude', CLAUDE_CODE_MODES, 'default'), 'default')
+  assert.equal(offeredModeId('claude', CLAUDE_CODE_MODES, 'bypass'), 'bypassPermissions')
 })
 
 test('a new agent gets our own values for free, and nothing else unregistered', () => {

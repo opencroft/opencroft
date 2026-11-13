@@ -57,6 +57,10 @@ function Probe(): ReactNode {
   return null
 }
 
+// What is under test is where the controls land around the message, not the
+// message's editor: a stand-in fills the composer's slot.
+const COMPOSER = { input: <span />, hasText: false, submit: () => {} }
+
 // The composer as its host draws it: the quotation above, the composer below,
 // and the toggle handed to the composer's forwarded slot rather than placed by
 // the host. `controls` is what the "without the slot" case takes away.
@@ -68,9 +72,7 @@ function NewThreadSurface({ controls }: { controls: boolean }): ReactNode {
         agents={AGENTS}
         selectedAgentNodeId='agent-1'
         onSelectAgent={() => {}}
-        value=''
-        onValueChange={() => {}}
-        onSubmit={() => {}}
+        composer={COMPOSER}
         attachmentControls={controls ? <SelectionToggle /> : undefined}
       />
     </div>
@@ -135,12 +137,12 @@ test('the forwarded control stands in the action row, below the message', async 
 
   const button = view.toggle('new-thread')
   assert.ok(button, 'the toggle reached the composer')
-  const textarea = dom.container.querySelector('textarea')
-  assert.ok(textarea, 'the composer has a message field')
+  const message = dom.container.querySelector('[data-slot="agent-command-bar-composer"]')
+  assert.ok(message, 'the composer has a message field')
   // Document order is the claim: the lower part of the composer, not the row
   // above it, which is where the quotation goes and where this must not.
   assert.ok(
-    (textarea.compareDocumentPosition(button) & FOLLOWING) !== 0,
+    (message.compareDocumentPosition(button) & FOLLOWING) !== 0,
     'the toggle follows the message field rather than preceding it',
   )
   await view.unmount()

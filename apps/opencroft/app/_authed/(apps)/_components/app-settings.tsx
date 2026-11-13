@@ -19,11 +19,19 @@ import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 
-import { removeSpaceApp, renameSpaceApp, transferSpaceApp, updateSpaceApp } from '@/app/_authed/(apps)/_server/actions'
+import {
+  listAppRemovalSecretReferences,
+  removeSpaceApp,
+  renameSpaceApp,
+  transferSpaceApp,
+  updateSpaceApp,
+} from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta, SpaceAppInstance } from '@/app/_authed/(apps)/_server/types'
 import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { useProvided } from '@/app/_authed/(extension-runtime)/_client/provides'
 import { resolveIcon } from '@/app/_authed/(extension-runtime)/_client/registry'
+import { SecretReferenceList } from '@/app/_authed/(secrets-store)/_components/secret-reference-list'
+import type { SecretKeyReferences } from '@/app/_authed/(secrets-store)/_lib/secret-references'
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
 
 interface Props {
@@ -73,6 +81,8 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
   const [removeConfirm, setRemoveConfirm] = useState(false)
   const [removeError, setRemoveError] = useState<string>()
   const [removing, setRemoving] = useState(false)
+  /** Secrets the instance takes with it that Apps left in the space still name. */
+  const [removeNamed, setRemoveNamed] = useState<SecretKeyReferences[]>([])
 
   // The extension's client half, for Apps that ship a custom parameter form.
   const { items: definitions } = useProvided<AppDefinition>('apps', loadExtensionsProviding)
@@ -144,6 +154,20 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
     } finally {
       setTransferring(false)
     }
+  }
+
+  // The confirm names what stops working, so that is looked up first.
+  async function askRemove() {
+    setRemoveError(undefined)
+    try {
+      setRemoveNamed(await listAppRemovalSecretReferences({ data: { spaceSlug, instanceId: instance.id } }))
+    } catch (error) {
+      setRemoveError(
+        `Could not check what uses the secrets it holds: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return
+    }
+    setRemoveConfirm(true)
   }
 
   async function handleRemove() {
@@ -286,7 +310,7 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
             The app is unloaded and everything it stored is deleted. Transfer it instead if the data should survive.
           </p>
           <div>
-            <Button variant='destructive' onClick={() => setRemoveConfirm(true)} disabled={removing}>
+            <Button variant='destructive' onClick={() => void askRemove()} disabled={removing}>
               {removing ? 'Removing…' : 'Remove app'}
             </Button>
           </div>
@@ -333,11 +357,21 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
             <AlertDialogTitle>Remove {instance.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               The app instance and everything it stored are deleted. This cannot be undone.
+              {removeNamed.length > 0
+                ? ' Its Secrets Stores go with it, and these apps still name some of their secrets: they stop working at their next use.'
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {removeNamed.length > 0 ? <SecretReferenceList named={removeNamed} /> : null}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRemove}>Remove</AlertDialogAction>
+            {removeNamed.length > 0 ? (
+              <AlertDialogAction variant='destructive' onClick={handleRemove}>
+                Remove anyway
+              </AlertDialogAction>
+            ) : (
+              <AlertDialogAction onClick={handleRemove}>Remove</AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

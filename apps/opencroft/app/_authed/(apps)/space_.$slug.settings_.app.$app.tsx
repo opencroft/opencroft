@@ -1,13 +1,14 @@
-import { createFileRoute, Link, notFound } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from 'ui/button'
 import { Flex } from 'ui/layout/flex'
 import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/layout/scrollpage'
+import { TitleBarTitle } from 'ui/layouts/title-bar'
 
 import { AppSettings } from '@/app/_authed/(apps)/_components/app-settings'
 import { instanceBySlug } from '@/app/_authed/(apps)/_lib/instance-by-slug'
 import { listApps, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
-import { settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
+import { missingAddress, settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
 
@@ -18,7 +19,8 @@ import { pageTitle } from '@/app/_lib/page-title'
 export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app/$app')({
   loader: async ({ params }) => {
     // An unknown SPACE is settled first (settleSpaceRoute); an unknown INSTANCE
-    // in a space that exists is this loader's own notFound, below. Both 404.
+    // in a space that exists is this loader's own check, below. Both leave for
+    // the root (missingAddress).
     const { space, spaces, data } = await settleSpaceRoute(
       params.slug,
       listSpaces(),
@@ -27,7 +29,7 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/settings_/app
     const [apps, instances] = data
     const instance = instanceBySlug(instances, params.app)
     if (!instance) {
-      throw notFound()
+      throw missingAddress()
     }
     const meta = apps.find((app) => app.type === instance.type)
     return { space, instance, meta, spaces }
@@ -47,7 +49,11 @@ function Page() {
   const { slug } = Route.useParams()
   return (
     <ScrollPage>
-      <ScrollHeader>
+      {/* On a phone the title bar names the page and leads with its Back. */}
+      <TitleBarTitle>
+        <span className='md:hidden'>{instance.name}</span>
+      </TitleBarTitle>
+      <ScrollHeader className='max-md:hidden'>
         <Flex row withGaps align='center' className='w-full'>
           <Link to='/space/$slug/settings' params={{ slug }} search={{ section: 'apps' }}>
             <Button variant='ghost' size='icon'>

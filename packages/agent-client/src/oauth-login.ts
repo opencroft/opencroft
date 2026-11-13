@@ -9,24 +9,43 @@
 //  - device-code (./oauth-device-code): the user opens a verification URL and
 //    enters a one-time code there, while the login waits (awaitOauthLogin).
 
-import { type ChildProcessWithoutNullStreams, execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 
 import { errorMessage } from './errors'
 import type { HarnessAdapter } from './harness-adapters'
+import { placedShell, startHarnessProcess } from './harness-process'
 import { driveDeviceCodeLogin } from './oauth-device-code'
 import { drivePasteCodeLogin } from './oauth-paste-code'
-import { buildSpawnConfig, findAdapter, harnessHomeDir } from './resolve'
-import type { AgentSelection } from './types'
+import {
+  buildSpawnConfig,
+  findAdapter,
+  type HarnessPlacement,
+  harnessHomeDir,
+  harnessPlacement,
+  placementLabel,
+} from './resolve'
+import type { AgentSelection, HarnessProcess, RemoteShell, ShellResolver } from './types'
 
-// Where the agent that signs in runs: the same two fields its sessions are
-// spawned with, so a login lands in the home those sessions read.
-export type OauthPlacement = Pick<AgentSelection, 'harnessHome' | 'containerName'>
+// Where the agent that signs in runs: the same fields its sessions are spawned
+// with, so a login lands in the home those sessions read; the shell itself
+// rather than its id, as the host would resolve it for those sessions.
+export type OauthPlacement = Pick<AgentSelection, 'harnessHome' | 'containerName'> & { shell?: RemoteShell }
+
+// The placement as a selection's fields, and the resolver for its one shell.
+function placed(placement: OauthPlacement): {
+  where: HarnessPlacement
+  fields: Pick<AgentSelection, 'containerName' | 'shell'>
+  shells: ShellResolver
+} {
+  const { shell } = placement
+  const fields = { containerName: placement.containerName, shell: shell?.id }
+  return { where: harnessPlacement(fields), fields, shells: (id) => (shell?.id === id ? shell : undefined) }
+}
 
 interface PasteCodeSpec {
   kind: 'paste-code'
@@ -102,7 +121,7 @@ interface LoginFlow {
   // One live login per scope: the adapter plus where its credentials land.
   scope: string
   placement: OauthPlacement
-  child: ChildProcessWithoutNullStreams
+  child: HarnessProcess
   stderrTail: string
   // What the caller of startOauthLogin shows the user. Settled once.
   showPrompt: (prompt: OauthLoginStart) => void
@@ -142,8 +161,8 @@ function loginHarnessHome(adapter: HarnessAdapter, placement: OauthPlacement): s
 
 interface FileLocation {
   paths: string[]
-  // Undefined: the files are on this machine.
-  containerName?: string
+  where: HarnessPlacement
+  shells?: ShellResolver
 }
 
 function credentialLocation(
@@ -153,45 +172,43 @@ function credentialLocation(
   files: string[],
 ): FileLocation {
   if (spec.kind === 'paste-code') {
-    return { paths: files.map((file) => join(homedir(), file)) }
+    return { paths: files.map((file) => join(homedir(), file)), where: { kind: 'host' } }
   }
   const home = loginHarnessHome(adapter, placement)
-  return { paths: files.map((file) => `${home}/${file}`), containerName: placement.containerName }
+  const { where, shells } = placed(placement)
+  return { paths: files.map((file) => `${home}/${file}`), where, shells }
 }
 
-const execFileAsync = promisify(execFile)
-
 async function allFilesExist(location: FileLocation): Promise<boolean> {
-  if (!location.containerName) {
+  const { where } = location
+  if (where.kind === 'host') {
     return location.paths.every((path) => existsSync(path))
   }
   try {
-    await execFileAsync('docker', [
-      'exec',
-      location.containerName,
-      'sh',
-      '-c',
-      'for f; do test -f "$f" || exit 3; done',
-      'sh',
-      ...location.paths,
-    ])
-    return true
+    const answer = await placedShell(where, location.shells)(
+      `for f in ${location.paths.map(shellQuote).join(' ')}; do test -f "$f" || { echo missing; exit 0; }; done; echo present`,
+      '',
+      {},
+    )
+    return answer.trim() === 'present'
   } catch (error) {
-    // Exit 3 is the script's own "a file is missing"; anything else (the
-    // container is down, docker is missing) is not an answer about the files.
-    if ((error as { code?: unknown }).code === 3) {
-      return false
-    }
-    throw new Error(`Could not check the sign-in inside container '${location.containerName}': ${errorMessage(error)}`)
+    // The script answers about the files; a failure to run it (the container
+    // is down, the shell is unreachable) is not an answer about them.
+    throw new Error(`Could not check the sign-in in ${placementLabel(where)}: ${errorMessage(error)}`)
   }
 }
 
 async function removeFiles(location: FileLocation): Promise<void> {
-  if (!location.containerName) {
+  const { where } = location
+  if (where.kind === 'host') {
     await Promise.all(location.paths.map((path) => rm(path, { force: true })))
     return
   }
-  await execFileAsync('docker', ['exec', location.containerName, 'rm', '-f', '--', ...location.paths])
+  await placedShell(where, location.shells)(`rm -f -- ${location.paths.map(shellQuote).join(' ')}`, '', {})
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
 }
 
 async function isConnected(spec: OauthSpec, adapter: HarnessAdapter, placement: OauthPlacement): Promise<boolean> {
@@ -212,7 +229,7 @@ function settle(flow: LoginFlow, result: OauthLoginResult) {
       flow.failPrompt(new Error(result.error ?? 'Login failed'))
     }
   }
-  if (flow.child.exitCode === null && !flow.child.killed) {
+  if (flow.child.exitCode === null && flow.child.signalCode === null) {
     flow.child.kill()
   }
 }
@@ -229,7 +246,7 @@ async function spawnLoginProcess(
   spec: OauthSpec,
   adapter: HarnessAdapter,
   placement: OauthPlacement,
-): Promise<ChildProcessWithoutNullStreams> {
+): Promise<HarnessProcess> {
   if (spec.kind === 'paste-code') {
     return spawn(adapter.command, adapter.args, {
       // A neutral cwd: the login needs no workspace, and the harness would
@@ -242,31 +259,31 @@ async function spawnLoginProcess(
   // Refuses before anything is spawned when there is no home to sign in to.
   loginHarnessHome(adapter, placement)
   // Built by the same function as the agent's sessions, so the home variable,
-  // the fixed environment and the container wrapping are theirs. No provider
+  // the fixed environment and the placement's wrapping are theirs. No provider
   // and no key: signing in needs neither.
+  const { where, fields, shells } = placed(placement)
   const config = buildSpawnConfig({
     providerId: '',
     adapterId: adapter.id,
     model: '',
     apiKey: '',
-    cwd: placement.containerName ? '' : tmpdir(),
+    cwd: where.kind === 'host' ? tmpdir() : '',
     harnessHome: placement.harnessHome,
-    containerName: placement.containerName,
+    ...fields,
   })
   for (const dir of config.ensureDirs ?? []) {
     await mkdir(dir, { recursive: true })
   }
-  return spawn(config.command, config.args, {
-    cwd: config.cwd || undefined,
-    env: { ...process.env, ...config.env },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
+  return startHarnessProcess(config, shells)
 }
 
 function loginScope(spec: OauthSpec, adapterId: string, placement: OauthPlacement): string {
-  return spec.kind === 'paste-code'
-    ? adapterId
-    : JSON.stringify([adapterId, placement.containerName ?? '', placement.harnessHome ?? ''])
+  if (spec.kind === 'paste-code') {
+    return adapterId
+  }
+  const { where } = placed(placement)
+  const place = where.kind === 'shell' ? `shell:${where.shell}` : where.kind === 'container' ? where.container : ''
+  return JSON.stringify([adapterId, place, placement.harnessHome ?? ''])
 }
 
 // Spawns the harness and returns what to show the user: a consent URL to open

@@ -2,7 +2,15 @@ import type { HTMLAttributes } from 'react'
 
 import { cn } from 'cn'
 
-export type StatusVariant = 'primary' | 'secondary' | 'muted' | 'accent' | 'success' | 'warning' | 'destructive'
+export type StatusVariant =
+  | 'primary'
+  | 'secondary'
+  | 'muted'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'destructive'
+  | 'neutral'
 
 // The colour is looked up, not composed.
 //
@@ -32,21 +40,30 @@ const VARIANT_BG: Record<StatusVariant, string> = {
   success: 'bg-success',
   warning: 'bg-warning',
   destructive: 'bg-destructive',
+  // Grey: something that is off, as against `muted`, which is a surface colour and barely shows.
+  neutral: 'bg-muted-foreground',
 }
 
 export interface StatusIndicatorProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'className'> {
   variant?: StatusVariant
+  /**
+   * The ring that pings around the dot, on by default. Turn it off for a state that is still,
+   * such as something switched off, so only live states draw the eye.
+   */
+  pulse?: boolean
   className?: string
 }
 
-export function StatusIndicator({ variant, className, ...props }: StatusIndicatorProps) {
+export function StatusIndicator({ variant, pulse = true, className, ...props }: StatusIndicatorProps) {
   // No variant means no colour, exactly as before: an uncoloured dot rather
   // than a defaulted one, so a host that has nothing to report shows nothing.
   const bg = variant ? VARIANT_BG[variant] : undefined
 
   return (
     <span className={cn('relative flex h-2 w-2', 'group', variant, className)} {...props}>
-      <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full opacity-75', bg)} />
+      {pulse ? (
+        <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full opacity-75', bg)} />
+      ) : null}
       <span className={cn('relative inline-flex h-2 w-2 rounded-full', bg)} />
     </span>
   )

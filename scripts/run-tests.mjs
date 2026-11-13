@@ -13,6 +13,10 @@
 // since packages/db's advisory lock, refuse; either is a failed run, which is
 // why an inherited OPENCROFT_PGLITE_PATH is cleared below rather than handed to every
 // file at once.
+//
+// Every file runs under a wall-clock limit (test-file-limit.mjs). One that
+// passes it is named, killed with the processes it started, and fails the
+// run, which goes on with the other files.
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
@@ -22,6 +26,7 @@ import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { testConcurrency } from './test-concurrency.mjs'
+import { defaultFileTimeout, fileTimeouts, startWatchdog } from './test-file-limit.mjs'
 
 // The repository's own tsx, as a loader of this node's rather than through
 // `npx` or tsx's command line. Under npx a signal sent to this process stopped
@@ -33,6 +38,8 @@ import { testConcurrency } from './test-concurrency.mjs'
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href
 
 const SLOT_GATE = pathToFileURL(join(import.meta.dirname, 'test-slot.mjs')).href
+
+const FILE_WATCHDOG = pathToFileURL(join(import.meta.dirname, 'test-file-watchdog.mjs')).href
 
 const RUN_DIR_PREFIX = 'opencroft-test-run-'
 
@@ -88,6 +95,16 @@ if (testFiles.length === 0) {
   process.exit(0)
 }
 
+// Each file's wall-clock limit (see test-file-limit.mjs). A declaration that
+// cannot be used is fixed before anything runs, not discovered when the file
+// it was meant for times out.
+const defaultSeconds = defaultFileTimeout()
+const { limits, problems } = fileTimeouts(testFiles, defaultSeconds)
+if (problems.length > 0) {
+  for (const problem of problems) console.error(problem)
+  process.exit(1)
+}
+
 const args = []
 // Under the root run, each file first waits for a slot of the run's pool, so
 // the concurrency below is the most this workspace runs at once, and the cap
@@ -96,6 +113,8 @@ const args = []
 if (process.env.OPENCROFT_TEST_SLOTS) {
   args.push('--import', SLOT_GATE)
 }
+// After the slot gate, so a file's clock starts once it may run.
+args.push('--import', FILE_WATCHDOG)
 args.push('--import', TSX)
 // A workspace-local preload -- e.g. one that gives DB-touching suites a
 // default throwaway datadir -- is opted into by placing it at this path.
@@ -164,15 +183,30 @@ process.on('exit', () => rmSync(runDir, { recursive: true, force: true }))
 // but not on SIGHUP, which ends it alone and leaves the files running, so a
 // SIGHUP is sent on as SIGTERM. The setup blocks the event loop, so a
 // signal that arrives during it is handled once it returns, and stops the
-// files instead.
+// files instead. One that arrives before then, while the watchdog starts,
+// has no files to stop and ends the run.
 let child
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  process.on(signal, () => child?.kill(signal === 'SIGHUP' ? 'SIGTERM' : signal))
+  process.on(signal, () => (child ? child.kill(signal === 'SIGHUP' ? 'SIGTERM' : signal) : process.exit(1)))
 }
+
+// In the run directory, so it goes with it.
+env.OPENCROFT_TEST_WATCHDOG = join(runDir, 'watchdog.sock')
+const watchdog = await startWatchdog(env.OPENCROFT_TEST_WATCHDOG, limits, defaultSeconds)
 
 runGlobalSetup()
 child = spawn(process.execPath, args, { stdio: 'inherit', env })
-child.on('close', (code) => process.exit(code ?? 1))
+child.on('close', (code) => {
+  watchdog.stop()
+  // On stderr, as the last lines of the run: the report on stdout shows a
+  // timed-out file only as failed, among every other failure. The run fails
+  // without help: a timed-out file exits failed or is killed, and the test
+  // runner counts either as a failed file.
+  for (const { file, seconds } of watchdog.timedOut) {
+    console.error(`Timed out: ${file} (limit ${seconds} s).`)
+  }
+  process.exit(code ?? 1)
+})
 
 // Removes run directories left by runs that died before their exit hook ran.
 // Directories only: lstat, so a link with this prefix is never followed.

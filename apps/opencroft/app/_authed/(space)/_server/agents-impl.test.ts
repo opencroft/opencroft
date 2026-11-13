@@ -85,17 +85,10 @@ test('a node with no name matches nothing, including the empty string', () => {
 
 test('the agent directory is id, name and avatar, ordered by name, and nothing else', () => {
   // Extensions read this through the host, so the shape is the exposure: an
-  // agent's instructions and space must not ride along with its face.
+  // agent's space must not ride along with its face.
   const listed = [
-    {
-      nodeId: 'agent-2',
-      name: 'Carol',
-      avatar: 'data:image/png;base64,AAAA',
-      spaceSlug: 'team',
-      spaceName: 'Team',
-      instructions: [{ nodeId: 'i-1', name: 'Role', instruction: 'secret' }],
-    },
-    { nodeId: 'agent-1', name: 'Alice', spaceSlug: 'team', spaceName: 'Team', instructions: [] },
+    { nodeId: 'agent-2', name: 'Carol', avatar: 'data:image/png;base64,AAAA', spaceSlug: 'team', spaceName: 'Team' },
+    { nodeId: 'agent-1', name: 'Alice', spaceSlug: 'team', spaceName: 'Team' },
   ]
   assert.deepEqual(agentDirectoryOf(listed), [
     { id: 'agent-1', name: 'Alice', avatarUrl: null },

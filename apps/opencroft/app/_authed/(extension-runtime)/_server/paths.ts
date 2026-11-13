@@ -24,8 +24,9 @@ export const CLIENT_ICONS_FILE = 'icons.json'
 
 /**
  * Written into `dist/` beside a client bundle: the provider points its
- * declaration registers, read off the bundle itself, with the identity of the
- * `client.js` they were read from. See provided-points.ts.
+ * declaration registers and its node types' default data, read off the bundle
+ * itself, with the identity of the `client.js` they were read from. See
+ * provided-points.ts.
  */
 export const PROVIDED_POINTS_FILE = 'provides.json'
 

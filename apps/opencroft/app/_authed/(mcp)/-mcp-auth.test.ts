@@ -151,7 +151,7 @@ test('a graph read and a graph write through app_call are refused without a toke
   const read = { name: 'app_call', arguments: { app: address, action: 'listNodes' } }
   const write = {
     name: 'app_call',
-    arguments: { app: address, action: 'createNodes', params: { nodes: [{ type: 'acme.notes.note' }] } },
+    arguments: { app: address, action: 'createNodes', params: { nodes: [{ type: 'builtin.core.section' }] } },
   }
 
   await assertRefused(await call('tools/call', undefined, read), 'a graph read without a token')

@@ -1,11 +1,19 @@
 import type { MentionedAccount } from '@opencroft/client/chat'
 import { db, user } from '@opencroft/db'
+import type { MentionCandidate } from 'agent-chat/components/mention-autocomplete'
 import { inArray } from 'drizzle-orm'
 
 import { listAgentNodesImpl } from '@/app/_authed/(space)/_server/agents-impl'
 import { agentAvatarUrl } from '@/app/_server/agent-avatar'
 import { userAvatarUrl } from '@/app/_server/user-avatar'
-import { currentUsernames, type Principal, principalKey, resolveUsernames } from '@/app/_server/usernames'
+import {
+  currentUsernames,
+  type ExistingAccount,
+  ensureCurrentUsernames,
+  type Principal,
+  principalKey,
+  resolveUsernames,
+} from '@/app/_server/usernames'
 
 /**
  * What a stamped handle looks like to a reader, now.
@@ -110,6 +118,41 @@ export async function mentionedAccountsByUsername(names: string[]): Promise<Reco
       { kind, name, avatarUrl, username: current.get(principalKey({ kind, id })) ?? username },
     ]),
   )
+}
+
+/**
+ * Everyone a mention can name, as the markdown editor's `@` list offers them:
+ * every person and every agent, each with the handle it goes by now, in name
+ * order. The same directory `mentionedAccountsByUsername` shows any signed-in
+ * member one handle at a time, listed whole.
+ *
+ * An account with no handle yet is given one, as a chat's member list does;
+ * one that still has none is left out, since a mention could not name it.
+ */
+export async function mentionableAccounts(): Promise<MentionCandidate[]> {
+  const [people, agents] = await Promise.all([
+    db.select({ id: user.id, name: user.name, image: user.image }).from(user),
+    listAgentNodesImpl(),
+  ])
+  const entries: { account: ExistingAccount; name: string; avatarUrl: string | null }[] = [
+    ...people.map((person) => ({
+      account: { kind: 'user' as const, id: person.id },
+      name: person.name,
+      avatarUrl: userAvatarUrl(person),
+    })),
+    ...agents.map((agent) => ({
+      account: { kind: 'agent' as const, id: agent.nodeId, name: agent.name },
+      name: agent.name,
+      avatarUrl: agentAvatarUrl(agent),
+    })),
+  ]
+  const handles = await ensureCurrentUsernames(entries.map((entry) => entry.account))
+  return entries
+    .flatMap(({ account, name, avatarUrl }) => {
+      const handle = handles.get(principalKey(account))
+      return handle ? [{ handle, name, avatarUrl }] : []
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
 }
 
 async function peopleById(userIds: string[]): Promise<Map<string, ResolvedAuthor>> {

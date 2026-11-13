@@ -6,19 +6,28 @@ import { instanceKeysStatus } from '@/server/instance-keys'
 import { secrets } from '@/server/secrets'
 
 /**
- * Where the instance keys come from, the key file's warning while it is in
- * use, and how many stored secrets the current OPENCROFT_SECRETS_KEY cannot
- * decrypt. Names and a count only: no key value leaves the server.
+ * Where the instance keys come from, and how many stored secrets the current
+ * OPENCROFT_SECRETS_KEY cannot decrypt. Names and a count only: no key value
+ * leaves the server. The key file's warning is not repeated here: it stands
+ * across the top of every settings page (getKeyFileNotice).
  */
 export const getInstanceKeys = createServerFn({ strict: { output: false } })
   .middleware([adminOnly])
   .handler(async (): Promise<BackupInstanceKeys> => {
-    const { sources, keyFile, notice } = instanceKeysStatus()
+    const { sources, keyFile } = instanceKeysStatus()
     return {
       secretsKey: sources.OPENCROFT_SECRETS_KEY,
       authSecret: sources.OPENCROFT_AUTH_SECRET,
       keyFile,
-      notice: notice ?? undefined,
       undecryptableSecrets: await secrets.countUndecryptable(),
     }
   })
+
+/**
+ * The key file's warning while a key comes from the file, else null. Read on
+ * every load of the settings page, so it is gone on the first load after both
+ * variables are set and the file is deleted. It names the file, never a key.
+ */
+export const getKeyFileNotice = createServerFn({ method: 'GET', strict: { output: false } })
+  .middleware([adminOnly])
+  .handler(async (): Promise<string | null> => instanceKeysStatus().notice)

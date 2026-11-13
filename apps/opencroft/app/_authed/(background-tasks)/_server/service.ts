@@ -17,9 +17,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
-import { dataDir } from '@opencroft/instance'
+import { instanceId } from '@opencroft/instance'
 
 import {
   BackgroundTaskRunner,
@@ -84,6 +83,7 @@ const RECENT_MS = DAY_MS
 const RECENT_LIMIT = 50
 
 export const SERVER_RESTARTED = 'server restarted'
+export const RETIRED = 'its conversation was deleted'
 
 export interface ServiceDeps {
   /** Which process registry this is — see the schema's comment on `instanceId`. */
@@ -367,6 +367,27 @@ export class BackgroundTasks implements BackgroundTaskService {
     return outcome === 'stopped' || outcome === 'requested'
   }
 
+  /**
+   * Stop the in-process tasks of a session key that is gone for good — its
+   * conversation deleted, not merely its process stopped. Such a handler's
+   * result has nowhere left to go, and one with no time limit (a question for
+   * the user) would otherwise run until the server restarts. Each ends already
+   * told: there is no session to tell.
+   *
+   * A runner task is left be. Its process is work on a node — files, a log —
+   * that keeps its worth without the conversation, and it ends on its own or
+   * at its deadline.
+   */
+  async retireSessionKey(sessionKey: string): Promise<void> {
+    const rows = await tasksForSessionKey(this.deps.instanceId(), sessionKey)
+    for (const row of rows) {
+      if (row.state === 'running' && !onRunner(row)) {
+        this.inProcess.abort(row.taskId, RETIRED)
+        await this.end(row.taskId, { state: 'stopped', reason: RETIRED, deliveredAt: this.now() })
+      }
+    }
+  }
+
   /** Stop a runner task's process group on its node. `toldInReply`: see `end`. */
   private async stopOnNode(row: TaskRow, reason: string, toldInReply = false): Promise<CancelOutcome> {
     const dir = row.nodeDir
@@ -594,31 +615,6 @@ export class BackgroundTasks implements BackgroundTaskService {
 
 // ── this process's service ─────────────────────────────────────────────
 
-let instance: string | undefined
-
-/**
- * This instance's registry id: made once and kept on the instance's own data
- * volume, which is per-instance by construction — unlike the database, which
- * several deployments can share.
- */
-function instanceIdFromDataDir(): string {
-  if (instance) {
-    return instance
-  }
-  const file = dataDir('background-tasks-instance')
-  try {
-    instance = readFileSync(file, 'utf8').trim() || undefined
-  } catch {
-    // First use on this volume.
-  }
-  if (!instance) {
-    instance = randomUUID()
-    mkdirSync(dataDir(), { recursive: true })
-    writeFileSync(file, `${instance}\n`)
-  }
-  return instance
-}
-
 const globalForTasks = globalThis as unknown as { __BACKGROUND_TASKS__?: ServiceState }
 globalForTasks.__BACKGROUND_TASKS__ ??= createState()
 
@@ -627,7 +623,7 @@ globalForTasks.__BACKGROUND_TASKS__ ??= createState()
 // tools that start tasks, the host that reads the running keys — so this module
 // must load from anywhere in those graphs without needing any of them loaded.
 export const backgroundTasks = new BackgroundTasks(globalForTasks.__BACKGROUND_TASKS__, {
-  instanceId: instanceIdFromDataDir,
+  instanceId,
   transport: async () => (await import('./remote-transport')).remoteToolsTransport,
   engine: async () => hostTaskEngine((await import('@/app/_authed/(agent)/_server/agent-client-instance')).agentClient),
   openSession: async (sessionKey) =>

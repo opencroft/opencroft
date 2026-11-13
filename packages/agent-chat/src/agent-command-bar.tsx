@@ -25,7 +25,9 @@ import {
   selectLeftoverBooleanOptions,
   selectLeftoverConfigs,
 } from './agent-command-bar-configs'
-import { AgentCommandBar, type ApprovalTitles, type CommandBarConfig } from './components/agent-command-bar'
+import { ChatCommandBar, type ChatComposerHandle } from './chat-composer'
+import type { ApprovalTitles, CommandBarConfig } from './components/agent-command-bar'
+import type { MentionCandidate } from './components/mention-autocomplete'
 import { AttachButton } from './components/attach-button'
 import { AttachmentChip } from './components/attachment-chip'
 import { ChatEditBar } from './components/chat-edit-bar'
@@ -250,6 +252,9 @@ export interface UseAgentCommandBarOptions {
   /** Receives the composer's handle, for a host that writes into it from
    *  elsewhere -- see `AgentComposerHandle`. */
   composerRef?: Ref<AgentComposerHandle>
+  /** Who a message here can mention, forwarded to the bar's `mentions`. Must
+   *  be identity-stable when nothing changed; it feeds the memoized bar. */
+  mentions?: MentionCandidate[]
 }
 
 // Everything the command bar needs that the design-kit component deliberately
@@ -262,8 +267,8 @@ export interface UseAgentCommandBarOptions {
 // MUST be identity-stable when nothing meaningful changed, or a host
 // publishing it into a slot (a `useState`/context write on every call)
 // re-renders everything downstream of that slot on every keystroke — hence
-// the memoization below, and hence the buffered-value design in the kit
-// component this composes (see AgentCommandBar's own doc comment).
+// the memoization below, and hence `ChatCommandBar`, which keeps what is typed
+// in its own state and reports it out without re-rendering this hook.
 export function useAgentCommandBar({
   session,
   placeholder,
@@ -297,6 +302,7 @@ export function useAgentCommandBar({
   emptySendLabel,
   presence,
   composerRef,
+  mentions,
 }: UseAgentCommandBarOptions): ReactElement {
   // Lazy init so a session opened with an existing draft paints with it
   // already in place — no separate fetch-then-fill flicker. This state
@@ -316,7 +322,7 @@ export function useAgentCommandBar({
     setValueText(next)
     setValueRevision((revision) => revision + 1)
   }, [])
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef<ChatComposerHandle>(null)
 
   // The live typed text, tracked without triggering a re-render — every
   // keystroke updates this, but only a genuine reset (see above) touches
@@ -378,7 +384,7 @@ export function useAgentCommandBar({
     if (session.draft) {
       textRef.current = session.draft.text
       setValue(session.draft.text)
-      textareaRef.current?.focus()
+      inputRef.current?.focusEnd()
     }
   }, [session.draft?.key])
 
@@ -457,8 +463,8 @@ export function useAgentCommandBar({
   // draft-tracked the same way, but the whole text is the caller's to shape.
   //
   // The caret is placed after the commit rather than here, because only then
-  // does the kit bar's textarea hold the new text: the bar takes a load during
-  // its own render, so by this hook's layout effect the two agree.
+  // does the composer hold the new text: it takes a load in its own layout
+  // effect, which runs before this hook's.
   const [caretToEnd, setCaretToEnd] = useState(false)
   useImperativeHandle(
     composerRef,
@@ -478,11 +484,7 @@ export function useAgentCommandBar({
       return
     }
     setCaretToEnd(false)
-    const textarea = textareaRef.current
-    if (textarea) {
-      textarea.focus()
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-    }
+    inputRef.current?.focusEnd()
   }, [caretToEnd])
   const dial = useMemo(() => commandBarDials(configOptions, adapterId), [configOptions, adapterId])
 
@@ -549,6 +551,7 @@ export function useAgentCommandBar({
         {dial.modeValues.length > 0 ? (
           <ModeSelector
             options={dial.modeValues}
+            labels={dial.modeLabels}
             current={dial.modeCurrent}
             onSelect={(value) => onSetConfigOptionRef.current?.(dial.modeId, dial.modeBack.get(value) ?? value)}
             lockedReason={lockedReason(dial.modeId, MODE_CONFIG_ID)}
@@ -631,7 +634,7 @@ export function useAgentCommandBar({
     (text: string) => {
       textRef.current = text
       setValue(text)
-      textareaRef.current?.focus()
+      inputRef.current?.focusEnd()
     },
     [setValue],
   )
@@ -953,7 +956,7 @@ export function useAgentCommandBar({
   // per-keystroke churn this hook exists to avoid.
   const barNode = useMemo(
     () => (
-      <AgentCommandBar
+      <ChatCommandBar
         value={value}
         valueRevision={valueRevision}
         onValueChange={onChangeText}
@@ -989,8 +992,9 @@ export function useAgentCommandBar({
         onToggleAutoApprove={handleToggleAutoApprove}
         yoloMode={autoApproveLocked}
         approvalTitles={approvalTitles}
-        textareaRef={textareaRef}
+        inputRef={inputRef}
         commands={session.commands}
+        mentions={mentions}
       />
     ),
     [
@@ -1034,6 +1038,7 @@ export function useAgentCommandBar({
       autoApproveLocked,
       approvalTitles,
       session.commands,
+      mentions,
     ],
   )
 

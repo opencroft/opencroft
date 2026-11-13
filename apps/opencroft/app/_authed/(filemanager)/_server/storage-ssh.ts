@@ -11,6 +11,7 @@ function toCreds(config: SshConfig): SshCredentials {
     port: config.port,
     username: config.username,
     password: config.password,
+    credentialsScope: config.credentialsScope,
     keyPath: config.privateKey,
   }
 }

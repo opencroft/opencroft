@@ -6,7 +6,7 @@ import { useMemo } from 'react'
 import { ApprovalDiff, ApprovalFields, FieldRow, Note, TargetRow } from './approval-fields'
 import { type DiffLine, lineDiff } from './diff-view'
 import { editSides, textEdit, useRemoteFile } from './edit-sides'
-import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpOutput, OpRow } from './op-block'
+import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpMeta, OpOutput, OpRow, toolViewState } from './op-block'
 
 // Views of calls that read and write files: the agent's own Write, Edit and
 // MultiEdit, and the product's remote_read, remote_write and remote_edit.
@@ -75,12 +75,14 @@ function AgentChange({
   change,
   mode,
   result,
+  state,
 }: {
   verb: string
   filePath?: string
   change: { diffs: DiffLine[][]; part: string }
   mode: ToolViewProps['mode']
   result: ToolViewProps['result']
+  state: ToolViewProps['state']
 }) {
   if (mode === 'approval') {
     return (
@@ -90,26 +92,34 @@ function AgentChange({
       </ApprovalFields>
     )
   }
-  return <DiffOpBlock verb={verb} detail={filePath} result={result} diffs={change.diffs} part={change.part} />
+  return (
+    <DiffOpBlock
+      verb={verb}
+      detail={filePath}
+      state={toolViewState({ state, result })}
+      diffs={change.diffs}
+      part={change.part}
+    />
+  )
 }
 
 // A whole-file write, drawn as a diff like an edit: against what the file held
 // when the report carries it, otherwise against nothing, as a new file — and
 // from the written text in the arguments when nothing was reported.
-export function AgentWriteView({ args, diffs: reported, mode, result }: ToolViewProps) {
+export function AgentWriteView({ args, diffs: reported, mode, result, state }: ToolViewProps) {
   const filePath = agentFilePath(args)
   const content = args.content as string | undefined
   const change = useMemo(
     () => agentEditDiffs(reported, () => (content === undefined ? [] : [lineDiff('', content)])),
     [reported, content],
   )
-  return <AgentChange verb='Write' filePath={filePath} change={change} mode={mode} result={result} />
+  return <AgentChange verb='Write' filePath={filePath} change={change} mode={mode} result={result} state={state} />
 }
 
 // A targeted replacement. Its diff is of the replaced text, or of the regions
 // around it when the harness reported those — never of the whole file, which
 // is not in the call.
-export function AgentEditView({ args, diffs: reported, mode, result }: ToolViewProps) {
+export function AgentEditView({ args, diffs: reported, mode, result, state }: ToolViewProps) {
   const filePath = agentFilePath(args)
   const oldString = args.old_string as string | undefined
   const newString = args.new_string as string | undefined
@@ -120,13 +130,13 @@ export function AgentEditView({ args, diffs: reported, mode, result }: ToolViewP
       ),
     [reported, oldString, newString],
   )
-  return <AgentChange verb='Edit' filePath={filePath} change={change} mode={mode} result={result} />
+  return <AgentChange verb='Edit' filePath={filePath} change={change} mode={mode} result={result} state={state} />
 }
 
 // Several replacements in one file. Each is its own before/after pair, so they
 // are drawn as a list of diffs rather than merged — a merged one would have to
 // invent a combined "before" that never existed.
-export function AgentMultiEditView({ args, diffs: reported, mode, result }: ToolViewProps) {
+export function AgentMultiEditView({ args, diffs: reported, mode, result, state }: ToolViewProps) {
   const filePath = agentFilePath(args)
   const edits = args.edits
   const change = useMemo(
@@ -138,12 +148,13 @@ export function AgentMultiEditView({ args, diffs: reported, mode, result }: Tool
       ),
     [reported, edits],
   )
-  return <AgentChange verb='Edit' filePath={filePath} change={change} mode={mode} result={result} />
+  return <AgentChange verb='Edit' filePath={filePath} change={change} mode={mode} result={result} state={state} />
 }
 
-export function RemoteReadView({ args, mode, result }: ToolViewProps) {
+export function RemoteReadView({ args, mode, result, state: given }: ToolViewProps) {
   const target = args.target as string | undefined
   const filePath = args.path as string | undefined
+  const state = toolViewState({ state: given, result })
 
   if (mode === 'approval') {
     return (
@@ -160,18 +171,17 @@ export function RemoteReadView({ args, mode, result }: ToolViewProps) {
       detail={filePath}
       target={target}
       meta={<OpMeta text={linesLabel(result?.text)} />}
-      isError={result?.isError}
-      pending={!result}
+      state={state}
       overflowing={exceedsClamp(result?.text)}
     >
       <OpRow label='output'>
-        <OpOutput result={result} />
+        <OpOutput result={result} state={state} />
       </OpRow>
     </OpBlock>
   )
 }
 
-export function RemoteWriteView({ args, requestId, mode, result }: ToolViewProps) {
+export function RemoteWriteView({ args, requestId, mode, result, state }: ToolViewProps) {
   const target = args.target as string | undefined
   const filePath = args.path as string | undefined
   const newContent = (args.content as string | undefined) ?? ''
@@ -197,10 +207,18 @@ export function RemoteWriteView({ args, requestId, mode, result }: ToolViewProps
       </ApprovalFields>
     )
   }
-  return <DiffOpBlock verb='Write' detail={filePath} target={target} result={result} diffs={diff ? [diff] : []} />
+  return (
+    <DiffOpBlock
+      verb='Write'
+      detail={filePath}
+      target={target}
+      state={toolViewState({ state, result })}
+      diffs={diff ? [diff] : []}
+    />
+  )
 }
 
-export function RemoteEditView({ args, requestId, mode, result }: ToolViewProps) {
+export function RemoteEditView({ args, requestId, mode, result, state }: ToolViewProps) {
   const target = args.target as string | undefined
   const filePath = args.path as string | undefined
   const edit = textEdit(args)
@@ -220,5 +238,7 @@ export function RemoteEditView({ args, requestId, mode, result }: ToolViewProps)
       </ApprovalFields>
     )
   }
-  return <DiffOpBlock verb='Edit' detail={filePath} target={target} result={result} diffs={[diff]} />
+  return (
+    <DiffOpBlock verb='Edit' detail={filePath} target={target} state={toolViewState({ state, result })} diffs={[diff]} />
+  )
 }

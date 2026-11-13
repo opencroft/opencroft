@@ -27,5 +27,5 @@ export default defineEventHandler(async (event) => {
   } catch (err) {
     return new Response(String(err), { status: 500 })
   }
-  return dispatchExtensionRoute(mod.routes?.[routeKey], event.req)
+  return dispatchExtensionRoute(extensionId, mod.routes?.[routeKey], event.req)
 })

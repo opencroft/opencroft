@@ -3,7 +3,9 @@
 // growing wait until a limit, and a retry or a different conversation opens
 // again. And how it answers a stream that ended: it rejoins without starting
 // the session, stays offline when nothing is held, and starts it again only for
-// a send -- or rejoins when the session is back by another hand.
+// a send -- or rejoins when the session is back by another hand. And which
+// Presence an opened tab shows, which depends on what the open said about
+// steering.
 //
 // The real hook is mounted against a real DOM with an injected open transport
 // -- the seam a host uses -- and the clock is mocked, so every attempt the hook
@@ -47,7 +49,7 @@ const { SessionOpenNotice } = await import('./session-open-notice')
 const { SessionOpenRefusedError } = await import('@/app/_authed/(agent)/_shared/session-open-refusal')
 const { MAX_FAILURES } = await import('@/app/_authed/(agent)/_lib/use-reconnect')
 const { receiveSessionActivity } = await import('@/app/_authed/(agent)/_lib/use-session-activity')
-const { SESSION_GONE_KIND } = await import('@/app/_authed/(agent)/_lib/acp-stream')
+const { HISTORY_END_KIND, SESSION_GONE_KIND } = await import('@/app/_authed/(agent)/_lib/acp-stream')
 
 type Hook = ReturnType<typeof useAcpSession>
 type Source = Parameters<typeof useAcpSession>[0]
@@ -315,5 +317,55 @@ test('an activity reading that says alive while nothing is held asks once, not i
     calls.map((call) => call.wake),
     [true, false, false],
   )
+  await unmount()
+})
+
+// ── the presence it shows ──────────────────────────────────────────────────
+
+function presenceEvent(kind: 'realtime' | 'hourly') {
+  return { data: JSON.stringify({ kind: 'presence', presence: { kind } }) }
+}
+
+// Replays a stored presence the way the server opens a stream: a snapshot,
+// then the end of the history.
+async function replayPresence(kind: 'realtime'): Promise<void> {
+  const stream = SilentEventSource.opened.at(-1)
+  assert.ok(stream, 'a stream was opened')
+  await act(async () => {
+    stream.onmessage?.(presenceEvent(kind))
+    stream.onmessage?.({
+      data: JSON.stringify({ kind: HISTORY_END_KIND, startIndex: 0, hasMore: false, snapshotPrefix: 1 }),
+    })
+  })
+}
+
+// A presence set while the stream is live.
+async function setLivePresence(kind: 'hourly'): Promise<void> {
+  const stream = SilentEventSource.opened.at(-1)
+  assert.ok(stream, 'a stream was opened')
+  await act(async () => {
+    stream.onmessage?.(presenceEvent(kind))
+  })
+}
+
+test('an agent that cannot steer shows Online for the default and for a stored Realtime', async () => {
+  const { open } = recordingOpen(() => Promise.resolve({ ...OPENED, canSteer: false }))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(200)
+  assert.deepEqual(hook().presence, { kind: 'online' }, 'the default')
+  await replayPresence('realtime')
+  assert.deepEqual(hook().presence, { kind: 'online' }, 'a stored realtime')
+  await setLivePresence('hourly')
+  assert.deepEqual(hook().presence, { kind: 'hourly' }, 'any other cadence as it is')
+  await unmount()
+})
+
+test('an agent that can steer shows Realtime as Realtime', async () => {
+  const { open } = recordingOpen(() => Promise.resolve({ ...OPENED, canSteer: true }))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(200)
+  assert.deepEqual(hook().presence, { kind: 'realtime' }, 'the default')
+  await replayPresence('realtime')
+  assert.deepEqual(hook().presence, { kind: 'realtime' }, 'a stored realtime')
   await unmount()
 })

@@ -43,12 +43,12 @@ test('dueDeliveryDay delivers again once a new day has started', () => {
   assert.equal(dueDeliveryDay(now, 12, '2026-08-14'), '2026-08-15')
 })
 
-test('collectRollupRows merges rows returned by multiple containers', async () => {
+test('collectRollupRows merges rows returned by multiple places', async () => {
   const rows = await collectRollupRows(
     {
-      containerNames: ['agent-container', 'agent-container-2'],
-      execInContainer: async (containerName) =>
-        JSON.stringify([row({ agent: containerName === 'agent-container' ? 'bob' : 'dave', requests: 5 })]),
+      places: ['agent-container', 'agent-container-2'],
+      execIn: async (place) =>
+        JSON.stringify([row({ agent: place === 'agent-container' ? 'bob' : 'dave', requests: 5 })]),
     },
     '2026-08-13',
   )
@@ -56,11 +56,11 @@ test('collectRollupRows merges rows returned by multiple containers', async () =
   assert.deepEqual(rows.map((r) => r.agent).sort(), ['bob', 'dave'])
 })
 
-test('collectRollupRows sums a bucket reported by more than one container', async () => {
+test('collectRollupRows sums a bucket reported by more than one place', async () => {
   const rows = await collectRollupRows(
     {
-      containerNames: ['a', 'b'],
-      execInContainer: async () => JSON.stringify([row({ requests: 5, cacheReadTokens: 100 })]),
+      places: ['a', 'b'],
+      execIn: async () => JSON.stringify([row({ requests: 5, cacheReadTokens: 100 })]),
     },
     '2026-08-13',
   )
@@ -69,12 +69,12 @@ test('collectRollupRows sums a bucket reported by more than one container', asyn
   assert.equal(rows[0].cacheReadTokens, 200)
 })
 
-test('collectRollupRows skips a container whose exec fails, keeping the rest', async () => {
+test('collectRollupRows skips a place whose exec fails, keeping the rest', async () => {
   const rows = await collectRollupRows(
     {
-      containerNames: ['broken', 'ok'],
-      execInContainer: async (containerName) => {
-        if (containerName === 'broken') {
+      places: ['broken', 'ok'],
+      execIn: async (place) => {
+        if (place === 'broken') {
           throw new Error('exec timed out')
         }
         return JSON.stringify([row({ agent: 'erin' })])
@@ -86,11 +86,11 @@ test('collectRollupRows skips a container whose exec fails, keeping the rest', a
   assert.equal(rows[0].agent, 'erin')
 })
 
-test('collectRollupRows skips a container that returns unparseable output', async () => {
+test('collectRollupRows skips a place that returns unparseable output', async () => {
   const rows = await collectRollupRows(
     {
-      containerNames: ['flaky'],
-      execInContainer: async () => 'not json',
+      places: ['flaky'],
+      execIn: async () => 'not json',
     },
     '2026-08-13',
   )
@@ -101,8 +101,8 @@ test('runUsageRollupTick persists rows and reports a pending delivery once due',
   await setUsageRollupConfig({ enabled: true, deliverAfterHour: 12, lastDeliveredDay: undefined })
   const now = new Date('2026-08-14T13:00:00.000Z')
   const result = await runUsageRollupTick({
-    containerNames: ['agent-container'],
-    execInContainer: async () => JSON.stringify([row({ day: '2026-08-14', requests: 42 })]),
+    places: ['agent-container'],
+    execIn: async () => JSON.stringify([row({ day: '2026-08-14', requests: 42 })]),
     now,
   })
   assert.equal(result.rowsUpserted, 1)
@@ -118,8 +118,8 @@ test('runUsageRollupTick persists rows and reports a pending delivery once due',
 test('runUsageRollupTick reports no pending delivery before the configured hour', async () => {
   await setUsageRollupConfig({ enabled: true, deliverAfterHour: 12, lastDeliveredDay: undefined })
   const result = await runUsageRollupTick({
-    containerNames: ['agent-container'],
-    execInContainer: async () => JSON.stringify([row({ day: '2026-08-14' })]),
+    places: ['agent-container'],
+    execIn: async () => JSON.stringify([row({ day: '2026-08-14' })]),
     now: new Date('2026-08-14T05:00:00.000Z'),
   })
   assert.equal(result.pendingDelivery, null)
@@ -129,15 +129,15 @@ test('runUsageRollupTick skips scanning entirely when disabled, not just the cha
   await setUsageRollupConfig({ enabled: false, lastDeliveredDay: undefined })
   let execCalls = 0
   const result = await runUsageRollupTick({
-    containerNames: ['agent-container'],
-    execInContainer: async () => {
+    places: ['agent-container'],
+    execIn: async () => {
       execCalls += 1
       return JSON.stringify([row({ day: '2026-08-14', agent: 'disabled-check' })])
     },
     now: new Date('2026-08-14T13:00:00.000Z'),
   })
   assert.equal(execCalls, 0)
-  assert.equal(result.scannedContainers, 0)
+  assert.equal(result.scannedPlaces, 0)
   assert.equal(result.rowsUpserted, 0)
   assert.equal(result.pendingDelivery, null)
   const stored = await listRollupRowsForDay('2026-08-14')
@@ -150,13 +150,13 @@ test('a second tick for the same day upserts the same row instead of duplicating
   await setUsageRollupConfig({ enabled: true })
   const now = new Date('2026-08-14T13:00:00.000Z')
   await runUsageRollupTick({
-    containerNames: ['agent-container'],
-    execInContainer: async () => JSON.stringify([row({ day: '2026-08-14', agent: 'frank', requests: 1 })]),
+    places: ['agent-container'],
+    execIn: async () => JSON.stringify([row({ day: '2026-08-14', agent: 'frank', requests: 1 })]),
     now,
   })
   await runUsageRollupTick({
-    containerNames: ['agent-container'],
-    execInContainer: async () => JSON.stringify([row({ day: '2026-08-14', agent: 'frank', requests: 7 })]),
+    places: ['agent-container'],
+    execIn: async () => JSON.stringify([row({ day: '2026-08-14', agent: 'frank', requests: 7 })]),
     now,
   })
   const stored = await listRollupRowsForDay('2026-08-14')

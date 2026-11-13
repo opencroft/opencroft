@@ -128,10 +128,14 @@ export function ArtifactTitle({ artifact, className }: ArtifactPartProps) {
  * Read-only on purpose. An agent revises these on its next iteration, so an
  * edit offered here would be a change waiting to be overwritten without warning
  * — and a note the reader half-owns is worse than one they plainly do not.
+ *
+ * The scroller is the containing block of everything in the note: an
+ * absolutely positioned box anywhere in the markdown (an `sr-only` label
+ * included) scrolls and clips with the note instead of lengthening the page.
  */
 export function ArtifactBody({ artifact, className }: ArtifactPartProps) {
   return (
-    <div className={cn('min-h-0 flex-1 overflow-y-auto px-3 py-3', className)}>
+    <div className={cn('relative min-h-0 flex-1 overflow-y-auto px-3 py-3', className)}>
       <Markdown text={artifact.content} />
     </div>
   )

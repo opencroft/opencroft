@@ -143,6 +143,11 @@ export function ReferenceChip({
   const showState = Boolean(state) && !unknown
   const classes = cn(
     REFERENCE_CHIP_CLASS,
+    // The containing block of its own `sr-only` state label. That label is
+    // absolutely positioned, and with no positioned ancestor it is placed
+    // against the page: a scroller holding the chip below the fold does not
+    // clip it, and it lengthens the whole document.
+    'relative',
     unknown && REFERENCE_CHIP_UNKNOWN_CLASS,
     // A state fills the chip's height, so its gap above and below is the
     // chip's vertical padding; its gap on the right is made the same.

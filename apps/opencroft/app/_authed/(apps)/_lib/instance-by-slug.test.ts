@@ -16,7 +16,7 @@ test('the slug names the instance', () => {
   assert.equal(instanceBySlug([REPORTS, NAMED_LIKE_A_UUID], 'reports'), REPORTS)
 })
 
-test('a uuid in the url names nothing, so the address 404s', () => {
+test('a uuid in the url names nothing, so the address is a missing one', () => {
   assert.equal(instanceBySlug([REPORTS], REPORTS.id), undefined)
 })
 

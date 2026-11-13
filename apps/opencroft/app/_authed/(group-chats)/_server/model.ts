@@ -24,7 +24,7 @@ import {
 } from '@opencroft/db'
 import type { HostSessionOptions, HostSessionOptionsResult } from '@opencroft/server'
 import type { QueueMode } from 'agent-client/types'
-import { and, asc, eq, inArray, like, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, like, type SQL, sql } from 'drizzle-orm'
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core'
 
 import type { OpenedSession } from '@/app/_authed/(agent)/_server/acp-impl'
@@ -69,6 +69,7 @@ import {
   watchCompact,
   withSessionKeyLock,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { announceGroupChatChange, subscribeGroupChatChanges } from '@/app/_authed/(group-chats)/_server/chat-changes'
 import { storedGroupChatKeys } from '@/app/_authed/(group-chats)/_server/orphaned-session-keys'
 import { inThreadList, moveThreadBetweenLists, threadListOf } from '@/app/_authed/(group-chats)/_server/thread-archive'
 import {
@@ -78,7 +79,11 @@ import {
   updateThreadLayout,
   withThreadInFolder,
 } from '@/app/_authed/(group-chats)/_server/thread-layout-store'
-import { spaceIdBySlug, threadIdForSessionKey } from '@/app/_authed/(group-chats)/_server/thread-space'
+import {
+  spaceIdBySlug,
+  spaceSlugsOfChats,
+  threadIdForSessionKey,
+} from '@/app/_authed/(group-chats)/_server/thread-space'
 import { GroupChatAccessError, type GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import {
   isGroupChatSessionKey,
@@ -88,6 +93,7 @@ import {
   type SessionKeyParts,
 } from '@/app/_authed/(group-chats)/_shared/session-key'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
+import { announceDirectoryChange } from '@/app/_authed/(space)/_server/directory-changes'
 
 // THE ONE MESSAGE every "you cannot have this" refusal carries.
 //
@@ -160,7 +166,7 @@ export interface GroupChatThreadSummary {
  * data back, and collapsing them into one throw here means every function
  * below has exactly one failure path to handle, not two.
  */
-async function requireSignedInUser(request: Request) {
+export async function requireSignedInUser(request: Request) {
   const sessionUser = await getSessionUser(request)
   if (!sessionUser) {
     throw new GroupChatAccessError('unauthenticated', 'Sign in to use group chats')
@@ -174,18 +180,30 @@ async function requireSignedInUser(request: Request) {
 // person or an agent is, and there is no branch anywhere that waves a kind
 // through without its row.
 async function isPrincipalMember(groupChatId: string, principal: MemberPrincipal): Promise<boolean> {
-  const byId =
-    principal.kind === 'user'
-      ? eq(groupChatMember.userId, principal.userId)
-      : principal.kind === 'agent'
-        ? eq(groupChatMember.agentNodeId, principal.agentNodeId)
-        : eq(groupChatMember.systemId, principal.systemId)
   const [row] = await db
     .select({ id: groupChatMember.id })
     .from(groupChatMember)
-    .where(and(eq(groupChatMember.groupChatId, groupChatId), byId))
+    .where(and(eq(groupChatMember.groupChatId, groupChatId), memberRowOf(principal)))
     .limit(1)
   return !!row
+}
+
+/** The member rows that are `principal`'s, as a condition on the member table. */
+function memberRowOf(principal: MemberPrincipal) {
+  return principal.kind === 'user'
+    ? eq(groupChatMember.userId, principal.userId)
+    : principal.kind === 'agent'
+      ? eq(groupChatMember.agentNodeId, principal.agentNodeId)
+      : eq(groupChatMember.systemId, principal.systemId)
+}
+
+/** The ids of the chats `principal` is a member of. */
+export async function memberChatIds(principal: MemberPrincipal): Promise<Set<string>> {
+  const rows = await db
+    .select({ groupChatId: groupChatMember.groupChatId })
+    .from(groupChatMember)
+    .where(memberRowOf(principal))
+  return new Set(rows.map((row) => row.groupChatId))
 }
 
 async function isUserMember(groupChatId: string, userId: string): Promise<boolean> {
@@ -312,6 +330,11 @@ export async function listGroupChatsForAgent(agentName: string): Promise<GroupCh
   if (!match) {
     throw new GroupChatAccessError('not-found', `No agent named "${agentName.trim()}" was found`)
   }
+  return listGroupChatsOfAgentNode(match.nodeId)
+}
+
+/** The group chats an agent node is a member of. */
+export async function listGroupChatsOfAgentNode(agentNodeId: string): Promise<GroupChatSummary[]> {
   return db
     .select({
       id: groupChat.id,
@@ -323,7 +346,7 @@ export async function listGroupChatsForAgent(agentName: string): Promise<GroupCh
     })
     .from(groupChat)
     .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
-    .where(eq(groupChatMember.agentNodeId, match.nodeId))
+    .where(eq(groupChatMember.agentNodeId, agentNodeId))
 }
 
 /** One group chat's own fields. Refuses exactly as `requireGroupChatMember`. */
@@ -609,6 +632,31 @@ export async function findThreadInGroupChat(
     .where(and(eq(groupChatThread.groupChatId, groupChatId), eq(groupChatThread.id, threadId)))
     .limit(1)
   return row ?? null
+}
+
+/**
+ * Of the given thread ids, the threads the caller can read, each with its
+ * chat's name. The membership row is part of the query, so an id that names
+ * no thread and an id in a chat the caller is not a member of are both simply
+ * absent: the answer says nothing about threads outside the caller's chats.
+ */
+export async function findThreadsForUser(
+  request: Request,
+  threadIds: string[],
+): Promise<Array<GroupChatThreadSummary & { groupChatName: string }>> {
+  const sessionUser = await requireSignedInUser(request)
+  if (threadIds.length === 0) {
+    return []
+  }
+  return db
+    .select({ ...threadSummaryColumns, groupChatName: groupChat.name })
+    .from(groupChatThread)
+    .innerJoin(groupChat, eq(groupChat.id, groupChatThread.groupChatId))
+    .innerJoin(
+      groupChatMember,
+      and(eq(groupChatMember.groupChatId, groupChatThread.groupChatId), eq(groupChatMember.userId, sessionUser.id)),
+    )
+    .where(inArray(groupChatThread.id, threadIds))
 }
 
 // ── Writing ─────────────────────────────────────────────────────────────
@@ -1144,6 +1192,8 @@ export async function deleteGroupChat(request: Request, groupChatId: string): Pr
     }
   }
   await db.delete(groupChat).where(eq(groupChat.id, groupChatId))
+  // Any system sender's grant went with the chat.
+  announceDirectoryChange({ subject: 'access', change: 'removed' })
   // The sweep. Draining handles a thread that did not exist yet; this handles
   // an EXISTING thread whose session was re-created after its teardown -- the
   // likelier of the two, since a chat worth deleting may still have agents
@@ -1216,6 +1266,7 @@ export async function addMember(request: Request, groupChatId: string, principal
       .insert(groupChatMember)
       .values({ groupChatId, principalType: 'agent', agentNodeId: principal.agentNodeId })
       .onConflictDoNothing()
+    announceGroupChatChange({ groupChatId })
     return
   }
 
@@ -1232,6 +1283,7 @@ export async function addMember(request: Request, groupChatId: string, principal
     .insert(groupChatMember)
     .values({ groupChatId, principalType: 'user', userId: principal.userId })
     .onConflictDoNothing()
+  announceGroupChatChange({ groupChatId })
 }
 
 /** The system-sender grant row, validated as `addMember` describes. The caller has already passed the members gate. */
@@ -1240,6 +1292,9 @@ async function insertSystemMember(groupChatId: string, systemId: string): Promis
     throw new Error(`No such system sender: "${systemId}"`)
   }
   await db.insert(groupChatMember).values({ groupChatId, principalType: 'system', systemId }).onConflictDoNothing()
+  announceGroupChatChange({ groupChatId })
+  // A grant into a space's chat is a grant into the space (see `spacesGrantingSystemSender`).
+  announceDirectoryChange({ subject: 'access', change: 'added' })
 }
 
 /** Joined, or refused — and every refusal here carries the one collapsed code. */
@@ -1287,6 +1342,7 @@ export async function joinSpaceGroupChat(request: Request, slug: string): Promis
     .insert(groupChatMember)
     .values({ groupChatId: row.id, principalType: 'user', userId: sessionUser.id })
     .onConflictDoNothing()
+  announceGroupChatChange({ groupChatId: row.id })
   return { ok: true }
 }
 
@@ -1322,6 +1378,8 @@ export async function removeMember(request: Request, groupChatId: string, princi
           eq(groupChatMember.systemId, principal.systemId),
         ),
       )
+    announceGroupChatChange({ groupChatId })
+    announceDirectoryChange({ subject: 'access', change: 'removed' })
     return
   }
 
@@ -1345,6 +1403,7 @@ export async function removeMember(request: Request, groupChatId: string, princi
           eq(groupChatMember.userId, principal.userId),
         ),
       )
+    announceGroupChatChange({ groupChatId, removedUserId: principal.userId })
     return
   }
 
@@ -1380,6 +1439,43 @@ export async function removeMember(request: Request, groupChatId: string, princi
         eq(groupChatMember.agentNodeId, principal.agentNodeId),
       ),
     )
+  announceGroupChatChange({ groupChatId })
+}
+
+/**
+ * Push the changes to chats the signed-in person is in down one event stream,
+ * as each chat's id.
+ *
+ * Who is told is decided per change, after the write: the chat's members as
+ * they are then, and a person the change removed, whose open dialog still
+ * shows them in. The sign-in is read afresh each time, so a stream whose
+ * session expired hears nothing more.
+ *
+ * `decided` is told each change's chat once this reader's decision on it has
+ * settled, whether it was sent, skipped or its read failed: the point after
+ * which a change not sent never will be.
+ */
+export function streamOwnGroupChatChanges(
+  request: Request,
+  send: (groupChatId: string) => void,
+  decided?: (groupChatId: string) => void,
+): () => void {
+  return subscribeGroupChatChanges((change) => {
+    void (async () => {
+      const sessionUser = await getSessionUser(request)
+      if (!sessionUser) {
+        return
+      }
+      if (change.removedUserId === sessionUser.id || (await isUserMember(change.groupChatId, sessionUser.id))) {
+        send(change.groupChatId)
+      }
+    })()
+      .catch(() => {
+        // A membership read that failed tells this reader nothing; the next
+        // change, or reopening the dialog, reads the chat afresh.
+      })
+      .finally(() => decided?.(change.groupChatId))
+  })
 }
 
 /** Members of a group chat — users, agents and system senders together. Membership-gated. */
@@ -1538,9 +1634,10 @@ async function pinTextsFor(groupChatId: string): Promise<string[]> {
 }
 
 /**
- * STANDING CONTEXT: everything a thread's agent should be holding — the
- * agent's own instruction nodes, plus the group chat it is in: the topic it
- * exists for, and the notes pinned to it.
+ * STANDING CONTEXT: what a thread's agent should be holding about the group
+ * chat it is in: the topic the chat exists for, and the notes pinned to it.
+ * The agent's own instructions are not part of it; they reach the agent
+ * through its harness (agent-instructions.ts).
  *
  * One assembler, three delivery points, and that is the point of it being one
  * function rather than three call sites that each remember to include pins:
@@ -1577,8 +1674,8 @@ export interface StandingContext {
  * "nothing pinned" is a state that can be recorded as delivered and told apart
  * from the NULL that means nothing has ever been delivered.
  */
-export function standingSignature(topic: string, pinTexts: string[], instructionTexts: string[] = []): string {
-  const parts = [topic, ...pinTexts, ...instructionTexts]
+export function standingSignature(topic: string, pinTexts: string[]): string {
+  const parts = [topic, ...pinTexts]
   return `v1:${parts.length}:${parts.map((t) => `${t.length}:${t}`).join('|')}`
 }
 
@@ -1595,42 +1692,8 @@ export function composePinReminder(texts: string[]): string {
   return `Pinned notes for this group chat — standing guidance, not a new request:\n${lines}`
 }
 
-/**
- * The agent's OWN standing instructions — the `agent-instruction` nodes wired
- * into its `instructions-in` handle, the same ones a send-message node
- * delivers (send-message-helpers.ts).
- *
- * A thread is an ordinary session with that agent, so it gets them too. Until
- * this existed, a group-chat thread was the ONE surface that dropped them:
- * standing context here was assembled from the chat alone, so an agent whose
- * whole identity is configured on instruction nodes woke up in a thread
- * without any of it, and the more work moved into threads the more often that
- * happened.
- *
- * Read from the same `listAgentNodesImpl()` the callers around here already
- * use to validate and name an agent — `AgentNodeRef` has carried
- * `.instructions` all along; nothing here reaches for anything new.
- */
-async function agentInstructionsFor(agentNodeId: string): Promise<string[]> {
-  const nodes = await listAgentNodesImpl()
-  const agent = nodes.find((n) => n.nodeId === agentNodeId)
-  return (agent?.instructions ?? []).map((i) => i.instruction.trim()).filter((text) => text.length > 0)
-}
-
-/**
- * Assemble one THREAD's standing context: the chat's topic and pins, plus the
- * thread agent's own instruction nodes.
- *
- * Thread-scoped rather than chat-scoped, because the agent is a property of
- * the thread — two threads in one chat with different agents hold different
- * standing context, and assembling it per chat is what made that impossible
- * to express.
- *
- * The agent's instructions lead and the pins follow: the agent's own standing
- * guidance is what it is, and the chat's pins are the narrower thing layered
- * on top of it.
- */
-async function standingContextForThread(groupChatId: string, agentNodeId: string): Promise<StandingContext | null> {
+/** Assemble one THREAD's standing context: its chat's topic and pins. */
+async function standingContextForThread(groupChatId: string): Promise<StandingContext | null> {
   const [chat] = await db
     .select({ topic: groupChat.topic })
     .from(groupChat)
@@ -1641,20 +1704,13 @@ async function standingContextForThread(groupChatId: string, agentNodeId: string
   }
   const pins = await pinTextsFor(groupChatId)
   const reminder = composePinReminder(pins)
-  const agentInstructions = await agentInstructionsFor(agentNodeId)
   return {
     jobContext: `Group chat topic: ${chat.topic}`,
     // Pins ride the envelope's existing instruction axis rather than a new
     // one: that axis already means standing guidance rather than a request,
-    // which is what a pin is. The agent's own instructions ride the same axis
-    // for the same reason, and are the same blocks a 1:1 chat sends.
-    instructions: [...agentInstructions, ...(reminder ? [reminder] : [])],
-    // The agent's instructions are IN the signature, so editing an
-    // instruction node re-delivers on this thread's next message exactly as
-    // editing a pin does. That also means every existing thread's recorded
-    // signature no longer matches, which is correct: none of them were ever
-    // told the instructions, and one re-delivery is how they find out.
-    signature: standingSignature(chat.topic, pins, agentInstructions),
+    // which is what a pin is.
+    instructions: reminder ? [reminder] : [],
+    signature: standingSignature(chat.topic, pins),
   }
 }
 
@@ -1676,11 +1732,11 @@ export async function groupChatStandingContext(sessionKey: string): Promise<Stan
     return null
   }
   const [row] = await db
-    .select({ groupChatId: groupChatThread.groupChatId, agentNodeId: groupChatThread.agentNodeId })
+    .select({ groupChatId: groupChatThread.groupChatId })
     .from(groupChatThread)
     .where(eq(groupChatThread.id, threadId))
     .limit(1)
-  return row ? standingContextForThread(row.groupChatId, row.agentNodeId) : null
+  return row ? standingContextForThread(row.groupChatId) : null
 }
 
 /**
@@ -1990,7 +2046,7 @@ async function createThread(
   // that is not there before anything is minted; what the first message
   // actually carries is read again at delivery, from the one place that reads
   // it for every message (see deliverIntoThread).
-  const standing = await standingContextForThread(groupChatId, agentNodeId)
+  const standing = await standingContextForThread(groupChatId)
   if (!standing) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
@@ -2427,7 +2483,7 @@ async function deliverIntoThread(
   // ordinary message the same way. The flag decides whether the session-init
   // parts are attached to THIS message, which is exactly what is wanted here;
   // its name describes only the first of its two uses.
-  const standing = await standingContextForThread(row.groupChatId, row.agentNodeId)
+  const standing = await standingContextForThread(row.groupChatId)
   const changed = standing && standing.signature !== row.deliveredContextSignature
   const payload =
     changed && standing
@@ -2549,7 +2605,7 @@ export async function deleteThread(request: Request, threadId: string): Promise<
   if (!(await isUserMember(row.groupChatId, sessionUser.id))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
-  await tearDownAndDeleteThread(threadId, row.sessionKey)
+  await tearDownAndDeleteThread({ id: threadId, ...row })
 }
 
 /**
@@ -2569,9 +2625,10 @@ export async function deleteThread(request: Request, threadId: string): Promise<
  * delete retryable, and a failed row delete leaves only a torn-down thread
  * that reopens onto a fresh session via `ensureLocalSessionImpl`.
  */
-async function tearDownAndDeleteThread(threadId: string, sessionKey: string): Promise<void> {
-  await forgetLocalSessionImpl(sessionKey)
-  await db.delete(groupChatThread).where(eq(groupChatThread.id, threadId))
+async function tearDownAndDeleteThread(thread: { id: string; groupChatId: string; sessionKey: string }): Promise<void> {
+  await forgetLocalSessionImpl(thread.sessionKey)
+  await db.delete(groupChatThread).where(eq(groupChatThread.id, thread.id))
+  announceGroupChatChange({ groupChatId: thread.groupChatId })
 }
 
 /** Why a thread this agent can see was not deleted. */
@@ -2623,7 +2680,7 @@ export async function deleteThreadAsAgent(agent: AgentRef, threadRef: string): P
   if (hasActiveTurnForKeyImpl(row.sessionKey)) {
     return { deleted: false, refused: 'turn-in-progress' }
   }
-  await tearDownAndDeleteThread(row.id, row.sessionKey)
+  await tearDownAndDeleteThread(row)
   return { deleted: true }
 }
 
@@ -3184,19 +3241,8 @@ export async function listGroupChatsForAgentView(
   const threads = readArchive
     ? [...archivedByChatId.values()].flatMap((archived) => archived.slice(0, options.archivedLimit))
     : allThreads.filter((t) => t.archivedAt === null)
-  // Same lookup host.ts's ordinary-session listSessions does: agent-client
-  // only holds live (loaded-since-restart) sessions in memory, so a thread
-  // whose session isn't in this map is offline, not necessarily unknown —
-  // it falls back to what it persisted before going offline, and only
-  // offline threads pay for that read at all.
   const metaBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta] as const))
-  const lastKnownByKey = await lastKnownContextUsage(threads.filter((t) => !metaBySessionKey.has(t.sessionKey)))
-  const contextUsageByKey = new Map(
-    threads.map((t) => {
-      const live = metaBySessionKey.get(t.sessionKey)
-      return [t.sessionKey, live ? toContextUsage(live.usage) : (lastKnownByKey.get(t.sessionKey) ?? null)] as const
-    }),
-  )
+  const contextUsageByKey = await threadContextUsage(threads)
   // The rosters for every chat at once, alongside the threads. Needed because
   // `group_chat_start_thread` takes the target agent BY NAME and has no
   // defensible default (see startThreadAsAgent): without this the caller would
@@ -3231,6 +3277,30 @@ export async function listGroupChatsForAgentView(
       })),
     archivedThreads: archivedByChatId.get(chat.id)?.length ?? 0,
   }))
+}
+
+/**
+ * How much context each thread's session holds, by session key: what
+ * `group_chat_list` gives an agent and `groupChats.activity` an extension.
+ * No membership gate: the caller has already selected threads the asker may
+ * read.
+ */
+export async function threadContextUsage(
+  threads: readonly { sessionKey: string; agentNodeId: string }[],
+): Promise<Map<string, ContextUsage | null>> {
+  // Same lookup host.ts's ordinary-session listSessions does: agent-client
+  // only holds live (loaded-since-restart) sessions in memory, so a thread
+  // whose session isn't in this map is offline, not necessarily unknown —
+  // it falls back to what it persisted before going offline, and only
+  // offline threads pay for that read at all.
+  const metaBySessionKey = new Map(agentClient.listSessions().map((meta) => [meta.sessionKey, meta] as const))
+  const lastKnownByKey = await lastKnownContextUsage(threads.filter((t) => !metaBySessionKey.has(t.sessionKey)))
+  return new Map(
+    threads.map((t) => {
+      const live = metaBySessionKey.get(t.sessionKey)
+      return [t.sessionKey, live ? toContextUsage(live.usage) : (lastKnownByKey.get(t.sessionKey) ?? null)] as const
+    }),
+  )
 }
 
 /**
@@ -3649,12 +3719,14 @@ export async function deliverThreadFromNode(
 // extension wrote: the host builds the sender and binds it before handing
 // these to extension code (see the extension runtime's `groupChats`).
 
-/** A chat as a sender-bound caller sees it: its address, its name, and its agent members. */
+/** A chat as a sender-bound caller sees it: its address, its name, its agent members, and the space it is the chat of. */
 export interface SenderGroupChat {
   ref: string
   slug: string
   name: string
   agents: Array<{ nodeId: string; name: string }>
+  /** The slug of the space this is the chat of (see `spaceIdOfChat`); absent for a chat that is no space's. */
+  space?: string
 }
 
 /** A thread as a sender-bound caller sees it — enough to show it and to embed it. */
@@ -3667,22 +3739,43 @@ export interface SenderThread {
   createdAt: Date
   /** True while the thread is archived: every send into it is refused. */
   archived: boolean
+  /** Its thread-list folder by name, in the list it is in; null at the top level. */
+  folder: string | null
 }
 
 /** Every chat the sender is a member of. The membership row is the query, as in `listGroupChatsForAgentView`. */
 export async function listGroupChatsForSender(sender: AttributedSender): Promise<SenderGroupChat[]> {
-  const byPrincipal =
-    sender.principal.kind === 'agent'
-      ? eq(groupChatMember.agentNodeId, sender.principal.agentNodeId)
-      : eq(groupChatMember.systemId, sender.principal.systemId)
   const chats = await db
     .select({ id: groupChat.id, slug: groupChat.slug, name: groupChat.name })
     .from(groupChat)
     .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
-    .where(byPrincipal)
+    .where(memberRowOf(sender.principal))
     .orderBy(asc(groupChat.name))
-  const members = await agentMembersByChat(chats.map((c) => c.id))
-  return chats.map((c) => ({ ref: c.id, slug: c.slug, name: c.name, agents: members.get(c.id) ?? [] }))
+  return withChatDetails(chats)
+}
+
+/** Chat rows as `SenderGroupChat`s: with their agent members and the space each is the chat of. */
+async function withChatDetails(chats: Array<{ id: string; slug: string; name: string }>): Promise<SenderGroupChat[]> {
+  const [members, spaces] = await Promise.all([agentMembersByChat(chats.map((c) => c.id)), spaceSlugsOfChats(chats)])
+  return chats.map((c) => {
+    const space = spaces.get(c.id)
+    return { ref: c.id, slug: c.slug, name: c.name, agents: members.get(c.id) ?? [], ...(space ? { space } : {}) }
+  })
+}
+
+/**
+ * The slugs of the spaces whose chat holds `systemId` as a member: what a
+ * system sender's grant covers beyond the chat itself. Being let into a
+ * space's chat is being let into the space, the same rule that lets a person
+ * who is in a space into its chat, read the other way.
+ */
+export async function spacesGrantingSystemSender(systemId: string): Promise<Set<string>> {
+  const chats = await db
+    .select({ id: groupChat.id, slug: groupChat.slug })
+    .from(groupChat)
+    .innerJoin(groupChatMember, eq(groupChatMember.groupChatId, groupChat.id))
+    .where(eq(groupChatMember.systemId, systemId))
+  return new Set((await spaceSlugsOfChats(chats)).values())
 }
 
 /** A chat a person belongs to, and whether one system sender holds a grant in it. */
@@ -3713,14 +3806,7 @@ export async function listGroupChatsForPerson(userId: string, systemId: string):
             .where(and(inArray(groupChatMember.groupChatId, ids), eq(groupChatMember.systemId, systemId)))
         ).map((row) => row.groupChatId),
   )
-  const members = await agentMembersByChat(ids)
-  return chats.map((c) => ({
-    ref: c.id,
-    slug: c.slug,
-    name: c.name,
-    agents: members.get(c.id) ?? [],
-    systemGranted: granted.has(c.id),
-  }))
+  return (await withChatDetails(chats)).map((chat) => ({ ...chat, systemGranted: granted.has(chat.ref) }))
 }
 
 /**
@@ -3741,14 +3827,14 @@ export async function grantSystemSenderAsPerson(userId: string, chatRef: string,
   await insertSystemMember(chat.id, systemId)
 }
 
-/** A chat by id or slug, if the sender is a member of it — refused as UNAVAILABLE otherwise, whichever it was. */
-async function chatForSender(sender: AttributedSender, chatRef: string): Promise<GroupChatSummary> {
+/** A chat by id or slug, if `principal` is a member of it — refused as UNAVAILABLE otherwise, whichever it was. */
+async function chatForPrincipal(principal: MemberPrincipal, chatRef: string): Promise<GroupChatSummary> {
   const trimmed = chatRef.trim()
   const chat =
     (trimmed && (await chatRowBySlug(trimmed))) ||
     (trimmed && (await db.select(chatColumns).from(groupChat).where(eq(groupChat.id, trimmed)).limit(1))[0]) ||
     null
-  if (!chat || !(await isPrincipalMember(chat.id, sender.principal))) {
+  if (!chat || !(await isPrincipalMember(chat.id, principal))) {
     throw new GroupChatAccessError('not-found', UNAVAILABLE)
   }
   return chat
@@ -3768,7 +3854,7 @@ export async function startThreadForSender(
   firstMessage: string,
   opts?: { title?: string; folder?: string; sessionOptions?: HostSessionOptions },
 ): Promise<{ thread: SenderThread; folder: string | null; sessionOptions?: HostSessionOptionsResult }> {
-  const chat = await chatForSender(sender, chatRef)
+  const chat = await chatForPrincipal(sender.principal, chatRef)
   const trimmed = firstMessage.trim()
   if (!trimmed) {
     throw new Error('A message needs some text')
@@ -3896,9 +3982,54 @@ export async function compactThreadForSystem(systemId: string, threadRef: string
   }
 }
 
-// Ungated: every caller above has already resolved the thread through the sender's membership.
+/**
+ * The threads of every chat `reader` is a member of, or of the one chat
+ * `chatRef` (id or slug) names, which is refused as UNAVAILABLE when the
+ * reader is not in it. Active threads only, unless `includeArchived`. Each
+ * comes with its session key, for the caller to read its activity by; the key
+ * is not part of what an extension is shown.
+ */
+export async function threadsForReader(
+  reader: MemberPrincipal,
+  options: { chat?: string; includeArchived?: boolean },
+): Promise<SenderThreadWithKey[]> {
+  const chatIds =
+    options.chat === undefined
+      ? [...(await memberChatIds(reader))]
+      : [(await chatForPrincipal(reader, options.chat)).id]
+  if (chatIds.length === 0) {
+    return []
+  }
+  const inChats = inArray(groupChatThread.groupChatId, chatIds)
+  return senderThreadsWhere(options.includeArchived ? inChats : and(inChats, inThreadList('active')))
+}
+
+/** The threads of the given ids that still exist. Ungated, like `senderThreadFor`. */
+export async function senderThreadsByIds(threadIds: readonly string[]): Promise<SenderThreadWithKey[]> {
+  return threadIds.length === 0 ? [] : senderThreadsWhere(inArray(groupChatThread.id, [...threadIds]))
+}
+
+/** A `SenderThread` and the session key its activity is read by. */
+export interface SenderThreadWithKey {
+  thread: SenderThread
+  sessionKey: string
+}
+
+// Ungated: every caller has already resolved the thread through the sender's membership.
+export async function senderThreadWithKey(threadId: string): Promise<SenderThreadWithKey> {
+  const [row] = await senderThreadsByIds([threadId])
+  if (!row) {
+    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+  }
+  return row
+}
+
 async function senderThreadFor(threadId: string): Promise<SenderThread> {
-  const [row] = await db
+  return (await senderThreadWithKey(threadId)).thread
+}
+
+async function senderThreadsWhere(condition: SQL | undefined): Promise<SenderThreadWithKey[]> {
+  const rows = await db
     .select({
       id: groupChatThread.id,
       slug: groupChatThread.slug,
@@ -3913,19 +4044,34 @@ async function senderThreadFor(threadId: string): Promise<SenderThread> {
     })
     .from(groupChatThread)
     .innerJoin(groupChat, eq(groupChat.id, groupChatThread.groupChatId))
-    .where(eq(groupChatThread.id, threadId))
-    .limit(1)
-  if (!row) {
-    throw new GroupChatAccessError('not-found', UNAVAILABLE)
+    .where(condition)
+  if (rows.length === 0) {
+    return []
   }
-  const agentName = (await listAgentNodesImpl()).find((n) => n.nodeId === row.agentNodeId)?.name ?? null
-  return {
-    ref: agentThreadRef(row),
-    threadId: row.id,
-    title: row.title,
-    chat: { ref: row.chatId, slug: row.chatSlug, name: row.chatName },
-    agent: { nodeId: row.agentNodeId, name: agentName },
-    createdAt: row.createdAt,
-    archived: row.archivedAt !== null,
-  }
+  const agentNames = new Map((await listAgentNodesImpl()).map((n) => [n.nodeId, n.name] as const))
+  // One layout read per list a returned thread is drawn in, from the same
+  // shared layout the thread list draws.
+  const listKey = (row: { chatId: string; archivedAt: Date | null }) => `${threadListOf(row)}:${row.chatId}`
+  const lists = new Map(rows.map((row) => [listKey(row), { chatId: row.chatId, list: threadListOf(row) }] as const))
+  const folderByList = new Map(
+    await Promise.all(
+      [...lists].map(
+        async ([key, { chatId, list }]) =>
+          [key, folderNameByThreadId((await readThreadLayout(chatId, list)).layout)] as const,
+      ),
+    ),
+  )
+  return rows.map((row) => ({
+    sessionKey: row.sessionKey,
+    thread: {
+      ref: agentThreadRef(row),
+      threadId: row.id,
+      title: row.title,
+      chat: { ref: row.chatId, slug: row.chatSlug, name: row.chatName },
+      agent: { nodeId: row.agentNodeId, name: agentNames.get(row.agentNodeId) ?? null },
+      createdAt: row.createdAt,
+      archived: row.archivedAt !== null,
+      folder: folderByList.get(listKey(row))?.get(row.id) ?? null,
+    },
+  }))
 }

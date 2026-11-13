@@ -59,6 +59,7 @@ import type {
   GroupChatThreadListEntry,
   GroupChatThreadView,
   MemberRef,
+  RecentThreadView,
   ThreadTranscriptSearch,
 } from '@/app/_authed/(group-chats)/_server/read-model'
 import {
@@ -69,8 +70,17 @@ import {
   listThreadsInGroupChatView,
   searchThreadTranscriptsView,
 } from '@/app/_authed/(group-chats)/_server/read-model'
+import {
+  loadRecent,
+  parseRecentLayoutInput,
+  type RecentView,
+  recordRecent,
+  removeRecent,
+  saveRecentLayout,
+} from '@/app/_authed/(group-chats)/_server/recent-store'
 import { getThreadLayout, putThreadLayout } from '@/app/_authed/(group-chats)/_server/thread-layout-access'
 import type {
+  SaveLayoutResult,
   ThreadLayout,
   ThreadList,
   VersionedThreadLayout,
@@ -79,9 +89,9 @@ import type { DirectoryAgent, DirectoryUser } from '@/app/_authed/(group-chats)/
 import { listDirectoryAgents, listDirectoryUsers } from '@/app/_authed/(group-chats)/_server/user-directory'
 import type { GroupChatAccessFailure } from '@/app/_authed/(group-chats)/_shared/access-error'
 import { GroupChatAccessError } from '@/app/_authed/(group-chats)/_shared/access-error'
+import { LEGACY_RECENT_THREADS_MAX } from '@/app/_authed/(group-chats)/_shared/recent-threads'
 import { slug as slugify } from '@/app/_authed/(server)/_server/types'
 import { listSystemSenderIds } from '@/app/_server/message-author'
-import { requireSessionServerFn } from '@/app/_server/require-session'
 
 // So no client file ever has a reason to name model.ts directly. These are erased at
 // build time and carry no runtime binding, so re-exporting them here is safe
@@ -101,6 +111,8 @@ export type {
   JoinGroupChatResult,
   MemberPrincipal,
   MemberRef,
+  RecentThreadView,
+  RecentView,
   StartThreadResult,
   ThreadLayout,
   ThreadList,
@@ -242,18 +254,11 @@ export const listGroupChatMembers = createServerFn({ method: 'GET', strict: { ou
  * the message that asked for it. Offering the population removes the mistake
  * instead of reporting it.
  *
- * Not chat-scoped, so a session is the whole check — and it IS checked here: a
- * server function is its own callable HTTP endpoint, reachable without going
- * through the page that leads to it, so `_authed` is routing rather than a
- * boundary. Every other export in this file gets the same answer from the
- * model function it delegates to; this one has no model function, so it asks
- * directly.
+ * Not chat-scoped, so a session is the whole check, and the session gate every
+ * server function runs (app/start.ts) is that check.
  */
 export const listSystemSenders = createServerFn({ method: 'GET', strict: { output: false } }).handler(
-  async (): Promise<string[]> => {
-    await requireSessionServerFn()
-    return listSystemSenderIds()
-  },
+  async (): Promise<string[]> => listSystemSenderIds(),
 )
 
 export const listGroupChatThreads = createServerFn({ method: 'GET', strict: { output: false } })
@@ -466,7 +471,7 @@ export const getGroupChatThreadLayout = createServerFn({ method: 'GET', strict: 
  * payload the caller needs. There is nothing for the caller to do with "your
  * write did not land" on its own — it has to show what did land instead.
  */
-export type SaveThreadLayoutResult = { ok: true; version: number } | { ok: false; current: VersionedThreadLayout }
+export type SaveThreadLayoutResult = SaveLayoutResult
 
 export const saveGroupChatThreadLayout = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator(
@@ -603,6 +608,49 @@ export const findGroupChatThreadInChat = createServerFn({ method: 'GET', strict:
       throw error
     }
   })
+
+// The signed-in person's Recent, kept in their account (recent-store.ts). Each
+// call answers with the whole of it as it stands afterwards, so whichever
+// surface asked can draw it.
+
+// `legacyIds` are a browser's Recent from before it moved into the account,
+// sent once and then cleared there. They come from the browser's own storage,
+// so anything that is not a short list of strings is refused rather than
+// queried.
+export const loadRecentThreads = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: unknown): { legacyIds: string[] } => {
+    const legacyIds = (data as { legacyIds?: unknown } | null)?.legacyIds
+    if (
+      !Array.isArray(legacyIds) ||
+      legacyIds.length > LEGACY_RECENT_THREADS_MAX ||
+      !legacyIds.every((id) => typeof id === 'string')
+    ) {
+      throw new Error('Expected a list of thread ids')
+    }
+    return { legacyIds }
+  })
+  .handler(async ({ data }): Promise<RecentView> => loadRecent(getRequest(), data.legacyIds))
+
+export const recordRecentThread = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<RecentView> => recordRecent(getRequest(), threadId))
+
+export const removeRecentThread = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((threadId: string) => threadId)
+  .handler(async ({ data: threadId }): Promise<RecentView> => removeRecent(getRequest(), threadId))
+
+export const saveRecentThreadLayout = createServerFn({ method: 'POST', strict: { output: false } })
+  .inputValidator((data: unknown): { layout: ThreadLayout; expectedVersion: number } => {
+    const expectedVersion = (data as { expectedVersion?: unknown } | null)?.expectedVersion
+    if (typeof expectedVersion !== 'number' || !Number.isInteger(expectedVersion) || expectedVersion < 0) {
+      throw new Error('Expected the version the layout is based on')
+    }
+    return { layout: parseRecentLayoutInput((data as { layout?: unknown }).layout), expectedVersion }
+  })
+  .handler(
+    async ({ data }): Promise<SaveThreadLayoutResult> =>
+      saveRecentLayout(getRequest(), data.layout, data.expectedVersion),
+  )
 
 // A thread's artifacts, for the reader. Gated on the caller's own membership,
 // exactly as the thread's messages are — the agent-facing write path is a

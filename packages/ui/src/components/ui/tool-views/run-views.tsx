@@ -1,4 +1,4 @@
-import type { ToolViewProps } from 'agent-chat/tool-views'
+import type { ToolCallState, ToolViewProps } from 'agent-chat/tool-views'
 import { cn } from 'cn'
 import { useMemo } from 'react'
 
@@ -13,6 +13,7 @@ import {
   OpRow,
   OpText,
   readableJson,
+  toolViewState,
 } from './op-block'
 import { useToolViewHost } from './tool-view-host'
 
@@ -29,7 +30,17 @@ type Result = ToolViewProps['result']
 
 // An input row (what ran) over an output row (what it printed). `preview`
 // shortens both to what a preview keeps.
-function RunBody({ input, result, preview }: { input?: string; result: Result; preview?: boolean }) {
+function RunBody({
+  input,
+  result,
+  state,
+  preview,
+}: {
+  input?: string
+  result: Result
+  state: ToolCallState
+  preview?: boolean
+}) {
   return (
     <>
       {input && (
@@ -39,7 +50,7 @@ function RunBody({ input, result, preview }: { input?: string; result: Result; p
       )}
       <div className='border-t' />
       <OpRow label='output'>
-        <OpOutput result={result} tail={preview ? PREVIEW_OUTPUT_LINES : undefined} />
+        <OpOutput result={result} state={state} tail={preview ? PREVIEW_OUTPUT_LINES : undefined} />
       </OpRow>
     </>
   )
@@ -51,12 +62,14 @@ function RunBlock({
   target,
   input,
   result,
+  state,
 }: {
   verb: string
   detail?: string
   target?: string
   input?: string
   result: Result
+  state: ToolCallState
 }) {
   return (
     <OpBlock
@@ -64,12 +77,11 @@ function RunBlock({
       detail={detail}
       target={target}
       meta={<OpMeta text={linesLabel(result?.text)} />}
-      isError={result?.isError}
-      pending={!result}
+      state={state}
       overflowing={exceedsClamp(input) || exceedsClamp(result?.text)}
-      preview={<RunBody input={input} result={result} preview />}
+      preview={<RunBody input={input} result={result} state={state} preview />}
     >
-      <RunBody input={input} result={result} />
+      <RunBody input={input} result={result} state={state} />
     </OpBlock>
   )
 }
@@ -95,7 +107,7 @@ function RunFields({ args, input, inputLabel }: { args: Record<string, unknown>;
   )
 }
 
-export function RemoteExecView({ args, mode, result }: ToolViewProps) {
+export function RemoteExecView({ args, mode, result, state }: ToolViewProps) {
   const command = args.command as string | undefined
   if (mode === 'approval') {
     return <RunFields args={args} input={command} inputLabel='Command' />
@@ -107,11 +119,12 @@ export function RemoteExecView({ args, mode, result }: ToolViewProps) {
       target={args.target as string | undefined}
       input={command}
       result={result}
+      state={toolViewState({ state, result })}
     />
   )
 }
 
-export function RemoteScriptView({ args, mode, result }: ToolViewProps) {
+export function RemoteScriptView({ args, mode, result, state }: ToolViewProps) {
   const script = args.script as string | undefined
   if (mode === 'approval') {
     return <RunFields args={args} input={script} inputLabel='Script' />
@@ -123,6 +136,7 @@ export function RemoteScriptView({ args, mode, result }: ToolViewProps) {
       target={args.target as string | undefined}
       input={script}
       result={result}
+      state={toolViewState({ state, result })}
     />
   )
 }
@@ -135,12 +149,14 @@ function CallBlock({
   target,
   values,
   result,
+  state,
 }: {
   verb: string
   detail?: string
   target?: string
   values?: Record<string, unknown>
   result: Result
+  state: ToolCallState
 }) {
   // Laid out for reading here only; the result itself stays as it arrived.
   const shown = useMemo(() => result && { ...result, text: readableJson(result.text) }, [result])
@@ -150,14 +166,13 @@ function CallBlock({
       verb={verb}
       detail={detail}
       target={target}
-      isError={result?.isError}
-      pending={!result}
+      state={state}
       overflowing={Object.keys(values ?? {}).length > 2 || exceedsClamp(shown?.text)}
     >
       {hasValues && <OpFields values={values} />}
       {hasValues && <div className='border-t' />}
       <OpRow label='output'>
-        <OpOutput result={shown} />
+        <OpOutput result={shown} state={state} />
       </OpRow>
     </OpBlock>
   )
@@ -166,11 +181,16 @@ function CallBlock({
 // Fallback for a tool call with no registered view (e.g. an external MCP
 // server's tool) — the same chrome as every other call, without a target line:
 // a generic tool call isn't tied to one of the product's node/handle targets.
-export function GenericToolView({ tool, args, result }: { tool: string; args: Record<string, unknown>; result?: Result }) {
-  return <CallBlock verb={tool} values={args} result={result} />
+export function GenericToolView({
+  tool,
+  args,
+  result,
+  state,
+}: Pick<ToolViewProps, 'tool' | 'args' | 'result' | 'state'>) {
+  return <CallBlock verb={tool} values={args} result={result} state={toolViewState({ state, result })} />
 }
 
-export function CallView({ args, mode, result }: ToolViewProps) {
+export function CallView({ args, mode, result, state }: ToolViewProps) {
   const nodeId = args.nodeId as string | undefined
   const action = args.action as string | undefined
   const params = args.params as Record<string, unknown> | undefined
@@ -186,7 +206,16 @@ export function CallView({ args, mode, result }: ToolViewProps) {
       </ApprovalFields>
     )
   }
-  return <CallBlock verb='Call' detail={action} target={nodeId} values={params} result={result} />
+  return (
+    <CallBlock
+      verb='Call'
+      detail={action}
+      target={nodeId}
+      values={params}
+      result={result}
+      state={toolViewState({ state, result })}
+    />
+  )
 }
 
 interface AskedQuestion {
@@ -248,16 +277,24 @@ export function askAnswers(text: string | undefined, questions: readonly string[
 // A question the agent put to the user. The question itself is answered on its
 // own card, so the transcript row only records it: each question asked, and the
 // answer the agent got back for it.
-export function AskUserQuestionView({ args, result }: ToolViewProps) {
+export function AskUserQuestionView({ args, result, state: given }: ToolViewProps) {
+  const state = toolViewState({ state: given, result })
   const questions = Array.isArray(args.questions) ? (args.questions as AskedQuestion[]) : []
   // While the agent is still writing the call, its arguments carry no
   // questions yet: there is nothing to count and nothing to show under the
   // header.
-  if (questions.length === 0 && !result) {
-    return <OpBlock verb='Preparing' detail='question' pending />
+  if (questions.length === 0 && state === 'running') {
+    return <OpBlock verb='Preparing' detail='question' state='running' />
   }
   const asked = questions.map((entry) => entry.question ?? entry.header ?? '').filter(Boolean)
-  const detail = questions.length === 1 ? (questions[0].header ?? questions[0].question) : `${questions.length} questions`
+  // A call stopped or failed before its arguments arrived asked nothing, so
+  // there is no count to give.
+  const detail =
+    questions.length === 0
+      ? 'question'
+      : questions.length === 1
+        ? (questions[0].header ?? questions[0].question)
+        : `${questions.length} questions`
   // Only questions that have their own text can be found in the reply; a
   // header alone is not what the reply quotes.
   const answers = questions.every((entry) => entry.question) ? askAnswers(result?.text, asked) : null
@@ -265,8 +302,7 @@ export function AskUserQuestionView({ args, result }: ToolViewProps) {
     <OpBlock
       verb='Ask'
       detail={detail}
-      isError={result?.isError}
-      pending={!result}
+      state={state}
       overflowing={asked.length > 2 || (!answers && exceedsClamp(result?.text))}
     >
       {answers ? (
@@ -288,9 +324,9 @@ export function AskUserQuestionView({ args, result }: ToolViewProps) {
               <OpText text={asked.join('\n')} />
             </OpRow>
           )}
-          <div className='border-t' />
+          {asked.length > 0 && <div className='border-t' />}
           <OpRow label='answer'>
-            <OpOutput result={result} />
+            <OpOutput result={result} state={state} />
           </OpRow>
         </>
       )}

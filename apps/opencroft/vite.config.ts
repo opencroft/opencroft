@@ -1,9 +1,12 @@
+import { fileURLToPath } from 'node:url'
+
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
 
+import { shadowedDependencies } from './scripts/shadowed-dependencies'
 import { nitroWorkerStop } from './vite-nitro-worker-stop'
 import { ssrWatchdog } from './vite-ssr-watchdog'
 
@@ -135,8 +138,18 @@ export default defineConfig(async ({ mode }) => {
       ],
       // agent-client and @opencroft/terminal ship TS source and must be
       // transpiled for SSR; their native deps (ssh2, node-pty,
-      // @electric-sql/pglite, pg) stay external via the list above.
-      noExternal: ['agent-client', '@opencroft/terminal', '@opencroft/db-backups'],
+      // @electric-sql/pglite, pg) stay external via the list above. A package
+      // a workspace package holds its own version of is bundled, so the server
+      // runs the version its importer depends on (./scripts/shadowed-dependencies).
+      noExternal: [
+        'agent-client',
+        '@opencroft/terminal',
+        '@opencroft/db-backups',
+        ...shadowedDependencies(
+          fileURLToPath(new URL('.', import.meta.url)),
+          fileURLToPath(new URL('../../packages', import.meta.url)),
+        ),
+      ],
     },
     // Defense-in-depth: the same native/server-only modules
     // external for the SSR build above are external here for the CLIENT build too, in

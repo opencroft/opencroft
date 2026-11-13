@@ -140,16 +140,16 @@ async function pressSpace(element: Element | null) {
   })
 }
 
-async function type(input: Element | null | undefined, text: string) {
-  assert.ok(input instanceof window.HTMLInputElement, 'the text box is on the page')
-  const setValue = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+async function type(box: Element | null | undefined, text: string) {
+  assert.ok(box instanceof window.HTMLTextAreaElement, 'the text box is on the page')
+  const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
   await act(async () => {
-    setValue?.call(input, text)
-    input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    setValue?.call(box, text)
+    box.dispatchEvent(new window.Event('input', { bubbles: true }))
   })
 }
 
-const customBox = () => container.querySelector('input[placeholder="Custom answer (optional)"]')
+const customBox = () => container.querySelector('[placeholder="Custom answer (optional)"]')
 
 for (const [way, pressOption] of [
   ['its row', (value: string) => press(optionLabel(value)?.querySelector('span') ?? null)],

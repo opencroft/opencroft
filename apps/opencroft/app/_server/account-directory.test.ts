@@ -20,10 +20,20 @@ process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
 )
 delete process.env.OPENCROFT_DATABASE_URL
 
-const { db, user, username: usernames } = await import('@opencroft/db')
+const { db, space, user, username: usernames } = await import('@opencroft/db')
 const { eq } = await import('drizzle-orm')
 const store = await import('./usernames')
-const { authorsByIdentifier } = await import('./account-directory')
+const { authorsByIdentifier, mentionableAccounts } = await import('./account-directory')
+
+// One real agent node, seeded before anything reads the space registry.
+await db.insert(space).values({
+  slug: 'directory-space',
+  name: 'Directory Space',
+  data: JSON.stringify({
+    nodes: [{ id: 'agent-m', type: 'builtin.core.agent', data: { name: 'Agent M' } }],
+    edges: [],
+  }),
+})
 
 beforeEach(async () => {
   await db.delete(usernames)
@@ -113,4 +123,32 @@ test('several handles are answered in one pass, resolved and unresolved together
 
 test('asking about nothing reads nothing', async () => {
   assert.deepEqual(await authorsByIdentifier([]), {})
+})
+
+test('everyone a mention can name is listed by the handle they go by now, in name order', async () => {
+  await person('person-9', 'Zed', '/zed.png')
+  await store.changeUsername({ kind: 'user', id: 'person-9' }, 'zed')
+  await store.changeUsername({ kind: 'user', id: 'person-9' }, 'zed.z')
+  // Has no handle yet, and is given one from the name.
+  await person('person-10', 'Bea')
+  // An agent node that is gone, with its handle still on record: a mention could not name it.
+  await store.changeUsername({ kind: 'agent', id: 'agent-gone' }, 'agent.gone')
+
+  const listed = await mentionableAccounts()
+
+  assert.deepEqual(
+    listed.map(({ handle, name }) => [handle, name]),
+    [
+      ['agent.agent.m', 'Agent M'],
+      ['bea', 'Bea'],
+      ['zed.z', 'Zed'],
+    ],
+  )
+  assert.equal(listed[2].avatarUrl, '/zed.png')
+  assert.equal(await store.currentUsername({ kind: 'user', id: 'person-10' }), 'bea', 'the given handle is kept')
+  assert.equal(
+    await store.currentUsername({ kind: 'agent', id: 'agent-m' }),
+    'agent.agent.m',
+    'an agent is given one from its directory name',
+  )
 })

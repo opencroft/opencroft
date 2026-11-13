@@ -1,5 +1,6 @@
-import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process'
+import { type ChildProcess, type ChildProcessWithoutNullStreams, spawn as nodeSpawn } from 'node:child_process'
 import os from 'node:os'
+import type { Readable, Writable } from 'node:stream'
 
 import type { ExecOptions, ExecResult, SshCredentials, TerminalContext } from '../types'
 import {
@@ -9,8 +10,9 @@ import {
   DEFAULT_TIMEOUT_MS,
   OutputCollector,
   shellJoin,
+  stdoutFields,
 } from './exec-util'
-import { sshExecResult, sshStreamHandle } from './ssh'
+import { sshChannelSpawn, sshExecResult, sshStreamHandle } from './ssh'
 import { type OutputFilter, pipedProcessHandle, type StreamHandle } from './stream-handle'
 
 /** What a streamed command needs, which is the collecting options minus everything about
@@ -25,6 +27,31 @@ export interface StreamOptions {
   stdin?: string
   /** Transforms the output before anything keeps or shows it — see OutputFilter. */
   filter?: OutputFilter
+}
+
+/** Where a spawned process starts, and the environment it gets on top of the transport's own. */
+export interface SpawnOptions {
+  cwd?: string
+  env?: Record<string, string>
+}
+
+/**
+ * A process whose stdin, stdout and stderr stay open for its whole life, for a caller that speaks
+ * a protocol over them (an agent harness's JSON-RPC over stdio). Shaped as a node `ChildProcess`
+ * with piped stdio is, so a process this machine starts itself is handed back as it is.
+ *
+ * `'exit'` is emitted once when the process ends or its channel is lost; a lost channel emits
+ * `'error'` first, with the reason. `kill` asks the process to stop.
+ */
+export interface SpawnedProcess {
+  readonly stdin: Writable
+  readonly stdout: Readable
+  readonly stderr: Readable
+  readonly exitCode: number | null
+  readonly signalCode: string | null
+  kill(): void
+  on(event: 'exit', listener: (code: number | null, signal: string | null) => void): this
+  on(event: 'error', listener: (error: Error) => void): this
 }
 
 /**
@@ -43,11 +70,29 @@ export interface StreamOptions {
  * command needs a non-pty channel of the transport's own, and `wsl` and `docker-exec` have no
  * such channel here today. They refuse, naming the context, instead of falling back to a
  * transport that would run the command on the wrong machine.
+ *
+ * `spawn` is the fourth: a process with its stdin left open, for a caller that talks to it for as
+ * long as it runs. Every transport has it. Env reaches the process the way `exec` delivers it on
+ * that transport: in the process environment locally, else as lines read off stdin before the
+ * command is exec'd, after which stdin is the caller's.
  */
 export interface TerminalBackend {
   exec(ctx: TerminalContext, command: string, opts?: ExecOptions): Promise<ExecResult>
   run(ctx: TerminalContext, argv: string[], opts?: ExecOptions): Promise<ExecResult>
   stream(ctx: TerminalContext, argv: string[], opts?: StreamOptions): Promise<StreamHandle>
+  spawn(ctx: TerminalContext, argv: string[], opts?: SpawnOptions): Promise<SpawnedProcess>
+}
+
+/**
+ * `child` with the env lines its preamble reads written to its stdin, which then stays open for
+ * the caller. The preamble's `read` takes one line at a time off a pipe, so what the caller
+ * writes next reaches the exec'd command untouched.
+ */
+function withEnvLines<P extends { stdin: Writable }>(child: P, envStdin: Buffer | undefined): P {
+  if (envStdin) {
+    child.stdin.write(envStdin)
+  }
+  return child
 }
 
 /**
@@ -62,6 +107,26 @@ function notStreamable(type: string): never {
       `channel per transport, and only local and ssh have one; a job on this context has to stay a ` +
       `one-shot exec until it does.`,
   )
+}
+
+/**
+ * The one stdin a transport that delivers env over stdin sends: the env lines, or the caller's
+ * input, never both.
+ *
+ * Env arrives out of band as lines the preamble reads from stdin, so a document sent alongside
+ * would be read as part of that preamble's input. Refused rather than silently preferring one: a
+ * deploy that lost its env, or a key that never reached `ssh-add`, is the kind of failure that
+ * gets diagnosed as something else entirely.
+ */
+function soleStdin<T>(transport: string, envStdin: Buffer | undefined, stdin: T | undefined): Buffer | T | undefined {
+  if (envStdin && stdin !== undefined) {
+    throw new Error(
+      `${transport} cannot carry both \`env\` and \`stdin\`: env is delivered as lines the command ` +
+        'reads from stdin before it starts, which is the same channel the stdin document uses. ' +
+        'Send one or the other.',
+    )
+  }
+  return envStdin ?? stdin
 }
 
 function isWindows(): boolean {
@@ -94,9 +159,9 @@ function collectProcess(child: ChildProcess, opts: ExecOptions): Promise<ExecRes
     }, timeoutMs)
     timer.unref?.()
 
-    // Out-of-band env delivery (see buildEnvInjection): write once, then close stdin so a
-    // preamble's `read` sees EOF right after its own lines rather than hanging. Every other
-    // caller leaves stdin untouched, exactly as before this existed.
+    // The caller's input, or out-of-band env (see buildEnvInjection): write once, then close
+    // stdin so a reader (an env preamble's `read`, `ssh-add -`) sees EOF right after it rather
+    // than hanging. Without either, stdin is left untouched.
     if (opts.stdin) {
       child.stdin?.end(opts.stdin)
     }
@@ -114,7 +179,7 @@ function collectProcess(child: ChildProcess, opts: ExecOptions): Promise<ExecRes
       settled = true
       clearTimeout(timer)
       resolve({
-        stdout: stdout.toString(),
+        ...stdoutFields(stdout, opts),
         stderr: stderr.toString(),
         exitCode: timedOut ? 124 : (code ?? 1),
         truncated: stdout.truncated || stderr.truncated || undefined,
@@ -137,7 +202,12 @@ function spawnLocal(cmd: string, args: string[], cwd: string | undefined, opts: 
 // On Windows, "local" means "inside the default WSL distro" — same transport as `wslBackend`,
 // so env must be injected the same way (stdin, not the spawned wsl.exe process's own env, which
 // WSL does not forward into the distro).
-function spawnLocalWindows(cmd: string, args: string[], cwd: string | undefined, preamble: string): ChildProcess {
+function spawnLocalWindows(
+  cmd: string,
+  args: string[],
+  cwd: string | undefined,
+  preamble: string,
+): ChildProcessWithoutNullStreams {
   const cdArgs = cwd ? ['--cd', cwd] : []
   const invocation = preamble
     ? [...cdArgs, '--exec', 'bash', '-c', preamble + shellJoin([cmd, ...args])]
@@ -152,7 +222,7 @@ const localBackend: TerminalBackend = {
       const { preamble, stdin } = buildEnvInjection(opts.env)
       return collectProcess(spawnLocalWindows('bash', ['-c', command], cwd, preamble), {
         ...opts,
-        stdin: stdin ?? opts.stdin,
+        stdin: soleStdin('local on Windows', stdin, opts.stdin),
       })
     }
     return collectProcess(spawnLocal('bash', ['-c', command], cwd, opts), opts)
@@ -162,7 +232,10 @@ const localBackend: TerminalBackend = {
     const [cmd, ...rest] = argv
     if (isWindows()) {
       const { preamble, stdin } = buildEnvInjection(opts.env)
-      return collectProcess(spawnLocalWindows(cmd, rest, cwd, preamble), { ...opts, stdin: stdin ?? opts.stdin })
+      return collectProcess(spawnLocalWindows(cmd, rest, cwd, preamble), {
+        ...opts,
+        stdin: soleStdin('local on Windows', stdin, opts.stdin),
+      })
     }
     return collectProcess(spawnLocal(cmd, rest, cwd, opts), opts)
   },
@@ -190,6 +263,20 @@ const localBackend: TerminalBackend = {
     child.stdin?.end(opts.stdin ?? '')
     return handle
   },
+  async spawn(ctx, argv, opts = {}) {
+    const cwd = opts.cwd ?? ctx.cwd
+    const [cmd, ...rest] = argv
+    if (isWindows()) {
+      const { preamble, stdin } = buildEnvInjection(opts.env)
+      return withEnvLines(spawnLocalWindows(cmd, rest, cwd, preamble), stdin)
+    }
+    return nodeSpawn(cmd, rest, {
+      cwd,
+      env: opts.env ? { ...process.env, ...opts.env } : process.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+  },
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -209,17 +296,27 @@ const wslBackend: TerminalBackend = {
     const child = nodeSpawn('wsl', [...wslArgs(ctx, opts), '--exec', 'bash', '-c', preamble + command], {
       windowsHide: true,
     })
-    return collectProcess(child, { ...opts, stdin: stdin ?? opts.stdin })
+    return collectProcess(child, { ...opts, stdin: soleStdin('wsl', stdin, opts.stdin) })
   },
   run(ctx, argv, opts = {}) {
     const { preamble, stdin } = buildEnvInjection(opts.env)
     const args = preamble
       ? [...wslArgs(ctx, opts), '--exec', 'bash', '-c', preamble + shellJoin(argv)]
       : [...wslArgs(ctx, opts), '--exec', ...argv]
-    return collectProcess(nodeSpawn('wsl', args, { windowsHide: true }), { ...opts, stdin: stdin ?? opts.stdin })
+    return collectProcess(nodeSpawn('wsl', args, { windowsHide: true }), {
+      ...opts,
+      stdin: soleStdin('wsl', stdin, opts.stdin),
+    })
   },
   async stream() {
     notStreamable('wsl')
+  },
+  async spawn(ctx, argv, opts = {}) {
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const args = preamble
+      ? [...wslArgs(ctx, opts), '--exec', 'bash', '-c', `${preamble}exec ${shellJoin(argv)}`]
+      : [...wslArgs(ctx, opts), '--exec', ...argv]
+    return withEnvLines(nodeSpawn('wsl', args, { windowsHide: true }), stdin)
   },
 }
 
@@ -233,6 +330,7 @@ function credsFromCtx(ctx: TerminalContext): SshCredentials {
     port: (ctx.port as number) || 22,
     username: (ctx.username as string) || 'root',
     password: ctx.password as string | undefined,
+    credentialsScope: ctx.credentialsScope as string | undefined,
     keyPath: ctx.keyPath as string | undefined,
   }
 }
@@ -242,31 +340,25 @@ const sshBackend: TerminalBackend = {
     const cwd = contextCwd(ctx, opts)
     const { preamble, stdin } = buildEnvInjection(opts.env)
     const full = cdPrefix(cwd) + preamble + command
-    return sshExecResult(credsFromCtx(ctx), full, { ...opts, stdin: stdin ?? opts.stdin })
+    return sshExecResult(credsFromCtx(ctx), full, { ...opts, stdin: soleStdin('ssh', stdin, opts.stdin) })
   },
   run(ctx, argv, opts = {}) {
     const cwd = contextCwd(ctx, opts)
     const { preamble, stdin } = buildEnvInjection(opts.env)
     const full = cdPrefix(cwd) + preamble + shellJoin(argv)
-    return sshExecResult(credsFromCtx(ctx), full, { ...opts, stdin: stdin ?? opts.stdin })
+    return sshExecResult(credsFromCtx(ctx), full, { ...opts, stdin: soleStdin('ssh', stdin, opts.stdin) })
   },
   async stream(ctx, argv, opts = {}) {
     const cwd = opts.cwd ?? ctx.cwd
     const { preamble, stdin: envStdin } = buildEnvInjection(opts.env)
-    // Env and a stdin document want the same channel, and this is the one place they can both
-    // turn up: env arrives out of band as lines the preamble reads from stdin, so a document sent
-    // alongside would be read as part of that preamble's input. Refused rather than silently
-    // preferring one — a deploy that lost its env, or a compose file that arrived truncated, is
-    // the kind of failure that gets diagnosed as something else entirely.
-    if (envStdin && opts.stdin !== undefined) {
-      throw new Error(
-        'ssh streaming cannot carry both `env` and `stdin`: env is delivered as lines the command ' +
-          'reads from stdin before it starts, which is the same channel the stdin document uses. ' +
-          'Send one or the other.',
-      )
-    }
+    const input = soleStdin('ssh streaming', envStdin, opts.stdin)
     const full = cdPrefix(cwd) + preamble + shellJoin(argv)
-    return sshStreamHandle(credsFromCtx(ctx), full, envStdin ?? opts.stdin, opts.filter)
+    return sshStreamHandle(credsFromCtx(ctx), full, input, opts.filter)
+  },
+  async spawn(ctx, argv, opts = {}) {
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const full = `${cdPrefix(opts.cwd ?? ctx.cwd) + preamble}exec ${shellJoin(argv)}`
+    return withEnvLines(await sshChannelSpawn(credsFromCtx(ctx), full), stdin)
   },
 }
 
@@ -284,12 +376,19 @@ function dockerArgv(ctx: TerminalContext, opts: ExecOptions): string[] {
   return ['docker', ...ctxArgs, 'exec', ...cwdArgs, ...userArgs, '-i', (ctx.containerId as string) ?? '']
 }
 
-// Only the timeout/output-cap knobs travel to the parent call as opts -- cwd/env are consumed
-// here, folded into the inner `sh -c` preamble. `stdin` is the one exception: it's how that
-// preamble's payload actually reaches the container (the outer `docker exec -i` process forwards
-// its own stdin straight through), so it has to ride along on the parent call explicitly.
-function parentOpts(opts: ExecOptions, stdin: Buffer | undefined): ExecOptions {
-  return { timeoutMs: opts.timeoutMs, maxOutputBytes: opts.maxOutputBytes, stdin }
+// Only the timeout/output knobs travel to the parent call as opts -- cwd/env are consumed
+// here, folded into the inner `sh -c` preamble. `stdin` is the one exception: the outer
+// `docker exec -i` process forwards its own stdin straight through to the command in the
+// container, so the env preamble's payload, or the caller's own input, rides along on the parent
+// call explicitly. `docker exec` passes the command's stdout through unchanged, so bytes asked
+// for here are the parent's stdout as bytes.
+function parentOpts(opts: ExecOptions, envStdin: Buffer | undefined): ExecOptions {
+  return {
+    timeoutMs: opts.timeoutMs,
+    maxOutputBytes: opts.maxOutputBytes,
+    binaryStdout: opts.binaryStdout,
+    stdin: soleStdin('docker-exec', envStdin, opts.stdin),
+  }
 }
 
 const dockerExecBackend: TerminalBackend = {
@@ -314,6 +413,15 @@ const dockerExecBackend: TerminalBackend = {
   // that looks finished.
   async stream() {
     notStreamable('docker-exec')
+  },
+  // Composed with the parent the way `exec` and `run` are: `docker exec -i` forwards its own
+  // stdin to the command for as long as both run, so the parent's spawn is this one's channel.
+  // The env lines go after the parent has started, onto that same stdin.
+  async spawn(ctx, argv, opts = {}) {
+    const via = ctx.via ?? { type: 'local' }
+    const { preamble, stdin } = buildEnvInjection(opts.env)
+    const inner = preamble ? ['sh', '-c', `${preamble}exec ${shellJoin(argv)}`] : argv
+    return withEnvLines(await getBackend(via).spawn(via, [...dockerArgv(ctx, opts), ...inner]), stdin)
   },
 }
 

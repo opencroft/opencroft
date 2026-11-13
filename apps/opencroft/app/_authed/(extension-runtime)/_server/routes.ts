@@ -1,6 +1,7 @@
 import { getSessionUser } from '@opencroft/auth/server'
 import type { ExtensionRoute } from '@opencroft/server'
 
+import { directoryForCaller } from '@/app/_authed/(extension-runtime)/_server/host'
 import { directoryUserOf } from '@/app/_server/user-directory'
 
 // The methods a session route answers whichever site the request came from.
@@ -18,7 +19,8 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
  * A `{ session: 'person', handler }` route is checked here, before the handler
  * runs, with the same `getSessionUser` the rest of the app uses. No session:
  * 401, and the handler never runs. A session: the handler gets the person in
- * the shape an App action gets as `callerPerson` (`directoryUserOf`).
+ * the shape an App action gets as `callerPerson` (`directoryUserOf`), and the
+ * spaces and apps that person sees, bound until the handler settles.
  *
  * A session cookie is sent with requests from other sites under the same
  * domain too, so a request that could change something is refused when the
@@ -27,7 +29,11 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
  * Anything else declared under a route name fails closed with 500: a typo in
  * `session`, or a kind this host doesn't know, must not be served as public.
  */
-export async function dispatchExtensionRoute(route: ExtensionRoute | undefined, request: Request): Promise<Response> {
+export async function dispatchExtensionRoute(
+  extensionId: string,
+  route: ExtensionRoute | undefined,
+  request: Request,
+): Promise<Response> {
   if (!route) {
     return new Response('Not found', { status: 404 })
   }
@@ -44,7 +50,13 @@ export async function dispatchExtensionRoute(route: ExtensionRoute | undefined, 
   if (!SAFE_METHODS.has(request.method.toUpperCase()) && !fromThisOrigin(request)) {
     return Response.json({ error: 'Cross-site request refused' }, { status: 403 })
   }
-  return route.handler(request, { person: directoryUserOf(user) })
+  const person = directoryUserOf(user)
+  const directory = directoryForCaller(extensionId, { person })
+  try {
+    return await route.handler(request, { person, spaces: directory.spaces, apps: directory.apps })
+  } finally {
+    directory.end()
+  }
 }
 
 /**

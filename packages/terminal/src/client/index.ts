@@ -1,3 +1,5 @@
 export * from '../types'
+export { connectionFromContext } from './connection'
+export { SCROLLS_ITSELF } from './scrolls-itself'
 export { Terminal, type TerminalProps, type TerminalStatus } from './terminal'
 export { terminalTheme } from './theme'

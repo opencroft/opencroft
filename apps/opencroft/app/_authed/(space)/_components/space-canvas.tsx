@@ -3,7 +3,9 @@
 import { FlowEditor } from '@/app/_authed/(dashboard)/_canvas/flow-editor'
 import { OverlayProvider } from '@/app/_authed/(dashboard)/_canvas/overlay-context'
 import { ChatDock } from '@/app/_authed/(extension-runtime)/_client/chat-dock'
+import { ChatDockAppType } from '@/app/_authed/(extension-runtime)/_client/chat-dock-mode'
 import { SelectionProvider } from '@/app/_authed/(extension-runtime)/_client/selection-context'
+import { GRAPH_APP_TYPE } from '@/app/_authed/(space)/_server/types'
 
 /**
  * The thread slug every space surface addresses. One per member agent, chosen
@@ -27,9 +29,11 @@ interface Props {
    * passes its instance's graph.
    */
   graph?: string
+  /** The graph's name, where it is not the space's own canvas. */
+  graphName?: string
 }
 
-export function SpaceCanvas({ slug, spaceName, graph }: Props) {
+export function SpaceCanvas({ slug, spaceName, graph, graphName }: Props) {
   return (
     // The selection scope is mounted HERE rather than inside the editor,
     // because it is a property of this surface and not of the editor: the same
@@ -44,9 +48,13 @@ export function SpaceCanvas({ slug, spaceName, graph }: Props) {
             the selection scope, which is what lets a node selected on the
             canvas reach the composer. The chat is the SPACE's, whichever of
             its graphs this canvas draws -- one conversation per space. */}
-        <ChatDock space={slug} id={SPACE_THREAD_ID} title={spaceName} chatName={spaceName}>
-          <FlowEditor slug={graph ?? slug} spaceName={spaceName} />
-        </ChatDock>
+        {/* The Graph App's type whether this is the space's own page or a
+            Graph App instance's, so every graph keeps one chat position. */}
+        <ChatDockAppType.Provider value={GRAPH_APP_TYPE}>
+          <ChatDock space={slug} id={SPACE_THREAD_ID} title={spaceName} chatName={spaceName}>
+            <FlowEditor slug={graph ?? slug} spaceName={spaceName} graphName={graphName} />
+          </ChatDock>
+        </ChatDockAppType.Provider>
       </OverlayProvider>
     </SelectionProvider>
   )

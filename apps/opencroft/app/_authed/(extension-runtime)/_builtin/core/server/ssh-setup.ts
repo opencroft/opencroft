@@ -2,6 +2,7 @@ import { exec, execFile, fs, os, path } from '@opencroft/server/system'
 import { type ServerConfig, ssh } from '@opencroft/server/terminal'
 
 import { keyStoreReadPublicKey } from './key-store'
+import { parseKeyRef } from './key-store-checks'
 
 // ═══════════════════════════════════════════════════════════════════
 // SSH setup helpers
@@ -13,16 +14,6 @@ import { keyStoreReadPublicKey } from './key-store'
 //  - key auth: install a public key from a Key Store into the remote's
 //    authorized_keys so non-interactive (key-only) transports can connect.
 // ═══════════════════════════════════════════════════════════════════
-
-/** A Server node's `keyPath` is a `"<storeId>:<name>"` reference into a Key
- *  Store node. Split it back into its parts. */
-export function parseKeyRef(keyRef: string): { storeId: string; name: string } | null {
-  const idx = keyRef.indexOf(':')
-  if (idx <= 0) {
-    return null
-  }
-  return { storeId: keyRef.slice(0, idx), name: keyRef.slice(idx + 1) }
-}
 
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`

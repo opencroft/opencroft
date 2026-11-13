@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
@@ -41,6 +41,11 @@ export interface AddMemberPickerProps {
   error?: string
   /** What stands in for the member list while nobody is in. */
   emptyState?: ReactNode
+  /** The rows scroll inside the menu's own height cap. Set false where the
+   * container already scrolls (a settings section), so the list runs its
+   * full length instead of hiding its last rows behind a second scroll.
+   * Defaults to true. */
+  scrollsInside?: boolean
   className?: string
 }
 
@@ -69,9 +74,11 @@ export function AddMemberPicker({
   removing,
   error,
   emptyState,
+  scrollsInside = true,
   className,
 }: AddMemberPickerProps) {
   const [query, setQuery] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
   const principalKey = (principal: { kind: string; id: string }) => `${principal.kind}:${principal.id}`
 
   const memberKeys = (members ?? []).map(principalKey)
@@ -115,8 +122,8 @@ export function AddMemberPicker({
     // Filtering stays this component's own (the query decides which of the
     // two lists is drawn, and against whom), hence shouldFilter off.
     <Command shouldFilter={false} className={cn('bg-transparent', className)}>
-      <CommandInput value={query} onValueChange={setQuery} placeholder='Search to add…' />
-      <CommandList>
+      <CommandInput ref={inputRef} value={query} onValueChange={setQuery} placeholder='Search to add…' />
+      <CommandList className={scrollsInside ? undefined : 'max-h-none'}>
         {needle ? (
           matches.length === 0 ? (
             <CommandEmpty>No one matches that.</CommandEmpty>
@@ -128,7 +135,16 @@ export function AddMemberPicker({
                   value={principalKey(candidate)}
                   disabled={adding}
                   className={itemClassName}
-                  onSelect={() => onAdd({ kind: candidate.kind, id: candidate.id })}
+                  onSelect={() => {
+                    // Choosing someone ends the search: the field empties back
+                    // to the member list, where they appear once the host has
+                    // them in, and keeps focus for the next name. Left as it
+                    // was, the query would match no one, since whoever it
+                    // found is a member now.
+                    onAdd({ kind: candidate.kind, id: candidate.id })
+                    setQuery('')
+                    inputRef.current?.focus()
+                  }}
                 >
                   {person(candidate)}
                   <Plus className='text-muted-foreground' />

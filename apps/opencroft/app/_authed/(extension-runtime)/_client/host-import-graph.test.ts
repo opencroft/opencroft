@@ -209,13 +209,19 @@ test('asking the host what it offers does not reach monaco itself', () => {
 //
 // A pair again, for the Monaco test's reason: deleting the wrapper satisfies
 // "the editor module is not imported" exactly as well as deferring it does.
+// The editor's frame is the one part the wrapper imports statically: it draws
+// the box shown while the editor loads, and imports no TipTap.
 test('asking the host what it offers does not reach the markdown editor module', () => {
   assert.ok(
     fromHost.files.has(MARKDOWN_EDITOR),
     "the host does still offer the editor wrapper -- if it does not, the next assertion isn't about anything",
   )
   assert.deepEqual(
-    [...fromHost.externals].filter((specifier) => specifier.startsWith('agent-chat/markdown-editor')),
+    [...fromHost.externals].filter(
+      (specifier) =>
+        specifier.startsWith('agent-chat/components/markdown-editor') &&
+        specifier !== 'agent-chat/components/markdown-editor-frame',
+    ),
     [],
     'TipTap must stay behind the dynamic import in components/markdown-editor.tsx',
   )

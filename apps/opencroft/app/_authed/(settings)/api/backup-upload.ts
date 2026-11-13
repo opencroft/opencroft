@@ -1,7 +1,7 @@
 import { saveUploadedBackup } from '@opencroft/db-backups'
 import { createFileRoute } from '@tanstack/react-router'
 
-import { requireSession } from '@/app/_server/require-session'
+import { requireAdminSession } from '@/app/_server/require-session'
 
 // Uploading a backup is a raw-body POST rather than a server function because
 // a backup is now a ZIP. The server function it replaces took a parsed JSON
@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_authed/(settings)/api/backup-upload')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const denied = await requireSession(request)
+        const denied = await requireAdminSession(request)
         if (denied) return denied
         const header = request.headers.get('x-filename')
         if (!header) {

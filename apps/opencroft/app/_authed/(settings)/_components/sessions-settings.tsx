@@ -6,17 +6,20 @@ import { AgentSessions } from 'ui/settings/agent-sessions'
 import { readBackgroundTasks } from '@/app/_authed/(settings)/_lib/read-background-tasks'
 import {
   type BackgroundTaskList,
+  type ChatHistorySettings,
+  getChatHistorySettings,
   getSleepMode,
   getYoloMode,
   listBackgroundTasks,
   listLiveSessions,
+  updateChatHistorySettings,
   updateSleepMode,
   updateYoloMode,
 } from '@/app/_authed/(settings)/_server/audit-actions'
 
 // The page is the kit's AgentSessions; what stays here is everything that
-// talks to the server: the two mode flags, and the polling that keeps the
-// live parts live.
+// talks to the server: the two mode flags, the chat history settings, and the
+// polling that keeps the live parts live.
 
 export default function SessionsSettings() {
   const [, startTransition] = useTransition()
@@ -27,12 +30,17 @@ export default function SessionsSettings() {
   // Null until the first read comes back, which the page draws as not read
   // yet rather than as an empty list.
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskList | null>(null)
+  // Null until read, which the page draws as not read yet rather than as off.
+  const [chatHistory, setChatHistory] = useState<ChatHistorySettings | null>(null)
 
   useEffect(() => {
     getYoloMode().then(({ enabled, source }) => {
       setYoloEnabled(enabled)
       setYoloSource(source)
     })
+    getChatHistorySettings()
+      .then(setChatHistory)
+      .catch(() => {})
   }, [])
 
   // Sessions, background tasks and the sleep flag re-poll together: the flag
@@ -87,6 +95,12 @@ export default function SessionsSettings() {
     })
   }
 
+  const onChatHistoryChange = (next: ChatHistorySettings) => {
+    startTransition(async () => {
+      setChatHistory(await updateChatHistorySettings({ data: next }))
+    })
+  }
+
   return (
     <AgentSessions
       sleepEnabled={sleepEnabled}
@@ -97,6 +111,8 @@ export default function SessionsSettings() {
       sessions={sessions}
       backgroundTasks={backgroundTasks?.tasks ?? null}
       backgroundTasksError={backgroundTasks?.error}
+      chatHistory={chatHistory}
+      onChatHistoryChange={onChatHistoryChange}
     />
   )
 }

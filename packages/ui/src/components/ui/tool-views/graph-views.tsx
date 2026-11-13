@@ -7,7 +7,17 @@ import { cn } from 'cn'
 import { ApprovalDiff, ApprovalFields, DefaultToolView, FieldRow, NodeRow, Note } from './approval-fields'
 import { lineDiff } from './diff-view'
 import { editSides, textEdit } from './edit-sides'
-import { DiffOpBlock, exceedsClamp, linesLabel, OpBlock, OpFields, OpMeta, OpRow, OpText } from './op-block'
+import {
+  DiffOpBlock,
+  exceedsClamp,
+  linesLabel,
+  OpBlock,
+  OpFields,
+  OpMeta,
+  OpRow,
+  OpText,
+  toolViewState,
+} from './op-block'
 import { GenericToolView } from './run-views'
 import { type ToolViewNode, useToolViewHost } from './tool-view-host'
 // Type-only: the registry imports these views, so a value import back would be
@@ -45,7 +55,7 @@ function useNodeName(nodeId: string): string {
   return (useNode(nodeId)?.data?.name as string | undefined) ?? nodeId
 }
 
-export function WriteNodePropertyView({ args, mode, result }: ToolViewProps) {
+export function WriteNodePropertyView({ args, mode, result, state }: ToolViewProps) {
   const nodeId = args.nodeId as string | undefined
   const propPath = args.path as string | undefined
   const value = (args.value as string | undefined) ?? ''
@@ -68,8 +78,7 @@ export function WriteNodePropertyView({ args, mode, result }: ToolViewProps) {
       detail={propPath}
       target={nodeId}
       meta={<OpMeta text={linesLabel(value)} />}
-      isError={result?.isError}
-      pending={!result}
+      state={toolViewState({ state, result })}
       overflowing={exceedsClamp(value)}
     >
       <OpRow label='value'>
@@ -79,7 +88,7 @@ export function WriteNodePropertyView({ args, mode, result }: ToolViewProps) {
   )
 }
 
-export function EditNodePropertyView({ args, mode, result }: ToolViewProps) {
+export function EditNodePropertyView({ args, mode, result, state }: ToolViewProps) {
   const nodeId = args.nodeId as string | undefined
   const propPath = args.path as string | undefined
   const edit = textEdit(args)
@@ -97,7 +106,15 @@ export function EditNodePropertyView({ args, mode, result }: ToolViewProps) {
       </ApprovalFields>
     )
   }
-  return <DiffOpBlock verb='Edit property' detail={propPath} target={nodeId} result={result} diffs={[diff]} />
+  return (
+    <DiffOpBlock
+      verb='Edit property'
+      detail={propPath}
+      target={nodeId}
+      state={toolViewState({ state, result })}
+      diffs={[diff]}
+    />
+  )
 }
 
 interface NodeUpdate {
@@ -169,7 +186,7 @@ function UpdatedNode({ update }: { update: NodeUpdate }) {
   )
 }
 
-export function UpdateNodesView({ args, requestId, mode, result }: ToolViewProps) {
+export function UpdateNodesView({ args, requestId, mode, result, state }: ToolViewProps) {
   const updates = (args.updates ?? []) as NodeUpdate[]
   const [openId, setOpenId] = useState<string | null>(null)
 
@@ -185,8 +202,7 @@ export function UpdateNodesView({ args, requestId, mode, result }: ToolViewProps
         verb='Update'
         detail={only ? undefined : `${updates.length} nodes`}
         target={only?.nodeId}
-        isError={result?.isError}
-        pending={!result}
+        state={toolViewState({ state, result })}
         overflowing={updates.length > 1 || Object.keys(only ? updatedValues(only) : {}).length > 3}
       >
         {updates.map((update) => (
@@ -290,7 +306,7 @@ export function AppCallView(props: ToolViewProps) {
     return props.mode === 'approval' ? (
       <DefaultToolView {...props} />
     ) : (
-      <GenericToolView tool={props.tool} args={props.args} result={props.result} />
+      <GenericToolView tool={props.tool} args={props.args} result={props.result} state={props.state} />
     )
   }
   const Inner = resolved.view.body

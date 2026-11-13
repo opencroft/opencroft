@@ -6,6 +6,7 @@ import { PanelBottom, PanelLeft, PanelRight, PictureInPicture2, X } from 'lucide
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { Button } from 'ui/button'
+import { ChatItemSummary } from 'ui/chat/chat-list-item'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,14 +16,14 @@ import {
 } from 'ui/dropdown-menu'
 import { ArtifactSplit } from 'ui/group-chat/artifact-split'
 import { ChatLauncher } from 'ui/group-chat/chat-launcher'
-import { ThreadAgentCluster } from 'ui/group-chat/thread-agent-cluster'
 import { ArtifactMenu } from 'ui/group-chat/thread-artifacts'
 import { ThreadWorkControl } from 'ui/group-chat/thread-work-control'
 import { useIsMobile } from 'ui/hooks/use-mobile'
-import { DockPanel, type DockSide } from 'ui/layouts/dock-panel'
+import { DockPanel } from 'ui/layouts/dock-panel'
 import { BackButton } from 'ui/utils/back-button'
 
 import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
+import { type ChatDockMode, useChatDockMode } from '@/app/_authed/(extension-runtime)/_client/chat-dock-mode'
 import type {
   EmbeddedChatSelection,
   EmbeddedThreadContext,
@@ -30,16 +31,16 @@ import type {
 import { EmbeddedAgentChat } from '@/app/_authed/(extension-runtime)/_client/embedded-agent-chat'
 import type { GroupChatDetailHeader } from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
 import { countChatThreadKeys } from '@/app/_authed/(group-chats)/_shared/session-key'
+import { useCloseSidebarSheet } from '@/app/_shell/app-sidebar'
 import { useHistoryBackClose } from '@/hooks/utils/use-history-back-close'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
-/** Where the chat panel sits when it is open: docked to an edge, or floating. */
-export type ChatDockMode = DockSide | 'float'
-
-// ONE ARRANGEMENT FOR THE PERSON, NOT ONE PER SURFACE. Where the chat sits,
-// its size and whether it is open follow the reader across every surface that
-// mounts this component -- spaces and extension views alike -- so opening a
-// different one shows the chat where this browser left it.
+// ONE ARRANGEMENT FOR THE PERSON, NOT ONE PER SURFACE. The chat's size and
+// whether it is open follow the reader across every surface that mounts this
+// component -- spaces and extension views alike -- so opening a different one
+// shows the chat as this browser left it. Where it sits is the exception: it
+// is remembered per App type (useChatDockMode), because a canvas and a list
+// want the chat in different places.
 //
 // The retired per-surface entries (`opencroft.spaceChat.*` and the
 // `opencroft.<extension>.chatDock` family) are left exactly where they lie,
@@ -50,11 +51,10 @@ export type ChatDockMode = DockSide | 'float'
 // arrangement does not follow the reader to another machine. That is inherent
 // to where it is stored, not a decision taken here.
 const OPEN_KEY = 'opencroft.chatDock.open'
-const MODE_KEY = 'opencroft.chatDock.mode'
 const SIZE_KEY = 'opencroft.chatDock.size'
 const FLOAT_KEY = 'opencroft.chatDock.float'
 
-// WHICH CONVERSATION, unlike the four keys above, is scoped twice over.
+// WHICH CONVERSATION, unlike the keys above, is scoped twice over.
 //
 // By SPACE, because the chats are per space: one key for all of them would
 // restore the previous space's thread on arriving at the next one, and a thread
@@ -62,7 +62,7 @@ const FLOAT_KEY = 'opencroft.chatDock.float'
 // not available" -- a refusal that reads as a defect rather than as a browser
 // remembering the wrong thing.
 //
-// By ACCOUNT, which the four above deliberately are not, and the difference is
+// By ACCOUNT, which the arrangement deliberately is not, and the difference is
 // what the value IS. A dock side or a window size is a layout preference, and
 // two accounts sharing one browser sharing it costs nothing. This is a pointer
 // into conversation data, and the second account is refused by the same panel
@@ -71,8 +71,6 @@ const FLOAT_KEY = 'opencroft.chatDock.float'
 function lastChatKey(accountId: string, space: string): string {
   return `opencroft.chatDock.lastChat.${accountId}.${space}`
 }
-
-const MODE_DEFAULT: ChatDockMode = 'right'
 
 // The floating window first: it is the arrangement this menu's own launcher
 // suggests, and the three docks read as one family below it.
@@ -229,7 +227,7 @@ interface Props {
  */
 export function ChatDock({ space, id, title, chatName, children }: Props) {
   const [open, setOpen] = useLocalStorage<boolean>(OPEN_KEY, false)
-  const [mode, setMode] = useLocalStorage<ChatDockMode>(MODE_KEY, MODE_DEFAULT)
+  const [mode, setMode] = useChatDockMode()
   // Undefined until one has been set, which is what tells the docked panel to
   // keep its own default rather than being resized to a remembered nothing.
   const [size, setSize] = useLocalStorage<number | undefined>(SIZE_KEY, undefined)
@@ -284,15 +282,24 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     setGoneThreadId(null)
     setOpen(false)
   }
+  // On a phone the open chat is a full-screen cover, and the sidebar's sheet
+  // steps aside for it rather than staying on top of it.
+  const closeSidebarSheet = useCloseSidebarSheet()
+  const show = useCallback(() => {
+    setOpen(true)
+    if (isMobile) {
+      closeSidebarSheet()
+    }
+  }, [setOpen, isMobile, closeSidebarSheet])
   const control = useMemo<ChatDockControl>(
     () => ({
       space,
       openThread: (threadId) => {
         select({ threadId })
-        setOpen(true)
+        show()
       },
     }),
-    [space, select, setOpen],
+    [space, select, show],
   )
 
   // What the open thread's header says -- who it is with, where it is, what
@@ -431,11 +438,13 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
       <div className='flex min-w-0 flex-1 items-center gap-1'>
         <BackButton label='Back to the chat' onClick={() => select({ home: true })} />
         {threadContext ? (
-          <ThreadAgentCluster
-            agent={threadContext.agent}
+          <ChatItemSummary
+            title={threadContext.threadTitle || 'Thread'}
+            breadcrumb={threadContext.groupChatName}
+            description={threadContext.agent.name}
+            avatarUrl={threadContext.agent.avatarUrl}
+            avatarName={threadContext.agent.name}
             status={threadContext.status}
-            groupChatName={threadContext.groupChatName}
-            threadTitle={threadContext.threadTitle}
             className='min-w-0 flex-1'
           />
         ) : null}
@@ -516,32 +525,13 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     </ArtifactSplit>
   )
 
-  if (open && !isMobile && mode !== 'float') {
-    return (
-      <DockPanel
-        dock={mode}
-        size={size}
-        onSizeChange={setSize}
-        showHeader={false}
-        panel={pane({
-          headerClassName: 'h-[45px] gap-0.5 px-2 py-1',
-          titleClassName: 'mr-1.5 flex min-w-0 flex-1 items-center',
-          buttonSize: 'icon',
-          withModeMenu: true,
-          fallbackTitle: <span className='truncate text-xs text-muted-foreground'>{title}</span>,
-        })}
-        className='h-full w-full'
-      >
-        {surface}
-      </DockPanel>
-    )
-  }
+  const docked = open && !isMobile && mode !== 'float'
 
   // The launcher, the cover and the window are all FIXED, not absolute: the
   // page around an extension's surface can scroll, and a corner anchored to a
   // container rides away with it -- these belong to the viewport.
-  const overlay = !open ? (
-    <ChatLauncher waitingCount={waitingCount} className='fixed right-4 bottom-4 z-40' onClick={() => setOpen(true)} />
+  const overlay = docked ? null : !open ? (
+    <ChatLauncher waitingCount={waitingCount} className='fixed right-4 bottom-4 z-40' onClick={show} />
   ) : isMobile ? (
     <div className='fixed inset-0 z-50 flex min-h-0 flex-col bg-background'>
       {/* Touch targets, not pointer targets, on the full-screen cover. */}
@@ -606,10 +596,28 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     </div>
   )
 
+  // The surface sits in the dock in every arrangement, docked or not, so
+  // opening, moving or closing the chat never remounts what it holds.
   return (
-    <div className='flex h-full min-h-0 w-full'>
-      {surface}
+    <>
+      <DockPanel
+        open={docked}
+        dock={mode === 'float' ? 'right' : mode}
+        size={size}
+        onSizeChange={setSize}
+        showHeader={false}
+        panel={pane({
+          headerClassName: 'h-[45px] gap-0.5 px-2 py-1',
+          titleClassName: 'mr-1.5 flex min-w-0 flex-1 items-center',
+          buttonSize: 'icon',
+          withModeMenu: true,
+          fallbackTitle: <span className='truncate text-xs text-muted-foreground'>{title}</span>,
+        })}
+        className='h-full w-full'
+      >
+        {surface}
+      </DockPanel>
       {overlay}
-    </div>
+    </>
   )
 }

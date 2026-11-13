@@ -16,6 +16,26 @@ import type { Presence, QueuedPrompt } from './types'
  */
 export const DEFAULT_PRESENCE: Presence = { kind: 'realtime' }
 
+const ONLINE: Presence = { kind: 'online' }
+
+/**
+ * The cadence a session actually reads at, given whether its harness can take
+ * a message mid-turn (supportsMidTurnInput).
+ *
+ * `realtime` means "as it arrives, even mid-turn", and only steering can make
+ * the mid-turn half true. Without it a realtime reader's messages wait for the
+ * running turn to end, which is exactly what `online` promises, so that is what
+ * the session is said to read at. No other cadence depends on steering, so
+ * every other one is returned as it is.
+ *
+ * The stored setting is left as it was. A setting of `realtime` comes back as
+ * `realtime` the moment the harness can steer (it advertises steering at
+ * connect, or the adapter is changed), with nothing to rewrite.
+ */
+export function effectivePresence(presence: Presence, canSteer: boolean): Presence {
+  return presence.kind === 'realtime' && !canSteer ? ONLINE : presence
+}
+
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS

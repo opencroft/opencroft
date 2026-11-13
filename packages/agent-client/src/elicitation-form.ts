@@ -118,6 +118,18 @@ export function questionsToElicitation(questions: AskUserQuestionSpec[]): {
 }
 
 /**
+ * Accepted content as the agent reads it: one `"question"="answer"` line per
+ * question, in the order asked.
+ */
+export function answerLines(
+  questions: AskUserQuestionSpec[],
+  content: Record<string, ElicitationContentValue>,
+): string {
+  const answers = contentToAnswers(questions, content)
+  return questions.map((q) => `"${q.question}"="${answers[q.title] ?? ''}"`).join('\n')
+}
+
+/**
  * Fold a form's accepted content back into per-question answers, keyed by the
  * question TITLE — the shape the ask_user tool has always reported
  * (`"question"="answer"` lines are built from it, and answer consumers read

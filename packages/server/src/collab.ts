@@ -58,6 +58,12 @@ export interface HostCollabApi {
       change: () => Promise<T>,
       options?: { discard?: boolean },
     ): Promise<T>
+    /**
+     * Drops every document of `kind` whose key starts with `keyPrefix`, for
+     * when their storage is going away (the extension's `onRemoved`): open
+     * ones are closed without being stored, and the host forgets every one.
+     */
+    drop(kind: string, keyPrefix: string): Promise<void>
   }
 }
 

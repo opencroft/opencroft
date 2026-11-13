@@ -28,15 +28,17 @@ export class UndecryptableSecretError extends Error {
   }
 }
 
-// Derived keys by passphrase: scrypt is slow on purpose, and the passphrase is
-// the same on every call while the server runs.
+// Derived keys by salt and passphrase: scrypt is slow on purpose, and the
+// passphrase is the same on every call while the server runs.
 const derivedKeys = new Map<string, Buffer>()
 
-function deriveKey(passphrase: string): Buffer {
-  let key = derivedKeys.get(passphrase)
+/** The AES-256 key `passphrase` stands for under `salt`; each kind of stored value has a salt of its own. */
+export function deriveKey(passphrase: string, salt: string = SALT): Buffer {
+  const cacheKey = JSON.stringify([salt, passphrase])
+  let key = derivedKeys.get(cacheKey)
   if (!key) {
-    key = scryptSync(passphrase, SALT, 32)
-    derivedKeys.set(passphrase, key)
+    key = scryptSync(passphrase, salt, 32)
+    derivedKeys.set(cacheKey, key)
   }
   return key
 }
@@ -55,23 +57,37 @@ function currentKey(): Buffer {
   return deriveKey(passphrase.value)
 }
 
-export function encrypt(plaintext: string): string {
-  const key = currentKey()
+/**
+ * AES-256-GCM under `key`, as base64 of iv, tag and ciphertext. `aad`, when given, binds the
+ * value to where it is stored: it decrypts only with the same `aad`.
+ */
+export function encryptWith(key: Buffer, plaintext: string, aad?: string): string {
   const iv = randomBytes(IV_LEN)
   const cipher = createCipheriv(ALG, key, iv)
+  if (aad !== undefined) {
+    cipher.setAAD(Buffer.from(aad, 'utf8'))
+  }
   const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
   const tag = cipher.getAuthTag()
   return Buffer.concat([iv, tag, encrypted]).toString('base64')
 }
 
-function decryptWith(key: Buffer, encoded: string): string {
+/** The plaintext `encryptWith` sealed under `key` and `aad`. Throws when either differs. */
+export function decryptWith(key: Buffer, encoded: string, aad?: string): string {
   const buf = Buffer.from(encoded, 'base64')
   const iv = buf.subarray(0, IV_LEN)
   const tag = buf.subarray(IV_LEN, IV_LEN + TAG_LEN)
   const encrypted = buf.subarray(IV_LEN + TAG_LEN)
   const decipher = createDecipheriv(ALG, key, iv)
   decipher.setAuthTag(tag)
+  if (aad !== undefined) {
+    decipher.setAAD(Buffer.from(aad, 'utf8'))
+  }
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
+}
+
+export function encrypt(plaintext: string): string {
+  return encryptWith(currentKey(), plaintext)
 }
 
 /** Decrypt a value `encrypt` produced. Throws {@link UndecryptableSecretError} when another key produced it. */

@@ -18,7 +18,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '
 import { ExtensionUpdates } from 'ui/extensions/extension-updates'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
-import { TitleBarTitle, TitleBarToolbar } from 'ui/layouts/title-bar'
+import { TitleBarToolbar } from 'ui/layouts/title-bar'
 import { Spinner } from 'ui/spinner'
 
 import {
@@ -376,7 +376,6 @@ export default function ExtensionsPage({ index }: ExtensionsPageProps) {
 
   return (
     <Flex row expanded className='h-full min-h-0 w-full'>
-      <TitleBarTitle>Extensions</TitleBarTitle>
       <TitleBarToolbar>
         <ExtensionsToolbar
           query={query}

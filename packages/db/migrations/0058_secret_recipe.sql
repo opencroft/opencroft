@@ -1,0 +1,1 @@
+ALTER TABLE "Secret" ADD COLUMN "recipe" text;

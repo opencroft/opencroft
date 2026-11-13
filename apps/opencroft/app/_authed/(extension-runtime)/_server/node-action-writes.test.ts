@@ -12,6 +12,8 @@ import { join } from 'node:path'
 import test, { after, afterEach, beforeEach } from 'node:test'
 
 import { qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { problemOf } from '@/app/_authed/(extension-runtime)/_node-errors'
+import { handleToolCall } from '@/app/_authed/(mcp)/_server/tools'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import { toastStore } from '@/lib/toast-store'
 import { dispatchNodeActionImpl } from './node-actions-impl'
@@ -42,6 +44,12 @@ writeFileSync(
     lamp: {
       ok: async () => 'ok',
       fail: async (ctx) => { throw new Error(ctx.params.message) },
+      explain: async () => {
+        throw Object.assign(new Error('Lamp unplugged: no power'), {
+          problem: { title: 'Lamp unplugged', detail: 'no power', next: 'Plug it in.', extra: 'dropped' },
+        })
+      },
+      throwText: async () => { throw 'lamp fell over' },
       paint: async (ctx) => { ctx.updateData({ colour: ctx.params.colour }) },
     },
   },
@@ -93,12 +101,58 @@ async function dispatchFailing(message: string): Promise<void> {
   await assert.rejects(dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'fail', params: { message } }), { message })
 }
 
+const BROKEN = [{ source: 'action', title: 'Action "fail" failed', detail: 'lamp is broken' }]
+
 test('a failing action stores its error and announces the graph change', async () => {
   await dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'ok' })
   events = []
   await dispatchFailing('lamp is broken')
-  assert.deepEqual(storedData().__errors, ['lamp is broken'])
+  assert.deepEqual(storedData().__errors, BROKEN)
   assert.deepEqual(await announcements(), ['graph_updated'])
+})
+
+test('a failing action that throws a problem stores the problem, nothing more', async () => {
+  await assert.rejects(dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'explain' }))
+  assert.deepEqual(storedData().__errors, [
+    { source: 'action', title: 'Lamp unplugged', detail: 'no power', next: 'Plug it in.' },
+  ])
+})
+
+// What `call` answers an agent with: the problem a failure carries (`problemOf`).
+test('a failing action reaches its caller carrying the problem the node stored, its message as thrown', async () => {
+  await assert.rejects(
+    dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'fail', params: { message: 'lamp is broken' } }),
+    (err) => {
+      assert.equal((err as Error).message, 'lamp is broken')
+      assert.deepEqual(problemOf(err), { title: 'Action "fail" failed', detail: 'lamp is broken' })
+      return true
+    },
+  )
+  await assert.rejects(dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'explain' }), (err) => {
+    assert.deepEqual(problemOf(err), { title: 'Lamp unplugged', detail: 'no power', next: 'Plug it in.' })
+    return true
+  })
+})
+
+// `internal` passes the approval gate, which is not what this pins.
+test("an agent's call of a failing action is answered with the problem the node stored", async () => {
+  const result = await handleToolCall(
+    'call',
+    { nodeId: LAMP, action: 'fail', params: { message: 'lamp is broken' } },
+    { internal: true },
+  )
+  assert.equal(result.isError, true)
+  const text = (result.content as { type: string; text: string }[])[0]?.text ?? ''
+  assert.deepEqual(JSON.parse(text), { error: { title: 'Action "fail" failed', detail: 'lamp is broken' } })
+})
+
+test('a failing action that throws something other than an error reaches its caller as an error with the problem', async () => {
+  await assert.rejects(dispatchNodeActionImpl({ nodeId: LAMP, actionId: 'throwText' }), (err) => {
+    assert.ok(err instanceof Error)
+    assert.equal(err.message, 'lamp fell over')
+    assert.deepEqual(problemOf(err), { title: 'Action "throwText" failed', detail: 'lamp fell over' })
+    return true
+  })
 })
 
 test('the next action that succeeds clears the error and announces it', async () => {
@@ -126,7 +180,7 @@ test('a retry clears the error while it runs and stores it again when it fails, 
   const version = storedVersion()
   await dispatchFailing('lamp is broken')
   assert.notEqual(storedVersion(), version)
-  assert.deepEqual(storedData().__errors, ['lamp is broken'])
+  assert.deepEqual(storedData().__errors, BROKEN)
   assert.deepEqual(await announcements(), ['graph_updated'])
 })
 

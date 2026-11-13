@@ -1,5 +1,6 @@
 // Which inspector tabs stay mounted: a tab that asks to be kept stays mounted across tab switches
-// on the same node, and goes when the node changes or the inspector closes.
+// on the same node, and goes when the node changes or the inspector closes. And a tab that throws
+// takes only itself down.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -26,11 +27,16 @@ function tracked(name: string, events: string[]) {
   }
 }
 
+function Broken(): never {
+  throw new Error('data.language is undefined')
+}
+
 function setup() {
   const events: string[] = []
   const tabs: InspectorTabEntry[] = [
     { id: 'details', fullHeight: true, component: tracked('details', events) },
     { id: 'terminal', fullHeight: true, keepMounted: true, component: tracked('terminal', events) },
+    { id: 'broken', fullHeight: false, component: Broken },
   ]
   const container = document.createElement('div')
   document.body.append(container)
@@ -40,6 +46,7 @@ function setup() {
       root.render(
         createElement(InspectorTabBody, {
           nodeId,
+          nodeType: 'acme.widgets.gauge',
           tabs,
           active: tabs.find((tab) => tab.id === activeId) as InspectorTabEntry,
           inspectorProps: { nodeId },
@@ -54,8 +61,35 @@ function setup() {
     act(() => root.unmount())
     container.remove()
   }
-  return { events, show, terminalVisible, close }
+  return { events, container, show, terminalVisible, close }
 }
+
+test('a tab that throws while it renders shows the error in its place, and the other tabs still render', () => {
+  const s = setup()
+  const logged: unknown[][] = []
+  const savedError = console.error
+  console.error = (...args: unknown[]) => logged.push(args)
+  try {
+    s.show('node-1', 'terminal')
+    s.show('node-1', 'broken')
+
+    const text = s.container.textContent ?? ''
+    assert.match(text, /acme\.widgets\.gauge/, 'names the node type')
+    assert.match(text, /data\.language is undefined/, 'says what failed')
+    assert.ok(
+      logged.some((args) => String(args[0]).includes('[ext:acme.widgets.gauge] render failed')),
+      'and logs it',
+    )
+    assert.equal(s.terminalVisible(), false, 'the kept tab is still mounted beside it')
+
+    s.show('node-1', 'details')
+    assert.ok(s.container.querySelector('[data-tab="details"]'), 'another tab renders after it')
+    assert.doesNotMatch(s.container.textContent ?? '', /data\.language is undefined/)
+  } finally {
+    console.error = savedError
+    s.close()
+  }
+})
 
 test('a kept tab survives switching to another tab and back, hidden meanwhile', () => {
   const s = setup()

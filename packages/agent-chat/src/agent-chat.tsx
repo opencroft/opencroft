@@ -9,7 +9,7 @@ import { type Block, ChatConversation, type ChatConversationHandle } from './com
 import { ChatEmptyState } from './components/chat-empty-state'
 import type { ChatTurnRenderers, ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
 import { ChatUnread, type ChatUnreadMessage } from './components/chat-unread'
-import { MessageActionsProvider } from './components/message-context-menu'
+import { MessageActionsProvider, MessageSelectionBar } from './components/message-selection-bar'
 import { appendQuotedReply } from './message-quote'
 import type { AgentChatSession } from './session'
 import { ThinkingIndicator } from './thinking-indicator'
@@ -114,9 +114,10 @@ export interface AgentChatProps {
   // nowhere else in this component's own contract to live.
   footerExtra?: ReactNode
   // The composer this conversation replies into -- the same ref the host hands
-  // `useAgentCommandBar`. With it every message's context menu offers Reply,
-  // which quotes the message (or the selected part of it) at the end of the
-  // composer; without it the menu offers Copy alone.
+  // `useAgentCommandBar`. With it every message's menu offers Reply, which
+  // quotes the message at the end of the composer, and text selected in a
+  // message gets a selection bar with Reply for the selected part; without it
+  // there is no Reply.
   composerRef?: RefObject<AgentComposerHandle | null>
   // Open the conversation at a turn instead of at its end: older history is
   // loaded until a block with one of these ids is rendered, and its turn is
@@ -250,38 +251,42 @@ export function AgentChat({
   if (panelState) {
     return (
       <MessageActionsProvider value={messageActions}>
-        <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
-          <div className='flex flex-1 items-center justify-center p-4'>{panelState}</div>
-          {footer}
-        </div>
+        <MessageSelectionBar>
+          <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
+            <div className='flex flex-1 items-center justify-center p-4'>{panelState}</div>
+            {footer}
+          </div>
+        </MessageSelectionBar>
       </MessageActionsProvider>
     )
   }
 
   return (
     <MessageActionsProvider value={messageActions}>
-      <ChatConversation
-        ref={conversationRef}
-        sessionKey={session.sessionKey}
-        blocks={blocks}
-        hasMessages={hasMessages}
-        hasUndelivered={(unread?.length ?? 0) > 0}
-        loading={session.loading}
-        emptyText={emptyText}
-        waiting={session.waiting}
-        historyHeaderParts={historyHeaderParts}
-        hasMoreHistory={session.hasMoreHistory === true}
-        loadingMoreHistory={session.loadingMoreHistory === true}
-        onLoadOlder={loadOlder}
-        onEditUser={onEditUser}
-        onForkUser={onForkUser}
-        defaultExpanded={defaultExpanded}
-        botName={displayName}
-        agentAvatar={agentAvatar}
-        renderers={renderers}
-        renderTool={renderTool}
-        footer={footer}
-      />
+      <MessageSelectionBar>
+        <ChatConversation
+          ref={conversationRef}
+          sessionKey={session.sessionKey}
+          blocks={blocks}
+          hasMessages={hasMessages}
+          hasUndelivered={(unread?.length ?? 0) > 0}
+          loading={session.loading}
+          emptyText={emptyText}
+          waiting={session.waiting}
+          historyHeaderParts={historyHeaderParts}
+          hasMoreHistory={session.hasMoreHistory === true}
+          loadingMoreHistory={session.loadingMoreHistory === true}
+          onLoadOlder={loadOlder}
+          onEditUser={onEditUser}
+          onForkUser={onForkUser}
+          defaultExpanded={defaultExpanded}
+          botName={displayName}
+          agentAvatar={agentAvatar}
+          renderers={renderers}
+          renderTool={renderTool}
+          footer={footer}
+        />
+      </MessageSelectionBar>
     </MessageActionsProvider>
   )
 }

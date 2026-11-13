@@ -364,6 +364,41 @@ export async function ensureUsernameForAgent(agentNodeId: string, displayName: s
 }
 
 /**
+ * An account known to exist, with what its handle is seeded from if it has
+ * none: a person's comes from their account, an agent's from its directory
+ * name.
+ */
+export type ExistingAccount = { kind: 'user'; id: string } | { kind: 'agent'; id: string; name: string }
+
+/**
+ * The handles these accounts go by now, keyed by `principalKey`, giving one
+ * to each that has none yet -- for a list that offers accounts to mention,
+ * which is the need the ensure step exists for.
+ *
+ * The caller passes only accounts that exist: a deleted node or account is
+ * not one, even with a handle still on record, and must not be offered.
+ * Claimed one at a time, because each claim reads the taken set afresh and
+ * two at once could pick the same candidate.
+ */
+export async function ensureCurrentUsernames(accounts: ExistingAccount[]): Promise<Map<string, string>> {
+  const handles = await currentUsernames(accounts.map(({ kind, id }) => ({ kind, id })))
+  for (const account of accounts) {
+    const key = principalKey(account)
+    if (handles.has(key)) {
+      continue
+    }
+    const handle =
+      account.kind === 'agent'
+        ? await ensureUsernameForAgent(account.id, account.name)
+        : await ensureUsernameForUser(account.id)
+    if (handle) {
+      handles.set(key, handle)
+    }
+  }
+  return handles
+}
+
+/**
  * Make sure every account of either kind has a handle.
  *
  * Idempotent, and a reconciliation rather than a one-time migration on

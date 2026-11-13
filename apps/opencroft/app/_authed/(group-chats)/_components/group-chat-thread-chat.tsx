@@ -38,8 +38,10 @@ import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/
 import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selection-toggle'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
+import { mentionCandidates } from '@/app/_authed/(group-chats)/_lib/mention-candidates'
+import { useRecordRecentThread } from '@/app/_authed/(group-chats)/_lib/recent-threads-store'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
-import type { GroupChatThreadView } from '@/app/_authed/(group-chats)/_server/actions'
+import type { GroupChatThreadView, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   attachGroupChatThreadSession,
   clearGroupChatThread,
@@ -111,6 +113,9 @@ interface GroupChatThreadChatProps {
    *  search hit names) instead of at its end. Once per thread and position:
    *  the same value arriving again does not scroll the reader back. */
   revealPosition?: number
+  /** The chat's members, offered by the composer when `@` is typed. Omitted,
+   *  `@` opens nothing. */
+  members?: readonly MemberRef[]
 }
 
 const TURN_GONE_MESSAGE = 'That message is no longer in this conversation.'
@@ -149,7 +154,12 @@ export function GroupChatThreadChat({
   renderFrame,
   onHeaderChange,
   revealPosition,
+  members,
 }: GroupChatThreadChatProps) {
+  // Here rather than in each surface, so a thread opened anywhere -- the chats
+  // page or a space's chat panel -- is one the Recent list knows.
+  useRecordRecentThread(thread.id)
+  const mentions = useMemo(() => (members ? mentionCandidates(members) : undefined), [members])
   // Memoised on the two values that identify the session, not rebuilt each
   // render: `useAcpSession` keys its effects on this object, so a fresh
   // identity every render would tear the session down and reopen it in a loop.
@@ -617,6 +627,7 @@ export function GroupChatThreadChat({
       attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
       canAttachImages={acp.canAttachImages}
       composerRef={composerRef}
+      mentions={mentions}
     />
   )
 

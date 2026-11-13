@@ -12,7 +12,7 @@ import { ScrollContent, ScrollHeader, ScrollPage } from 'ui/components/ui/layout
 import { SidebarMenuButton } from 'ui/components/ui/sidebar'
 
 import { AddImportFooter } from './add-import-footer'
-import { MarkdownEditor } from './markdown-editor'
+import { MarkdownEditor } from './components/markdown-editor'
 import type { SkillRecord } from './server/runtime'
 
 export type { SkillRecord }
@@ -170,7 +170,9 @@ export function SkillsManager({ skills: incoming, onCreate, onUpdate, onDelete }
             </Field>
             <Field className='flex-1 min-h-0'>
               <FieldLabel>Instructions</FieldLabel>
+              {/* One editor per skill, so undo never reaches into another skill's edits. */}
               <MarkdownEditor
+                key={selected.id}
                 value={content}
                 onChange={setContent}
                 placeholder='Markdown instructions loaded when the agent invokes this skill…'

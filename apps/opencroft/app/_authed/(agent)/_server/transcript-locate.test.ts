@@ -1,62 +1,44 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { arrayLogReader, type LogReader, MISSING_ENTRY } from 'agent-client/pagination'
 import type { ChatEvent } from 'agent-client/types'
 
-import { locateRecordedEvent, locateTurn } from './transcript-locate'
+import { locateTurn } from './transcript-locate'
 
 const user = (text: string): ChatEvent => ({ kind: 'user', text })
 const reply = (text: string): ChatEvent => ({ kind: 'agent_message', text })
+const known = async () => true
+const unknown = async () => false
 
-test('a turn still recorded is located against its recorded event', () => {
-  const log = [user('first'), reply('a'), user('second'), reply('b')]
-  assert.deepEqual(locateTurn(log, { event: user('second'), fromEnd: 2 }, null), { kind: 'found', index: 2 })
-  assert.deepEqual(locateTurn(log, { event: user('never said'), fromEnd: 2 }, null), { kind: 'gone' })
+test('a hit is found where its position stands, in what is held and below it alike', async () => {
+  // Held from 10, with the history below read back from the store.
+  const held = arrayLogReader([user('newer'), reply('newer answer')], 10)
+  const below: ChatEvent[] = [user('old'), reply('old answer')]
+  const reader: LogReader = {
+    end: held.end,
+    read: async (from, to) =>
+      from >= 10 ? held.read(from, to) : { start: from, events: below.slice(from - 8, Math.min(to, 10) - 8) },
+    turnStartBefore: held.turnStartBefore,
+  }
+  assert.deepEqual(await locateTurn(reader, 10, unknown), { kind: 'found', index: 10 })
+  assert.deepEqual(await locateTurn(reader, 9, unknown), { kind: 'found', index: 9 })
 })
 
-test('a trimmed turn the log still holds is located against the indexed question', () => {
-  // The log reaches back further than the recording: the session has been
-  // open since before the cap trimmed this turn.
-  const delivered = '<agent-message author="alice" datetime="2026-01-01T10:00:00.000Z"/>\nthe old question'
-  const log = [user(delivered), reply('old answer'), user('newer'), reply('newer answer')]
-  const indexed = { role: 'user' as const, text: 'the old question' }
-  assert.deepEqual(locateTurn(log, { event: null, fromEnd: 4 }, indexed), { kind: 'found', index: 0 })
+test('a hit on history the settings trimmed is older than what is kept, and one nothing knows is gone', async () => {
+  const trimmed: LogReader = { ...arrayLogReader([user('kept')], 5), read: async () => ({ start: 5, events: [] }) }
+  assert.deepEqual(await locateTurn(trimmed, 2, known), { kind: 'older' })
+  assert.deepEqual(await locateTurn(trimmed, 2, unknown), { kind: 'gone' })
 })
 
-test('a trimmed turn that came without a question is located by its first chunk', () => {
-  const log = [reply('Hello, '), reply('I am here.'), user('hi')]
-  const indexed = { role: 'agent' as const, text: 'Hello, I am here.' }
-  assert.deepEqual(locateTurn(log, { event: null, fromEnd: 3 }, indexed), { kind: 'found', index: 0 })
+test('a hit on a missing row is not found there', async () => {
+  const reader = arrayLogReader([user('a'), MISSING_ENTRY])
+  assert.deepEqual(await locateTurn(reader, 1, unknown), { kind: 'gone' })
 })
 
-test('a trimmed turn the log does not reach back to is older than what can be shown', () => {
-  const log = [user('newer'), reply('newer answer')]
-  const indexed = { role: 'user' as const, text: 'the old question' }
-  assert.deepEqual(locateTurn(log, { event: null, fromEnd: 40 }, indexed), { kind: 'older' })
-  // In range, but saying something else: not that turn, and nothing else to try.
-  assert.deepEqual(locateTurn(log, { event: null, fromEnd: 2 }, indexed), { kind: 'older' })
-})
-
-test('a trimmed turn the index does not know is gone', () => {
-  assert.deepEqual(locateTurn([user('a')], { event: null, fromEnd: 1 }, null), { kind: 'gone' })
-})
-
-test('a recording that is the log tail locates by distance from the end', () => {
-  // The log holds more than the recording: the recording was capped at its start.
-  const log = [user('dropped by the cap'), reply('a'), user('again'), reply('b'), user('again'), reply('c')]
-  assert.equal(locateRecordedEvent(log, { event: user('again'), fromEnd: 4 }), 2)
-  assert.equal(locateRecordedEvent(log, { event: user('again'), fromEnd: 2 }), 4)
-})
-
-test('when the distance misses, the nearest event with the same words is taken', () => {
-  // Two events the recording lost shift its distances by two.
-  const log = [user('first'), reply('x'), user('repeat'), reply('y'), user('repeat'), reply('z'), reply('w')]
-  assert.equal(locateRecordedEvent(log, { event: user('repeat'), fromEnd: 1 }), 4)
-  assert.equal(locateRecordedEvent(log, { event: user('first'), fromEnd: 3 }), 0)
-})
-
-test('a log holding nothing like the recorded event locates nothing', () => {
-  const log = [user('something else'), reply('first')]
-  assert.equal(locateRecordedEvent(log, { event: user('first'), fromEnd: 1 }), null)
-  assert.equal(locateRecordedEvent([], { event: user('first'), fromEnd: 1 }), null)
+test('a hit past the log, or for a session with no base, is gone unless the index knows it', async () => {
+  const reader = arrayLogReader([user('a')])
+  assert.deepEqual(await locateTurn(reader, 3, unknown), { kind: 'gone' })
+  assert.deepEqual(await locateTurn(reader, null, unknown), { kind: 'gone' })
+  assert.deepEqual(await locateTurn(reader, null, known), { kind: 'older' })
 })

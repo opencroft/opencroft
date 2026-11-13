@@ -115,3 +115,51 @@ test('after a tool call, the same id continues the NEW block, not the one above 
   ]
   assert.deepEqual(shape(events), ['assistant:Before.', 'tool', 'assistant:After the steer.', 'user:a steer'])
 })
+
+// How Copilot leaves a command a Stop interrupted: announced, then the turn
+// ends with no update for it.
+test('a call still open when its turn ends reads as cancelled; settled calls keep their status', () => {
+  const statuses = (events: ChatEvent[]) =>
+    foldEvents(events).flatMap((message) => (message.kind === 'tool' ? [message.status] : []))
+  const turn: ChatEvent[] = [
+    user('run them'),
+    { kind: 'tool_call', toolCallId: 'done', title: 'echo', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'done', status: 'completed', output: 'hi' },
+    { kind: 'tool_call', toolCallId: 'broke', title: 'exit 3', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'broke', status: 'failed' },
+    { kind: 'tool_call', toolCallId: 'sleep', title: 'sleep 120', status: 'pending' },
+    { kind: 'tool_update', toolCallId: 'sleep', status: 'in_progress', output: 'partial' },
+  ]
+  assert.deepEqual(statuses(turn), ['completed', 'failed', 'in_progress'], 'still running while the turn runs')
+  assert.deepEqual(statuses([...turn, { kind: 'turn_end', stopReason: 'cancelled' }]), [
+    'completed',
+    'failed',
+    'cancelled',
+  ])
+  // A call announced in a later turn is that turn's, open until it ends.
+  assert.deepEqual(
+    statuses([
+      ...turn,
+      turnEnd,
+      user('again'),
+      { kind: 'tool_call', toolCallId: 'next', title: 'ls', status: 'pending' },
+    ]),
+    ['completed', 'failed', 'cancelled', 'pending'],
+  )
+})
+
+test('a settled ask carries how it was settled, and claims nothing when the event does not say', () => {
+  const ask = (requestId: string): ChatEvent => ({ kind: 'ask_user', requestId, message: 'Which way?' })
+  const asks = foldEvents([
+    ask('a'),
+    { kind: 'ask_user_resolved', requestId: 'a', outcome: 'turn_ended' },
+    ask('b'),
+    { kind: 'ask_user_resolved', requestId: 'b' },
+    ask('c'),
+  ]).flatMap((message) => (message.kind === 'ask' ? [[message.resolved, message.outcome]] : []))
+  assert.deepEqual(asks, [
+    [true, 'turn_ended'],
+    [true, undefined],
+    [false, undefined],
+  ])
+})

@@ -1,5 +1,6 @@
 import { NodeFrame, useGraphNodes } from '@opencroft/client/canvas'
 import { extensionId } from '@opencroft/client/extension'
+import { SecretValueField } from '@opencroft/client/secrets'
 import { Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@opencroft/client/ui'
 import { UserRound } from 'lucide-react'
 import type { ChangeEvent } from 'react'
@@ -9,6 +10,7 @@ import { storedType } from './stored-type'
 export interface OpenAIAssistantData {
   name: string
   chatApiBase: string
+  /** Typed, or `secret:NAME`, resolved server-side where the chat request is made. */
   chatApiKey: string
   chatModel: string
   temperature: number
@@ -57,15 +59,12 @@ export function OpenAIAssistantInspector({
           placeholder='https://api.openai.com/v1'
         />
       </div>
-      <div className='flex flex-col gap-1'>
-        <Label>API Key</Label>
-        <Input
-          type='password'
-          value={data.chatApiKey ?? ''}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => updateData({ chatApiKey: e.target.value })}
-          placeholder='sk-…'
-        />
-      </div>
+      <SecretValueField
+        label='API Key'
+        value={data.chatApiKey}
+        onChange={(chatApiKey) => updateData({ chatApiKey })}
+        placeholder='sk-…'
+      />
       <div className='flex flex-col gap-1'>
         <Label>Model</Label>
         <Input

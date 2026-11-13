@@ -46,7 +46,8 @@ after(async () => {
   await rm(workdir, { recursive: true, force: true })
 })
 
-const URL_BASE = 'http://localhost:9999/api/ext/acme.example/http/files'
+const EXTENSION_ID = 'acme.example'
+const URL_BASE = `http://localhost:9999/api/ext/${EXTENSION_ID}/http/files`
 
 // A real Better Auth session: sign up and keep the cookie the response sets.
 async function signUp(email: string): Promise<{ id: string; cookie: string }> {
@@ -84,13 +85,14 @@ function plantedSessionRoute() {
 }
 
 test('an undeclared route is 404', async () => {
-  const response = await dispatchExtensionRoute(undefined, request())
+  const response = await dispatchExtensionRoute(EXTENSION_ID, undefined, request())
   assert.equal(response.status, 404)
 })
 
 test('a plain handler stays public: an anonymous request reaches it', async () => {
   let called = 0
   const response = await dispatchExtensionRoute(
+    EXTENSION_ID,
     () => {
       called++
       return new Response('webhook')
@@ -104,7 +106,7 @@ test('a plain handler stays public: an anonymous request reaches it', async () =
 
 test('a session route without a session is 401 and its handler never runs', async () => {
   const { route, calls } = plantedSessionRoute()
-  const response = await dispatchExtensionRoute(route, request())
+  const response = await dispatchExtensionRoute(EXTENSION_ID, route, request())
   assert.equal(response.status, 401)
   assert.deepEqual(await response.json(), { error: 'Unauthorized' })
   assert.equal(calls.length, 0)
@@ -113,14 +115,14 @@ test('a session route without a session is 401 and its handler never runs', asyn
 test('a session route with a cookie that names no session is 401 and its handler never runs', async () => {
   const { route, calls } = plantedSessionRoute()
   const [name] = member.cookie.split('=')
-  const response = await dispatchExtensionRoute(route, request({ cookie: `${name}=not-a-session` }))
+  const response = await dispatchExtensionRoute(EXTENSION_ID, route, request({ cookie: `${name}=not-a-session` }))
   assert.equal(response.status, 401)
   assert.equal(calls.length, 0)
 })
 
 test('a signed-in request reaches the handler with the person an App action would get', async () => {
   const { route, calls } = plantedSessionRoute()
-  const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie }))
+  const response = await dispatchExtensionRoute(EXTENSION_ID, route, request({ cookie: member.cookie }))
   assert.equal(response.status, 200)
   assert.equal(await response.text(), 'served')
   assert.equal(calls.length, 1)
@@ -132,10 +134,37 @@ test('a signed-in request reaches the handler with the person an App action woul
   assert.deepEqual(calls[0]?.person, { id: member.id, name: 'Person member@example.test', avatarUrl: null })
 })
 
+test("a session route's directory sees what the person sees, and only while its handler runs", async () => {
+  const listed: string[][] = []
+  let context: ExtensionRouteContext | undefined
+  const route: ExtensionRoute = {
+    session: 'person',
+    handler: async (_request, ctx) => {
+      context = ctx
+      listed.push((await ctx.spaces.list()).map((space) => space.slug))
+      return new Response('served')
+    },
+  }
+  const { createSpaceImpl, listSpacesImpl } = await import('@/app/_authed/(space)/_server/actions-impl')
+  const made = await createSpaceImpl('Route directory')
+  const response = await dispatchExtensionRoute(EXTENSION_ID, route, request({ cookie: member.cookie }))
+  assert.equal(response.status, 200)
+  assert.ok(listed[0]?.includes(made.slug))
+  // A person is in every space, so the person's listing is the registry's.
+  assert.deepEqual(listed[0]?.sort(), (await listSpacesImpl()).map((space) => space.slug).sort())
+  assert.ok(context)
+  await assert.rejects(context.spaces.list(), /has ended/)
+  await assert.rejects(context.apps.directory(), /has ended/)
+})
+
 test('a change sent from another origin is refused before the handler, even with a session', async () => {
   for (const site of ['cross-site', 'same-site']) {
     const { route, calls } = plantedSessionRoute()
-    const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie, method: 'POST', site }))
+    const response = await dispatchExtensionRoute(
+      EXTENSION_ID,
+      route,
+      request({ cookie: member.cookie, method: 'POST', site }),
+    )
     assert.equal(response.status, 403, site)
     assert.equal(calls.length, 0, site)
   }
@@ -144,7 +173,11 @@ test('a change sent from another origin is refused before the handler, even with
 test('a change from the same origin, or from a client that is not a browser, reaches the handler', async () => {
   for (const site of ['same-origin', 'none', undefined]) {
     const { route, calls } = plantedSessionRoute()
-    const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie, method: 'POST', site }))
+    const response = await dispatchExtensionRoute(
+      EXTENSION_ID,
+      route,
+      request({ cookie: member.cookie, method: 'POST', site }),
+    )
     assert.equal(response.status, 200, String(site))
     assert.equal(calls.length, 1, String(site))
   }
@@ -154,12 +187,17 @@ test('without Fetch Metadata, a change is refused when its Origin is another one
   // What a browser too old to send Sec-Fetch-Site sends: Origin alone.
   for (const origin of ['https://evil.example.test', 'http://localhost:1', 'https://localhost:9999', 'null']) {
     const { route, calls } = plantedSessionRoute()
-    const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie, method: 'POST', origin }))
+    const response = await dispatchExtensionRoute(
+      EXTENSION_ID,
+      route,
+      request({ cookie: member.cookie, method: 'POST', origin }),
+    )
     assert.equal(response.status, 403, origin)
     assert.equal(calls.length, 0, origin)
   }
   const { route, calls } = plantedSessionRoute()
   const own = await dispatchExtensionRoute(
+    EXTENSION_ID,
     route,
     request({ cookie: member.cookie, method: 'POST', origin: new URL(URL_BASE).origin }),
   )
@@ -169,7 +207,11 @@ test('without Fetch Metadata, a change is refused when its Origin is another one
 
 test('a read from another origin reaches the handler: GET is answered whoever links to it', async () => {
   const { route, calls } = plantedSessionRoute()
-  const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie, site: 'cross-site' }))
+  const response = await dispatchExtensionRoute(
+    EXTENSION_ID,
+    route,
+    request({ cookie: member.cookie, site: 'cross-site' }),
+  )
   assert.equal(response.status, 200)
   assert.equal(calls.length, 1)
 })
@@ -187,7 +229,7 @@ test('a declaration the host does not know fails closed instead of being served 
     { handler },
   ] as unknown as ExtensionRoute[]
   for (const route of malformed) {
-    const response = await dispatchExtensionRoute(route, request({ cookie: member.cookie }))
+    const response = await dispatchExtensionRoute(EXTENSION_ID, route, request({ cookie: member.cookie }))
     assert.equal(response.status, 500, JSON.stringify(route))
   }
   assert.equal(called, 0)

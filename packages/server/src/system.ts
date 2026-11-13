@@ -1,6 +1,6 @@
 /**
  * `@opencroft/server/system` — the machine the host runs on: its file system,
- * processes and the host's encryption.
+ * processes, the host's encryption and the instance's id.
  */
 import type * as nodeFs from 'node:fs'
 import type * as nodeOs from 'node:os'
@@ -23,3 +23,10 @@ export declare const exec: (cmd: string) => Promise<string>
 /** Run a program on the host without a shell and resolve with its stdout. */
 export declare const execFile: (cmd: string, args: string[]) => Promise<string>
 export declare const crypto: HostCryptoApi
+/**
+ * This OpenCroft instance's id, the same for as long as its data volume lives. Two deployments
+ * that share a database but not a data volume have different ids, and one restored from another's
+ * backup makes its own. Use it to mark what this instance creates outside itself (containers,
+ * volumes, remote resources) and to tell its own from another instance's.
+ */
+export declare const instanceId: string

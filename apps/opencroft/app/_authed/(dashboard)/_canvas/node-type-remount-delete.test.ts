@@ -1,13 +1,13 @@
 // The node-context-menu Delete button goes through useReactFlow().deleteElements(),
-// which flow-editor.tsx also feeds a `nodeTypes` map that is deliberately
-// rebuilt (and remounts every node) whenever the SET of node types on the
-// canvas changes -- see node-wrapper.tsx's buildNodeTypes and
-// node-type-keys.ts. Deleting the last node of a type is exactly the case
-// that shrinks that set, so it is the one place a delete and a full node
-// remount happen from the same state update. These tests exist to prove that
-// interaction does not swallow the delete, against a real DOM and the real
-// @xyflow/react library -- not a description of app wiring someone would
-// otherwise only find out about by clicking through it.
+// which flow-editor.tsx also feeds a `nodeTypes` map that is rebuilt whenever
+// the SET of node types on the canvas changes -- see node-wrapper.tsx's
+// buildNodeTypes and node-type-keys.ts. Deleting the last node of a type is
+// exactly the case that shrinks that set, so it is the one place a delete and
+// a new map happen from the same state update. These tests exist to prove that
+// interaction does not swallow the delete, and that the nodes left behind stay
+// mounted, against a real DOM and the real @xyflow/react library -- not a
+// description of app wiring someone would otherwise only find out about by
+// clicking through it.
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
 
@@ -60,8 +60,17 @@ function makeNode(id: string, type: string): TestNode {
 
 interface Harness {
   nodeCount: () => number
+  add: (node: TestNode) => Promise<void>
   select: (nodeId: string) => Promise<void>
   clickDelete: () => Promise<void>
+}
+
+// The element a node's component draws, under the flow library's own node
+// element. It is replaced exactly when the component remounts.
+function drawnElement(nodeId: string): Element {
+  const element = dom.container.querySelector(`.react-flow__node[data-id="${nodeId}"]`)?.firstElementChild
+  assert.ok(element, `node ${nodeId} is drawn`)
+  return element
 }
 
 // Selecting and deleting are kept as two separately committed steps here,
@@ -110,6 +119,11 @@ async function mountHarness(initialNodes: TestNode[], useAppNodeTypes: boolean):
 
   return {
     nodeCount: () => latestNodes.length,
+    add: async (node: TestNode) => {
+      await act(async () => {
+        latestSetNodes?.((nds) => [...nds, node])
+      })
+    },
     select: async (nodeId: string) => {
       await act(async () => {
         latestSetNodes?.((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })))
@@ -165,4 +179,39 @@ test('deleting the only node of its type (nodeTypes shrinks to empty) still remo
     0,
     'deleting the last node of a type changes nodeTypes identity -- must not swallow the delete',
   )
+})
+
+// Each harness stays mounted until the file ends, so these use node ids no
+// other test draws.
+//
+// Elements are compared with `===` inside assert.ok: a failing assert.equal on
+// two DOM elements renders both, and through them the whole document.
+test('a node of a type new to the canvas leaves the nodes already drawn mounted', async () => {
+  const harness = await mountHarness([makeNode('stay-1', 'type-stay'), makeNode('other-1', 'type-other')], true)
+  const stay = drawnElement('stay-1')
+  const other = drawnElement('other-1')
+
+  await harness.add(makeNode('new-1', 'type-new'))
+
+  assert.equal(harness.nodeCount(), 3)
+  assert.ok(drawnElement('stay-1') === stay, 'a node of an unchanged type keeps its component')
+  assert.ok(drawnElement('other-1') === other, 'a node of an unchanged type keeps its component')
+})
+
+test('deleting the last node of a type leaves the other nodes mounted', async () => {
+  const harness = await mountHarness([makeNode('stay-2', 'type-stay'), makeNode('gone-2', 'type-gone')], true)
+  const stay = drawnElement('stay-2')
+
+  await harness.select('gone-2')
+  await harness.clickDelete()
+
+  assert.equal(harness.nodeCount(), 1)
+  assert.ok(drawnElement('stay-2') === stay, 'the remaining node keeps its component')
+})
+
+test('a type keeps one component across node-type maps', () => {
+  const before = buildNodeTypes(['type-a'])
+  const after = buildNodeTypes(['type-a', 'type-b'])
+  assert.equal(after['type-a'], before['type-a'])
+  assert.notEqual(after['type-b'], after['type-a'])
 })

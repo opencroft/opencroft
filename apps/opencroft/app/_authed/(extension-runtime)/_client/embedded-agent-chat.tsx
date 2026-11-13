@@ -563,6 +563,7 @@ function EmbeddedThread({
             there too: it replaces or continues that header. */}
         <GroupChatThreadChat
           thread={thread}
+          members={chat.members}
           revealPosition={revealPosition}
           onHeaderChange={setControls}
           onTurnSettled={refreshArtifacts}

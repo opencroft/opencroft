@@ -8,6 +8,9 @@ import {
 import { AlarmClock } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { RunOutputRows } from './run-output-rows'
+import { RUN_OUTPUTS } from './run-outputs'
+
 // ── Persisted data shape ──────────────────────────────────────────────
 // Matches the server scheduler's shape exactly (server/scheduler/event-scheduler.ts,
 // the Event node scheduler) and the design-kit `Schedules` component's
@@ -139,7 +142,9 @@ export function EventNode({ data, selected }: { id: string; data: EventData; sel
           {next !== undefined ? <span>{formatRelative(next, now)}</span> : null}
         </div>
       }
-    />
+    >
+      <RunOutputRows type='event' />
+    </NodeFrame>
   )
 }
 
@@ -194,6 +199,7 @@ export function EventInspector({ data, updateData }: InspectorProps) {
 
 export const EVENT_HANDLES = [
   { id: 'exec-out', handleType: 'execution-context', role: 'source' as const, label: 'Handler' },
+  ...RUN_OUTPUTS.event,
 ]
 
 export function eventExposeOutput(handleId: string): Record<string, never> | undefined {

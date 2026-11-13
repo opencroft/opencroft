@@ -1,6 +1,7 @@
 import { createRouter } from '@tanstack/react-router'
 
 import { appBasePath } from '@/app/_authed/(apps)/_lib/app-routes'
+import { stackTransitionTypes } from '@/app/_shell/stack-transition'
 import { routeTree } from '@/app/routeTree.gen'
 
 export function getRouter() {
@@ -14,6 +15,9 @@ export function getRouter() {
     // restored itself.
     scrollRestoration: ({ location }) => appBasePath(location.pathname) === null,
     defaultPreload: 'intent',
+    // On a phone every move between screens slides or fades by where it goes
+    // in the screen stack; see stack-transition.
+    defaultViewTransition: { types: stackTransitionTypes },
   })
   return router
 }

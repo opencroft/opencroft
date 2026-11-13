@@ -27,12 +27,17 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { connectionKey } from 'agent-client/agent-client'
+import { RequestError } from '@agentclientprotocol/sdk'
+import { connectionKey, handleUpdate } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
-import type { AgentSelection } from 'agent-client/types'
+import { SESSION_LOG } from 'agent-client/transcript-log'
+import type { AgentSelection, ChatEvent } from 'agent-client/types'
 
 import type { WirePromptOrigin } from '@/app/_authed/(agent)/_lib/prompt-origin'
 import { agentClient } from '@/app/_authed/(agent)/_server/agent-client-instance'
+import { INITIAL_HISTORY_RECORDS } from '@/app/_authed/(agent)/api/acp.stream'
+import { backgroundTasks, RETIRED } from '@/app/_authed/(background-tasks)/_server/service'
+import { agentPlacement } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-placement-shared'
 import { slug } from '@/app/_authed/(server)/_server/types'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import {
@@ -43,11 +48,19 @@ import {
   forgetLocalSessionImpl,
   promptLocalImpl,
   stopLocalSessionProcessImpl,
+  subagentHistoryPageImpl,
   tabSessions,
 } from './acp-impl'
 import { readPersistedSession, writePersistedUsage } from './acp-session-store'
 import { saveAttachment } from './attachment-store'
-import { appendSessionEvent, flushSessionEvents, readSessionEvents } from './session-event-store'
+import { flushSessionEvents, recordLogWrite, storedLogReader } from './session-event-store'
+import { opencroftLocalTools } from './tools-bridge'
+
+// The session's own log as recorded under a key, whole, in order.
+async function readSessionEvents(sessionKey: string): Promise<ChatEvent[]> {
+  const reader = await storedLogReader(sessionKey)
+  return (await reader.read(0, reader.end)).events
+}
 
 // The browser must not be able to say who a message is from — the name is
 // resolved server-side, from the session, in promptLocalImpl.
@@ -64,6 +77,17 @@ void _forgedOrigin
 
 interface AcpStoreShape {
   connections: Map<string, unknown>
+  pendingElicitations: Map<string, { sessionId: string }>
+}
+
+async function until(condition: () => boolean | Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (!(await condition())) {
+    if (Date.now() > deadline) {
+      throw new Error('condition never held')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
 
 function acpStore(): AcpStoreShape {
@@ -77,14 +101,51 @@ function acpStore(): AcpStoreShape {
 // of spawning a real process — same seam agent-client's own tests use.
 function seedMockConnection(
   selection: AgentSelection,
-  options: { canLoad?: boolean; forkable?: boolean; resumable?: boolean; resumeFails?: boolean; images?: boolean } = {},
+  options: {
+    canLoad?: boolean
+    forkable?: boolean
+    resumable?: boolean
+    resumeFails?: boolean
+    // The harness answers a resume with ACP resource-not-found: its store no
+    // longer has the session.
+    resumeNotFound?: boolean
+    images?: boolean
+    // The harness announces its commands right after answering `session/new`,
+    // the way the real bridges do. The client reads that notification once it
+    // holds the session the answer created, so it is sent from then.
+    commandsOnNew?: boolean
+  } = {},
 ): void {
   const connection = {
-    newSession: async () => ({ sessionId: `acp-session-${crypto.randomUUID()}` }),
+    newSession: async () => {
+      const sessionId = `acp-session-${crypto.randomUUID()}`
+      if (options.commandsOnNew) {
+        // Polled on a timer: creating the session awaits I/O, which a run of
+        // immediates outpaces. Bounded, so a session that never appears ends it.
+        const announce = (triesLeft: number) => {
+          if (agentClient.listSessions().some((session) => session.id === sessionId)) {
+            handleUpdate({
+              sessionId,
+              update: {
+                sessionUpdate: 'available_commands_update',
+                availableCommands: [{ name: 'review', description: 'Review code' }],
+              },
+            })
+          } else if (triesLeft > 0) {
+            setTimeout(() => announce(triesLeft - 1), 5)
+          }
+        }
+        setTimeout(() => announce(1_000), 0)
+      }
+      return { sessionId }
+    },
     prompt: async () => ({ stopReason: 'end_turn' }),
     resumeSession: async (params: { sessionId: string }) => {
       if (options.resumeFails) {
         throw new Error('the harness would not start')
+      }
+      if (options.resumeNotFound) {
+        throw RequestError.resourceNotFound(params.sessionId)
       }
       return { sessionId: params.sessionId }
     },
@@ -135,26 +196,44 @@ async function freshAgentNode(): Promise<{ nodeId: string; selection: AgentSelec
   // the first test's mock connection, silently, with different capabilities.
   const nodeId = `agent-${crypto.randomUUID()}`
   const agentName = `ACP Test Agent ${crypto.randomUUID()}`
+  // An agent runs only through a terminal: this one through the server's own,
+  // a Localhost node's, in its workspace folder under `data/agent-workspace`.
+  const localhostId = `localhost-${crypto.randomUUID()}`
+  const workspaceSlug = slug(agentName) || nodeId
+  const cwd = join(process.cwd(), 'data', 'agent-workspace', workspaceSlug)
+  const terminal = `${localhostId}/terminal`
   await registry.create(spaceSlug, spaceSlug, {
     nodes: [
+      { id: localhostId, type: 'builtin.core.localhost', position: { x: 0, y: 200 }, data: {} },
       {
         id: nodeId,
         type: 'builtin.core.agent',
         position: { x: 0, y: 0 },
-        data: { name: agentName, providerId: 'test-provider', adapterId: 'openclaw', model: 'test-model' },
+        data: {
+          name: agentName,
+          providerId: 'test-provider',
+          adapterId: 'openclaw',
+          model: 'test-model',
+          terminal,
+          terminalFolder: cwd,
+        },
       },
     ],
     edges: [],
   })
-  const workspaceSlug = slug(agentName) || nodeId
-  const cwd = join(process.cwd(), 'data', 'agent-workspace', workspaceSlug)
   await mkdir(cwd, { recursive: true })
+  const placement = agentPlacement({ name: agentName, terminal, terminalFolder: cwd }, nodeId, {
+    cwd: process.cwd(),
+    join,
+  })
   const selection: AgentSelection = {
     providerId: 'test-provider',
     adapterId: 'openclaw',
     model: 'test-model',
     apiKey: '',
     cwd,
+    harnessHome: placement.harnessHome,
+    shell: terminal,
     sessionKey: '',
     mcpIdentity: workspaceSlug,
   }
@@ -414,6 +493,200 @@ test('a restore that fails keeps the recorded transcript and the pointer, and th
   assert.equal(reopened.sessionId, first.sessionId, 'the next open brings the same conversation back')
 })
 
+test("a chat with a long-running subagent opens with the parent's history at the top of its window, reopened too", async () => {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true, resumable: true })
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'delegate the long job',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  const push = (sessionId: string, update: Record<string, unknown>) =>
+    handleUpdate({ sessionId, update } as Parameters<typeof handleUpdate>[0])
+  const child = `child-${crypto.randomUUID()}`
+  push(first.sessionId, { sessionUpdate: 'subagent_spawned', subagentSessionId: child, name: 'Worker', task: 'dig' })
+  const STEPS = 120
+  for (let i = 0; i < STEPS; i++) {
+    push(child, { sessionUpdate: 'tool_call', toolCallId: `call-${i}`, title: `step ${i}`, status: 'pending' })
+    push(child, { sessionUpdate: 'tool_call_update', toolCallId: `call-${i}`, status: 'completed', rawOutput: 'ok' })
+  }
+
+  const opening = (sessionId: string) => agentClient.getRecordsWindow(sessionId, { records: INITIAL_HISTORY_RECORDS })
+  const asOpened = (sessionId: string) => {
+    const window = opening(sessionId)
+    assert.ok(window, 'the session is held')
+    assert.ok(
+      window.events.some((event) => event.kind === 'user' && event.text.includes('delegate the long job')),
+      "the parent's question is in the opening window",
+    )
+    assert.ok(!window.events.some((event) => event.kind === 'subagent_event'), 'none of the subagent steps is')
+    const headers = window.events.flatMap((event) => (event.kind === 'subagent' ? [event.subagent] : []))
+    assert.deepEqual(
+      headers.map((info) => [info.subagentSessionId, info.name, info.steps]),
+      [[child, 'Worker', STEPS]],
+      'the header carries the name and the step count',
+    )
+  }
+  asOpened(first.sessionId)
+  const live = await subagentHistoryPageImpl(first.sessionId, child, undefined, 10)
+  assert.ok(live && live.events.length > 0 && live.hasMore, 'the section loads its newest steps, with older ones above')
+
+  await flushSessionEvents()
+  await stopLocalSessionProcessImpl(tabKey)
+  const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  assert.equal(reopened.sessionId, first.sessionId, 'restored from the recording')
+  asOpened(reopened.sessionId)
+  const restored = await subagentHistoryPageImpl(reopened.sessionId, child, undefined, 10)
+  // As stored: JSON keeps no key whose value is undefined.
+  assert.deepEqual(
+    restored?.events,
+    JSON.parse(JSON.stringify(live.events)),
+    "the section's steps come back from the subagent's own log",
+  )
+})
+
+// A conversation recorded and spoken to, whose session the harness has since
+// lost from its own store, and the tab's key with its open stopped.
+async function lostConversation(harness: { commandsOnNew?: boolean } = {}): Promise<{
+  nodeId: string
+  selection: AgentSelection
+  tabKey: string
+  lostId: string
+  recorded: ChatEvent[]
+}> {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true, resumable: true })
+  const tabKey = `resume-test-tab-${crypto.randomUUID()}`
+  const first = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await promptLocalImpl({
+    sessionId: first.sessionId,
+    text: 'remember me',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await flushSessionEvents()
+  const recorded = await readSessionEvents(tabKey)
+  assert.ok(
+    recorded.some((event) => event.kind === 'user'),
+    'precondition: a conversation was recorded',
+  )
+  await stopLocalSessionProcessImpl(tabKey)
+  seedMockConnection(selection, { canLoad: true, resumable: true, resumeNotFound: true, ...harness })
+  return { nodeId, selection, tabKey, lostId: first.sessionId, recorded }
+}
+
+test('a spoken-to session the harness no longer has opens as a new session that carries its transcript', async () => {
+  const { nodeId, tabKey, lostId, recorded } = await lostConversation()
+
+  const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+
+  assert.notEqual(reopened.sessionId, lostId, 'the harness cannot take the old id back, so this is a new session')
+  assert.equal(reopened.created, true, 'the agent holds none of the old context, so it gets the opening context')
+  assert.deepEqual(await readPersistedSession(tabKey), { id: reopened.sessionId, prompted: false })
+
+  const shown = agentClient.getRecordsWindow(reopened.sessionId, { records: 1_000 })?.events ?? []
+  const start = shown.findIndex((event) => event.kind === 'session_start')
+  assert.ok(start > 0, 'the new session shows where it begins, below the history')
+  assert.deepEqual(shown[start], { kind: 'session_start', sessionId: reopened.sessionId })
+  assert.ok(
+    shown.slice(0, start).some((event) => event.kind === 'user' && event.text.includes('remember me')),
+    'the conversation recorded under the lost session is shown above it',
+  )
+
+  await flushSessionEvents()
+  const kept = await readSessionEvents(tabKey)
+  assert.deepEqual(kept.slice(0, recorded.length), recorded, 'the recording is kept as it was')
+  assert.ok(
+    kept.slice(recorded.length).some((event) => event.kind === 'session_start'),
+    "the new session's events are recorded after it",
+  )
+
+  await promptLocalImpl({
+    sessionId: reopened.sessionId,
+    text: 'still here?',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  assert.equal((await readPersistedSession(tabKey))?.prompted, true, 'and it can be sent to')
+})
+
+// Until the session holds the commands a `commandsOnNew` harness announced,
+// which reaches it after the open that created it has returned.
+async function commandsAnnounced(sessionId: string): Promise<void> {
+  for (let tries = 0; tries < 1_000; tries++) {
+    if (agentClient.getSessionEvents(sessionId)?.some((event) => event.kind === 'available_commands')) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.fail(`the harness never announced its commands for ${sessionId}`)
+}
+
+const sessionStarts = (events: readonly ChatEvent[]) =>
+  events.flatMap((event) => (event.kind === 'session_start' ? [event.sessionId] : []))
+
+test('a carried conversation opened again and again before its first message marks one start', async () => {
+  const { nodeId, tabKey, recorded } = await lostConversation({ commandsOnNew: true })
+  const carrier = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await commandsAnnounced(carrier.sessionId)
+  await flushSessionEvents()
+  const carried = await readSessionEvents(tabKey)
+  const carrierStart = carried.findIndex((event) => event.kind === 'session_start')
+  assert.ok(
+    carrierStart >= 0 && carried.slice(carrierStart).some((event) => event.kind === 'available_commands'),
+    "precondition: the harness's announcement is recorded after the carrier's start",
+  )
+  await stopLocalSessionProcessImpl(tabKey)
+  const again = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await commandsAnnounced(again.sessionId)
+  await flushSessionEvents()
+  await stopLocalSessionProcessImpl(tabKey)
+  const third = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await commandsAnnounced(third.sessionId)
+
+  assert.equal(new Set([carrier.sessionId, again.sessionId, third.sessionId]).size, 3, 'each open is a new session')
+  await promptLocalImpl({
+    sessionId: third.sessionId,
+    text: 'back again',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await flushSessionEvents()
+  const kept = await readSessionEvents(tabKey)
+  assert.deepEqual(kept.slice(0, recorded.length), recorded, 'never cleared as a session with nothing to keep')
+  assert.deepEqual(sessionStarts(kept), [carrier.sessionId], 'nothing was said between the opens: one start')
+  const start = kept.findIndex((event) => event.kind === 'session_start')
+  assert.ok(
+    kept.slice(start).some((event) => event.kind === 'user' && event.text.includes('back again')),
+    'the message sent after the opens follows the start',
+  )
+  const shown = agentClient.getRecordsWindow(third.sessionId, { records: 1_000 })?.events ?? []
+  assert.deepEqual(sessionStarts(shown), [carrier.sessionId], 'the live transcript shows the same one start')
+})
+
+test('a carried conversation spoken to and then lost again marks a second start', async () => {
+  const { nodeId, tabKey } = await lostConversation({ commandsOnNew: true })
+  const carrier = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  await commandsAnnounced(carrier.sessionId)
+  await promptLocalImpl({
+    sessionId: carrier.sessionId,
+    text: 'said to the carrier',
+    queue: 'wait',
+    origin: { kind: 'message', sender: 'Reader' },
+  })
+  await flushSessionEvents()
+  await stopLocalSessionProcessImpl(tabKey)
+
+  const again = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+
+  assert.notEqual(again.sessionId, carrier.sessionId)
+  await flushSessionEvents()
+  assert.deepEqual(sessionStarts(await readSessionEvents(tabKey)), [carrier.sessionId, again.sessionId])
+})
+
 // A session nobody ever spoke to has no conversation to keep, and a harness
 // may never have stored it: its restore then fails on every attempt, and the
 // thread could be neither opened nor sent to.
@@ -425,7 +698,12 @@ test('a never-prompted session whose restore fails is replaced by a fresh one', 
   // A harness reports its state at session start, and the host records it like
   // any other event -- so a session nobody spoke to still has a recording, and
   // its reopen goes through the restore.
-  appendSessionEvent(tabKey, { kind: 'usage', used: 0 })
+  recordLogWrite(tabKey, first.sessionId, {
+    log: SESSION_LOG,
+    position: agentClient.getSessionEvents(first.sessionId)?.length ?? 0,
+    event: { kind: 'usage', used: 0 },
+    appended: true,
+  })
   await flushSessionEvents()
   assert.ok((await readSessionEvents(tabKey)).length > 0, 'precondition: something to restore from')
   await stopLocalSessionProcessImpl(tabKey)
@@ -435,6 +713,11 @@ test('a never-prompted session whose restore fails is replaced by a fresh one', 
   assert.notEqual(reopened.sessionId, first.sessionId)
   assert.equal(reopened.created, true, 'it gets the opening context a new session gets')
   assert.deepEqual(await readPersistedSession(tabKey), { id: reopened.sessionId, prompted: false })
+  await flushSessionEvents()
+  assert.ok(
+    !(await readSessionEvents(tabKey)).some((event) => event.kind === 'session_start'),
+    'with no conversation above it, there is no start to mark',
+  )
 })
 
 // ── attach: rejoining without starting ────────────────────────────────────
@@ -485,6 +768,77 @@ test('forgetLocalSessionImpl drops the durable pointer too -- unlike stopLocalSe
     'delete must drop the durable pointer -- a later restart must not resurrect this session',
   )
 })
+
+// A session's question is a background task with no time limit, open until
+// someone answers it. Stopping the process keeps both, for the reopen to show;
+// deleting the conversation leaves nobody to answer, so it ends both.
+async function askFromSession(tabKey: string, agent: { resumable?: boolean } = {}) {
+  const { nodeId, selection } = await freshAgentNode()
+  seedMockConnection(selection, { canLoad: true, ...agent })
+  const opened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+  const tool = (await opencroftLocalTools({ sessionId: opened.sessionId, adapterId: 'copilot' })).find(
+    (t) => t.name === 'ask_user',
+  )
+  assert.ok(tool, 'precondition: the session is offered the host question tool')
+  const result = (await tool.handler({
+    questions: [{ title: 'Colour', question: 'Which colour?', options: ['Red', 'Blue'] }],
+  })) as { content: { text: string }[] }
+  const taskId = /background task ([0-9a-f-]{36})/.exec(result.content[0]?.text ?? '')?.[1]
+  assert.ok(taskId, 'the call names the task its answer will come as')
+  const asked = () => [...acpStore().pendingElicitations.values()].some((p) => p.sessionId === opened.sessionId)
+  await until(asked)
+  return { taskId, asked, nodeId, selection }
+}
+
+test('deleting a session ends its open question: the task stops, told, and the question is withdrawn', async () => {
+  const tabKey = `ask-test-tab-${crypto.randomUUID()}`
+  const { taskId, asked } = await askFromSession(tabKey)
+
+  await forgetLocalSessionImpl(tabKey)
+
+  const task = await backgroundTasks.get(taskId)
+  assert.deepEqual([task?.state, task?.reason], ['stopped', RETIRED])
+  assert.ok(task?.deliveredAt, 'there is no conversation left to tell')
+  assert.equal(asked(), false, 'the question is gone from the chat')
+})
+
+// Both ways back: an agent that replays its history (whose history never held
+// the host's question) and one reattached under the host's own recording.
+for (const [how, resumable] of [
+  ['replays its history', false],
+  ['resumes under the recording', true],
+] as const) {
+  test(`a session whose process stopped shows its open question again on reopen, and the answer arrives (${how})`, async () => {
+    const tabKey = `ask-test-tab-${crypto.randomUUID()}`
+    const { taskId, asked, nodeId, selection } = await askFromSession(tabKey, { resumable })
+
+    await stopLocalSessionProcessImpl(tabKey)
+    assert.equal((await backgroundTasks.get(taskId))?.state, 'running')
+    assert.equal(asked(), true, 'the question is still pending')
+
+    // The process stop dropped the agent's connection; the reopen starts it again.
+    seedMockConnection(selection, { canLoad: true, resumable })
+    const reopened = await ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey })
+    const events: ChatEvent[] = []
+    agentClient.subscribe(reopened.sessionId, (event) => events.push(event))
+    const shown = events.filter((event) => event.kind === 'ask_user')
+    assert.equal(shown.length, 1, 'its card is on screen, once')
+    const [card] = shown
+    assert.ok(card?.kind === 'ask_user' && card.form)
+    assert.ok(
+      !events.some((event) => event.kind === 'ask_user_resolved' && event.requestId === card.requestId),
+      'and open to answer',
+    )
+
+    const [field] = Object.keys(card.form.properties ?? {})
+    assert.ok(field)
+    agentClient.resolveElicitation(card.requestId, { [field]: 'Blue' })
+    await until(async () => (await backgroundTasks.get(taskId))?.state === 'completed')
+    assert.equal(asked(), false)
+    assert.match((await backgroundTasks.get(taskId))?.outputTail ?? '', /The user answered:[\s\S]*Blue/)
+    await forgetLocalSessionImpl(tabKey)
+  })
+}
 
 // ── edit recreates, it does not branch ──────────────────────────────────────
 //

@@ -1,8 +1,11 @@
+import type { ChatContextStartReason } from 'agent-chat/components/chat-context-divider'
 import type { Block } from 'agent-chat/components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, MessageAttachment, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
+import { toolCallState } from 'agent-chat/tool-views'
 import { toUserParts } from 'agent-chat/user-parts'
 import type { DeliveredAttachment } from 'agent-client/attachments'
+import { isCompletedCompaction } from 'agent-client/fold'
 import type { QueuedPrompt } from 'agent-client/types'
 
 import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
@@ -314,14 +317,31 @@ export function buildBlocks(
   // the block after its first message is stable by circumstance. Ids are
   // absolute event indices, so this cannot collide with a turn-named block.
   let firstReplyId: number | null = null
+  // What a details block below a context start adds to its turn's name: the
+  // turn's replies above the rule already hold `t:<turn>`, and two blocks must
+  // not share a key. Named by the rule, which is as stable as the turn.
+  let segment = ''
   const flush = () => {
     const id = turnId ?? firstReplyId
     if (details.length === 0 || id === null) {
       return
     }
-    blocks.push({ id: `t:${id}`, kind: 'details', items: details })
+    blocks.push({ id: `t:${id}${segment}`, kind: 'details', items: details })
     details = []
     firstReplyId = null
+  }
+  // Ends the run of replies it falls in: the rule is drawn across the
+  // conversation, between the replies the old context saw and the ones after.
+  // Rules with nothing drawn between them are one change of context for the
+  // reader, so the last stands for them all.
+  const contextStart = (id: string, reason: ChatContextStartReason, messageId: number) => {
+    flush()
+    if (blocks.at(-1)?.kind === 'context-start') {
+      blocks.pop()
+    }
+    blocks.push({ id, kind: 'context-start', reason })
+    segment = `@${id}`
+    firstReplyId ??= messageId
   }
   for (const m of messages) {
     if (m.role === 'user') {
@@ -329,6 +349,7 @@ export function buildBlocks(
       // The turn boundary exists even when the message renders nothing (its
       // text can strip to empty), so the replies below still belong to it.
       turnId = m.id
+      segment = ''
       for (const p of m.parts) {
         if (p.type !== 'text') {
           continue
@@ -345,9 +366,18 @@ export function buildBlocks(
       firstReplyId = m.id
     }
     for (const p of m.parts) {
+      if (p.type === 'context-start') {
+        contextStart(`c:${p.sessionId}`, 'new-session', m.id)
+        continue
+      }
       const item = partToDetail(p, onStopTask)
       if (item) {
         details.push(item)
+      }
+      // The compaction's own row stays with the replies it summarised; the
+      // context it left behind starts below it.
+      if (p.type === 'tool-call' && isCompletedCompaction(p.id, p.status)) {
+        contextStart(`c:${p.id}`, 'compaction', m.id)
       }
     }
   }
@@ -377,6 +407,10 @@ function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId
       items: p.parts
         .map((child) => partToDetail(child, onStopTask))
         .filter((item): item is DetailItem => item !== null),
+      ...(p.steps !== undefined ? { steps: p.steps } : {}),
+      ...(p.onExpand ? { onExpand: p.onExpand } : {}),
+      ...(p.loading ? { loading: p.loading } : {}),
+      ...(p.onLoadOlder ? { onLoadOlder: p.onLoadOlder } : {}),
     }
   }
   if (p.type === 'async-task') {
@@ -395,6 +429,10 @@ function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId
       onStop: onStopTask && p.canStop ? () => onStopTask(p.asyncTaskId) : undefined,
     }
   }
+  if (p.type === 'context-start') {
+    // A rule, not a detail: buildBlocks draws it between blocks.
+    return null
+  }
   if (p.type === 'notice') {
     return {
       kind: 'notice',
@@ -410,6 +448,7 @@ function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId
     toolName: p.toolName,
     args: p.args,
     result: p.result,
+    state: toolCallState(p.status),
     ...(p.diffs ? { diffs: p.diffs } : {}),
   }
 }

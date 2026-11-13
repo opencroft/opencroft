@@ -10,6 +10,7 @@ import { Checkbox } from 'ui/components/ui/checkbox'
 import { Input } from 'ui/components/ui/input'
 import { Label } from 'ui/components/ui/label'
 import { RadioGroup, RadioGroupItem } from 'ui/components/ui/radio-group'
+import { Textarea } from 'ui/components/ui/textarea'
 
 import { Markdown } from './markdown'
 
@@ -250,6 +251,57 @@ function OptionRow({ id, option, control }: { id: string; option: AskUserOption;
   )
 }
 
+// Read at event time, as the composer does: only a key press asks, so there
+// is nothing to hydrate.
+function isCoarsePointer(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
+}
+
+interface AnswerBoxProps {
+  value: string
+  onValueChange: (value: string) => void
+  onKeyDown: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>, multiline: boolean) => void
+  placeholder: string
+  secret?: boolean
+  numeric?: boolean
+  className?: string
+}
+
+// A typed answer. Free text is a textarea, one line tall at rest like the
+// input it sits among, growing with its text and keeping pasted line breaks.
+// Its cap stays well inside a host's height-capped card (the approvals list
+// caps the card at 24rem), so the question and the button stay in view; past
+// it the box scrolls. A secret stays a one-line password input, because a
+// textarea cannot mask its text, and a number stays an input.
+function AnswerBox({ value, onValueChange, onKeyDown, placeholder, secret, numeric, className }: AnswerBoxProps) {
+  if (secret || numeric) {
+    return (
+      <Input
+        type={secret ? 'password' : undefined}
+        autoComplete={secret ? 'off' : undefined}
+        inputMode={numeric ? 'decimal' : undefined}
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        onKeyDown={(event) => onKeyDown(event, false)}
+        placeholder={placeholder}
+        className={['h-8', className].filter(Boolean).join(' ')}
+      />
+    )
+  }
+  // The vertical padding makes one line exactly the input's h-8 at both of the
+  // field's type sizes: 24px lines below md, 20px lines from md up.
+  return (
+    <Textarea
+      rows={1}
+      value={value}
+      onChange={(event) => onValueChange(event.target.value)}
+      onKeyDown={(event) => onKeyDown(event, true)}
+      placeholder={placeholder}
+      className={['max-h-40 min-h-8 resize-none py-[3px] md:py-[5px]', className].filter(Boolean).join(' ')}
+    />
+  )
+}
+
 export interface AskUserProps {
   // The elicitation's own message — the question itself for a single-field
   // form, the "please answer" preamble for several.
@@ -289,11 +341,21 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
     }
   }
 
-  const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      advance()
+  // Enter answers: it moves to the next question, or submits on the last. In a
+  // free-text box the keys are the chat composer's: Shift+Enter adds a line,
+  // and on a touch device, whose soft keyboard has no Shift, Enter adds a line
+  // and the button answers. An Enter that confirms an IME composition picks
+  // the IME's candidate and never answers; Safari reports that Enter after
+  // the composition ended, with only keyCode 229 left to tell.
+  const onAnswerKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>, multiline: boolean) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      return
     }
+    if (multiline && (event.shiftKey || isCoarsePointer())) {
+      return
+    }
+    event.preventDefault()
+    advance()
   }
 
   const picks = Array.isArray(state.values[field.key]) ? (state.values[field.key] as string[]) : []
@@ -339,16 +401,20 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
 
   return (
     <div className='flex flex-col gap-2 px-3 py-2'>
-      {/* Header */}
-      <div className='flex items-center gap-2'>
-        <MessageCircleQuestion className='h-4 w-4 shrink-0 text-primary' />
+      {/* Header: the icon and the close button sit on the question's first
+          line, however many lines it wraps to. The close button is taller
+          than a line; the padding keeps the row at its height. */}
+      <div className={onCancel ? 'flex items-start gap-2 py-0.5' : 'flex items-start gap-2'}>
+        <MessageCircleQuestion className='mt-0.5 h-4 w-4 shrink-0 text-primary' />
         <div className='min-w-0 flex-1 text-sm font-medium wrap-break-word'>
           <Markdown text={message || 'Questions'} typography='inherit' />
         </div>
         {onCancel ? (
-          <Button size='sm' variant='ghost' onClick={onCancel} disabled={pending} className='h-6 w-6 p-0'>
-            <X className='h-4 w-4' />
-          </Button>
+          <span className='flex h-5 shrink-0 items-center'>
+            <Button size='sm' variant='ghost' onClick={onCancel} disabled={pending} className='h-6 w-6 p-0'>
+              <X className='h-4 w-4' />
+            </Button>
+          </span>
         ) : null}
       </div>
 
@@ -448,28 +514,25 @@ export function AskUser({ message, schema, onSubmit, onCancel, pending = false }
           </Label>
         </div>
       ) : (
-        <Input
-          type={field.secret ? 'password' : undefined}
-          autoComplete={field.secret ? 'off' : undefined}
+        <AnswerBox
           value={typeof state.values[field.key] === 'string' ? (state.values[field.key] as string) : ''}
-          onChange={(event) => setValue(field.key, event.target.value)}
-          onKeyDown={onInputKeyDown}
-          inputMode={field.kind.type === 'number' ? 'decimal' : undefined}
+          onValueChange={(value) => setValue(field.key, value)}
+          onKeyDown={onAnswerKeyDown}
           placeholder={field.required ? 'Required' : 'Optional'}
-          className='h-8'
+          secret={field.secret}
+          numeric={field.kind.type === 'number'}
         />
       )}
 
       {/* The question's own "Other" box, when the schema declared one */}
       {field.customKey ? (
-        <Input
-          type={field.customSecret ? 'password' : undefined}
-          autoComplete={field.customSecret ? 'off' : undefined}
+        <AnswerBox
           value={customText}
-          onChange={(event) => setCustom(field.key, event.target.value)}
-          onKeyDown={onInputKeyDown}
+          onValueChange={(value) => setCustom(field.key, value)}
+          onKeyDown={onAnswerKeyDown}
           placeholder='Custom answer (optional)'
-          className='mt-1 h-8'
+          secret={field.customSecret}
+          className='mt-1'
         />
       ) : null}
 

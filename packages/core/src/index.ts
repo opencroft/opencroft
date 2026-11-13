@@ -103,6 +103,8 @@ export interface AppEntry {
   description?: string
   /** Lucide icon name, shown in App lists. */
   icon?: string
+  /** CSS colour for the App, in the form a node's `accent` takes; handed to extensions that draw Apps (`apps.directory`). */
+  accent?: string
   parameters?: AppParameter[]
   actions?: AppActionMeta[]
   /** Context sources instances of this App expose (e.g. a terminal per worktree). */
@@ -122,6 +124,46 @@ export interface AppEntry {
    * client's `AppDefinition` has no effect.
    */
   fullPageRoutes?: string[]
+}
+
+/**
+ * Something wrong with a node, described for whoever has to act on it: a
+ * person reading the node's Errors tab, or an agent reading the node or the
+ * answer to an action it called. Never a raw command line or a stderr dump as
+ * the title: the output belongs in `detail`, the exit code in `code`.
+ */
+export interface NodeError {
+  /** What failed, in a few words: "Can't reach the Docker daemon". */
+  title: string
+  /** The output that explains it, such as the relevant lines of a command's stderr. */
+  detail?: string
+  /** A short secondary identifier of the failure: "Exit code 1", "HTTP 502". */
+  code?: string
+  /** What to do about it, where that is known. */
+  next?: string
+  /**
+   * The field of the node's data it is about, as a dot path the graph's
+   * property actions take (`authHeader`, `schedules.0.cron`), when it is about one.
+   */
+  path?: string
+}
+
+/**
+ * What is wrong with a value in a node's data, as a node type's data validator
+ * reports it: always about one field.
+ */
+export interface NodeDataProblem extends NodeError {
+  path: string
+}
+
+/**
+ * A node error as the node stores it: with the `source` that reported it. Each
+ * source's errors are replaced and cleared on their own, so a connection check
+ * clearing its error leaves a failed action's in place. `action` is the host's
+ * own: the last node action's failure, cleared when the next action starts.
+ */
+export interface NodeErrorEntry extends NodeError {
+  source: string
 }
 
 /** A node contributed by an extension. */

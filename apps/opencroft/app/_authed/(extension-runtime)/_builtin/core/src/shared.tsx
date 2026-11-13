@@ -1,11 +1,6 @@
-import { NodeCard, NodeResizer, useNodeAccent, useReactFlow, useUpdateNodeInternals } from '@opencroft/client/canvas'
 import { FileBrowser, FileManagerProvider } from '@opencroft/client/files'
 import { Button } from '@opencroft/client/ui'
-import { X } from 'lucide-react'
-import { type ComponentType, type ReactNode, useCallback, useEffect, useState } from 'react'
-
-const OPEN_ANIMATION_MS = 250
-const CLOSE_ANIMATION_MS = 200
+import type { ComponentType, ReactNode } from 'react'
 
 // ═════════════════════════════════════════════════════════════════════
 // Handle definitions
@@ -17,6 +12,7 @@ export type HandleDef = {
   role: 'source' | 'target'
   label?: string
   dynamic?: boolean
+  multiple?: boolean
 }
 
 export const TERMINAL_SOURCE: HandleDef[] = [
@@ -29,16 +25,9 @@ export const TERMINAL_CONSUMER: HandleDef[] = [
 
 export const SCRIPT_CONSUMER: HandleDef[] = [
   { id: 'ctx-in', handleType: 'terminal-context', role: 'target', label: 'Target' },
-  { id: 'exec-in', handleType: 'execution-context', role: 'target', label: 'Handler' },
+  // A handler serves every trigger wired into it: dispatch starts at the trigger.
+  { id: 'exec-in', handleType: 'execution-context', role: 'target', label: 'Handler', multiple: true },
   { id: 'stdout-out', handleType: 'text-stream', role: 'source', label: 'Output' },
-]
-
-export const AGENT_HANDLES: HandleDef[] = [
-  { id: 'instructions-in', handleType: 'agent-instruction', role: 'target', label: 'Instructions' },
-]
-
-export const AGENT_INSTRUCTION_HANDLES: HandleDef[] = [
-  { id: 'instruction-out', handleType: 'agent-instruction', role: 'source', label: 'Agent' },
 ]
 
 // ═════════════════════════════════════════════════════════════════════
@@ -102,96 +91,5 @@ export function InspectorFilesBody({ connection }: { connection: StorageConnecti
     <FileManagerProvider initialConnection={connection}>
       <FileBrowser />
     </FileManagerProvider>
-  )
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// WindowShell — resizable NodeCard with title bar
-// ═════════════════════════════════════════════════════════════════════
-
-const WINDOW_GRID = 10
-const snap = (v: number) => Math.round(v / WINDOW_GRID) * WINDOW_GRID
-
-interface WindowShellProps {
-  id: string
-  selected?: boolean
-  loading?: boolean
-  icon: ComponentType<{ className?: string }>
-  iconClassName?: string
-  title: string
-  bodyClassName?: string
-  input?: ReactNode
-  children: ReactNode
-  minWidth?: number
-  minHeight?: number
-}
-
-export function WindowShell({
-  id,
-  selected,
-  loading,
-  icon: Icon,
-  iconClassName,
-  title,
-  bodyClassName,
-  input,
-  children,
-  minWidth = 300,
-  minHeight = 200,
-}: WindowShellProps) {
-  const accent = useNodeAccent()
-  const { setNodes } = useReactFlow()
-  const updateNodeInternals = useUpdateNodeInternals()
-  const [closing, setClosing] = useState(false)
-
-  useEffect(() => {
-    const t = setTimeout(() => updateNodeInternals(id), OPEN_ANIMATION_MS)
-    return () => clearTimeout(t)
-  }, [id, updateNodeInternals])
-
-  const close = useCallback(() => {
-    setClosing(true)
-    setTimeout(() => {
-      setNodes((nds) => nds.filter((n) => n.id !== id))
-    }, CLOSE_ANIMATION_MS)
-  }, [id, setNodes])
-
-  return (
-    <>
-      <NodeResizer
-        isVisible
-        minWidth={minWidth}
-        minHeight={minHeight}
-        onResizeEnd={(_event, { width, height }) => {
-          setNodes((nds) =>
-            nds.map((n) =>
-              n.id === id ? { ...n, style: { ...n.style, width: snap(width), height: snap(height) } } : n,
-            ),
-          )
-        }}
-        lineStyle={{ border: '8px solid transparent', zIndex: 1 }}
-        handleStyle={{ background: 'transparent', border: 'none', width: 16, height: 16, zIndex: 1 }}
-      />
-      <div className={`h-full w-full ${closing ? 'window-node-close' : 'window-node-open'}`}>
-        <NodeCard selected={selected} loading={loading} accent={accent} className='h-full w-full min-w-0 flex flex-col'>
-          <div className='flex items-center gap-2 px-4 py-2'>
-            {input}
-            <Icon className={`h-4 w-4 shrink-0 ${iconClassName ?? ''}`} />
-            <span className='text-sm font-medium truncate flex-1'>{title}</span>
-            <Button variant='ghost' size='icon' className='nodrag nopan h-4 w-4 shrink-0' onClick={close}>
-              <X className='h-3 w-3' />
-            </Button>
-          </div>
-          <div
-            className={
-              'flex-1 nodrag nopan nowheel overflow-hidden rounded-b-md mx-px mb-px relative ' +
-              (bodyClassName ?? 'bg-card')
-            }
-          >
-            <div className='absolute inset-2'>{children}</div>
-          </div>
-        </NodeCard>
-      </div>
-    </>
   )
 }

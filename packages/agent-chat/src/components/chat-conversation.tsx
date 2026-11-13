@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 
+import { ChatContextDivider, type ChatContextStartReason } from './chat-context-divider'
 import { ChatEmptyState } from './chat-empty-state'
 import {
   BLOCK_ID_ATTR,
@@ -34,9 +35,15 @@ import { Flex } from 'ui/components/ui/layout/flex'
 // puts back into the composer -- so it keeps whatever the host's own encoding
 // left in it, because anything dropped there would be dropped from the message
 // on the way back out, silently and with nothing to notice it by.
+//
+// A context-start block is where the agent's context begins again (see
+// ChatContextDivider). It ends the turn section it falls in, so the question
+// above it stops sticking at the rule, and whatever follows in the same turn
+// is a block of its own: name it apart from the turn's earlier details block.
 export type Block =
   | { id: string; kind: 'user'; text: UserText; parts: readonly ChatUserMessagePart[] }
   | { id: string; kind: 'details'; items: DetailItem[] }
+  | { id: string; kind: 'context-start'; reason: ChatContextStartReason }
 
 // Each block carries its own position in the full `blocks` array, assigned
 // once while grouping. `onEditUser`/`pending` both need "where is this in the
@@ -45,9 +52,13 @@ export type Block =
 // exactly the case pagination exists to keep long.
 type PositionedBlock = Block & { absoluteIndex: number }
 
+// A section leads with a turn's question, or with a context-start rule, or --
+// only the first one -- with nothing, when the loaded window starts inside a
+// turn.
 interface TurnSection {
   id: string
   user?: Extract<PositionedBlock, { kind: 'user' }>
+  contextStart?: Extract<PositionedBlock, { kind: 'context-start' }>
   items: PositionedBlock[]
 }
 
@@ -66,6 +77,10 @@ function groupIntoTurnSections(blocks: readonly Block[]): TurnSection[] {
     const positioned: PositionedBlock = { ...block, absoluteIndex }
     if (positioned.kind === 'user') {
       sections.push({ id: positioned.id, user: positioned, items: [] })
+      return
+    }
+    if (positioned.kind === 'context-start') {
+      sections.push({ id: positioned.id, contextStart: positioned, items: [] })
       return
     }
     const current = sections[sections.length - 1]
@@ -889,6 +904,8 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                   onEdit={onEditUser ? () => onEditUser(user.id) : undefined}
                   onFork={onForkUser ? () => onForkUser(user.id) : undefined}
                 />
+              ) : section.contextStart ? (
+                <ChatContextDivider reason={section.contextStart.reason} />
               ) : (
                 // Only the first section can lack a question: the window starts
                 // inside a turn whose own `user` event is above it. Not
@@ -932,7 +949,7 @@ export const ChatConversation = forwardRef<ChatConversationHandle, ChatConversat
                   underneath. */}
               {sectionIndex === 0 && loadOlder}
               {section.items.map((b) =>
-                b.kind === 'user' ? null : (
+                b.kind !== 'details' ? null : (
                   <ChatTurnDetails
                     key={b.id}
                     renderers={renderers}

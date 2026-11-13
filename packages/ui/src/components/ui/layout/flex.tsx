@@ -1,4 +1,5 @@
 import { cn } from 'cn'
+import type * as React from 'react'
 
 export type FlexDirection = 'row' | 'row-reverse' | 'col' | 'col-reverse'
 export type JustifyContent =

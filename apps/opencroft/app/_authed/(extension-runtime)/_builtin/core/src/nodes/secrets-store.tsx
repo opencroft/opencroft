@@ -1,26 +1,47 @@
 import { invoke } from '@opencroft/client/actions'
 import { NodeFrame } from '@opencroft/client/canvas'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  SecretInput,
 } from '@opencroft/client/ui'
-import { Dices, Eye, EyeOff, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import type { SecretRecipe } from '@opencroft/server/secrets'
+import { Copy, Dices, EllipsisVertical, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
-interface SecretRow {
-  id?: string
-  key: string
-  value: string
-  updatedAt?: string
-  dirty: boolean
-}
+import { type DeleteOutcome, describeReference, type NodeReference, type RenameOutcome } from './delete-refusal-shared'
+import { type RandomValueChoice, RandomValueDialog, type RandomValueTarget } from './random-value-dialog'
+import { randomValueMode, startingPassword, startingRandom } from './secret-recipe-shared'
+import {
+  applyAnyway,
+  duplicateRows,
+  mergeWritten,
+  type RefusedChange,
+  removeSecretRow,
+  rowTarget,
+  type SecretEdit,
+  type SecretRow,
+  saveSecrets,
+} from './secrets-store-save'
+import { type LoginPassword, SetPasswordDialog, type SetPasswordTarget } from './set-password-dialog'
+
 export interface SecretsData {
   secretKeys: string[]
 }
@@ -62,16 +83,47 @@ function formatEditedAt(iso?: string): string {
   })
 }
 
-interface SecretRowEditorProps {
-  row: SecretRow
-  onChange: (field: 'key' | 'value', v: string) => void
-  onRemove: () => void
-  onRotate: () => void
+const NAME_REQUIRED = 'Give the secret a name, or remove the row.'
+const NAME_SHARED = 'Another row has this name. Rename one of them, or remove a row.'
+
+// Copies what the field holds now, an unsaved edit included. The write starts
+// inside the click: WebKit allows the clipboard only while the gesture runs.
+// Outside a secure context there is no clipboard, and an unfocused document
+// rejects the write; both end in the error toast.
+function copyValue(name: string, value: string) {
+  const write = navigator.clipboard?.writeText(value) ?? Promise.reject(new Error('No clipboard'))
+  write.then(
+    () => toast.success(name ? `Copied ${name}` : 'Copied', { duration: 1500 }),
+    () => toast.error('Could not copy to the clipboard'),
+  )
 }
 
-function SecretRowEditor({ row, onChange, onRemove, onRotate }: SecretRowEditorProps) {
-  const [visible, setVisible] = useState(false)
-  const canRotate = Boolean(row.id) && !row.dirty
+interface SecretRowEditorProps {
+  row: SecretRow
+  /** Why Save refused the row's name; undefined while the name is fine. */
+  nameError: string | undefined
+  /** The name Random value… and Set password… write under; undefined disables them (see `rowTarget`). */
+  target: string | undefined
+  onChange: (field: 'key' | 'value', v: string) => void
+  onRemove: () => void
+  /** Opens the Random value dialog, behind Rotate… where the row offers it and Random value… elsewhere. */
+  onRandom: () => void
+  onSetPassword: () => void
+}
+
+function SecretRowEditor({
+  row,
+  nameError,
+  target,
+  onChange,
+  onRemove,
+  onRandom,
+  onSetPassword,
+}: SecretRowEditorProps) {
+  const name = row.savedKey ?? row.key.trim()
+  // Rotate is offered only where the store can make the next value by the secret's recipe, never on
+  // a value someone brought, and only once the row's own edits are saved.
+  const mode = randomValueMode(row)
   return (
     <div className='flex flex-col gap-0.5'>
       <div className='flex items-center gap-1'>
@@ -79,33 +131,67 @@ function SecretRowEditor({ row, onChange, onRemove, onRotate }: SecretRowEditorP
           value={row.key}
           onChange={(e) => onChange('key', e.target.value)}
           placeholder='KEY'
-          className='h-7 text-xs font-mono flex-1'
+          autoComplete='off'
+          aria-label='Secret name'
+          aria-invalid={nameError !== undefined || undefined}
+          className='h-7 text-xs font-mono flex-1 min-w-0'
         />
-        <Input
+        <SecretInput
           value={row.value}
           onChange={(e) => onChange('value', e.target.value)}
           placeholder='value'
-          type={visible ? 'text' : 'password'}
-          className='h-7 text-xs font-mono flex-1'
+          aria-label={name ? `Value of ${name}` : 'Secret value'}
+          className='h-7 flex-1 min-w-0'
         />
-        <Button variant='ghost' size='icon' className='h-7 w-7' onClick={() => setVisible(!visible)}>
-          {visible ? <EyeOff className='h-3 w-3' /> : <Eye className='h-3 w-3' />}
-        </Button>
-        <Button
-          variant='ghost'
-          size='icon'
-          className='h-7 w-7'
-          onClick={onRotate}
-          disabled={!canRotate}
-          title={canRotate ? 'Rotate token' : 'Save before rotating'}
-        >
-          <RefreshCw className='h-3 w-3' />
-        </Button>
-        <Button variant='ghost' size='icon' className='h-7 w-7' onClick={onRemove}>
-          <Trash2 className='h-3 w-3' />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon'
+                className='h-7 w-7 shrink-0'
+                aria-label={name ? `${name} actions` : 'Secret actions'}
+              />
+            }
+          >
+            <EllipsisVertical className='h-3 w-3' />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end' className='min-w-40'>
+            <DropdownMenuGroup>
+              <DropdownMenuItem disabled={row.value === ''} onClick={() => copyValue(name, row.value)}>
+                <Copy /> Copy
+              </DropdownMenuItem>
+              {mode === 'rotate' ? (
+                <DropdownMenuItem disabled={row.dirty} onClick={onRandom}>
+                  <RefreshCw /> Rotate…
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  disabled={target === undefined || (mode === 'replace' && row.dirty)}
+                  onClick={onRandom}
+                >
+                  <Dices /> Random value…
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem disabled={target === undefined} onClick={onSetPassword}>
+                <KeyRound /> Set password…
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant='destructive' onClick={onRemove}>
+              <Trash2 /> Delete
+              <DropdownMenuShortcut>on Save</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <div className='pl-1 text-[10px] text-muted-foreground'>edited {formatEditedAt(row.updatedAt)}</div>
+      {nameError !== undefined ? (
+        <div className='pl-1 text-[10px] text-destructive' role='alert'>
+          {nameError}
+        </div>
+      ) : (
+        <div className='pl-1 text-[10px] text-muted-foreground'>edited {formatEditedAt(row.updatedAt)}</div>
+      )}
     </div>
   )
 }
@@ -117,61 +203,87 @@ interface OrphanRow {
   updatedAt: string
 }
 
-type SecretFormat = 'alphanumeric' | 'symbols'
-
-interface GenerateSecretResult {
-  name: string
-  status: 'created' | 'rotated'
+/** A row as `secretsStore.getSecrets` answers it. */
+interface StoredSecret {
+  id: string
+  key: string
+  value: string
+  recipe: SecretRecipe | null
+  rotatable: boolean
+  updatedAt: string
 }
 
-export function SecretsStoreInspector({
-  nodeId,
-  data,
-  updateData,
-}: {
-  nodeId: string
-  data: SecretsData
-  updateData: (p: Partial<SecretsData>) => void
-}) {
-  const [rows, setRows] = useState<SecretRow[]>([])
-  const [removed, setRemoved] = useState<string[]>([])
-  const [dirty, setDirty] = useState(false)
+function storedRow(s: StoredSecret): SecretRow {
+  return {
+    rowId: crypto.randomUUID(),
+    id: s.id,
+    savedKey: s.key,
+    key: s.key,
+    value: s.value,
+    savedValue: s.value,
+    recipe: s.recipe,
+    rotatable: s.rotatable,
+    updatedAt: s.updatedAt,
+    dirty: false,
+  }
+}
+
+/** How the in-use confirm names the changes it holds back: deletes, renames, or both. */
+function refusedWording(items: RefusedChange[]) {
+  const renames = items.filter((item) => item.rename).length
+  if (renames === 0) {
+    return { renames: false, done: 'deleted', verb: 'delete', action: 'Delete anyway' }
+  }
+  if (renames === items.length) {
+    return { renames: true, done: 'renamed', verb: 'rename', action: 'Rename anyway' }
+  }
+  return { renames: true, done: 'deleted or renamed', verb: 'delete or rename', action: 'Save anyway' }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+export function SecretsStoreInspector({ nodeId }: { nodeId: string }) {
+  const [edit, setEdit] = useState<SecretEdit>({ rows: [], removed: [] })
+  const [unnamed, setUnnamed] = useState<string[]>([])
+  const [shared, setShared] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [refused, setRefused] = useState<RefusedChange[]>([])
+  const [randomTarget, setRandomTarget] = useState<RandomValueTarget | null>(null)
   const [orphans, setOrphans] = useState<OrphanRow[]>([])
-  const [genName, setGenName] = useState('')
-  const [genLength, setGenLength] = useState('32')
-  const [genFormat, setGenFormat] = useState<SecretFormat>('alphanumeric')
-  const [generating, setGenerating] = useState(false)
+  const [orphanError, setOrphanError] = useState<string | null>(null)
+  const [confirmOrphan, setConfirmOrphan] = useState<OrphanRow | null>(null)
+  const [passwordTarget, setPasswordTarget] = useState<SetPasswordTarget | null>(null)
+  const [writing, setWriting] = useState(false)
+  const dirty = edit.removed.length > 0 || edit.rows.some((r) => r.dirty)
 
   const reload = useCallback(async () => {
-    const secrets = await invoke<{ id: string; key: string; value: string; updatedAt: string }[]>(
-      'secretsStore.getSecrets',
-      nodeId,
-    )
-    setRows(
-      secrets.map((s) => ({
-        id: s.id,
-        key: s.key,
-        value: s.value,
-        updatedAt: s.updatedAt,
-        dirty: false,
-      })),
-    )
-    const found = await invoke<OrphanRow[]>('secretsStore.listOrphans', nodeId)
-    setOrphans(found)
-    setRemoved([])
-    setDirty(false)
+    const secrets = await invoke<StoredSecret[]>('secretsStore.getSecrets', nodeId)
+    setEdit({ rows: secrets.map(storedRow), removed: [] })
+    setUnnamed([])
+    setShared([])
+    try {
+      setOrphans(await invoke<OrphanRow[]>('secretsStore.listOrphans', nodeId))
+      setOrphanError(null)
+    } catch (err) {
+      setOrphans([])
+      setOrphanError(errorText(err))
+    }
   }, [nodeId])
 
   const deleteOrphan = useCallback(
-    async (id: string, key: string) => {
-      if (!window.confirm(`Delete orphan secret "${key}"? It belongs to a Secrets Store node that no longer exists.`)) {
-        return
+    async ({ id, key }: OrphanRow) => {
+      setConfirmOrphan(null)
+      try {
+        await invoke('secretsStore.deleteOrphan', nodeId, id)
+        toast.success(`Deleted orphan ${key}`)
+      } catch (err) {
+        toast.error(`Could not delete ${key}: ${String(err)}`)
       }
-      await invoke('secretsStore.deleteOrphan', id)
       await reload()
-      toast.success(`Deleted orphan ${key}`)
     },
-    [reload],
+    [nodeId, reload],
   )
 
   useEffect(() => {
@@ -179,116 +291,199 @@ export function SecretsStoreInspector({
   }, [reload])
 
   const persist = useCallback(async () => {
+    setSaving(true)
     try {
-      for (const key of removed) {
-        await invoke('secretsStore.deleteSecret', nodeId, key)
+      const result = await saveSecrets(edit.rows, edit.removed, {
+        deleteSecret: (key) => invoke<DeleteOutcome>('secretsStore.deleteSecret', nodeId, key),
+        renameSecret: (from, to) => invoke<RenameOutcome>('secretsStore.renameSecret', nodeId, from, to),
+        setSecret: (key, value) => invoke('secretsStore.setSecret', nodeId, key, value),
+      })
+      if (result.status === 'unnamed') {
+        setUnnamed(result.rowIds)
+        toast.error('Not saved: a secret has no name')
+        return
       }
-      for (const row of rows) {
-        if (row.key && row.dirty) {
-          await invoke('secretsStore.setSecret', nodeId, row.key, row.value)
-        }
+      if (result.status === 'duplicate') {
+        setShared(result.rowIds)
+        toast.error('Not saved: two secrets have the same name')
+        return
       }
-      toast.success('Secrets saved')
-    } catch (err) {
-      // Without this, a thrown invoke() call (network error, a store row that
-      // fails to write, ...) aborted here silently — the delete/set loop above
-      // had no try/catch at all, so nothing after the failure point ran: no
-      // error toast, no secretKeys sync, no reload. The user saw an
-      // unresponsive Save button and the secret was never written.
-      toast.error(`Could not save secrets: ${String(err)}`)
-    } finally {
-      // Re-derive secretKeys from what's actually in the store rather than
-      // from this panel's local `rows`, so a PARTIAL failure (row 2 of 3
-      // fails) still leaves the mirror matching row 1's real write instead of
-      // silently omitting it — the same class of drift this mirror has had
-      // before, from a different cause.
-      const current = await invoke<{ key: string }[]>('secretsStore.getSecrets', nodeId)
-      updateData({ secretKeys: current.map((s) => s.key) })
+      // The rows that did save are shown even when another one did not. The
+      // node's key index needs nothing from here: the server re-derives it
+      // after every write to the store.
       await reload()
+      if (result.failed.length > 0) {
+        toast.error(`Could not save ${result.failed.join('; ')}`)
+      }
+      if (result.refused.length > 0) {
+        setRefused(result.refused)
+      } else if (result.failed.length === 0) {
+        toast.success('Secrets saved')
+      }
+    } finally {
+      setSaving(false)
     }
-  }, [rows, removed, nodeId, updateData, reload])
+  }, [edit, nodeId, reload])
+
+  // A secret a node started naming after the confirm opened is not deleted or
+  // renamed: the confirm opens again, listing every node that names it now.
+  const handleAnyway = useCallback(
+    async (items: RefusedChange[]) => {
+      setRefused([])
+      const result = await applyAnyway(items, {
+        deleteListed: (key, shown) => invoke<DeleteOutcome>('secretsStore.deleteSecret', nodeId, key, shown),
+        renameListed: (from, to, shown) => invoke<RenameOutcome>('secretsStore.renameSecret', nodeId, from, to, shown),
+        setSecret: (key, value) => invoke('secretsStore.setSecret', nodeId, key, value),
+      })
+      for (const key of result.deleted) {
+        toast.success(`Deleted ${key}`)
+      }
+      for (const { from, to } of result.renamed) {
+        toast.success(`Renamed ${from} to ${to}`)
+      }
+      if (result.failed.length > 0) {
+        toast.error(`Could not save ${result.failed.join('; ')}`)
+      }
+      await reload()
+      setRefused(result.refused)
+    },
+    [nodeId, reload],
+  )
 
   const addRow = useCallback(() => {
-    setRows((prev) => [...prev, { key: '', value: '', dirty: true }])
-    setDirty(true)
+    const rowId = crypto.randomUUID()
+    setEdit((prev) => ({ ...prev, rows: [...prev.rows, { rowId, key: '', value: '', dirty: true }] }))
   }, [])
 
   const updateRow = useCallback((index: number, field: 'key' | 'value', v: string) => {
-    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: v, dirty: true } : r)))
-    setDirty(true)
+    setEdit((prev) => ({
+      ...prev,
+      rows: prev.rows.map((r, i) => (i === index ? { ...r, [field]: v, dirty: true } : r)),
+    }))
   }, [])
 
   const removeRow = useCallback((index: number) => {
-    setRows((prev) => {
-      const row = prev[index]
-      if (row.key) {
-        setRemoved((r) => [...r, row.key])
-      }
-      return prev.filter((_, i) => i !== index)
-    })
-    setDirty(true)
+    setEdit((prev) => removeSecretRow(prev, index))
   }, [])
 
-  const rotateRow = useCallback(
-    async (index: number) => {
-      const row = rows[index]
-      if (!row?.id || row.dirty) {
-        return
+  // After a write from a row's menu: that row shows what the store now holds,
+  // and every other row keeps its unsaved edit.
+  const showWritten = useCallback(
+    async (key: string) => {
+      const fresh = (await invoke<StoredSecret[]>('secretsStore.getSecrets', nodeId)).find((s) => s.key === key)
+      if (fresh) {
+        setEdit((prev) => mergeWritten(prev, key, storedRow(fresh)))
       }
-      const ok = window.confirm(
-        `Rotate token for "${row.key}"?\n\nThe current value will be replaced with a new random token.`,
-      )
-      if (!ok) {
-        return
-      }
-      await invoke('secretsStore.rotateSecret', nodeId, row.key)
-      await reload()
-      toast.success(`Rotated ${row.key}`)
     },
-    [rows, nodeId, reload],
+    [nodeId],
   )
 
-  // Server-generated value — never touches this component's state, only the
-  // name and created/rotated status come back.
-  const handleGenerate = useCallback(async () => {
-    const name = genName.trim()
-    if (!name) {
-      return
-    }
-    const length = Number.parseInt(genLength, 10)
-    setGenerating(true)
-    try {
-      const result = await invoke<GenerateSecretResult>('secretsStore.generate', nodeId, name, {
-        length: Number.isFinite(length) ? length : undefined,
-        format: genFormat,
-      })
-      setGenName('')
-      // invoke() writes straight to the secrets table; without this, a key
-      // created/rotated here never reaches the node's own secretKeys mirror —
-      // reload() alone only refreshes this panel's local rows.
-      if (!(data.secretKeys ?? []).includes(result.name)) {
-        updateData({ secretKeys: [...(data.secretKeys ?? []), result.name] })
+  // One dialog for Random value… and Rotate…, on new and stored rows alike, its
+  // fields started from the recipe. Replacing a stored value names who stops
+  // working, so the nodes are looked up first.
+  const openRandom = useCallback(
+    async (row: SecretRow, key: string) => {
+      const start = startingRandom(row.recipe)
+      const mode = randomValueMode(row)
+      if (mode === 'create') {
+        setRandomTarget({ key, mode, references: [], ...start })
+        return
       }
-      await reload()
-      toast.success(`${result.name} ${result.status}`)
-    } catch (err) {
-      toast.error(`Could not generate ${name}: ${String(err)}`)
-    } finally {
-      setGenerating(false)
+      try {
+        const references = await invoke<NodeReference[]>('secretsStore.references', nodeId, key)
+        setRandomTarget({ key, mode, references, ...start })
+      } catch (err) {
+        toast.error(`Could not check what uses ${key}: ${errorText(err)}`)
+      }
+    },
+    [nodeId],
+  )
+
+  // The value is made on the server, so it never travels back in the answer;
+  // the row shows it behind the eye. Rotate goes through the store's rotate,
+  // which refuses a secret its recipe cannot remake; a new value, or one in
+  // place of a typed value or a password, is written by generate, which creates
+  // the name or replaces what it holds.
+  const writeRandom = useCallback(
+    async ({ key, mode }: RandomValueTarget, choice: RandomValueChoice) => {
+      const rotate = mode === 'rotate'
+      setWriting(true)
+      try {
+        await invoke(rotate ? 'secretsStore.rotateSecret' : 'secretsStore.generate', nodeId, key, choice)
+        setRandomTarget(null)
+        toast.success(rotate ? `Rotated ${key}` : `Saved ${key}`)
+        await showWritten(key)
+      } catch (err) {
+        toast.error(`Could not ${rotate ? 'rotate' : 'save'} ${key}: ${errorText(err)}`)
+      } finally {
+        setWriting(false)
+      }
+    },
+    [nodeId, showWritten],
+  )
+
+  const setPassword = useCallback(
+    async (key: string, { login, password, basic }: LoginPassword) => {
+      setWriting(true)
+      try {
+        await invoke('secretsStore.setPassword', nodeId, key, login, password, basic)
+        setPasswordTarget(null)
+        toast.success(`Saved ${key}`)
+        await showWritten(key)
+      } catch (err) {
+        toast.error(`Could not save ${key}: ${errorText(err)}`)
+      } finally {
+        setWriting(false)
+      }
+    },
+    [nodeId, showWritten],
+  )
+
+  // A new row whose name the store already holds under another row, or whose
+  // row was deleted and waits for Save, would write over that secret, so Random
+  // value… and Set password… are off until it is renamed.
+  const savedKeys = new Set([
+    ...edit.rows.flatMap((r) => (r.savedKey === undefined ? [] : [r.savedKey])),
+    ...edit.removed,
+  ])
+  const wording = refusedWording(refused)
+  // A refused name stays marked until its row is given a name of its own.
+  const sharedNow = new Set(duplicateRows(edit.rows))
+  const nameErrorOf = (row: SecretRow): string | undefined => {
+    if (unnamed.includes(row.rowId) && !row.key.trim()) {
+      return NAME_REQUIRED
     }
-  }, [genName, genLength, genFormat, nodeId, reload, data.secretKeys, updateData])
+    return shared.includes(row.rowId) && sharedNow.has(row.rowId) ? NAME_SHARED : undefined
+  }
+  const targetOf = (row: SecretRow): string | undefined => {
+    const target = rowTarget(row)
+    return row.savedKey === undefined && target !== undefined && savedKeys.has(target) ? undefined : target
+  }
 
   return (
     <div className='flex flex-col gap-3'>
       <Label className='text-xs'>Secrets</Label>
       <div className='flex flex-col gap-2'>
-        {rows.map((r, i) => (
+        {edit.rows.map((r, i) => (
           <SecretRowEditor
-            key={r.id ?? `new-${i}`}
+            key={r.rowId}
             row={r}
+            nameError={nameErrorOf(r)}
             onChange={(field, v) => updateRow(i, field, v)}
+            target={targetOf(r)}
             onRemove={() => removeRow(i)}
-            onRotate={() => rotateRow(i)}
+            onRandom={() => {
+              const key = targetOf(r)
+              if (key !== undefined) {
+                void openRandom(r, key)
+              }
+            }}
+            onSetPassword={() => {
+              const key = targetOf(r)
+              if (key !== undefined) {
+                setPasswordTarget({ key, exists: r.savedKey !== undefined, ...startingPassword(r.recipe) })
+              }
+            }}
           />
         ))}
       </div>
@@ -296,53 +491,22 @@ export function SecretsStoreInspector({
         <Button variant='outline' size='sm' className='h-7 text-xs flex-1' onClick={addRow}>
           <Plus className='h-3 w-3 mr-1' /> Add Secret
         </Button>
-        <Button size='sm' className='h-7 text-xs' onClick={persist} disabled={!dirty}>
+        <Button size='sm' className='h-7 text-xs' onClick={persist} disabled={!dirty || saving}>
           Save
         </Button>
       </div>
-      <div className='flex flex-col gap-1 pt-2 border-t'>
-        <Label className='text-xs'>Generate secret</Label>
-        <div className='text-[10px] text-muted-foreground'>
-          Value is created server-side and never shown — absent name creates, existing name rotates.
-        </div>
-        <div className='flex gap-1'>
-          <Input
-            value={genName}
-            onChange={(e) => setGenName(e.target.value)}
-            placeholder='KEY'
-            className='h-7 text-xs font-mono flex-1'
-          />
-          <Input
-            value={genLength}
-            onChange={(e) => setGenLength(e.target.value)}
-            type='number'
-            min={8}
-            max={256}
-            placeholder='32'
-            className='h-7 text-xs w-16'
-          />
-          <Select
-            value={genFormat}
-            items={{ alphanumeric: 'Alphanumeric', symbols: 'With symbols' }}
-            onValueChange={(v) => {
-              if (v !== null) {
-                setGenFormat(v)
-              }
-            }}
-          >
-            <SelectTrigger className='h-7 text-xs w-32'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='alphanumeric'>Alphanumeric</SelectItem>
-              <SelectItem value='symbols'>With symbols</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button size='sm' className='h-7 text-xs' onClick={handleGenerate} disabled={!genName.trim() || generating}>
-            <Dices className='h-3 w-3' />
-          </Button>
-        </div>
-      </div>
+      <SetPasswordDialog
+        target={passwordTarget}
+        busy={writing}
+        onCancel={() => setPasswordTarget(null)}
+        onSubmit={(entered) => passwordTarget && void setPassword(passwordTarget.key, entered)}
+      />
+      <RandomValueDialog
+        target={randomTarget}
+        busy={writing}
+        onCancel={() => setRandomTarget(null)}
+        onSubmit={(choice) => randomTarget && void writeRandom(randomTarget, choice)}
+      />
       {orphans.length > 0 ? (
         <div className='flex flex-col gap-1 mt-3 pt-3 border-t'>
           <Label className='text-xs text-amber-600'>Orphan secrets ({orphans.length}) — from deleted stores</Label>
@@ -361,7 +525,8 @@ export function SecretsStoreInspector({
                   variant='ghost'
                   size='icon'
                   className='h-6 w-6'
-                  onClick={() => deleteOrphan(o.id, o.key)}
+                  onClick={() => setConfirmOrphan(o)}
+                  aria-label={`Delete orphan ${o.key}`}
                   title='Delete orphan row'
                 >
                   <Trash2 className='h-3 w-3' />
@@ -371,6 +536,80 @@ export function SecretsStoreInspector({
           </div>
         </div>
       ) : null}
+      {orphanError ? (
+        <div className='flex flex-col gap-1 mt-3 pt-3 border-t'>
+          <Label className='text-xs text-amber-600'>Orphan secrets — not checked</Label>
+          <div className='text-[10px] text-muted-foreground'>{orphanError}</div>
+        </div>
+      ) : null}
+      <AlertDialog
+        open={refused.length > 0}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRefused([])
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {refused.length === 1
+                ? `${refused[0].key} is still in use`
+                : `${refused.length} secrets are still in use`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Not {wording.done}: these nodes and apps still name {refused.length === 1 ? 'it' : 'them'}. If you{' '}
+              {wording.verb} {refused.length === 1 ? 'it' : 'them'} anyway, they will fail at their next use or deploy.
+              A container already running keeps the value it started with until then.
+              {wording.renames ? ' A renamed secret is found again once they name the new name.' : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className='flex flex-col gap-1 text-xs'>
+            {refused.map(({ key, rename, references }) => (
+              <li key={key}>
+                <span className='font-mono'>{key}</span>
+                {rename ? (
+                  <>
+                    {' → '}
+                    <span className='font-mono'>{rename.to}</span>
+                  </>
+                ) : null}
+                : {references.map(describeReference).join(', ')}
+              </li>
+            ))}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction variant='destructive' onClick={() => void handleAnyway(refused)}>
+              {wording.action}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={confirmOrphan !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmOrphan(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete orphan secret {confirmOrphan?.key}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It belongs to a Secrets Store node that no longer exists. The row and its value are deleted. This cannot
+              be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmOrphan && void deleteOrphan(confirmOrphan)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

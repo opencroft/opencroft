@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import type { Readable } from 'node:stream'
+import { EventEmitter } from 'node:events'
+import type { Readable, Writable } from 'node:stream'
 
-import { Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
+// `utils` is read off the default export: ssh2 is CommonJS, and Node's named-export
+// detection finds `Client` in it but not `utils`.
+import ssh2, { Client, type ClientChannel, type SFTPWrapper } from 'ssh2'
 
 import type { ExecOptions, ExecResult, ServerConfig, SshCredentials } from '../types'
-import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, OutputCollector } from './exec-util'
+import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, OutputCollector, stdoutFields } from './exec-util'
 import { resolveKeyContent } from './keys'
 import { makeStreamHandle, type OutputFilter, type StreamHandle } from './stream-handle'
 
@@ -20,8 +23,45 @@ type SshTarget = string | SshCredentials
 
 // --- ssh2 connection ---
 
+// A password as a node stores it may stand for a secret (`secret:NAME`). This
+// package holds no secrets, so the host registers how a stored password becomes
+// the one sent, told the credentials' `credentialsScope` too; until it does, a
+// password is sent as given. Resolved on every dial, the one place every ssh2
+// entry point connects through, so a terminal, a file browser and a one-shot
+// exec all take the same stored form. A Key Store key is checked against the
+// same scope when it is read (`resolveKeyContent`).
+// The resolver is kept on `globalThis` for the reason the key store
+// registrations are (see `keys.ts`): the host registers it through one copy of
+// this module, and every copy dials.
+type PasswordResolver = (stored: string, scope: string | undefined) => Promise<string>
+
+const PASSWORD_RESOLVER_KEY = Symbol.for('opencroft.terminal.passwordResolver')
+
+const resolverHolder = globalThis as typeof globalThis & { [PASSWORD_RESOLVER_KEY]?: PasswordResolver }
+
+async function resolvePassword(stored: string, scope: string | undefined): Promise<string> {
+  const resolver = resolverHolder[PASSWORD_RESOLVER_KEY]
+  return resolver ? resolver(stored, scope) : stored
+}
+
+/** How a stored password becomes the one sent: the host's secret resolver. */
+export function registerPasswordResolver(resolver: PasswordResolver): void {
+  resolverHolder[PASSWORD_RESOLVER_KEY] = resolver
+}
+
+/**
+ * Why a dial cannot use `privateKey`, or null when it can: ssh2's own reading
+ * of the key, as `connectSsh2` hands it over, without a passphrase. The answer
+ * is ssh2's message, which never quotes the key.
+ */
+export function privateKeyUnusableReason(privateKey: string): string | null {
+  const parsed = ssh2.utils.parseKey(privateKey)
+  return parsed instanceof Error ? parsed.message : null
+}
+
 async function connectSsh2(creds: SshCredentials): Promise<Client> {
-  const keyContent = creds.keyPath ? await resolveKeyContent(creds.keyPath) : undefined
+  const keyContent = creds.keyPath ? await resolveKeyContent(creds.keyPath, creds.credentialsScope) : undefined
+  const password = creds.password ? await resolvePassword(creds.password, creds.credentialsScope) : undefined
 
   return new Promise((resolve, reject) => {
     const client = new Client()
@@ -31,7 +71,7 @@ async function connectSsh2(creds: SshCredentials): Promise<Client> {
       host: creds.host,
       port: creds.port || 22,
       username: creds.username,
-      password: creds.password || undefined,
+      password: password || undefined,
       privateKey: keyContent,
       readyTimeout: 10000,
       keepaliveInterval: 15000,
@@ -74,13 +114,22 @@ interface PoolEntry {
 const pool = new Map<string, PoolEntry>()
 const pendingDials = new Map<string, Promise<Client>>()
 
-/** Fingerprint the auth material without ever putting a plaintext password in the map key. */
+/**
+ * Fingerprint the auth material without ever putting a plaintext password in the map key.
+ *
+ * Taken over the password as stored, so a `secret:NAME` keys on the name: a client dialled before
+ * the secret's value changed is reused until it goes idle and closes, and the next dial resolves
+ * the new value. The scope is part of it: one name can stand for different values in two scopes,
+ * and a Key Store key one scope may use can be refused to another, so a client dialled for one
+ * scope is never handed to credentials of another.
+ */
 function authFingerprint(creds: SshCredentials): string {
   if (creds.keyPath) {
-    return `key:${creds.keyPath}`
+    return `key:${JSON.stringify([creds.credentialsScope ?? null, creds.keyPath])}`
   }
   if (creds.password) {
-    return `pw:${createHash('sha256').update(creds.password).digest('hex')}`
+    const material = JSON.stringify([creds.credentialsScope ?? null, creds.password])
+    return `pw:${createHash('sha256').update(material).digest('hex')}`
   }
   return 'none'
 }
@@ -129,11 +178,14 @@ function dial(key: string, creds: SshCredentials): Promise<Client> {
     return client
   })
   pendingDials.set(key, dialPromise)
-  dialPromise.finally(() => {
+  const settled = () => {
     if (pendingDials.get(key) === dialPromise) {
       pendingDials.delete(key)
     }
-  })
+  }
+  // Both outcomes handled: a failed dial reaches its callers through
+  // `dialPromise`, and this bookkeeping branch must not reject unhandled.
+  dialPromise.then(settled, settled)
   return dialPromise
 }
 
@@ -297,9 +349,9 @@ export async function sshExecResult(
         reject(err)
         return
       }
-      // Out-of-band env delivery (see buildEnvInjection): write once, then end the channel's
-      // writable side so a preamble's `read` sees EOF right after its own lines. Every other
-      // caller leaves the channel's stdin untouched, exactly as before this existed.
+      // The caller's input, or out-of-band env (see buildEnvInjection): write once, then end the
+      // channel's writable side so a reader sees EOF right after it. Without either, the
+      // channel's stdin is left untouched.
       if (opts.stdin) {
         stream.end(opts.stdin)
       }
@@ -313,7 +365,7 @@ export async function sshExecResult(
         clearTimer()
         release(creds)
         resolve({
-          stdout: stdout.toString(),
+          ...stdoutFields(stdout, opts),
           stderr: stderr.toString(),
           exitCode: timedOut ? 124 : (code ?? 1),
           truncated: stdout.truncated || stderr.truncated || undefined,
@@ -422,6 +474,76 @@ export async function sshStreamHandle(
 }
 
 /**
+ * A process on an ssh `exec` channel, shaped as a piped `ChildProcess` (backend.ts
+ * `SpawnedProcess`): the channel is its stdin and stdout, the channel's stderr its stderr.
+ */
+class SshChannelProcess extends EventEmitter {
+  exitCode: number | null = null
+  signalCode: string | null = null
+  readonly stdin: Writable
+  readonly stdout: Readable
+  readonly stderr: Readable
+
+  constructor(private readonly channel: ClientChannel) {
+    super()
+    this.stdin = channel
+    this.stdout = channel
+    this.stderr = channel.stderr
+  }
+
+  // The same stop as a streamed job's (see sshStreamHandle): a signal for the remote process
+  // group, then the channel closed.
+  kill(): void {
+    this.channel.signal('TERM')
+    this.channel.close()
+  }
+}
+
+/**
+ * Run `command` on an ssh `exec` channel and hand back the process with its stdin open, for as
+ * long as it runs. The `exec` channel for the reason `sshStreamHandle` gives: no pty, so nothing
+ * written to the process is echoed back into what it prints.
+ *
+ * `'exit'` comes once, from the channel's close, with the remote exit status, or with none when
+ * the connection went away under the process, which `'error'` reports first. The pooled
+ * connection is released once, on that same close or failure.
+ */
+export async function sshChannelSpawn(creds: SshCredentials, command: string): Promise<SshChannelProcess> {
+  const client = await acquire(creds)
+  return new Promise<SshChannelProcess>((resolve, reject) => {
+    client.exec(command, (err, channel) => {
+      if (err) {
+        release(creds)
+        reject(err)
+        return
+      }
+      const child = new SshChannelProcess(channel)
+      let ended = false
+      const end = (code: number | null, signal: string | null) => {
+        if (ended) {
+          return
+        }
+        ended = true
+        release(creds)
+        child.exitCode = code
+        child.signalCode = signal
+        child.emit('exit', code, signal)
+      }
+      channel.on('exit', (code: number | null, signal?: string) => {
+        child.exitCode = typeof code === 'number' ? code : null
+        child.signalCode = signal ?? null
+      })
+      channel.on('close', () => end(child.exitCode, child.signalCode))
+      channel.on('error', (channelErr: Error) => {
+        child.emit('error', channelErr)
+        end(null, null)
+      })
+      resolve(child)
+    })
+  })
+}
+
+/**
  * `command` reading exactly `bytes` bytes of the channel's input, then end-of-file.
  *
  * End-of-file would otherwise have to come from ending the channel, and an ended channel can no
@@ -440,6 +562,7 @@ export async function sshExec(config: ServerConfig, command: string): Promise<st
       port: config.port,
       username: config.username,
       password: config.password,
+      credentialsScope: config.credentialsScope,
       keyPath: config.keyPath,
     },
     command,

@@ -21,13 +21,13 @@ import type { MarkdownTableAlign, MarkdownTableCommand } from './markdown-table'
 
 /*
  * What the editable table's menus offer, as data: the grip menus and the cell's
- * context menu read the same lists, so they always offer the same thing in the
- * same order.
+ * context menu read the same lists, as does a host's own menu for the table,
+ * so they always offer the same thing in the same order.
  */
 
 export type Axis = 'row' | 'column'
 
-interface Action {
+export interface Action {
   label: string
   icon: LucideIcon
   destructive?: boolean
@@ -104,6 +104,11 @@ export const ALIGNS: { align: MarkdownTableAlign; label: string; icon: LucideIco
   { align: 'center', label: 'Align center', icon: TextAlignCenter },
   { align: 'right', label: 'Align right', icon: TextAlignEnd },
 ]
+
+/** Aligns the column at `index`. Left is the default, so choosing it writes no alignment at all. */
+export function alignCommand(index: number, align: MarkdownTableAlign): MarkdownTableCommand {
+  return { type: 'alignColumn', index, align: align === 'left' ? null : align }
+}
 
 export const DELETE_TABLE: Action = {
   label: 'Delete table',

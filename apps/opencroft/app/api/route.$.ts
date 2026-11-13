@@ -1,97 +1,42 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { API_ROUTE_NODE_TYPE } from '@/app/_authed/(extension-runtime)/_core-types'
+import { checkRouteAccess } from '@/app/_authed/(extension-runtime)/_server/api-route-access'
+import { requestBody } from '@/app/_authed/(extension-runtime)/_server/api-route-body'
+import { instanceRouteTable } from '@/app/_authed/(extension-runtime)/_server/api-route-claims'
+import { matchRoute } from '@/app/_authed/(extension-runtime)/_server/api-route-table'
 import { dispatchExecutionContext, NoExecTargetError } from '@/app/_authed/(extension-runtime)/_server/exec-dispatch'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
-
-// ═══════════════════════════════════════════════════════════════════
-// Path matching — simple :param syntax
-// ═══════════════════════════════════════════════════════════════════
-
-interface MatchResult {
-  matched: boolean
-  params: Record<string, string>
-}
-
-function matchPath(pattern: string, actual: string): MatchResult {
-  const patternParts = pattern.replace(/^\/+|\/+$/g, '').split('/')
-  const actualParts = actual.replace(/^\/+|\/+$/g, '').split('/')
-  const params: Record<string, string> = {}
-
-  if (patternParts.length !== actualParts.length) {
-    return { matched: false, params: {} }
-  }
-
-  for (let i = 0; i < patternParts.length; i++) {
-    const p = patternParts[i]
-    const a = actualParts[i]
-    if (p.startsWith(':')) {
-      params[p.slice(1)] = a
-    } else if (p !== a) {
-      return { matched: false, params: {} }
-    }
-  }
-
-  return { matched: true, params }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Types
-// ═══════════════════════════════════════════════════════════════════
-
-interface GraphNode {
-  id: string
-  type?: string
-  data: Record<string, unknown>
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // Route handler
 // ═══════════════════════════════════════════════════════════════════
 
+// A path belongs to one route on the instance (`api-route-claims.ts`).
 async function handleRequest(request: Request, params: { _splat?: string }) {
   const pathSegments = (params._splat ?? '').split('/').filter(Boolean)
   const requestPath = `/${pathSegments.join('/')}`
   const method = request.method
 
-  // Load all spaces and find api-route nodes
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
 
-  let matchedRouteNode: GraphNode | null = null
-  let matchedSpaceSlug: string | null = null
-  let matchedParams: Record<string, string> = {}
-
-  for (const space of registry.list()) {
-    const runtime = registry.getBySlug(space.slug)
-    if (!runtime) {
-      continue
-    }
-
-    const spaceNodes = [...runtime.graphs.values()].flatMap((g) => g.graph.nodes)
-    for (const node of spaceNodes as unknown as GraphNode[]) {
-      if (node.type !== API_ROUTE_NODE_TYPE) {
-        continue
-      }
-
-      const nodePath = (node.data.path as string) ?? '/'
-
-      const result = matchPath(nodePath, requestPath)
-      if (result.matched) {
-        matchedRouteNode = node
-        matchedSpaceSlug = space.slug
-        matchedParams = result.params
-        break
-      }
-    }
-
-    if (matchedRouteNode) {
-      break
-    }
-  }
-
-  if (!matchedRouteNode || !matchedSpaceSlug) {
+  const match = matchRoute(instanceRouteTable(), requestPath)
+  if (match.kind === 'none') {
     return Response.json({ error: 'Not Found' }, { status: 404 })
+  }
+  // No route of those sharing the path takes its requests, nor any header
+  // meant for one of them.
+  if (match.kind === 'shared') {
+    return Response.json({ error: 'More than one route has this path' }, { status: 409 })
+  }
+  const matchedRouteNode = { id: match.route.nodeId, data: match.route.data }
+  const matchedParams = match.params
+
+  // Before anything else about the route is answered: a caller without the
+  // required header learns neither its methods nor how it handles a body.
+  const access = await checkRouteAccess(matchedRouteNode.id, matchedRouteNode.data, request.headers)
+  if (!access.allowed) {
+    return access.response
   }
 
   const rawMethods = matchedRouteNode.data.methods ?? matchedRouteNode.data.method ?? ['GET']
@@ -103,27 +48,17 @@ async function handleRequest(request: Request, params: { _splat?: string }) {
     )
   }
 
-  // Build request event
-  let body: unknown
-  const contentType = request.headers.get('content-type')
-  if (contentType?.includes('application/json')) {
-    try {
-      body = await request.json()
-    } catch {
-      // ignore parse errors
-    }
-  } else if (request.method !== 'GET' && request.method !== 'HEAD') {
-    body = await request.text()
-  }
-
+  // Build request event; `text` is what the route's Text output carries.
+  const { body, text } = await requestBody(request)
   const url = new URL(request.url)
   const event = {
     method,
     path: requestPath,
     params: matchedParams,
     query: Object.fromEntries(url.searchParams.entries()),
-    headers: Object.fromEntries(request.headers.entries()),
+    headers: access.headers,
     body,
+    ...(text === undefined ? {} : { text }),
   }
 
   // Dispatch to every target connected to the route's exec-out handle;

@@ -9,7 +9,11 @@ export interface TerminalSelectorProps {
   /** "node-id/handle-id" of the selected terminal source, or '' for none. */
   value?: string
   onChange: (value: string) => void
-  /** Limit the choices to one space's nodes; omit to offer every space. */
+  /**
+   * Limit the choices to one space's terminals and the routes of its Terminal
+   * Routers, the way that space reaches a terminal of another; omit to offer
+   * every space's terminals, without routers.
+   */
   spaceSlug?: string
   /** Offer an explicit "None" choice (reported as ''). */
   allowNone?: boolean

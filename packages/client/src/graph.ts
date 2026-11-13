@@ -31,6 +31,10 @@ export interface GraphRefDescription {
   /** The node type's name, or `App`. */
   typeName: string
   spaceSlug: string
+  /** For an App instance: its slug, unique in its space; `/space/<spaceSlug>/app/<slug>` opens it. */
+  slug?: string
+  /** For an App instance: its address, `<spaceSlug>.<slug>`. */
+  address?: string
 }
 
 /**

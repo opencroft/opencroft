@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parseEnvBlock, parseNameLines, pickPrimaryEdge, unsupportedHandlerError } from './exec-dispatch'
+import { pickPrimaryEdge, unsupportedHandlerError } from './exec-dispatch'
 
 // ── pickPrimaryEdge ──────────────────────────────────────────────────────
 // Edge ids are stable across canvas re-saves; array order is not (a re-save
@@ -53,41 +53,4 @@ test('unsupportedHandlerError reports "none" when no language is set', () => {
     unsupportedHandlerError(undefined),
     'Unsupported handler language: none. Only Bash, Python and Node.js scripts support ExecutionContext.',
   )
-})
-
-// ── parseEnvBlock ────────────────────────────────────────────────────────
-
-test('parseEnvBlock parses one KEY=VALUE pair per line', () => {
-  assert.deepEqual(parseEnvBlock('NODE_ENV=production\nDEBUG=false'), {
-    NODE_ENV: 'production',
-    DEBUG: 'false',
-  })
-})
-
-test('parseEnvBlock trims whitespace and skips blank lines', () => {
-  assert.deepEqual(parseEnvBlock('  A=1  \n\n  \nB=2\n'), { A: '1', B: '2' })
-})
-
-test('parseEnvBlock keeps "=" characters inside the value', () => {
-  assert.deepEqual(parseEnvBlock('QUERY=a=b=c'), { QUERY: 'a=b=c' })
-})
-
-test('parseEnvBlock ignores a line with no "="', () => {
-  assert.deepEqual(parseEnvBlock('NOEQUALS\nA=1'), { A: '1' })
-})
-
-test('parseEnvBlock returns an empty object for undefined/empty input', () => {
-  assert.deepEqual(parseEnvBlock(undefined), {})
-  assert.deepEqual(parseEnvBlock(''), {})
-})
-
-// ── parseNameLines ───────────────────────────────────────────────────────
-
-test('parseNameLines splits, trims, and drops blank lines', () => {
-  assert.deepEqual(parseNameLines('  KEY_ONE  \n\nKEY_TWO\n  '), ['KEY_ONE', 'KEY_TWO'])
-})
-
-test('parseNameLines returns an empty array for undefined/empty input', () => {
-  assert.deepEqual(parseNameLines(undefined), [])
-  assert.deepEqual(parseNameLines(''), [])
 })

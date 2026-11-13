@@ -15,6 +15,16 @@ export interface TerminalContext {
   user?: string
   /** docker-exec only: preferred interactive shell (e.g. `/bin/zsh`) for shell sessions. */
   shell?: string
+  /**
+   * Set by the context's source when agents must not use it, as the reason they are refused with
+   * (`agentRefusalOf`). A person's surfaces and the nodes wired to it use it like any other context.
+   *
+   * It is a top-level field, so it reaches whoever resolves a node that re-exposes the context
+   * whole or spreads it (a Terminal Router route, a Git worktree's `{ ...base, cwd }`). A node
+   * that wraps the context instead, nesting it as another context's `via`, drops it: the outer
+   * context carries no refusal unless that node sets one of its own.
+   */
+  agentRefusal?: string
   [key: string]: unknown
 }
 
@@ -27,17 +37,29 @@ export interface ExecOptions {
   /** Stop accumulating output past this many bytes, per stream. Default 5MB. */
   maxOutputBytes?: number
   /**
-   * Internal: raw bytes to write to the spawned process's stdin, then close it. Set by a
-   * `TerminalBackend` implementation to deliver `env` out-of-band (see `buildEnvInjection` in
-   * exec-util) when it can't pass a real env map to the transport -- not a caller-facing stdin
-   * passthrough.
+   * Bytes written to the command's stdin, which is then closed. The channel for a value that must
+   * not appear in any process's argv or environment (a private key, a password): stdin is not
+   * readable through `/proc/<pid>/cmdline` or `/proc/<pid>/environ`. Every transport reaches the
+   * command's own stdin, `docker-exec` through its parent's `docker exec -i`.
+   *
+   * Refused together with `env` wherever env itself is delivered over stdin (wsl, ssh,
+   * docker-exec, local on Windows; see `buildEnvInjection` in exec-util): the two would share one
+   * channel.
    */
   stdin?: Buffer
+  /**
+   * Keep stdout as bytes, in `ExecResult.stdoutBytes`, for a command whose output is a binary
+   * file. `stdout` is then empty: decoding a binary as UTF-8 would replace every invalid
+   * sequence. The output cap still applies.
+   */
+  binaryStdout?: boolean
 }
 
 /** The result of a `TerminalBackend.exec`/`run` call — identical shape across every backend. */
 export interface ExecResult {
   stdout: string
+  /** stdout as bytes, set only when the call asked for `binaryStdout`. */
+  stdoutBytes?: Buffer
   stderr: string
   exitCode: number
   /** Either stream hit the output cap and was cut. Kept as the broad "something was lost" answer. */
@@ -58,6 +80,8 @@ export interface ServerConfig {
   username: string
   keyPath?: string
   password?: string
+  /** As `SshCredentials.credentialsScope`. */
+  credentialsScope?: string
 }
 
 /** SSH credentials for interactive shells and SFTP. */
@@ -66,6 +90,15 @@ export interface SshCredentials {
   port?: number
   username: string
   password?: string
+  /**
+   * Where the credentials belong. Handed with the password to the host's
+   * password resolver (`registerPasswordResolver`), where a password standing
+   * for a secret resolves, and with a Key Store key reference to the host's
+   * check (`registerKeyStoreAccess`), which says whether that store's keys may
+   * be used here. Opaque to this package; the host passes the id of the node
+   * the credentials are stored on.
+   */
+  credentialsScope?: string
   keyPath?: string
 }
 

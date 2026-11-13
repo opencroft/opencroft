@@ -17,13 +17,16 @@ export type ChatPart =
   // sees; `toolName` is the programmatic name behind it, which is what decides
   // HOW the call is drawn. See the kit's DetailItem for why they cannot be one
   // field. Absent when the agent named no tool. `diffs` are the file changes
-  // the call reported (see ToolDiff), absent when it reported none.
+  // the call reported (see ToolDiff), absent when it reported none. `status`
+  // is the call's folded status, `result` its output so far: a running call
+  // can already have one.
   | {
       type: 'tool-call'
       id: string
       name: string
       toolName?: string
       args: unknown
+      status: string
       result?: { text: string; isError?: boolean }
       diffs?: ToolDiff[]
     }
@@ -31,6 +34,11 @@ export type ChatPart =
   // transcript is nested verbatim in `parts`, folded from the subagent's
   // session/update stream the same way the parent's is. `state` is absent
   // while it runs; a terminal state closes it.
+  //
+  // A subagent that keeps a log of its own has `steps`, the count its header
+  // reports, and its section is loaded only once expanded: `parts` are what
+  // has been loaded (none before), `onExpand` loads them, `loading` is true
+  // while a load is out, and `onLoadOlder` is present while older steps exist.
   | {
       type: 'subagent'
       subagentSessionId: string
@@ -38,6 +46,10 @@ export type ChatPart =
       task: string
       state?: string
       parts: ChatPart[]
+      steps?: number
+      onExpand?: () => void
+      loading?: boolean
+      onLoadOlder?: () => void
     }
   // A background task the harness reported under this turn (see
   // AsyncTaskInfo). One part per asyncTaskId, placed at the position of its
@@ -60,6 +72,10 @@ export type ChatPart =
   // An advisory the agent addressed to the reader (see SessionNotice), at the
   // position it arrived. Not text: it never merges with the reply around it.
   | ({ type: 'notice' } & SessionNotice)
+  // Where a new session's agent context begins, below the history it carries
+  // (the `session_start` event). Drawn as a rule across the conversation, not
+  // as a step of the reply it sits in.
+  | { type: 'context-start'; sessionId: string }
 
 export interface ChatMessage {
   // Stable across a "load older" prepend — the absolute index (in the

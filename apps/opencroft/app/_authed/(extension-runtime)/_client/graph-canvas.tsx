@@ -67,7 +67,12 @@ export function GraphCanvas({ instanceId }: { instanceId: string }) {
     <div className='h-full w-full'>
       <ReactFlowProvider>
         <CanvasNodesProvider>
-          <SpaceCanvas slug={view.spaceSlug} spaceName={view.spaceName} graph={view.address} />
+          <SpaceCanvas
+            slug={view.spaceSlug}
+            spaceName={view.spaceName}
+            graph={view.address}
+            graphName={view.graphName}
+          />
         </CanvasNodesProvider>
       </ReactFlowProvider>
     </div>

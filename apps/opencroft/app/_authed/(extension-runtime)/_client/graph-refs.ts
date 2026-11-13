@@ -109,6 +109,9 @@ export interface GraphRefDescription {
   /** The node type's name, or `App`. */
   typeName: string
   spaceSlug: string
+  /** For an App instance: its slug, and its address `<spaceSlug>.<slug>`. */
+  slug?: string
+  address?: string
 }
 
 /** Splits a "node-id/handle-id" terminal target; a bare id has no handle. */
@@ -146,7 +149,16 @@ function handleDetail(info: GraphRefInfo, handleId: string): string {
 export function describeGraphRef(info: GraphRefInfo, handleId = ''): GraphRefDescription {
   const detail = handleDetail(info, handleId) || undefined
   if (info.kind === 'app') {
-    return { kind: 'app', name: info.name, detail, icon: 'AppWindow', typeName: 'App', spaceSlug: info.spaceSlug }
+    return {
+      kind: 'app',
+      name: info.name,
+      detail,
+      icon: 'AppWindow',
+      typeName: 'App',
+      spaceSlug: info.spaceSlug,
+      ...(info.slug ? { slug: info.slug } : {}),
+      ...(info.address ? { address: info.address } : {}),
+    }
   }
   // The resolved type for what the canvas shows (its accent, with the
   // registry's default); the declaration for the icon's name, which the
