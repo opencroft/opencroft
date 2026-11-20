@@ -574,6 +574,7 @@ async function framesUntil(
 ): Promise<SessionActivitySnapshot[]> {
   const deadline = Date.now() + deadlineMs
   while (frames.length < count && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   return frames

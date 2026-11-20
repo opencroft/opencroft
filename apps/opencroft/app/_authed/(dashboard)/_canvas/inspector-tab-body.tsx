@@ -1,6 +1,6 @@
 'use client'
 
-import { type ComponentType, useState } from 'react'
+import { type ComponentType, memo, useState } from 'react'
 import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
 
@@ -20,7 +20,9 @@ interface InspectorTabBodyProps {
   nodeType: string
   tabs: InspectorTabEntry[]
   active: InspectorTabEntry
-  inspectorProps: Record<string, unknown>
+  /** The node's data, given to the tab as it is: a tab renders again only when this or `updateData` changes. */
+  data: unknown
+  updateData: (patch: Record<string, unknown>) => void
 }
 
 /**
@@ -29,7 +31,7 @@ interface InspectorTabBodyProps {
  * or closing the inspector does. A tab that throws while it renders shows the error in its place,
  * and the header, the tab strip and the other tabs stay usable.
  */
-export function InspectorTabBody({ nodeId, nodeType, tabs, active, inspectorProps }: InspectorTabBodyProps) {
+export function InspectorTabBody({ nodeId, nodeType, tabs, active, data, updateData }: InspectorTabBodyProps) {
   const [kept, setKept] = useState<{ nodeId: string; ids: string[] }>({ nodeId, ids: [] })
   const keptIds = kept.nodeId === nodeId ? kept.ids : []
   const ids = active.keepMounted && !keptIds.includes(active.id) ? [...keptIds, active.id] : keptIds
@@ -37,42 +39,69 @@ export function InspectorTabBody({ nodeId, nodeType, tabs, active, inspectorProp
     setKept({ nodeId, ids })
   }
 
+  const contentOf = (tab: InspectorTabEntry) => (
+    <TabContent
+      component={tab.component}
+      fullHeight={tab.fullHeight}
+      tabId={tab.id}
+      nodeId={nodeId}
+      nodeType={nodeType}
+      data={data}
+      updateData={updateData}
+    />
+  )
+
   return (
     <>
       {ids.map((id) => {
         const tab = tabs.find((t) => t.id === id)
         return tab ? (
           <div key={`${nodeId}:${id}`} className={id === active.id ? 'flex flex-1 min-h-0 flex-col' : 'hidden'}>
-            <TabContent tab={tab} nodeId={nodeId} nodeType={nodeType} inspectorProps={inspectorProps} />
+            {contentOf(tab)}
           </div>
         ) : null
       })}
-      {active.keepMounted ? null : (
-        <TabContent tab={active} nodeId={nodeId} nodeType={nodeType} inspectorProps={inspectorProps} />
-      )}
+      {active.keepMounted ? null : contentOf(active)}
     </>
   )
 }
 
 interface TabContentProps {
-  tab: InspectorTabEntry
+  // biome-ignore lint/suspicious/noExplicitAny: a tab's component takes whatever its extension's node data is
+  component?: ComponentType<any>
+  fullHeight: boolean
+  tabId: string
   nodeId: string
   nodeType: string
-  inspectorProps: Record<string, unknown>
+  data: unknown
+  updateData: (patch: Record<string, unknown>) => void
 }
 
-function TabContent({ tab, nodeId, nodeType, inspectorProps }: TabContentProps) {
-  const Component = tab.component
+/**
+ * One tab's content. Memoized on plain values, not on the tab entry, which the inspector builds
+ * afresh on each render: the inspector renders whenever its node object changes, and React Flow
+ * replaces that object on every pointer move of a drag or a resize, while `data` keeps its
+ * identity. So a move reaches the tab only through what the tab subscribes to itself.
+ */
+const TabContent = memo(function TabContent({
+  component: Component,
+  fullHeight,
+  tabId,
+  nodeId,
+  nodeType,
+  data,
+  updateData,
+}: TabContentProps) {
   const content = Component ? (
-    <RenderBoundary scope='ext' label={nodeType} resetKey={`${nodeId}:${tab.id}`}>
-      <Component {...inspectorProps} />
+    <RenderBoundary scope='ext' label={nodeType} resetKey={`${nodeId}:${tabId}`}>
+      <Component nodeId={nodeId} data={data} updateData={updateData} />
     </RenderBoundary>
   ) : (
-    <p className={`text-xs text-muted-foreground italic${tab.fullHeight ? ' p-2' : ''}`}>
+    <p className={`text-xs text-muted-foreground italic${fullHeight ? ' p-2' : ''}`}>
       This extension has no editable properties.
     </p>
   )
-  if (tab.fullHeight) {
+  if (fullHeight) {
     return (
       <Flex expanded className='w-full min-h-0'>
         {content}
@@ -84,4 +113,4 @@ function TabContent({ tab, nodeId, nodeType, inspectorProps }: TabContentProps) 
       <div className='py-2 px-4'>{content}</div>
     </ScrollArea>
   )
-}
+})

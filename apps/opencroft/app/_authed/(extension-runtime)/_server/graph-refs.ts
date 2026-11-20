@@ -1,5 +1,9 @@
+import { nodeName } from '@opencroft/core/values'
+
 import { resolveAppAddress } from '@/app/_authed/(apps)/_server/app-address'
-import { appHandleLabels } from '@/app/_authed/(apps)/_server/runtime'
+import { appHandleNames } from '@/app/_authed/(apps)/_server/runtime'
+import type { NodeTypeHandles } from '@/app/_authed/(extension-runtime)/_server/node-handles'
+import { terminalDetail, terminalTitle } from '@/app/_authed/(extension-runtime)/_server/terminal-names'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 
 /** What a node or App instance id stands for, for showing it by name. */
@@ -11,15 +15,29 @@ export interface GraphRefInfo {
   /** The name its owner gave it; '' when it has none (the caller falls back to the type's name). */
   name: string
   spaceSlug: string
+  /** The space's name as its people see it; '' when the space is gone. */
+  spaceName: string
+  /** For a node: the graph it is on, by its address (`<spaceSlug>.<graph>`) and name. */
+  graph?: { address: string; name: string }
   /** For an App instance: its slug, and its address `<spaceSlug>.<slug>` when its space exists. */
   slug?: string
   address?: string
   /**
-   * Asked as a terminal target on an App instance: what the App calls that
-   * handle (its `handleLabel` hook), keyed by handle id. Absent when the App
-   * gives it no name, so the caller falls back to the id.
+   * Asked as a terminal target: which of the owner's terminals it is, when
+   * that needs saying (see `terminalDetail`), and the terminal's one name
+   * (see `terminalTitle`).
    */
-  handleLabels?: Record<string, string>
+  detail?: string
+  title?: string
+}
+
+// Node types' declared handles, read only when a node's terminal target is
+// asked: naming a plain node id needs no manifest. Imported on use, as host.ts
+// does, since the manifest loader reaches back into the host.
+async function nodeTypeHandles(): Promise<Map<string, NodeTypeHandles>> {
+  const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')
+  const { buildNodeTypeHandles } = await import('@/app/_authed/(extension-runtime)/_server/node-handles')
+  return buildNodeTypeHandles(await listExtensionManifestsImpl())
 }
 
 // Across every space, since a reference (a terminal target, a route) can
@@ -28,14 +46,16 @@ export interface GraphRefInfo {
 // of guessing.
 //
 // Each ref is answered under the string it was asked as. A
-// "<id>/<handle-id>" terminal target is described by its owner, and on an App
-// also carries the App's name for that handle: only the App knows that a
-// worktree handle's escaped id stands for "repo · worktree".
+// "<id>/<handle-id>" terminal target is described by its owner, with the
+// terminal's name: only the host knows what tells a node's terminals apart,
+// and only the App that a worktree handle's escaped id stands for
+// "repo · worktree".
 export async function describeGraphRefsImpl(ids: string[]): Promise<Record<string, GraphRefInfo | null>> {
   const registry = getSpacesRegistry()
   await registry.ensureLoaded()
   const result: Record<string, GraphRefInfo | null> = {}
-  let spaceSlugById: Map<string, string> | undefined
+  let spaces: Map<string, { slug: string; name: string }> | undefined
+  let byType: Promise<Map<string, NodeTypeHandles>> | undefined
   for (const asked of new Set(ids)) {
     const slash = asked.indexOf('/')
     const id = slash > 0 ? asked.slice(0, slash) : asked
@@ -46,29 +66,44 @@ export async function describeGraphRefsImpl(ids: string[]): Promise<Record<strin
       | undefined
     if (ref && node) {
       const data = node.data ?? {}
-      result[asked] = {
+      const type = node.type ?? ''
+      const info: GraphRefInfo = {
         id,
         kind: 'node',
-        type: node.type ?? '',
+        type,
         name: (data.name as string) || (data.title as string) || '',
         spaceSlug: ref.space.slug,
+        spaceName: ref.space.name,
+        graph: { address: registry.addressOf(ref), name: ref.graph.name },
       }
+      if (handleId) {
+        byType ??= nodeTypeHandles()
+        const declared = (await byType).get(type)
+        const sources = (declared?.handles ?? []).filter((handle) => handle.role === 'source')
+        const detail = terminalDetail(sources, handleId)
+        if (detail) {
+          info.detail = detail
+        }
+        info.title = terminalTitle({ kind: 'node', name: nodeName(data, declared?.name, type) }, detail)
+      }
+      result[asked] = info
       continue
     }
     const row = await resolveAppAddress(id).catch(() => null)
     if (row) {
-      spaceSlugById ??= new Map(registry.list().map((space) => [space.id, space.slug]))
-      const handleLabels = handleId ? await appHandleLabels(row, [handleId]) : {}
-      const spaceSlug = spaceSlugById.get(row.spaceId) ?? ''
+      spaces ??= new Map(registry.list().map((space) => [space.id, { slug: space.slug, name: space.name }]))
+      const space = spaces.get(row.spaceId)
+      const named = handleId ? (await appHandleNames(row, [handleId]))[handleId] : undefined
       result[asked] = {
         id,
         kind: 'app',
         type: `app:${row.type}`,
         name: row.name || row.type,
-        spaceSlug,
+        spaceSlug: space?.slug ?? '',
+        spaceName: space?.name ?? '',
         slug: row.slug,
-        ...(spaceSlug ? { address: `${spaceSlug}.${row.slug}` } : {}),
-        ...(Object.keys(handleLabels).length > 0 ? { handleLabels } : {}),
+        ...(space ? { address: `${space.slug}.${row.slug}` } : {}),
+        ...(named ? { ...(named.detail ? { detail: named.detail } : {}), title: named.title } : {}),
       }
       continue
     }

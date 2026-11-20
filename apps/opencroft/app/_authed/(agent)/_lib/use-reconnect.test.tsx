@@ -23,6 +23,7 @@ function setVisibility(next: DocumentVisibilityState): void {
   document.dispatchEvent(new window.Event('visibilitychange'))
 }
 
+// biome-ignore lint/plugin/noTestFixedTime: fixed settle delay used between the steps of these tests
 const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function mount() {

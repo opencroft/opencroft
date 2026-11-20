@@ -58,16 +58,22 @@ export async function listSpacesImpl(): Promise<SpaceSummary[]> {
   return r.list()
 }
 
-/** `slug` is a graph address: `<space>` (its default graph) or `<space>.<graph>`. */
+/**
+ * `slug` is a graph address: `<space>` (its default graph) or `<space>.<graph>`.
+ * The answer names the graph it resolved to by its full address and its name,
+ * so a canvas opened on a bare space slug can still say which graph it shows.
+ */
 export async function loadSpaceGraphImpl(
   slug: string,
-): Promise<{ graph: GraphData; updatedAt: string; live: LiveGraphSession } | null> {
+): Promise<{ graph: GraphData; updatedAt: string; live: LiveGraphSession; address: string; name: string } | null> {
   const r = await registry()
   const ref = r.resolveGraph(slug)
   if (!ref) {
     return null
   }
   return {
+    address: `${ref.space.slug}.${ref.graph.slug}`,
+    name: ref.graph.name,
     graph: ref.graph.graph,
     updatedAt: ref.graph.updatedAt.toISOString(),
     live: await liveGraphSession(ref.graph.id),

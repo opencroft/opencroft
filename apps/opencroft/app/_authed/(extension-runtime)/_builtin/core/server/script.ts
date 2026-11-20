@@ -77,8 +77,9 @@ Promise.resolve(typeof handler === 'function' ? handler(_event) : undefined)
   .then(function(_result) {
     if (_result === null || _result === undefined) _result = {};
     if (typeof _result !== 'object' || Array.isArray(_result)) _result = { body: _result };
-    console.log('${RESULT_MARKER}' + JSON.stringify(_result));
-    process.exit(0);
+    // Exit once the line is written: stdout to a pipe is written asynchronously,
+    // so an exit straight after it cuts a result of more than a pipe's worth.
+    process.stdout.write('${RESULT_MARKER}' + JSON.stringify(_result) + '\\n', function() { process.exit(0); });
   })
   .catch(function(_e) {
     console.error(_e.message || String(_e));
@@ -105,6 +106,38 @@ function splitStdout(stdout: string): SplitOutput {
   return { result, logs: before + after }
 }
 
+/**
+ * The most a handler may print, its result line included: the terminal's own
+ * default cap, passed explicitly so a result cut there can be named. As base64
+ * in a JSON result, that is a picture of about 3.7 MB.
+ */
+const HANDLER_OUTPUT_BYTES = 5 * 1024 * 1024
+
+/**
+ * A handler's stdout, or a throw: on a non-zero exit (with its code and
+ * stderr), and when the output passed `HANDLER_OUTPUT_BYTES`, since a result
+ * cut there no longer parses and would otherwise fail as malformed JSON.
+ */
+async function runCapped(context: TerminalContext, args: string[], env?: Record<string, string>): Promise<string> {
+  const result = await terminal.runResult(context, args, {
+    ...(env ? { env } : {}),
+    maxOutputBytes: HANDLER_OUTPUT_BYTES,
+  })
+  // The cut first: a backend that stops the process there reports an exit of
+  // its own, which would hide why.
+  if (result.stdoutTruncated) {
+    throw new Error(
+      `The handler's output passed the ${HANDLER_OUTPUT_BYTES / (1024 * 1024)} MB a handler may print, and was cut. Return less.`,
+    )
+  }
+  if (result.exitCode !== 0) {
+    const detail = result.timedOut ? ' (timed out)' : ''
+    const suffix = result.stderr ? `: ${result.stderr}` : ''
+    throw new Error(`Command exited with code ${result.exitCode}${detail}${suffix}`)
+  }
+  return result.stdout
+}
+
 // Python and Node.js handlers are a `handler(event)` function the bootstrap
 // appended here calls, reporting its return value on a RESULT_MARKER line. A
 // bash handler is the script itself: it reads the event as JSON from
@@ -113,14 +146,14 @@ function splitStdout(stdout: string): SplitOutput {
 function runHandlerScript(params: HandlerRunParams): Promise<string> {
   const { script, language, context, event, env } = params
   if (language === 'bash') {
-    return terminal.run(context, ['bash', '-c', script], { ...env, OPENCROFT_EVENT: JSON.stringify(event) })
+    return runCapped(context, ['bash', '-c', script], { ...env, OPENCROFT_EVENT: JSON.stringify(event) })
   }
   const eventB64 = Buffer.from(JSON.stringify(event), 'utf-8').toString('base64')
   if (language === 'python') {
-    return terminal.run(context, ['python', '-c', script + pythonHandlerBootstrap(eventB64)], env)
+    return runCapped(context, ['python', '-c', script + pythonHandlerBootstrap(eventB64)], env)
   }
   if (language === 'node') {
-    return terminal.run(context, ['node', '-e', script + nodeHandlerBootstrap(eventB64)], env)
+    return runCapped(context, ['node', '-e', script + nodeHandlerBootstrap(eventB64)], env)
   }
   throw new Error(`Unsupported language: ${language}`)
 }

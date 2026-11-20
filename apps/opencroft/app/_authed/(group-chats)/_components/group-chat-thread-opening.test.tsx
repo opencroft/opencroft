@@ -152,6 +152,7 @@ const render = (props: Props) => act(async () => root.render(createElement(Group
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) {
     await act(async () => {
+      // biome-ignore lint/plugin/noTestFixedTime: settle loop of five 5 ms rounds for the fakes to answer and their effects to run
       await new Promise((resolve) => setTimeout(resolve, 5))
     })
   }
@@ -268,12 +269,13 @@ test('the queue the thread was read with shows under the loader until the open a
   assert.equal(shows(), false, 'the live queue replaces the one the thread was read with')
 })
 
-test('a refused first open shows no composer until Try again opens it', async () => {
+test('a refused first open shows its notice beside the composer, and Try again opens it', async () => {
   refuseNextOpen = true
   await render({ thread: THREAD })
   await settle()
   assert.equal(hasButton(/^Try again$/), true, 'the refusal is shown')
-  assert.equal(hasComposer(), false)
+  // Up, so the reader can write again while the start is out.
+  assert.equal(hasComposer(), true)
   await press(/^Try again$/)
   await settle()
   await endHistory()

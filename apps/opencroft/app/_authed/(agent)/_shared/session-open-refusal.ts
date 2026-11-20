@@ -1,10 +1,13 @@
-import { ActionRequiredError } from 'agent-client/errors'
+import { ActionRequiredError, HarnessStartError } from 'agent-client/errors'
+import { knownFailure, type PlainFailure, plainFailure } from 'agent-client/plain-failure'
 
 // An open the server refused for a reason only a person can remove: no key on
-// the profile, an account that is not signed in, an agent node that is gone.
-// Asking again gives the same answer, so the chat stops and shows it instead
-// of retrying -- a retry is a full server-side open each time, and for some
-// harnesses that means spawning a process only to be refused again.
+// the profile, an account that is not signed in, an agent node that is gone,
+// a harness whose process died before it answered (no Node.js where it runs,
+// a rejected token). Asking again gives the same answer, so the chat stops and
+// shows it instead of retrying -- a retry is a full server-side open each
+// time, and for a harness that means spawning a process only to be refused
+// again.
 //
 // It crosses the RPC boundary as DATA, not as a thrown error. A thrown error
 // reaches the browser rebuilt from its message alone (the server-function
@@ -19,6 +22,9 @@ import { ActionRequiredError } from 'agent-client/errors'
 /** What an open server function answers with in place of a session it was refused. */
 export interface SessionOpenRefusal {
   refused: string
+  // The harness's process died at start: `refused` is what it said, written
+  // for a log rather than for the person.
+  harnessExited?: boolean
 }
 
 /**
@@ -32,7 +38,45 @@ export async function refusalAsData<T>(open: () => Promise<T>): Promise<T | Sess
     if (error instanceof ActionRequiredError) {
       return { refused: error.message }
     }
+    if (error instanceof HarnessStartError) {
+      return { refused: error.message, harnessExited: true }
+    }
     throw error
+  }
+}
+
+/** Shown when a run of failed attempts ran out and none said why. */
+export const OPEN_GAVE_UP_TITLE = "The agent can't be reached, so this chat stopped trying."
+
+/**
+ * Why a session is not open, as the open answered:
+ * - `refused`: a refusal written for the person (no key, not signed in);
+ * - `harness`: a harness that died at start, with what its process said;
+ * - `gave-up`: a run of failed attempts that ran out, with the last one's text.
+ */
+export type OpenFailureKind = 'refused' | 'harness' | 'gave-up'
+
+/**
+ * The notice for a session that is not open. A refusal is written for the
+ * person and is the line itself. A harness's own words are read in plain
+ * words with the text under Details. A run that gave up is told as such,
+ * unless its last text names a cause the engine states.
+ */
+export function openFailureNotice(reason: string, kind: OpenFailureKind): PlainFailure {
+  if (kind === 'refused') {
+    return { title: reason }
+  }
+  if (kind === 'harness') {
+    return plainFailure(reason, 'start', 'harness')
+  }
+  const known = knownFailure(reason, 'engine')
+  if (known) {
+    return known
+  }
+  return {
+    title: OPEN_GAVE_UP_TITLE,
+    hint: 'Try again once the server is back.',
+    ...(reason ? { details: reason } : {}),
   }
 }
 
@@ -42,16 +86,18 @@ export async function refusalAsData<T>(open: () => Promise<T>): Promise<T | Sess
  * holds.
  */
 export class SessionOpenRefusedError extends Error {
-  constructor(message: string) {
+  readonly kind: Exclude<OpenFailureKind, 'gave-up'>
+  constructor(message: string, kind: Exclude<OpenFailureKind, 'gave-up'> = 'refused') {
     super(message)
     this.name = 'SessionOpenRefusedError'
+    this.kind = kind
   }
 }
 
 /** The opened session, or the refusal thrown as a SessionOpenRefusedError. */
 export function openedOrThrow<T extends object>(answer: T | SessionOpenRefusal): T {
   if (isRefusal(answer)) {
-    throw new SessionOpenRefusedError(answer.refused)
+    throw new SessionOpenRefusedError(answer.refused, answer.harnessExited ? 'harness' : 'refused')
   }
   return answer
 }

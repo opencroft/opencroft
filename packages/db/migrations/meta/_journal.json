@@ -428,6 +428,13 @@
       "when": 1793484276350,
       "tag": "0060_agent_session_legacy_log",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794739826985,
+      "tag": "0061_chat_attachment_origin",
+      "breakpoints": true
     }
   ]
 }

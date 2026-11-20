@@ -9,12 +9,14 @@ import { type AuthorRun, authorRuns } from './author-runs'
 import { detailEntryKeys, withHeader } from './detail-entries'
 import { Markdown } from './markdown'
 import { MarkdownCallout, type MarkdownCalloutKind } from './markdown-callout'
+import { MarkdownSpoiler } from './markdown-spoiler'
 import { SelectableMessage, useMessageActions } from './message-selection-bar'
 
 import { SelectionBadge } from './selection-badge'
 
 import { AgentAvatar } from 'ui/components/ui/media/agent-avatar'
 import { Button } from 'ui/components/ui/button'
+import { Spinner } from 'ui/components/ui/spinner'
 import { TypingDots } from 'ui/components/ui/chat/typing-dots'
 import {
   DropdownMenu,
@@ -73,15 +75,35 @@ export type DetailItem =
   // reported, passed through to the host's tool view (oldText null: the before
   // side was not reported); absent when it reported none. `result` is the
   // output so far, and `state` where the call stands: a running call can
-  // already have output, and a stopped one may have none. Spelled out here
-  // rather than imported, so this component takes nothing from the client.
+  // already have output, and a stopped one may have none. `result.content` is
+  // the result with its pictures, sounds, files and links kept, for the host's
+  // tool view to draw (`src` is where a kept picture or sound loads from;
+  // without one its bytes are not there to show). Spelled out here rather
+  // than imported, so this component takes nothing from the client.
   | {
       kind: 'tool'
       id: string
       name: string
       toolName?: string
       args: unknown
-      result?: { text: string; isError?: boolean }
+      result?: {
+        text: string
+        isError?: boolean
+        content?: readonly (
+          | { type: 'text'; text: string }
+          | {
+              type: 'image' | 'audio'
+              mimeType: string
+              byteSize: number
+              src?: string
+              width?: number
+              height?: number
+            }
+          | { type: 'resource_link'; uri: string; name: string; title?: string; mimeType?: string; byteSize?: number }
+          | { type: 'resource'; uri: string; mimeType?: string; text?: string; byteSize?: number }
+          | { type: 'terminal'; terminalId: string }
+        )[]
+      }
       state?: 'running' | 'completed' | 'failed' | 'cancelled'
       diffs?: { path: string; oldText: string | null; newText: string }[]
     }
@@ -131,7 +153,27 @@ export type DetailItem =
   // reply: a model fallback, a blocked hook. `severity` is the agent's word;
   // 'warning' and 'error' draw as such and anything else draws as 'info'.
   // Plain text throughout, so the description is not rendered as markdown.
-  | { kind: 'notice'; severity: string; title: string; description?: string }
+  //
+  // Also how the conversation tells the reader that something did not happen:
+  // a session that did not start, a message that was not sent. Then `title`
+  // says what happened and `description` what to do, both in plain words;
+  // `details` is the technical text it came with (stderr, an error code),
+  // folded behind a Details disclosure so it is there without being the line
+  // the reader has to decode. `action` is the one way to try again where
+  // there is one, and `onDismiss` lets the reader put the notice away.
+  // `dismissLabel` names that control when putting it away does more than
+  // hide the notice (Discard, for a message that was not sent); absent, it
+  // reads Dismiss.
+  | {
+      kind: 'notice'
+      severity: string
+      title: string
+      description?: string
+      details?: string
+      action?: { label: string; onPress: () => void }
+      onDismiss?: () => void
+      dismissLabel?: string
+    }
 
 export type DetailEntry = { kind: 'header' } | { kind: 'item'; item: DetailItem }
 
@@ -294,6 +336,10 @@ export interface ChatAuthorAccount {
 export interface MessageAttachment {
   // What the chip says. Short -- it truncates.
   label: string
+  // Where the quoted selection was made, outermost first (the space, then the
+  // App): drawn as a path ahead of the label, shortened to the message's width.
+  // Absent for a quotation that names no place, and for a picture.
+  place?: readonly string[]
   // The whole of what travelled, for a reader who would rather see it than be
   // told it exists. Optional, because a host may have nothing but the label.
   detail?: string
@@ -326,7 +372,19 @@ export interface ChatUserMessagePart {
   // is waiting in -- which is both what the remove control needs to name and
   // what stops React reusing the wrong row when one disappears.
   id?: string
+  // How far a message the reader has just sent has got, while the host shows
+  // it before the server has it. Absent for every message the server holds,
+  // which is every message in a transcript or a queue.
+  delivery?: ChatMessageDelivery
 }
+
+// A sent message on its way. `sending`: the server has not answered yet, and a
+// spinner sits beside the message's time. `failed`: it did not arrive, and the
+// conversation's error notice sits under it, `reason` as its line and
+// `details` folded beneath, with Send again and Discard where the host offers
+// them (see ChatUserMessage's `onRetry` and `onDiscard`). The message itself
+// is drawn as any other: it is what the reader wrote, whether or not it went.
+export type ChatMessageDelivery = { state: 'sending' } | { state: 'failed'; reason: string; details?: string }
 
 export interface ChatUserMessageProps {
   // Marks this block in the DOM so the host's load-older restore can find it
@@ -375,6 +433,11 @@ export interface ChatUserMessageProps {
   // beside each part that carries an id, so a turn whose parts have none --
   // every turn already sent -- offers it nowhere.
   onRemove?: (id: string) => void
+  // Send a message that failed again, and drop it, each named by its own id.
+  // Offered on the notice under a part whose `delivery` failed; without them
+  // the notice says what happened and offers nothing to do about it.
+  onRetry?: (id: string) => void
+  onDiscard?: (id: string) => void
   // Hold the top of the viewport while this turn's replies scroll underneath.
   //
   // The turn is then rendered twice by `CollapsingStickyHeader`: in full, and
@@ -393,6 +456,8 @@ export function ChatUserMessage({
   onEdit,
   onFork,
   onRemove,
+  onRetry,
+  onDiscard,
   sticky,
   renderers,
 }: ChatUserMessageProps) {
@@ -439,13 +504,7 @@ export function ChatUserMessage({
   // waiting carries the id to name it by. So this returns nothing for every
   // part of every turn already in the transcript, without either side having to
   // know which kind of turn it is in.
-  const removeFor = (part: ChatUserMessagePart) => {
-    const id = part.id
-    if (!onRemove || id === undefined) {
-      return undefined
-    }
-    return () => onRemove(id)
-  }
+  const removeFor = (part: ChatUserMessagePart) => boundTo(part, onRemove)
 
   const body = (
     // The same rail the replies below are rendered in, so both columns start at
@@ -549,6 +608,13 @@ export function ChatUserMessage({
                     ) : (
                       <UserMessageBubble part={part} menu={turnMenu} />
                     )}
+                    {part.delivery?.state === 'failed' ? (
+                      <FailedDeliveryNotice
+                        delivery={part.delivery}
+                        onRetry={boundTo(part, onRetry)}
+                        onDiscard={boundTo(part, onDiscard)}
+                      />
+                    ) : null}
                   </MessageRow>
                 )
               })}
@@ -587,6 +653,42 @@ export function ChatUserMessage({
     >
       {body}
     </CollapsingStickyHeader>
+  )
+}
+
+// A per-message control's handler, bound to the message it acts on. Only a
+// message with an id can be named to the host, so one without gets no control:
+// every part of every turn already sent, whatever handlers the host passes.
+function boundTo(part: ChatUserMessagePart, act?: (id: string) => void): (() => void) | undefined {
+  const id = part.id
+  return act && id !== undefined ? () => act(id) : undefined
+}
+
+// The notice under a sent message that did not arrive: the conversation's own
+// error notice, so a message that failed reads the way every other thing that
+// did not happen does. Discard rather than Dismiss, because putting it away
+// drops the message with it.
+function FailedDeliveryNotice({
+  delivery,
+  onRetry,
+  onDiscard,
+}: {
+  delivery: Extract<ChatMessageDelivery, { state: 'failed' }>
+  onRetry?: () => void
+  onDiscard?: () => void
+}) {
+  return (
+    <ChatNotice
+      item={{
+        kind: 'notice',
+        severity: 'error',
+        title: delivery.reason,
+        details: delivery.details,
+        action: onRetry ? { label: 'Send again', onPress: onRetry } : undefined,
+        onDismiss: onDiscard,
+        dismissLabel: 'Discard',
+      }}
+    />
   )
 }
 
@@ -746,7 +848,7 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
         // header swaps the whole of it in.
         <div aria-hidden className='absolute inset-0 -z-1 rounded-md pointer-events-none shadow-lg shadow-black/50' />
       )}
-      {(part.author || part.authorAccount || part.sentAt || menu) && (
+      {(part.author || part.authorAccount || part.sentAt || part.delivery || menu) && (
         // Who sent it and when, together at the left; the turn's action menu
         // at the right, in the slot the send time used to hold alone.
         //
@@ -770,6 +872,12 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
               <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>{part.author}</span>
             ) : null}
             {part.sentAt ? <ChatMessageTime sentAt={part.sentAt} /> : null}
+            {/* Beside the time, the size of its text: the message is here and
+                the server has not said it has it yet. Nothing marks one that
+                arrived, so the spinner going is the whole confirmation. */}
+            {part.delivery?.state === 'sending' ? (
+              <Spinner aria-label='Sending' className='size-3 shrink-0 text-muted-foreground' />
+            ) : null}
           </span>
           {menu}
         </div>
@@ -831,6 +939,7 @@ function UserMessageBox({ part, preview, menu }: UserMessageBubbleProps) {
                 // biome-ignore lint/suspicious/noArrayIndexKey: a delivered message's attachments are decoded out of a text that cannot change, so nothing here reorders, is inserted or is removed -- position IS the identity, and there is no id to key on instead. What would retire this suppression: attachments becoming editable after delivery, or arriving carrying an identity of their own. Either one makes position stop being identity, and the key then has to become that identity rather than this comment being widened.
                 key={index}
                 label={attachment.label}
+                place={attachment.place}
                 // Everything the quotation is not told to name itself is spread
                 // onto it, so the whole of what travelled reaches the reader
                 // through the ordinary title attribute rather than a prop of its
@@ -1110,30 +1219,57 @@ function TaskBlock({ item }: { item: Extract<DetailItem, { kind: 'task' }> }) {
 }
 
 // Listed in full, like the callout's own tones: the severities the protocol
-// defines, each on the callout kind that carries its weight.
-const NOTICE_CALLOUT_KINDS: Record<string, MarkdownCalloutKind> = {
-  info: 'note',
-  warning: 'warning',
-  error: 'caution',
+// defines, each on the callout kind that carries its weight and under the
+// heading that names it. Anything else is information.
+const NOTICE_CALLOUTS: Record<string, { kind: MarkdownCalloutKind; heading: string }> = {
+  info: { kind: 'note', heading: 'Info' },
+  warning: { kind: 'warning', heading: 'Warning' },
+  error: { kind: 'caution', heading: 'Error' },
 }
 
 // A notice in the reply chain: the documentation callout for its severity,
-// with the notice's own title as the heading. The callout's outer margin is
-// for prose; here the rail spaces the entries, and a margin would drop the
-// heading below the rail's dot. Exported so a host drawing its own chain
-// draws a notice the same way.
+// headed by the severity's name ("Error"), with what happened as the first
+// line of its body. The callout's outer margin is for prose; here the rail
+// spaces the entries, and a margin would drop the heading below the rail's
+// dot. Exported so a host drawing its own chain draws a notice the same way.
+//
+// Its body is the title, then the description, then the details folded in a
+// spoiler, then the action and dismiss controls on one row. Each after the
+// title renders only when given, so a harness's advisory with just a title is
+// the heading and one line. An error notice is announced (`role='alert'` on a
+// wrapper, since the callout is a note).
 export function ChatNotice({ item }: { item: Extract<DetailItem, { kind: 'notice' }> }) {
-  return (
-    <MarkdownCallout
-      kind={Object.hasOwn(NOTICE_CALLOUT_KINDS, item.severity) ? NOTICE_CALLOUT_KINDS[item.severity] : 'note'}
-      title={item.title}
-      className='my-0'
-    >
+  const tone = Object.hasOwn(NOTICE_CALLOUTS, item.severity) ? NOTICE_CALLOUTS[item.severity] : NOTICE_CALLOUTS.info
+  const callout = (
+    <MarkdownCallout kind={tone.kind} title={tone.heading} className='my-0 min-w-0'>
+      <p className='whitespace-pre-wrap wrap-break-word text-sm text-foreground'>{item.title}</p>
       {item.description ? (
-        <p className='whitespace-pre-wrap wrap-break-word text-sm text-foreground/90'>{item.description}</p>
+        <p className='mt-1 whitespace-pre-wrap wrap-break-word text-sm text-muted-foreground'>{item.description}</p>
+      ) : null}
+      {item.details ? (
+        <MarkdownSpoiler summary='Details'>
+          <pre className='whitespace-pre-wrap wrap-break-word font-mono text-xs text-muted-foreground'>
+            {item.details}
+          </pre>
+        </MarkdownSpoiler>
+      ) : null}
+      {item.action || item.onDismiss ? (
+        <div className='mt-2 flex flex-wrap items-center gap-2'>
+          {item.action ? (
+            <Button size='xs' variant='outline' onClick={item.action.onPress}>
+              {item.action.label}
+            </Button>
+          ) : null}
+          {item.onDismiss ? (
+            <Button size='xs' variant='ghost' onClick={item.onDismiss}>
+              {item.dismissLabel ?? 'Dismiss'}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </MarkdownCallout>
   )
+  return item.severity === 'error' ? <div role='alert'>{callout}</div> : callout
 }
 
 export interface ChatTurnDetailsProps {

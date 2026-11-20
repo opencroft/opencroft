@@ -119,6 +119,7 @@ async function until(condition: () => boolean | Promise<boolean>): Promise<void>
     if (Date.now() > deadline) {
       throw new Error('condition never held')
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
@@ -686,6 +687,7 @@ test('delivery is recorded only when the session took it, and retried when it di
   const svc = service({ engine: fake.engine })
   const started = await inProcessTask(svc, async () => 'done')
   await until(() => fake.notified.length === 1)
+  // biome-ignore lint/plugin/noTestFixedTime: fixed window in which a delivery must not happen
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal((await svc.get(started.taskId))?.deliveredAt, undefined)
 
@@ -740,6 +742,7 @@ test('a session not in memory is opened for its delivery, and a key nothing clai
   })
   // The caller's session is known when the task starts…
   fake.sessions.push({ id: 'session-1', sessionKey: KEY })
+  // biome-ignore lint/plugin/noTestFixedTime: the task under test runs for 20 ms, so the session can go away before it ends; an input, not a wait
   const started = await inProcessTask(svc, () => new Promise((resolve) => setTimeout(() => resolve('done'), 20)))
   // …and gone by the time it ends.
   fake.sessions.length = 0
@@ -805,6 +808,7 @@ test('the running keys include tasks a previous process started', async () => {
   await until(() => svc.runningSessionKeys().has('agent:carried:over'))
   // Another registry's rows are not this one's.
   const other = service({ engine: fakeEngine().engine })
+  // biome-ignore lint/plugin/noTestFixedTime: fixed window in which the other registry must not pick up these rows
   await new Promise((resolve) => setTimeout(resolve, 50))
   assert.equal(other.runningSessionKeys().has('agent:carried:over'), false)
 })

@@ -28,11 +28,16 @@ const MISTYPED = "export const count: number = 'x'\n"
 // Formatted and type-correct, and a finding fix cannot repair.
 const UNSAFE = 'export const echo = (input: any) => input\n'
 
+// The machine's git config switched off, so a setting there (autoSetupMerge
+// giving the task branch an upstream, signing) cannot change the repositories
+// these tests build.
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+
 function git(cwd: string, ...args: string[]) {
   const result = spawnSync(
     'git',
     ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args],
-    { cwd, encoding: 'utf8' },
+    { cwd, env: GIT_ENV, encoding: 'utf8' },
   )
   assert.equal(result.status, 0, `git ${args.join(' ')}: ${result.stderr}`)
   return result.stdout

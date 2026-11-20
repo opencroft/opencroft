@@ -31,8 +31,8 @@ function hasToolImages(message: ModelMessage): boolean {
   return message.role === 'tool' && message.content.some((part) => partImages(part).length > 0)
 }
 
-// The size of a base64 payload in bytes, without decoding it.
-function base64Bytes(data: string): number {
+/** The size of a base64 payload in bytes, without decoding it. */
+export function base64Bytes(data: string): number {
   const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
   return Math.floor((data.length * 3) / 4) - padding
 }

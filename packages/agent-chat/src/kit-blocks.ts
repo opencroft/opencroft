@@ -3,7 +3,7 @@ import { type ChatMessage, isCompletedCompaction, isTerminalToolStatus } from 'a
 import type { ChatContextStartReason } from './components/chat-context-divider'
 import type { Block } from './components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
-import { formatToolValue, toolCallState } from './tool-views'
+import { formatToolValue, toolCallState, toolOutputParts } from './tool-views'
 import { toUserParts } from './user-parts'
 
 // Re-exported rather than redeclared: the component that renders these is what
@@ -29,7 +29,14 @@ const plainUserText = (raw: string): UserText | null => (raw.trim() ? (raw as Us
 //
 // Ids name the block for React and must survive a re-fold of the same log, so
 // they come from the message the block starts at rather than its position.
-export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
+//
+// `mediaSrc` is the URL a reader loads a tool's stored picture or sound from,
+// for a host that stores them (AgentClientOptions.storeToolMedia); without
+// it, the transcript says what each one was.
+export function buildKitBlocks(
+  messages: readonly ChatMessage[],
+  options: { mediaSrc?: (mediaId: string) => string } = {},
+): Block[] {
   const blocks: Block[] = []
   let details: DetailItem[] = []
   // The reply this run of details started at — the run's name.
@@ -87,7 +94,8 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
           details.push({ kind: 'thinking', text: message.text })
         }
         break
-      case 'tool':
+      case 'tool': {
+        const content = toolOutputParts(message.content, options.mediaSrc)
         details.push({
           kind: 'tool',
           id: message.toolCallId,
@@ -97,7 +105,11 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
           // that has may still be running, which `state` says.
           result:
             isTerminalToolStatus(message.status) || message.output !== undefined
-              ? { text: formatToolValue(message.output), isError: message.status === 'failed' }
+              ? {
+                  text: formatToolValue(message.output),
+                  isError: message.status === 'failed',
+                  ...(content ? { content } : {}),
+                }
               : undefined,
           state: toolCallState(message.status),
           ...(message.diffs ? { diffs: message.diffs } : {}),
@@ -106,6 +118,7 @@ export function buildKitBlocks(messages: readonly ChatMessage[]): Block[] {
           contextStart(message.id, 'compaction')
         }
         break
+      }
       case 'notice':
         details.push({
           kind: 'notice',

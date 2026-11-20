@@ -1,9 +1,11 @@
-// The bytes behind an image a reader attached to a message.
+// The bytes behind an image a reader attached to a message, and behind a
+// picture or a sound a tool returned in the conversation.
 //
 // A message carries only a reference (see attachments.ts in agent-client), beside
 // its text: the reference names a row here, and delivery turns that row into the
-// ACP image block. So this is the one place the picture exists, which makes its lifetime
-// the whole design problem — a row nobody can reach is not a missing chip, it
+// ACP image block. A tool result in the transcript names a row the same way (its
+// `mediaId`, see ToolContent in agent-client). So this is the one place the bytes
+// exist, which makes their lifetime the whole design problem — a row nobody can reach is not a missing chip, it
 // is bytes that never go away.
 //
 // FILED UNDER THE SESSION KEY, like the durable queue and the transcript beside
@@ -12,10 +14,14 @@
 // (session-key-move). Cleared at those call sites rather than from inside
 // clearSessionEvents, because that function is ALSO called on a failed replay,
 // where the conversation lives on and its pictures must live with it.
+//
+// A tool's media goes sooner as well (releaseToolMedia): the agent has already
+// looked at it, and once the conversation is compacted or its thread archived
+// the transcript says what it was instead of showing it.
 
 import { chatAttachment, db } from '@opencroft/db'
 import type { AttachmentRef, PromptAttachment } from 'agent-client/attachments'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, lt } from 'drizzle-orm'
 import sharp from 'sharp'
 
 import { VISION_MIME_TYPES } from '@/app/_authed/(agent)/_lib/vision-image'
@@ -77,11 +83,7 @@ export async function saveAttachment(input: {
   if (!(ATTACHABLE_MIME_TYPES as readonly string[]).includes(mimeType)) {
     throw new AttachmentRejected(`${input.mimeType || 'that file type'} cannot be attached`)
   }
-  // Base64 is four characters per three bytes, with the padding standing in for
-  // the bytes the last group does not have — so the size is known without
-  // decoding a payload that might be refused anyway.
-  const padding = input.data.endsWith('==') ? 2 : input.data.endsWith('=') ? 1 : 0
-  const byteSize = Math.max(0, Math.floor((input.data.length * 3) / 4) - padding)
+  const byteSize = decodedSize(input.data)
   if (byteSize === 0) {
     throw new AttachmentRejected('that image is empty')
   }
@@ -101,13 +103,92 @@ export async function saveAttachment(input: {
 }
 
 /**
+ * What a tool's media may be kept as: the pictures a reader may attach, and a
+ * fixed set of sounds. Kept means served back from this origin under the type
+ * stored with it (attachmentResponse), and the type comes from whatever tool
+ * answered. So the list is closed and holds no type a browser runs as a
+ * document or a script: an SVG or an HTML page a tool returned is never
+ * stored, and the transcript names it instead.
+ */
+export const TOOL_MEDIA_MIME_TYPES = [
+  ...ATTACHABLE_MIME_TYPES,
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/wav',
+  'audio/webm',
+] as const
+
+/**
+ * Keep a picture or a sound a tool returned in a conversation, as the engine's
+ * `storeToolMedia` hook. Null for one that is not kept: a type outside
+ * TOOL_MEDIA_MIME_TYPES, nothing at all, or over MAX_ATTACHMENT_BYTES, the
+ * ceiling every row here shares (see loadAttachments for what a larger row
+ * costs the database).
+ */
+export async function saveToolMedia(input: {
+  sessionKey: string
+  mimeType: string
+  /** Base64 with no `data:` prefix. */
+  data: string
+}): Promise<{ id: string; width?: number; height?: number } | null> {
+  const mimeType = input.mimeType.toLowerCase()
+  const byteSize = decodedSize(input.data)
+  const kept = (TOOL_MEDIA_MIME_TYPES as readonly string[]).includes(mimeType)
+  if (!kept || byteSize === 0 || byteSize > MAX_ATTACHMENT_BYTES) {
+    return null
+  }
+  const size = mimeType.startsWith('image/') ? await readDisplaySize(input.data) : null
+  const [row] = await db
+    .insert(chatAttachment)
+    .values({
+      sessionKey: input.sessionKey,
+      name: mimeType,
+      mimeType,
+      data: input.data,
+      byteSize,
+      origin: 'tool',
+      ...size,
+    })
+    .returning({ id: chatAttachment.id })
+  return { id: row.id, ...(size ?? {}) }
+}
+
+/**
+ * Let go of the media tools returned in a conversation: all of it, or only
+ * what was stored before `before` (a compaction keeps what arrived after it).
+ * A message's attachments stay; they keep the key's own lifetime.
+ */
+export async function releaseToolMedia(sessionKey: string, before?: Date): Promise<void> {
+  await db
+    .delete(chatAttachment)
+    .where(
+      and(
+        eq(chatAttachment.sessionKey, sessionKey),
+        eq(chatAttachment.origin, 'tool'),
+        before ? lt(chatAttachment.createdAt, before) : undefined,
+      ),
+    )
+}
+
+// Base64 is four characters per three bytes, with the padding standing in for
+// the bytes the last group does not have — so the size is known without
+// decoding a payload that might be refused anyway.
+function decodedSize(data: string): number {
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding)
+}
+
+/**
  * The references a send may carry, resolved from what the composer handed in.
  *
  * Ids only cross the wire; the name and type a message records are read here,
  * from the row, so a caller cannot label a picture as something it is not. And
  * every id must be a row of THIS conversation -- one that is not is refused
  * outright rather than dropped, since a send that quietly lost a picture is the
- * failure the whole feature is built against.
+ * failure the whole feature is built against. And a row a reader attached: what
+ * a tool returned is the transcript's, and a send cannot pass it off as the
+ * reader's own by naming its id.
  */
 export async function resolveAttachmentRefs(sessionKey: string, ids: readonly string[]): Promise<AttachmentRef[]> {
   if (ids.length === 0) {
@@ -123,7 +204,7 @@ export async function resolveAttachmentRefs(sessionKey: string, ids: readonly st
       sessionKey: chatAttachment.sessionKey,
     })
     .from(chatAttachment)
-    .where(inArray(chatAttachment.id, [...ids]))
+    .where(and(inArray(chatAttachment.id, [...ids]), eq(chatAttachment.origin, 'message')))
   const byId = new Map(rows.filter((row) => row.sessionKey === sessionKey).map((row) => [row.id, row]))
   return ids.map((id) => {
     const row = byId.get(id)
@@ -162,7 +243,9 @@ export async function loadAttachments(sessionKey: string, ids: readonly string[]
   // pictures meant the first one first.
   const loaded: PromptAttachment[] = []
   for (const id of ids) {
-    const row = await readAttachment(sessionKey, id)
+    // A reader's attachments only: a message's text can be edited, and a tag
+    // naming a tool's row must not make it travel as something the reader sent.
+    const row = await readAttachment(sessionKey, id, 'message')
     if (row) {
       loaded.push({ id, ...row })
     }
@@ -170,11 +253,6 @@ export async function loadAttachments(sessionKey: string, ids: readonly string[]
   return loaded
 }
 
-/**
- * One image for a surface that draws it -- the transcript, through
- * attachmentResponse. Scoped like loadAttachments: another conversation's id
- * answers null.
- */
 /**
  * The stored byte size of each of `ids` that is a row of this conversation.
  * Rows of any other conversation are absent from the answer, as they are from
@@ -191,9 +269,16 @@ export async function readAttachmentSizes(sessionKey: string, ids: readonly stri
   return Object.fromEntries(rows.filter((row) => row.sessionKey === sessionKey).map((row) => [row.id, row.byteSize]))
 }
 
+/**
+ * One stored picture or sound -- for delivery (loadAttachments), and for a
+ * surface that draws it, the transcript, through attachmentResponse. Another
+ * conversation's id answers null, and so does one of another `origin` when
+ * one is asked for.
+ */
 export async function readAttachment(
   sessionKey: string,
   id: string,
+  origin?: 'message' | 'tool',
 ): Promise<{ name: string; mimeType: string; data: string } | null> {
   const [row] = await db
     .select({
@@ -201,10 +286,12 @@ export async function readAttachment(
       mimeType: chatAttachment.mimeType,
       data: chatAttachment.data,
       sessionKey: chatAttachment.sessionKey,
+      origin: chatAttachment.origin,
     })
     .from(chatAttachment)
     .where(eq(chatAttachment.id, id))
-  return row && row.sessionKey === sessionKey ? { name: row.name, mimeType: row.mimeType, data: row.data } : null
+  const found = row && row.sessionKey === sessionKey && (!origin || row.origin === origin)
+  return found ? { name: row.name, mimeType: row.mimeType, data: row.data } : null
 }
 
 /** Everything held for a key that is being retired for good. */

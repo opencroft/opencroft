@@ -24,12 +24,14 @@ import test from 'node:test'
 // keys surface answers where the keys come from and the key file's warning,
 // which only an administrator is shown. The extension registries surface is
 // instance configuration whose credential picks name Secrets Stores anywhere.
-// The backup surface reads, restores and resets the whole instance.
+// The backup surface reads, restores and resets the whole instance. The usage
+// surface reads every space's spend.
 const SURFACES = [
   { file: 'audit-actions.ts', endpoints: 8 },
   { file: 'instance-keys-actions.ts', endpoints: 2 },
   { file: 'extension-registries-actions.ts', endpoints: 5 },
   { file: 'backup-actions.ts', endpoints: 9 },
+  { file: 'usage-actions.ts', endpoints: 1 },
 ]
 
 // Each `export const NAME = createServerFn(...)` starts one endpoint's builder

@@ -97,6 +97,7 @@ async function until(condition: () => boolean | Promise<boolean>, ms: number): P
     if (await condition()) {
       return true
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   return condition()

@@ -203,16 +203,24 @@ export {
   type EmbeddedAgentChatProps,
   /** @deprecated Import `EmbeddedChatSelection` from `@opencroft/client/chat`. */
   type EmbeddedChatSelection,
+  /** @deprecated Import `LineRange` from `@opencroft/client/chat`. */
+  type LineRange,
   /** @deprecated Import `MentionedAccount` from `@opencroft/client/chat`. */
   type MentionedAccount,
+  /** @deprecated Import `Selection` from `@opencroft/client/chat`. */
+  type Selection,
   /** @deprecated Import `SelectionContextValue` from `@opencroft/client/chat`. */
   type SelectionContextValue,
+  /** @deprecated Import `SelectionItem` from `@opencroft/client/chat`. */
+  type SelectionItem,
   /** @deprecated Import `SelectionProvider` from `@opencroft/client/chat`. */
   SelectionProvider,
   /** @deprecated Import `UserSelection` from `@opencroft/client/chat`. */
   type UserSelection,
   /** @deprecated Import `useChatDock` from `@opencroft/client/chat`. */
   useChatDock,
+  /** @deprecated Import `usePublishSelection` from `@opencroft/client/chat`. */
+  usePublishSelection,
   /** @deprecated Import `useSelection` from `@opencroft/client/chat`. */
   useSelection,
 } from './chat'
@@ -389,6 +397,8 @@ export {
   TerminalSelector,
   /** @deprecated Import `TerminalSelectorProps` from `@opencroft/client/terminal`. */
   type TerminalSelectorProps,
+  /** @deprecated Import `TerminalSourceOwner` from `@opencroft/client/terminal`. */
+  type TerminalSourceOwner,
   /** @deprecated Import `TerminalStatus` from `@opencroft/client/terminal`. */
   type TerminalStatus,
 } from './terminal'
@@ -793,6 +803,10 @@ export {
   FieldError,
   /** @deprecated Import `FieldGroup` from `@opencroft/client/ui`. */
   FieldGroup,
+  /** @deprecated Import `FieldHint` from `@opencroft/client/ui`. */
+  FieldHint,
+  /** @deprecated Import `FieldHintProps` from `@opencroft/client/ui`. */
+  type FieldHintProps,
   /** @deprecated Import `FieldLabel` from `@opencroft/client/ui`. */
   FieldLabel,
   /** @deprecated Import `FieldLegend` from `@opencroft/client/ui`. */

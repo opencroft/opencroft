@@ -37,8 +37,7 @@ export const terminalResolver: MarkdownResolver = {
           target,
           ref
             ? {
-                label: ref.name,
-                detail: ref.detail ? `· ${ref.detail}` : undefined,
+                label: ref.title,
                 icon: ref.icon ?? 'SquareTerminal',
                 href: spaceHref(ref.spaceSlug),
               }

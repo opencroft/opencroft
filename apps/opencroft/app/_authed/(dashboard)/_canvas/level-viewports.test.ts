@@ -58,6 +58,7 @@ function graph(level: string | undefined, measured: boolean): Node[] {
   return [at('a', undefined, 0), at('b', undefined, 400), at('s1', SUB, -300), at('s2', SUB, 300)]
 }
 
+// biome-ignore lint/plugin/noTestFixedTime: fixed 20 ms settle delay used between the steps of these tests
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
 
 // `ready: false` is a graph loading in the editor in place of the one shown.

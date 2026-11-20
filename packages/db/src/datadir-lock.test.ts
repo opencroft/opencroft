@@ -158,6 +158,7 @@ test('a holder in another thread of this process is waited for, not refused', as
     })
     // The open is still waiting at the moment the holder is told to let go;
     // on a slow machine this can miss a wrong early refusal, never invent one.
+    // biome-ignore lint/plugin/noTestFixedTime: fixed window in which the open must still be waiting; a slow host can only miss a wrong early refusal
     await new Promise((resolve) => setTimeout(resolve, 400))
     assert.equal(settled, false, 'the open must wait while the sibling still holds the datadir')
 

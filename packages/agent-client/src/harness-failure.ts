@@ -5,6 +5,8 @@
 // couldn't be fetched, a rejected token. That text is the actionable part, so
 // it becomes the error the caller sees.
 
+import { HarnessStartError } from './errors'
+
 export interface HarnessFailure {
   /** Tail of the process's stderr, most recent last. */
   stderr: string[]
@@ -61,7 +63,7 @@ export function harnessStartError(failure: HarnessFailure, cause: unknown): Erro
   }
   const exit = describeExit(failure.exit)
   const suffix = exit ? ` (${exit})` : ''
-  const error = new Error(`Agent failed to start${suffix}: ${detail}`)
+  const error = new HarnessStartError(`Agent failed to start${suffix}: ${detail}`)
   if (cause !== undefined) {
     error.cause = cause
   }

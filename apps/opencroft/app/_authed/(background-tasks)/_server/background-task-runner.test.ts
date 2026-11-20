@@ -208,6 +208,7 @@ async function until<T>(read: () => Promise<T>, done: (value: T) => boolean): Pr
     if (done(value) || Date.now() > deadline) {
       return value
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
 }

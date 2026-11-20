@@ -96,6 +96,7 @@ function named(label: string): HTMLElement | undefined {
 async function settle() {
   for (let i = 0; i < 5; i++) {
     await act(async () => {
+      // biome-ignore lint/plugin/noTestFixedTime: settle loop of five 10 ms rounds for the menu's effects and transitions
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
   }

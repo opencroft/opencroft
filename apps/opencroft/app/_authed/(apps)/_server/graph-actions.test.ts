@@ -147,12 +147,21 @@ async function graphNodeIds(address: string): Promise<string[]> {
   return loaded.graph.nodes.map((n) => (n as { id: string }).id).sort()
 }
 
+test('a graph loaded by its bare space slug names the graph it resolved to, by full address and name', async () => {
+  const [graph] = registry.graphsOf(x.slug)
+  const byBareSlug = await loadSpaceGraphImpl(x.slug)
+  assert.equal(byBareSlug?.address, x.address)
+  assert.equal(byBareSlug?.name, graph?.name)
+  assert.equal((await loadSpaceGraphImpl(x.address))?.address, x.address, 'and the full address names itself')
+})
+
 async function pendingApproval(tool: string) {
   for (let i = 0; i < 400; i++) {
     const request = approvalStore.list().find((r) => r.tool === tool)
     if (request) {
       return request
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   throw new Error(`no approval was requested for ${tool}`)

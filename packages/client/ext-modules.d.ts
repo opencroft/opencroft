@@ -442,10 +442,16 @@ declare module '@ext/host' {
     EmbeddedAgentChatProps,
     /** @deprecated Import `EmbeddedChatSelection` from `@opencroft/client/chat`. */
     EmbeddedChatSelection,
+    /** @deprecated Import `LineRange` from `@opencroft/client/chat`. */
+    LineRange,
     /** @deprecated Import `MentionedAccount` from `@opencroft/client/chat`. */
     MentionedAccount,
+    /** @deprecated Import `Selection` from `@opencroft/client/chat`. */
+    Selection,
     /** @deprecated Import `SelectionContextValue` from `@opencroft/client/chat`. */
     SelectionContextValue,
+    /** @deprecated Import `SelectionItem` from `@opencroft/client/chat`. */
+    SelectionItem,
     /** @deprecated Import `UserSelection` from `@opencroft/client/chat`. */
     UserSelection,
   } from '@opencroft/client/chat'
@@ -550,6 +556,8 @@ declare module '@ext/host' {
     TerminalRefProps,
     /** @deprecated Import `TerminalSelectorProps` from `@opencroft/client/terminal`. */
     TerminalSelectorProps,
+    /** @deprecated Import `TerminalSourceOwner` from `@opencroft/client/terminal`. */
+    TerminalSourceOwner,
     /** @deprecated Import `TerminalStatus` from `@opencroft/client/terminal`. */
     TerminalStatus,
   } from '@opencroft/client/terminal'
@@ -612,6 +620,8 @@ declare module '@ext/host' {
     EnvironmentVariable,
     /** @deprecated Import `ExampleFrameProps` from `@opencroft/client/ui`. */
     ExampleFrameProps,
+    /** @deprecated Import `FieldHintProps` from `@opencroft/client/ui`. */
+    FieldHintProps,
     /** @deprecated Import `FixedAreaProps` from `@opencroft/client/ui`. */
     FixedAreaProps,
     /** @deprecated Import `FlexDirection` from `@opencroft/client/ui`. */
@@ -899,10 +909,16 @@ declare module '@ext/ui' {
     EmbeddedAgentChatProps,
     /** @deprecated Import `EmbeddedChatSelection` from `@opencroft/client/chat`. */
     EmbeddedChatSelection,
+    /** @deprecated Import `LineRange` from `@opencroft/client/chat`. */
+    LineRange,
     /** @deprecated Import `MentionedAccount` from `@opencroft/client/chat`. */
     MentionedAccount,
+    /** @deprecated Import `Selection` from `@opencroft/client/chat`. */
+    Selection,
     /** @deprecated Import `SelectionContextValue` from `@opencroft/client/chat`. */
     SelectionContextValue,
+    /** @deprecated Import `SelectionItem` from `@opencroft/client/chat`. */
+    SelectionItem,
     /** @deprecated Import `UserSelection` from `@opencroft/client/chat`. */
     UserSelection,
   } from '@opencroft/client/chat'
@@ -1041,6 +1057,8 @@ declare module '@ext/ui' {
     TerminalRefProps,
     /** @deprecated Import `TerminalSelectorProps` from `@opencroft/client/terminal`. */
     TerminalSelectorProps,
+    /** @deprecated Import `TerminalSourceOwner` from `@opencroft/client/terminal`. */
+    TerminalSourceOwner,
     /** @deprecated Import `TerminalStatus` from `@opencroft/client/terminal`. */
     TerminalStatus,
   } from '@opencroft/client/terminal'
@@ -1115,6 +1133,8 @@ declare module '@ext/ui' {
     EnvironmentVariable,
     /** @deprecated Import `ExampleFrameProps` from `@opencroft/client/ui`. */
     ExampleFrameProps,
+    /** @deprecated Import `FieldHintProps` from `@opencroft/client/ui`. */
+    FieldHintProps,
     /** @deprecated Import `FixedAreaProps` from `@opencroft/client/ui`. */
     FixedAreaProps,
     /** @deprecated Import `FlexDirection` from `@opencroft/client/ui`. */
@@ -1547,6 +1567,8 @@ declare module '@ext/ui' {
     FieldError,
     /** @deprecated Import `FieldGroup` from `@opencroft/client/ui`. */
     FieldGroup,
+    /** @deprecated Import `FieldHint` from `@opencroft/client/ui`. */
+    FieldHint,
     /** @deprecated Import `FieldLabel` from `@opencroft/client/ui`. */
     FieldLabel,
     /** @deprecated Import `FieldLegend` from `@opencroft/client/ui`. */

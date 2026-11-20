@@ -30,7 +30,7 @@ import { getRequest } from '@tanstack/react-start/server'
 import { type RecordedLogOpts, supportsImagePrompt, supportsMidTurnInput } from 'agent-client'
 import type { AttachmentRef } from 'agent-client/attachments'
 import { usableContextWindow } from 'agent-client/context-window'
-import { ActionRequiredError, isResourceNotFound } from 'agent-client/errors'
+import { ActionRequiredError, errorMessage, HarnessStartError, isResourceNotFound } from 'agent-client/errors'
 import type { RecordsWindow } from 'agent-client/pagination'
 import { rebuildTurn, type TurnEdit } from 'agent-client/queue-tags'
 import { takesEndpointHeaders } from 'agent-client/resolve'
@@ -529,7 +529,13 @@ async function openLocalSession(data: { agentNodeId: string; tabKey: string }): 
   const placement = await terminalPlacement(
     agentPlacement(agent, data.agentNodeId, { cwd: process.cwd(), join }),
   ).catch((error: unknown) => {
-    throw error instanceof FolderMissingError ? new ActionRequiredError(error.message) : error
+    if (error instanceof FolderMissingError) {
+      throw new ActionRequiredError(error.message)
+    }
+    // The terminal could not run the probe at all (a stopped container, a
+    // context refused to agents): the harness cannot start there either, and
+    // each open would ask again for the same answer until someone starts it.
+    throw new HarnessStartError(`Agent failed to start: its terminal could not run it (${errorMessage(error)})`)
   })
   const adapterId = agent.adapterId ?? 'claude'
   const gateway = gatewayDefaults(adapterId)

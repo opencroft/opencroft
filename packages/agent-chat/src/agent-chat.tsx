@@ -2,12 +2,20 @@
 
 import type { ReactNode, RefObject } from 'react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Flex } from 'ui/components/ui/layout/flex'
 import { LogoLoader } from 'ui/components/ui/logo-loader'
 
 import type { AgentComposerHandle } from './agent-command-bar'
 import { type Block, ChatConversation, type ChatConversationHandle } from './components/chat-conversation'
 import { ChatEmptyState } from './components/chat-empty-state'
-import type { ChatTurnRenderers, ChatUserMessagePart, DetailItem, UserText } from './components/chat-turn'
+import {
+  ChatNotice,
+  type ChatTurnRenderers,
+  ChatUserMessage,
+  type ChatUserMessagePart,
+  type DetailItem,
+  type UserText,
+} from './components/chat-turn'
 import { ChatUnread, type ChatUnreadMessage } from './components/chat-unread'
 import { MessageActionsProvider, MessageSelectionBar } from './components/message-selection-bar'
 import { appendQuotedReply } from './message-quote'
@@ -43,8 +51,8 @@ type AgentChatCoreSession = Pick<
   | 'editMessage'
   | 'forkMessage'
   | 'draft'
-  | 'sendError'
-  | 'dismissSendError'
+  | 'notice'
+  | 'starting'
   | 'disabled'
   | 'hasMoreHistory'
   | 'loadingMoreHistory'
@@ -109,6 +117,18 @@ export interface AgentChatProps {
   // Without it the unread heading is only a heading, which is what a host
   // without a way to hand the queue over wants.
   onDeliverUnread?: () => void
+  // Messages the reader sent that the server does not hold yet, in the order
+  // sent, each with its own `id` and `delivery`: sending (a spinner by its
+  // time) or failed (the error notice under it). They render last, below
+  // anything unread, because each is the newest thing the reader did. The host
+  // drops one in the same render its own record of it -- a queue entry or a
+  // delivered turn -- appears, so a message is never on screen twice or not
+  // at all.
+  outgoing?: readonly ChatUserMessagePart[]
+  // Send a failed one again, and drop one, by its id. Without them a failed
+  // message's notice offers no control.
+  onRetryOutgoing?: (id: string) => void
+  onDiscardOutgoing?: (id: string) => void
   // Extra content rendered in the footer alongside the thinking indicator —
   // a host-specific status indicator (e.g. a voice playback visualizer) with
   // nowhere else in this component's own contract to live.
@@ -149,6 +169,9 @@ export function AgentChat({
   unread,
   onRemoveUnread,
   onDeliverUnread,
+  outgoing,
+  onRetryOutgoing,
+  onDiscardOutgoing,
   footerExtra,
   composerRef,
   reveal,
@@ -222,12 +245,52 @@ export function AgentChat({
     reveal.onSettled?.(false)
   }, [reveal, blocks, session, revealPages])
 
+  // A session being started is waited on with the product's own loader, the
+  // logo, as anything else that is loading is: the agent is not working on the
+  // reader's message yet, so the working indicator would say too much. Over an
+  // empty conversation it is the panel's state. Under a transcript already on
+  // screen it takes the indicator's place only for a start that carries
+  // nothing of the reader's (Try again on a start that failed): a start a
+  // send set off is told by that message's own spinner, in the conversation
+  // the reader is already reading, rather than by a loader as if it were
+  // being opened.
+  const starting = session.starting === true
+  const working = starting || (session.thinking ?? session.waiting)
+  const sending = (outgoing?.length ?? 0) > 0
+  // Only a message still on its way speaks for the start; one that failed is
+  // told by its notice, and a start after it (Try again) gets the loader.
+  const startCarried = outgoing?.some((part) => part.delivery?.state === 'sending') === true
+  const empty = !hasMessages && (unread?.length ?? 0) === 0
+  const loading = session.loading || (starting && empty)
   const footer = (
     <>
-      {showThinkingIndicator && (session.thinking ?? session.waiting) && <ThinkingIndicator />}
+      {starting && !loading && !startCarried ? (
+        <Flex align='center'>
+          <LogoLoader size={40} className='text-foreground' />
+        </Flex>
+      ) : null}
+      {/* Not under the panel's loader either: one loader at a time. A message
+          held across the open is waited on by that loader until the history
+          is in. */}
+      {showThinkingIndicator && working && !starting && !loading && <ThinkingIndicator />}
       {/* Unconditional: the section renders nothing with nothing waiting, so
           guarding it here would only duplicate a check it already makes. */}
       <ChatUnread messages={unread ?? []} onRemove={onRemoveUnread} onDeliver={onDeliverUnread} renderers={renderers} />
+      {/* Below what is unread: a message the server takes into the queue
+          joins the end of it, the row just above, so taking it moves nothing
+          but the heading a first queued message brings. One turn, like the
+          queue, so a run of sends draws one face. */}
+      {outgoing && outgoing.length > 0 ? (
+        <ChatUserMessage
+          parts={outgoing}
+          onRetry={onRetryOutgoing}
+          onDiscard={onDiscardOutgoing}
+          renderers={renderers}
+        />
+      ) : null}
+      {/* Last in the transcript, under the turn it is about and above
+          anything the host adds: it is the newest thing that happened. */}
+      {session.notice ? <ChatNotice item={{ kind: 'notice', severity: 'error', ...session.notice }} /> : null}
       {footerExtra}
     </>
   )
@@ -242,19 +305,27 @@ export function AgentChat({
   // here instead, the state fills the region the host gives this component
   // and centres in it. The footer still renders beneath, so a queue arriving
   // mid-load keeps its divider and the deliver affordance.
-  const panelState = session.loading ? (
+  //
+  // A running turn or a notice in an empty conversation is not "no messages
+  // yet": the panel stays blank above the footer that carries them. A running
+  // turn with nothing in the transcript is a just-started session whose
+  // history ended before the reader's first message came back.
+  const panelState = loading ? (
     <LogoLoader size={40} className='text-foreground' />
-  ) : !hasMessages && (unread?.length ?? 0) === 0 ? (
+  ) : empty && !sending && !working && !session.waiting && !session.notice ? (
     <ChatEmptyState text={emptyText ?? 'No messages yet'} />
   ) : null
 
-  if (panelState) {
+  if (panelState || empty) {
     return (
       <MessageActionsProvider value={messageActions}>
         <MessageSelectionBar>
           <div className='flex min-h-0 min-w-0 flex-1 flex-col'>
             <div className='flex flex-1 items-center justify-center p-4'>{panelState}</div>
-            {footer}
+            {/* The conversation's own inset and spacing (Chat Conversation's
+                column), so a notice or the indicator under an empty panel
+                sits where it would under a transcript, not against the edges. */}
+            <Flex className='min-w-0 gap-3 px-4 pb-4'>{footer}</Flex>
           </div>
         </MessageSelectionBar>
       </MessageActionsProvider>
@@ -269,8 +340,8 @@ export function AgentChat({
           sessionKey={session.sessionKey}
           blocks={blocks}
           hasMessages={hasMessages}
-          hasUndelivered={(unread?.length ?? 0) > 0}
-          loading={session.loading}
+          hasUndelivered={(unread?.length ?? 0) > 0 || sending}
+          loading={loading}
           emptyText={emptyText}
           waiting={session.waiting}
           historyHeaderParts={historyHeaderParts}

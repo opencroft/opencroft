@@ -23,12 +23,16 @@
 // output captured through a pipe would show them.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { testConcurrency } from './test-concurrency.mjs'
+import { formatSlowest, readTimings, slowestTests } from './test-timings.mjs'
+
+// How many of the slowest tests the run ends by listing.
+const SLOWEST_COUNT = 10
 
 const workspaces = listWorkspaces()
 
@@ -37,6 +41,9 @@ const slotDir = mkdtempSync(join(tmpdir(), 'opencroft-test-slots-'))
 const slotSocket = join(slotDir, 'slots.sock')
 process.on('exit', () => rmSync(slotDir, { recursive: true, force: true }))
 const slotServer = await serveSlots(slots, slotSocket)
+// Every workspace's runner writes its tests' times here (test-timings.mjs).
+const timingsDir = join(slotDir, 'timings')
+mkdirSync(timingsDir)
 
 // A workspace's runner is several processes deep -- npm, its `sh -c`, the
 // runner, the test runner, the files -- and the shell passes no signal
@@ -68,6 +75,9 @@ for (const result of results) {
   }
 }
 slotServer.close()
+// Last, after every workspace's report: the tests to look at first when the
+// run is slow.
+process.stdout.write(formatSlowest(slowestTests(readTimings(timingsDir), SLOWEST_COUNT), process.cwd()))
 // Not process.exit(): writes to a pipe finish asynchronously, and exiting
 // drops whatever has not drained yet. The report is megabytes, so a caller
 // reading it through a pipe would get the first part and a clean exit status.
@@ -136,7 +146,12 @@ function run(name) {
       detached: true,
       // run-tests.mjs runs at most this many files of its own at once, and
       // has each one take a slot from this run's pool before it starts.
-      env: { ...process.env, OPENCROFT_TEST_CONCURRENCY: String(slots), OPENCROFT_TEST_SLOTS: slotSocket },
+      env: {
+        ...process.env,
+        OPENCROFT_TEST_CONCURRENCY: String(slots),
+        OPENCROFT_TEST_SLOTS: slotSocket,
+        OPENCROFT_TEST_TIMINGS: timingsDir,
+      },
     })
     running.add(child)
     const stdout = []

@@ -330,6 +330,7 @@ async function positioned() {
   })
   for (let i = 0; i < 3; i += 1) {
     await React.act(async () => {
+      // biome-ignore lint/plugin/noTestFixedTime: settle loop of three zero-delay turns after the resize
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
   }

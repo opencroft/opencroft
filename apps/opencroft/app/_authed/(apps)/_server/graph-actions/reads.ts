@@ -21,8 +21,10 @@ import { loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/load
 import { withCheckedErrors } from '@/app/_authed/(extension-runtime)/_server/node-data-validation'
 import {
   buildNodeTypeHandles,
+  type DynamicHandleListerOf,
+  dynamicHandleListers,
+  dynamicSourcePrefixes,
   expandDynamicHandles,
-  findDockerExtensionId,
 } from '@/app/_authed/(extension-runtime)/_server/node-handles'
 import type { ExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { fail } from '@/app/_authed/(mcp)/_server/tool-refusal'
@@ -92,8 +94,8 @@ async function buildTypeNameMap(): Promise<Map<string, string>> {
 interface TypeHandlesContext {
   typeHandles: Map<string, ExtensionHandle[]>
   enumCasesOf: EnumCasesOf
-  // Resolved once here rather than per node inside the expansion.
-  dockerExtensionId: string | null
+  // One lookup for the read, so each type's extension is loaded once.
+  listerOf: DynamicHandleListerOf
 }
 
 async function buildTypeHandlesMap(): Promise<TypeHandlesContext> {
@@ -102,7 +104,7 @@ async function buildTypeHandlesMap(): Promise<TypeHandlesContext> {
   return {
     typeHandles: new Map(Array.from(byType, ([type, entry]) => [type, entry.handles])),
     enumCasesOf: enumCasesOfManifests(manifests),
-    dockerExtensionId: findDockerExtensionId(manifests),
+    listerOf: dynamicHandleListers(),
   }
 }
 
@@ -116,7 +118,7 @@ interface NodeHandlesView {
 async function nodeHandles(
   node: GraphNode,
   edges: StoredEdge[],
-  { typeHandles, enumCasesOf, dockerExtensionId }: TypeHandlesContext,
+  { typeHandles, enumCasesOf, listerOf }: TypeHandlesContext,
 ): Promise<NodeHandlesView> {
   const input: Record<string, string | null> = {}
   const output: Record<string, string[]> = {}
@@ -135,8 +137,12 @@ async function nodeHandles(
     }
     output[h.id] = []
   }
-  for (const id of await expandDynamicHandles(node, declared, dockerExtensionId)) {
-    output[id] = []
+  // Checked before the lookup, so a node with no dynamic source loads nothing.
+  const prefixes = dynamicSourcePrefixes(declared)
+  if (prefixes.length > 0) {
+    for (const id of await expandDynamicHandles(node, prefixes, await listerOf(node.type))) {
+      output[id] = []
+    }
   }
   for (const edge of edges) {
     if (edge.target === node.id && edge.targetHandle) {

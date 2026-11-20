@@ -4,12 +4,13 @@
 // scratch git repo and calls resolveBuildInfo() again after moving HEAD,
 // the same sequence the bug report itself prescribes as the verification.
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
 
+import { gitFixture } from '@/test-support/git-fixture'
 import { resolveBuildInfo } from './build-info'
 
 const originalEnv = {
@@ -24,21 +25,15 @@ after(() => {
   process.chdir(originalCwd)
 })
 
-test('env vars captured at deploy time win, even if the checkout moves later', async () => {
-  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'build-info-env-'))
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' })
-  git('init', '-q')
-  git('config', 'user.email', 'test@example.com')
-  git('config', 'user.name', 'test')
-  await fs.writeFile(path.join(repo, 'a.txt'), 'one')
-  git('add', '.')
-  git('commit', '-q', '-m', 'first')
-  const deployedCommit = git('rev-parse', 'HEAD').trim()
+test('env vars captured at deploy time win, even if the checkout moves later', async (t) => {
+  const repo = gitFixture(t)
+  await fs.writeFile(path.join(repo.dir, 'a.txt'), 'one')
+  const deployedCommit = repo.commitAll('first')
 
   process.env.OPENCROFT_BRANCH = 'stage'
   process.env.OPENCROFT_COMMIT = deployedCommit
   process.env.OPENCROFT_DEPLOYED_AT = '2026-01-01T00:00:00Z'
-  process.chdir(repo)
+  process.chdir(repo.dir)
 
   const atDeploy = resolveBuildInfo()
   assert.equal(atDeploy.commit, deployedCommit)
@@ -46,39 +41,28 @@ test('env vars captured at deploy time win, even if the checkout moves later', a
   assert.equal(atDeploy.deployedAt, '2026-01-01T00:00:00Z')
 
   // Move the checkout forward without "restarting" (without re-reading env).
-  await fs.writeFile(path.join(repo, 'a.txt'), 'two')
-  git('commit', '-q', '-am', 'second')
-  const movedCommit = git('rev-parse', 'HEAD').trim()
+  await fs.writeFile(path.join(repo.dir, 'a.txt'), 'two')
+  const movedCommit = repo.commitAll('second')
   assert.notEqual(movedCommit, deployedCommit, 'setup sanity: the checkout must actually have moved')
 
   const afterMove = resolveBuildInfo()
   assert.equal(afterMove.commit, deployedCommit, 'must still report what was deployed, not what the checkout moved to')
-
-  await fs.rm(repo, { recursive: true, force: true })
 })
 
-test('falls back to reading the checkout only when no deploy env vars are set', async () => {
-  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'build-info-fallback-'))
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' })
-  git('init', '-q', '-b', 'main')
-  git('config', 'user.email', 'test@example.com')
-  git('config', 'user.name', 'test')
-  await fs.writeFile(path.join(repo, 'a.txt'), 'one')
-  git('add', '.')
-  git('commit', '-q', '-m', 'first')
-  const commit = git('rev-parse', 'HEAD').trim()
+test('falls back to reading the checkout only when no deploy env vars are set', async (t) => {
+  const repo = gitFixture(t)
+  await fs.writeFile(path.join(repo.dir, 'a.txt'), 'one')
+  const commit = repo.commitAll('first')
 
   delete process.env.OPENCROFT_BRANCH
   delete process.env.OPENCROFT_COMMIT
   delete process.env.OPENCROFT_DEPLOYED_AT
-  process.chdir(repo)
+  process.chdir(repo.dir)
 
   const info = resolveBuildInfo()
   assert.equal(info.commit, commit)
   assert.equal(info.branch, 'main')
   assert.equal(info.deployedAt, null)
-
-  await fs.rm(repo, { recursive: true, force: true })
 })
 
 // The container image has no .git. Loading the module there must not print

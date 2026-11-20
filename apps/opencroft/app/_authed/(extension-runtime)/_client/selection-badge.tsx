@@ -15,11 +15,19 @@
 // is the first of them: held back means not quoted here, not only not sent.
 // The second is at the send transport, which reads the same flag.
 
+//
+// THE QUOTE IS SPLIT HERE, NOT IN THE BADGE. A composed label is a path,
+// `Space › App › what`; `splitQuote` gives the badge the place and the *what*
+// as props of their own, so the kit component never parses text. A label that
+// is not a path (a deprecated publisher's own) has no place, and the badge
+// draws it whole.
+
 import { SelectionBadge as KitSelectionBadge } from 'agent-chat/components/selection-badge'
 
+import { splitQuote } from '@/app/_authed/(agent)/_shared/selection-envelope'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 
-export function SelectionBadge() {
+export function SelectionBadge({ className }: { className?: string }) {
   const scope = useOptionalSelection()
   if (!scope?.selection || !scope.passEnabled) {
     return null
@@ -27,5 +35,6 @@ export function SelectionBadge() {
   // The label and nothing else. What the agent receives is not shown here and
   // is not handed over either — not even as a tooltip: the composer says what
   // is going, and what that is made of stays where it was published.
-  return <KitSelectionBadge label={scope.selection.label} />
+  const { place, what } = splitQuote(scope.selection.label)
+  return <KitSelectionBadge label={what} place={place} className={className} />
 }

@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect, useNavigate, useRouter } from '@tanstack/react-router'
 import { useCallback, useRef, useState } from 'react'
 import { Button } from 'ui/button'
 import { GroupChatThreadFraming } from 'ui/group-chat/group-chat-thread-framing'
@@ -6,16 +6,14 @@ import { ScrollPage } from 'ui/layout/scrollpage'
 
 import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { deriveSessionStatus } from '@/app/_authed/(agent)/_shared/session-status'
-import {
-  GroupChatRefusal,
-  GroupChatThreadGone,
-  GroupChatThreadLoadFailed,
-} from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { ChatSelectionScope } from '@/app/_authed/(group-chats)/_components/chat-selection-scope'
+import { GroupChatThreadLoadFailed } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatThreadChat } from '@/app/_authed/(group-chats)/_components/group-chat-thread-chat'
 import { loadOrRefusal } from '@/app/_authed/(group-chats)/_lib/load-or-refusal'
 import { parseRevealPosition } from '@/app/_authed/(group-chats)/_lib/reveal-position'
 import { REACHED_IN_CHAT } from '@/app/_authed/(group-chats)/_lib/thread-levels'
 import { useSafeBack } from '@/app/_authed/(group-chats)/_lib/use-safe-back'
+import { useSignedInReader } from '@/app/_authed/(group-chats)/_lib/use-signed-in-reader'
 import type { GroupChatDetailView, GroupChatThreadView } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   findGroupChatThreadInChat,
@@ -35,47 +33,66 @@ import { pageTitle } from '@/app/_lib/page-title'
 // the extension-embedded chat. What is THIS route's own is
 // the frame: the kit's thread framing with its breadcrumbs and the artifact
 // strip, supplied through the assembly's `renderFrame` slot.
-type ThreadPageData =
-  | { found: 'gone' }
-  | { found: 'refused' }
-  | {
-      found: 'ok'
-      thread: GroupChatThreadView
-      chat: GroupChatDetailView
-      artifacts: ThreadArtifact[]
-    }
+interface ThreadPageData {
+  thread: GroupChatThreadView
+  chat: GroupChatDetailView
+  artifacts: ThreadArtifact[]
+}
+
+// A thread this page cannot show has no screen of its own. Each redirect
+// replaces the dead address's entry, so Back does not return to it. The
+// replace is stated rather than left to the router: a reload in the
+// background (the open thread deleted, or the reader removed from its chat)
+// navigates to a redirect with the redirect's own options.
+//
+// Deleted: the chat's thread list.
+function toThreadList(groupChatId: string) {
+  return redirect({ to: '/group-chats/$groupChatId', params: { groupChatId }, replace: true })
+}
+// Out of the reader's reach, the chat included: the chats overview, as if they
+// had opened it themselves -- the address says nothing about what is behind it.
+function toChats() {
+  return redirect({ to: '/group-chats', replace: true })
+}
 
 export const Route = createFileRoute('/_authed/(group-chats)/group-chats/$groupChatId_/$threadId')({
   // `?at=` is the turn a message search opened this thread for; absent for
   // every other way in. Not a loader input: the turn is found once the
   // session is open, which the loader cannot wait for.
   validateSearch: (search: Record<string, unknown>): { at?: number } => ({ at: parseRevealPosition(search.at) }),
-  // Refusals come back as data rather than as a throw — see
-  // _lib/load-or-refusal.ts for the measurement behind that.
-  loader: async ({ params }) =>
-    loadOrRefusal(async (): Promise<ThreadPageData> => {
+  // Refusals come back from the reads as data rather than as a throw — see
+  // _lib/load-or-refusal.ts for the measurement behind that — and become a
+  // redirect here, a router signal like `notFound()`.
+  loader: async ({ params }): Promise<ThreadPageData> => {
+    const loaded = await loadOrRefusal(async (): Promise<{ page: ThreadPageData | null }> => {
       // Looked for inside the chat the URL names, which checks membership
       // first -- so a deleted thread can be told apart from one the reader
       // may not have, and the answer arrives as data rather than a throw.
       const found = await findGroupChatThreadInChat({
         data: { groupChatId: params.groupChatId, threadId: params.threadId },
       })
-      if (found.state !== 'ok') {
-        return { found: found.state }
+      if (found.state === 'gone') {
+        throw toThreadList(params.groupChatId)
+      }
+      if (found.state === 'refused') {
+        return { page: null }
       }
       // The framing shows the group chat's name as a breadcrumb, which lives
       // on the group chat rather than the thread.
       const chat = await getMyGroupChatView({ data: params.groupChatId })
       const artifacts = await listThreadArtifacts({ data: params.threadId })
-      return { found: found.state, thread: found.thread, chat, artifacts }
-    }),
-  // An untitled thread is named by its chat alone rather than by a
-  // placeholder, and a refusal or a deleted thread by neither -- pageTitle
-  // drops both.
-  head: ({ loaderData }) => {
-    const loaded = loaderData?.refused === false && loaderData.found === 'ok' ? loaderData : undefined
-    return { meta: [{ title: pageTitle(loaded?.thread.title, loaded?.chat.name ?? 'Chats') }] }
+      return { page: { thread: found.thread, chat, artifacts } }
+    })
+    if (loaded.refused || !loaded.page) {
+      throw toChats()
+    }
+    return loaded.page
   },
+  // An untitled thread is named by its chat alone rather than by a
+  // placeholder -- pageTitle drops it.
+  head: ({ loaderData }) => ({
+    meta: [{ title: pageTitle(loaderData?.thread.title, loaderData?.chat.name ?? 'Chats') }],
+  }),
   component: GroupChatThreadPage,
   errorComponent: ThreadLoadFailed,
 })
@@ -110,16 +127,6 @@ function BackToThreadList({ groupChatId }: { groupChatId: string }) {
   )
 }
 
-// A reader refused this chat would be refused its thread list too, so the way
-// out of a refusal is the list of chats they do have.
-function BackToChats() {
-  return (
-    <Button size='sm' variant='outline' nativeButton={false} render={<Link to='/group-chats' />}>
-      Back to your chats
-    </Button>
-  )
-}
-
 function GroupChatThreadPage() {
   const data = Route.useLoaderData()
   const { groupChatId } = Route.useParams()
@@ -146,29 +153,23 @@ function GroupChatThreadPage() {
       }),
     [navigate, groupChatId],
   )
+  // The open thread went away: the loader asks again and redirects as it does
+  // for an address opened fresh.
+  const router = useRouter()
+  const onUnavailable = useCallback(() => void router.invalidate(), [router])
 
-  if (data.refused) {
-    return <GroupChatRefusal code={data.code} action={<BackToChats />} />
-  }
-  // Not a member: the same collapsed refusal as a chat the reader cannot have.
-  if (data.found === 'refused') {
-    return <GroupChatRefusal code='not-found' action={<BackToChats />} />
-  }
-  if (data.found === 'gone') {
-    return <GroupChatThreadGone className='py-12' action={<BackToThreadList groupChatId={groupChatId} />} />
-  }
-  // The session lives in its own component so its hooks are never behind the
-  // refusal branch above — a hook after an early return is a different hook
-  // order between renders, which React does not allow.
   return (
-    <ThreadConversation
-      thread={data.thread}
-      chat={data.chat}
-      artifacts={data.artifacts}
-      revealPosition={at}
-      onBack={onBack}
-      onThreadForked={onThreadForked}
-    />
+    <ChatSelectionScope spaceId={data.chat.spaceId}>
+      <ThreadConversation
+        thread={data.thread}
+        chat={data.chat}
+        artifacts={data.artifacts}
+        revealPosition={at}
+        onBack={onBack}
+        onThreadForked={onThreadForked}
+        onUnavailable={onUnavailable}
+      />
+    </ChatSelectionScope>
   )
 }
 
@@ -179,6 +180,7 @@ function ThreadConversation({
   revealPosition,
   onBack,
   onThreadForked,
+  onUnavailable,
 }: {
   artifacts: ThreadArtifact[]
   thread: GroupChatThreadView
@@ -186,6 +188,7 @@ function ThreadConversation({
   revealPosition?: number
   onBack: () => void
   onThreadForked: (threadId: string) => void
+  onUnavailable: () => void
 }) {
   const [artifacts, setArtifacts] = useState(initialArtifacts)
   const [openArtifactId, setOpenArtifactId] = useState<string | undefined>(undefined)
@@ -216,6 +219,7 @@ function ThreadConversation({
         console.error('Failed to refresh thread artifacts', threadId, error)
       })
   }, [thread.id])
+  const reader = useSignedInReader()
 
   return (
     <ScrollPage>
@@ -225,6 +229,8 @@ function ThreadConversation({
         revealPosition={revealPosition}
         onTurnSettled={onTurnSettled}
         onThreadForked={onThreadForked}
+        onUnavailable={onUnavailable}
+        reader={reader}
         renderFrame={({ conversation, composer, work, plan }) => (
           <GroupChatThreadFraming
             groupChatName={chat.name}

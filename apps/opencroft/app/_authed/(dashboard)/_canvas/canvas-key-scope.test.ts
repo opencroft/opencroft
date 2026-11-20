@@ -90,6 +90,7 @@ function buildEditor() {
 }
 
 // Mutation observers report after the current task's microtasks.
+// biome-ignore lint/plugin/noTestFixedTime: zero-delay turn, so the mutation observers have reported
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 test('removing the focused node gives focus to the canvas', async () => {

@@ -25,6 +25,7 @@ export interface Handle {
 export interface AppParameter {
   id: string
   label: string
+  /** Markdown, shown behind the hint beside the field's label. */
   description?: string
   placeholder?: string
   required?: boolean

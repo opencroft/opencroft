@@ -12,6 +12,7 @@ import {
   handleUpdate,
   interceptDraftSessionUpdates,
   type QueueStore,
+  receiveUpdate,
   type SessionActivity,
 } from './agent-client'
 import type { AgentConnection } from './connection'
@@ -110,6 +111,7 @@ async function setup(
     // decides whether an attachment the message names may travel at all.
     imagePrompt?: boolean
     loadAttachments?: AgentClientOptions['loadAttachments']
+    storeToolMedia?: AgentClientOptions['storeToolMedia']
     stopHostTask?: AgentClientOptions['stopHostTask']
     onActivityChange?: AgentClientOptions['onActivityChange']
   } = {},
@@ -226,6 +228,9 @@ async function setup(
       : {}),
     ...(options.loadAttachments
       ? ({ loadAttachments: options.loadAttachments } satisfies Pick<AgentClientOptions, 'loadAttachments'>)
+      : {}),
+    ...(options.storeToolMedia
+      ? ({ storeToolMedia: options.storeToolMedia } satisfies Pick<AgentClientOptions, 'storeToolMedia'>)
       : {}),
     ...(options.stopHostTask
       ? ({ stopHostTask: options.stopHostTask } satisfies Pick<AgentClientOptions, 'stopHostTask'>)
@@ -411,6 +416,7 @@ test('a read that fails part-way keeps the images already read and reports the r
     errors.map((event) => event.message),
     ['2 attachments could not be read and did not travel: store unavailable'],
   )
+  assert.equal(errors[0].source, undefined, "the engine's own report is not marked as the harness's")
   h.endTurn()
   await h.client.deleteSession(h.sessionId)
 })
@@ -4713,29 +4719,33 @@ test('a command is not gated by the cadence', async () => {
   await h.client.deleteSession(h.sessionId)
 })
 
-test('a command queued BEHIND held messages is not gated by their window either', async () => {
+test('a command queued BEHIND held messages is not gated by their window either', async (t) => {
   // "Never gated" has to mean never, including from behind. Queued after a run
   // the window is holding, a command would inherit their wait — and whatever
   // waits on its turn reports a failure the cadence caused, on a session where
-  // nothing is wrong.
+  // nothing is wrong. Both clocks are faked, so "the window closed" is a tick,
+  // not a guess at how late a loaded machine runs the timer.
   const h = await setup()
   h.client.setPresence(h.sessionId, { kind: 'custom', intervalMs: WINDOW_MS })
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() })
   await h.client.prompt(h.sessionId, 'one', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await h.client.prompt(h.sessionId, 'two', { queue: 'wait', origin: { kind: 'message', sender: 'Reader' } })
   await h.client.prompt(h.sessionId, '/compact', { queue: 'wait', origin: { kind: 'system' } })
-  await settle()
+  await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(h.promptCalls, ['/compact'], 'it jumps them, alone, and now')
   assert.deepEqual(queueSnapshots(h.events).at(-1), ['one', 'two'], 'and they are still shown as waiting')
 
   // Its window closes while the command's own turn is still running. Nothing
   // may go over a live turn — that is what the queue is for — so the release
   // waits for the settlement rather than firing on the timer.
-  await afterWindow()
+  t.mock.timers.tick(WINDOW_MS)
+  await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(h.promptCalls, ['/compact'], 'not delivered over the turn the command started')
 
   h.endTurn()
-  await settle()
+  await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(deliveries(h).at(-1), ['one', 'two'], 'released together, in the order they were sent')
+  t.mock.timers.reset()
   await h.client.deleteSession(h.sessionId)
 })
 
@@ -8201,4 +8211,163 @@ test('a deferred MCP resume still runs first, then the held notification, then t
   h.endTurn()
   await settle()
   await h.client.deleteSession(h.sessionId)
+})
+
+// ── tool media: kept by the host, in the harness's order ───────────────────
+
+const PICTURE_UPDATE = {
+  sessionUpdate: 'tool_call_update',
+  toolCallId: 'shot-1',
+  status: 'completed',
+  content: [
+    { type: 'content', content: { type: 'text', text: 'screen.png' } },
+    { type: 'content', content: { type: 'image', data: 'AAAAAA==', mimeType: 'image/png' } },
+  ],
+}
+
+function receive(sessionId: string, update: Record<string, unknown>): void {
+  receiveUpdate({ sessionId, update } as Parameters<typeof receiveUpdate>[0])
+}
+
+// A store that answers only when the test lets it, and records what it was
+// handed.
+function heldStore() {
+  const asked: Array<{ sessionKey?: string; mimeType: string; data: string }> = []
+  const answers: Array<(stored: { id: string; width?: number; height?: number } | null) => void> = []
+  const storeToolMedia: NonNullable<AgentClientOptions['storeToolMedia']> = (request) => {
+    asked.push(request)
+    return new Promise((resolve) => answers.push(resolve))
+  }
+  return { asked, answers, storeToolMedia }
+}
+
+function toolUpdates(events: ChatEvent[]) {
+  return events.filter((event): event is Extract<ChatEvent, { kind: 'tool_update' }> => event.kind === 'tool_update')
+}
+
+test('a tool result with a picture is folded with the id the host stored it under', async () => {
+  const held = heldStore()
+  const h = await setup('openclaw', { sessionKey: 'chat-key-1', storeToolMedia: held.storeToolMedia })
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  await settle()
+  assert.deepEqual(held.asked, [{ sessionKey: 'chat-key-1', mimeType: 'image/png', data: 'AAAAAA==' }])
+  assert.equal(toolUpdates(h.events).length, 0, 'the update waits for its picture to be stored')
+  held.answers[0]({ id: 'media-1', width: 2, height: 1 })
+  await settle()
+  assert.deepEqual(toolUpdates(h.events).at(-1)?.content, [
+    { type: 'text', text: 'screen.png' },
+    { type: 'image', mimeType: 'image/png', byteSize: 4, mediaId: 'media-1', width: 2, height: 1 },
+  ])
+  assert.doesNotMatch(JSON.stringify(h.events), /AAAAAA==/, 'the bytes are not in any event')
+})
+
+test('updates sent after a tool result with a picture are folded after it, in the order they came', async () => {
+  const held = heldStore()
+  const h = await setup('openclaw', { sessionKey: 'chat-key-2', storeToolMedia: held.storeToolMedia })
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  receive(h.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Here it is.' } })
+  await settle()
+  assert.equal(
+    h.events.some((event) => event.kind === 'agent_message'),
+    false,
+    'the reply waits behind the result it follows',
+  )
+  held.answers[0]({ id: 'media-1' })
+  await settle()
+  const order = h.events
+    .filter((event) => event.kind === 'tool_update' || event.kind === 'agent_message')
+    .map((event) => event.kind)
+  assert.deepEqual(order, ['tool_update', 'agent_message'])
+})
+
+test('a turn whose result is still being stored ends after that result', async () => {
+  const held = heldStore()
+  const h = await setup('openclaw', { sessionKey: 'chat-key-3', storeToolMedia: held.storeToolMedia })
+  await h.client.prompt(h.sessionId, 'take a screenshot', { queue: 'push', origin: { kind: 'system' } })
+  await settle()
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  h.endTurn()
+  await settle()
+  assert.equal(kinds(h.events).includes('turn_end'), false, 'the turn has not ended before its last update')
+  held.answers[0]({ id: 'media-1' })
+  await settle()
+  const tail = kinds(h.events).filter((kind) => kind === 'tool_update' || kind === 'turn_end')
+  assert.deepEqual(tail, ['tool_update', 'turn_end'])
+})
+
+test('a picture the host refuses or fails to store is folded as not kept, and the session carries on', async () => {
+  let calls = 0
+  const h = await setup('openclaw', {
+    sessionKey: 'chat-key-4',
+    storeToolMedia: async () => {
+      calls += 1
+      if (calls === 1) {
+        throw new Error('disk full')
+      }
+      return null
+    },
+  })
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  receive(h.sessionId, { ...PICTURE_UPDATE, toolCallId: 'shot-2' })
+  receive(h.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after' } })
+  await settle()
+  const pictures = toolUpdates(h.events).map((event) => event.content?.[1])
+  assert.deepEqual(pictures, [
+    { type: 'image', mimeType: 'image/png', byteSize: 4 },
+    { type: 'image', mimeType: 'image/png', byteSize: 4 },
+  ])
+  assert.equal(kinds(h.events).at(-1), 'agent_message')
+})
+
+test('a permission request raised while a tool result is being stored is drawn after that result', async () => {
+  const held = heldStore()
+  const h = await setup('openclaw', { sessionKey: 'chat-key-5', storeToolMedia: held.storeToolMedia })
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  const response = raisePermission(h.sessionId)
+  await settle()
+  assert.equal(permissionsIn(h.events).length, 0, 'the request waits behind the result the harness sent first')
+  held.answers[0]({ id: 'media-1' })
+  await settle()
+  const order = kinds(h.events).filter((kind) => kind === 'tool_update' || kind === 'permission_request')
+  assert.deepEqual(order, ['tool_update', 'permission_request'])
+  h.client.resolvePermission(permissionsIn(h.events)[0].requestId, 'approved')
+  assert.deepEqual(await answerOf(response), { outcome: { outcome: 'selected', optionId: 'approved' } })
+})
+
+test('a tool result that arrived before a reload began is folded, though it is stored while the session reloads', async () => {
+  const held = heldStore()
+  const h = await setup('openclaw', { sessionKey: 'chat-key-6', storeToolMedia: held.storeToolMedia })
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  await settle()
+  const session = acpStore().sessions.get(h.sessionId) as { reloading?: boolean }
+  session.reloading = true
+  try {
+    receive(h.sessionId, { ...PICTURE_UPDATE, toolCallId: 'shot-0' })
+    held.answers[0]({ id: 'media-1' })
+    await settle()
+  } finally {
+    session.reloading = false
+  }
+  assert.equal(held.asked.length, 1, 'the update replayed by the reload is not stored')
+  assert.deepEqual(
+    toolUpdates(h.events).map((event) => event.toolCallId),
+    ['shot-1'],
+    'the live result is folded and the replayed one is not',
+  )
+})
+
+test('with no store, a tool result with a picture is folded at once and names what was there', async () => {
+  const h = await setup('openclaw')
+  receive(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'shot-1', title: 'screenshot', status: 'pending' })
+  receive(h.sessionId, PICTURE_UPDATE)
+  assert.deepEqual(toolUpdates(h.events).at(-1)?.content, [
+    { type: 'text', text: 'screen.png' },
+    { type: 'image', mimeType: 'image/png', byteSize: 4 },
+  ])
 })

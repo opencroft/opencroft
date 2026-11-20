@@ -168,7 +168,13 @@ export default defineExtension({
   into tabs. Both get `ExtensionInspectorProps<D>`: `nodeId`, `data` and
   `updateData(patch)`. The inspector wraps each in a scroll area unless it
   asks to fill the panel instead (`inspectorFullHeight`, or a tab's
-  `fullHeight`), as an editor or a terminal does.
+  `fullHeight`), as an editor or a terminal does. `updateData` keeps one
+  identity while the inspector shows the node, and a tab renders again only
+  when `data` or `updateData` changes, not when its node is dragged or
+  resized. A tab that calls a hook reading the graph (`useGraphNodes`,
+  `useGraphEdges`, `useNodeContext`, `useInputValue`, `useLiveNodeData`,
+  `useContainingNodes`) renders on every move or resize of any node on the
+  canvas, so a large form inside it is worth a `memo` with stable props.
 - `useNodeContext(nodeId, handleId)` reads what is wired into a target handle
   on the open canvas. A node offers a value on its source handle with
   `exposeOutput(handleId, data, type, nodeId, contexts)`.
@@ -259,6 +265,7 @@ export const routes: ExtensionRoutes = {
 | `nodeActionAccess` | the same policy for node actions | `NodeActionAccessMap` in `actions` |
 | `nodeDataValidators` | what is wrong with a node's data, by bare node type | `NodeDataValidators` in `graph` |
 | `nodeChecks` | what is wrong with a node given its data and wiring, by bare node type | `NodeChecks` in `graph` |
+| `dynamicHandles` | the live ids of a node's `dynamic` source handles, by bare node type | `DynamicHandles` in `graph` |
 | `exposeOutput` | the value a node's source handle carries, for server-side readers of the graph | `ExposeOutput` in `actions` |
 | `routes` | HTTP handlers at `/api/ext/<extension id>/http/<path>` (`routeUrl(path)`) | `ExtensionRoutes` in `routes` |
 | `tools` | the handlers of the manifest's `provides.mcpTools`, by name | `ExtensionToolHandler` in `tools` |
@@ -338,6 +345,28 @@ an abort `signal` when the run can be cancelled.
   pure: its findings follow from what it is told, in a stable order (sort by
   the other node's graph and id), so checking a graph again over the same
   instance writes nothing.
+- **Dynamic handles:** a source handle declared `dynamic: true` has an id
+  prefix (`shell-`), and the node's live ids under it depend on the node: a
+  route per entry in its data, a container per replica. The node type's
+  `dynamicHandles` entry answers them: `list(node, prefix)` gets the node
+  (`id`, `data`, wired inputs included) and the declared prefix, and returns
+  the live ids; the host keeps those under the prefix. Every handle listing
+  asks it: each terminal picker, a node read's outputs (`getNodes`) and
+  `graph.listHandles`. So a node whose type declares a dynamic terminal
+  (`builtin.core.terminal-context`) and answers its ids is offered wherever a
+  terminal is picked, with no code in the host for its type. An empty answer,
+  a throw or a rejection lists none for that node. Mark the entry
+  `fromData: true` when `list` reads the node's data alone, with no I/O: the
+  pickers then list its terminals in their first answer. Without it the host
+  asks `list` per node after the first answer, so one slow host keeps only
+  its own group loading. Each terminal named this way also needs
+  `exposeOutput` to answer the context for that id.
+
+  ```ts
+  export const dynamicHandles = {
+    rack: { fromData: true, list: (node: { data: RackData }) => node.data.shells.map((s) => `shell-${s}`) },
+  } satisfies DynamicHandles
+  ```
 - **Access:** `actionAccess` and `nodeActionAccess` guard the browser's entry
   points only. An agent's `call` and a graph run reach node actions without
   them.
@@ -361,7 +390,7 @@ modules; the package roots re-export them all.
 | `canvas` | node definitions and props, handle pins, `NodeFrame` and `NodeCard*`, `CanvasFrame` and `useContainingNodes`, `useNodeContext`, the inspector intent, context menus, xyflow hooks, command modes, `useOverlay`, `GraphCanvas` |
 | `graph` | `NodeRef`, `describeGraphRefs`, `subscribeGraphRefs` |
 | `streams` | `getStream`, `subscribe`, `broadcast`; the server's `events` arrive on `getStream(extensionId, 'events')` |
-| `chat` | `ChatDock`, `EmbeddedAgentChat`, `ChatSelector`, the selection that rides along with a message, the agent-chat provider points |
+| `chat` | `ChatDock`, `EmbeddedAgentChat`, `ChatSelector`, the selection that rides along with a message (`usePublishSelection`, `Selection`; see below), the agent-chat provider points |
 | `app` | `AppDefinition` and its props, App routing, the App's places in the chrome, `useUrlParam`, `useIsMobile` |
 | `markdown` | `Markdown`, `MarkdownEditor`, `MarkdownDiffView`, `MermaidDiagram`, `MarkdownResolver` |
 | `code` | `CodeBlock`, `CodeBlockEditor`, `CodeEditor` |
@@ -383,6 +412,48 @@ modules; the package roots re-export them all.
 | `people` | `users`, `agents`, `mentions`, `mcpTokens` |
 | `terminal` | `terminal`, `ssh`, `execContext` |
 | `routes`, `tools`, `lifecycle` | the types of those exports |
+
+### The selection a message carries
+
+The host mounts a selection scope around every App page and around the
+canvas. A surface tells it what the reader has selected or open, and the
+chat composer quotes it above the input and, unless the reader holds it back,
+sends it with the next message. An extension mounts no `SelectionProvider` of
+its own; one it still mounts publishes into the host's scope.
+
+Publish a `Selection` from `@opencroft/client/chat`: a list of items, each a
+reference an agent resolves with one tool call.
+
+```tsx
+import { usePublishSelection } from '@opencroft/client/chat'
+
+usePublishSelection(
+  task ? { items: [{ kind: 'app', app: address, action: 'task_get', params: { key: task.key }, name: task.key, noun: ['task', 'tasks'] }] } : null,
+)
+```
+
+| Kind | What it is | The call the host writes |
+| --- | --- | --- |
+| `node` | a canvas node: `graph` (`<space>.<graph>`), `id`, `name`, `type` | one `getNodes` per graph |
+| `file` | a file or folder on a terminal: `terminal` (a `remote_*` target), `path`, `folder?`, `lines?`, `text?`, `on?` | `remote_read`, or `ls -la --` through `remote_exec` for a folder |
+| `commit` | a commit on a terminal: `terminal`, `sha`, `repository?`, `subject?`, `path?` | `git show --stat`, or that file's change with `path`, through `remote_exec`; none when `sha` is not 4 to 64 hex digits |
+| `app` | anything an App's own action reads: `app`, `action`, `params`, `name`, `noun?`, `lines?`, `text?` | `app_call` with that action and those parameters |
+
+- `usePublishSelection(selection | null)` compares by value and publishes
+  when the value changes; `null` and an empty list clear it, and so does the
+  component unmounting while its last value selected something. `useSelection().setSelection(...)` takes the same value, for a
+  surface that publishes on an event.
+- The reader sees the quote as a path, `Space › App › what`, shortened to
+  fit: one item names itself (`deploy.sh`, `3 lines selected in deploy.md`),
+  several count (`2 nodes selected`, `3 items selected`). `place` replaces
+  the App's name in it.
+- The agent receives a block: the quote, a line per item, and a `Read:` line
+  with the exact call for each. Highlighted `text` travels with its `lines`,
+  or alone when the surface can't place it on a line, at most 4,000
+  characters per selection; the rest is cut with a note. At
+  most 100 items are listed, and the quote counts them all.
+- Publishing a `{ label, content }` pair still works and is sent as it is; it
+  is deprecated in favour of items.
 
 ### Spaces and apps: who sees what
 

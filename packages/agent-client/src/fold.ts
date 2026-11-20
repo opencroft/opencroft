@@ -5,6 +5,7 @@ import type {
   ElicitationSchema,
   PermissionOpt,
   SessionNotice,
+  ToolContent,
   ToolDiff,
 } from './types'
 
@@ -21,6 +22,7 @@ export type ChatMessage =
       input?: unknown
       output?: unknown
       diffs?: ToolDiff[]
+      content?: ToolContent[]
     }
   | {
       id: string
@@ -67,6 +69,20 @@ const TERMINAL_TOOL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 
 export function isTerminalToolStatus(status: string | undefined): boolean {
   return status !== undefined && TERMINAL_TOOL_STATUSES.has(status)
+}
+
+/**
+ * A call's `content` once `update` applies. Content belongs to the result it
+ * came with: an update reporting a result (output or content) replaces it,
+ * and one that carries none, such as a status change, leaves it. Every fold
+ * of a call's updates (here, the transcript's merge, a host's own) goes
+ * through this, so they cannot come to disagree.
+ */
+export function nextToolContent(
+  current: ToolContent[] | undefined,
+  update: { output?: unknown; content?: ToolContent[] },
+): ToolContent[] | undefined {
+  return update.output !== undefined || update.content ? update.content : current
 }
 
 // How a tool call reads once the turn that ran it has ended. A call still open
@@ -276,6 +292,7 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
           status: event.status,
           input: event.input,
           ...(event.diffs ? { diffs: event.diffs } : {}),
+          ...(event.content ? { content: event.content } : {}),
         }
         tools.set(event.toolCallId, message)
         messages.push(message)
@@ -293,6 +310,12 @@ export function foldEvents(events: ChatEvent[]): ChatMessage[] {
           message.output = event.output ?? message.output
           if (event.diffs) {
             message.diffs = event.diffs
+          }
+          const content = nextToolContent(message.content, event)
+          if (content) {
+            message.content = content
+          } else {
+            delete message.content
           }
           if (isTerminalToolStatus(message.status)) {
             openTools.delete(message)

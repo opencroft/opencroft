@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from '@tanstack/react-router'
+import { useRouteContext, useRouter } from '@tanstack/react-router'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AppLauncher,
@@ -26,6 +26,10 @@ const ROOT_PAGES: AppLauncherPage[] = ROOTS.filter((root) => root.path === CHATS
 }))
 
 const hrefFor = (slug: string) => `/space/${slug}`
+
+const settingsHrefFor = (slug: string) => `/space/${slug}/settings`
+
+const appSettingsHref = (spaceSlug: string, appSlug: string) => `/space/${spaceSlug}/settings/app/${appSlug}`
 
 /**
  * How long after a swipe the next one still walks further back through the
@@ -119,7 +123,13 @@ export function AppLauncherHost({
     fetching.current = true
     Promise.all([listAllSpaceApps(), listApps()])
       .then(([entries, metas]) => {
-        setApps(entries.map((entry) => ({ ...toSpaceApp(entry.spaceSlug, entry, metas), spaceSlug: entry.spaceSlug })))
+        setApps(
+          entries.map((entry) => ({
+            ...toSpaceApp(entry.spaceSlug, entry, metas),
+            spaceSlug: entry.spaceSlug,
+            settingsHref: appSettingsHref(entry.spaceSlug, entry.slug),
+          })),
+        )
       })
       .catch(() => {
         // The spaces stay listed; only the apps are missing until the next fetch.
@@ -138,16 +148,21 @@ export function AppLauncherHost({
     }
   }, [open, refresh])
 
+  // The settings buttons are an administrator's, decided by the same `isAdmin`
+  // the account menu shows the Administration page by.
+  const { isAdmin } = useRouteContext({ from: '/_authed' })
+  const listed = useMemo(() => (isAdmin ? apps : apps.map(({ settingsHref: _, ...app }) => app)), [apps, isAdmin])
+
   // The history without the open app and without apps that no longer exist.
   const recent = useMemo(() => {
-    const byId = new Map(apps.map((app) => [app.id, app]))
+    const byId = new Map(listed.map((app) => [app.id, app]))
     return recentIds
       .filter((id) => id !== navigation.activeAppId)
       .flatMap((id) => {
         const app = byId.get(id)
         return app ? [app] : []
       })
-  }, [apps, recentIds, navigation.activeAppId])
+  }, [listed, recentIds, navigation.activeAppId])
 
   // A run of swipes walks the history as it was when the run started; the
   // visits it makes reorder the history only for the next run.
@@ -200,14 +215,15 @@ export function AppLauncherHost({
       // Off a space's pages, such as the App Launcher page itself, the space of
       // the app the reader came from.
       currentSlug,
-      apps,
+      apps: listed,
       recent,
       activeAppId: navigation.activeAppId,
       pages,
       hrefFor,
+      settingsHrefFor: isAdmin ? settingsHrefFor : undefined,
       loading: !settled,
     }),
-    [spaces, currentSlug, apps, recent, navigation.activeAppId, pages, settled],
+    [spaces, currentSlug, listed, recent, navigation.activeAppId, pages, settled, isAdmin],
   )
   const show = useCallback(() => setOpen(true), [])
   const control = useMemo(() => ({ open: show, search, refresh, step }), [show, search, refresh, step])

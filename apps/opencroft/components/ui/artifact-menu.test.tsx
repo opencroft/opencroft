@@ -76,6 +76,7 @@ async function mount(node: ReactNode) {
 async function settle() {
   for (let i = 0; i < 5; i++) {
     await act(async () => {
+      // biome-ignore lint/plugin/noTestFixedTime: settle loop of five 10 ms rounds for the menu's effects and close transition
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
   }

@@ -19,6 +19,7 @@ import test, { after } from 'node:test'
 import { promisify } from 'node:util'
 
 import { toastStore } from '@/lib/toast-store'
+import { isolatedGitEnv } from '@/test-support/git-fixture'
 import { ensureExtensionBuilt } from './loader'
 
 const run = promisify(execFile)
@@ -36,14 +37,7 @@ after(async () => {
   await fs.rm(root, { recursive: true, force: true })
 })
 
-// A committer identity for the scratch repos, kept out of any shared git config.
-const GIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: 'test',
-  GIT_AUTHOR_EMAIL: 'test@example.test',
-  GIT_COMMITTER_NAME: 'test',
-  GIT_COMMITTER_EMAIL: 'test@example.test',
-}
+const GIT_ENV = isolatedGitEnv()
 
 let seq = 0
 

@@ -1228,6 +1228,13 @@ export const chatAttachment = pgTable(
     // bytes did not say.
     width: integer(),
     height: integer(),
+    // Who put the bytes here: 'message', a picture a reader attached to what
+    // they sent, or 'tool', a picture or a sound a tool returned in the
+    // conversation. Only a message's may be named by a send, and only a tool's
+    // are released when the conversation is compacted or its thread archived;
+    // everything else (the route that serves them, a key's rename or
+    // retirement, the orphan sweep) treats the two alike.
+    origin: text().$type<'message' | 'tool'>().notNull().default('message'),
     createdAt: createdAt(),
   },
   (t) => [index('ChatAttachment_sessionKey_idx').on(t.sessionKey)],

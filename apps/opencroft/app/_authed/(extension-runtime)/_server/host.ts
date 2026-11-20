@@ -101,6 +101,7 @@ import {
   type GraphEdgeLike as SendMessageEdgeLike,
   type GraphNodeLike as SendMessageNodeLike,
 } from '@/app/_authed/(extension-runtime)/_server/stream'
+import { terminalDetail, terminalTitle } from '@/app/_authed/(extension-runtime)/_server/terminal-names'
 import { wiredEdgesOf } from '@/app/_authed/(extension-runtime)/_wired-edges'
 import { COMPACT_WAIT_MS, compactResultOf, waitForCompact } from '@/app/_authed/(group-chats)/_server/compact-wait'
 import type { MemberPrincipal, SenderThread } from '@/app/_authed/(group-chats)/_server/model'
@@ -155,6 +156,8 @@ export interface GraphSnapshot {
 interface GraphEntry {
   /** The graph's address (`<space>.<graph>`). */
   address: string
+  /** The graph's name, as its Graph App instance shows it. */
+  name: string
   spaceSlug: string
   graph: GraphData
 }
@@ -164,6 +167,7 @@ async function loadAllGraphs(): Promise<GraphEntry[]> {
   await r.ensureLoaded()
   return r.listGraphs().map((ref) => ({
     address: r.addressOf(ref),
+    name: ref.graph.name,
     spaceSlug: ref.space.slug,
     graph: ref.graph.graph,
   }))
@@ -230,7 +234,11 @@ export interface HandleOwner {
   spaceSlug: string
   /** The node's stored, qualified type; `app:<type>` for an App instance. */
   type: string
-  /** Whether `handles()` asks anything at runtime. False means it answers from the manifest alone. */
+  /**
+   * Whether `handles()` asks anything at runtime. False means it answers from
+   * the manifest and the node's data alone: its type's `dynamicHandles` entry,
+   * if any, is `fromData`.
+   */
   dynamic: boolean
   handles: () => Promise<HandleInfo[]>
 }
@@ -397,8 +405,9 @@ export const setNodeErrors: HostGraphApi['setNodeErrors'] = (nodeId, source, err
  * The nodes and App instances owning handles that match `filter`, each with
  * its handles as a call of its own -- the discovery `listHandles` waits on in
  * full, exported for a caller that shows owners before their handles arrive
- * (the terminal picker). Reads the graph, the manifests and the App rows;
- * asks nothing at runtime.
+ * (the terminal picker). Reads the graph, the manifests, the App rows and
+ * which node types' `dynamicHandles` entries are `fromData`, loading those
+ * types' extensions; asks no owner anything at runtime.
  */
 export async function listGraphHandleOwners(
   filter?: ListHandlesFilter,
@@ -409,12 +418,12 @@ export async function listGraphHandleOwners(
   // Same manifest source as getTerminalContext, so a handle this returns is
   // one that resolver can actually resolve.
   const { listExtensionManifestsImpl } = await import('@/app/_authed/(extension-runtime)/_server/extension-action-impl')
-  const { buildNodeTypeHandles, expandDynamicHandles, findDockerExtensionId } = await import(
+  const { buildNodeTypeHandles, dynamicHandleListers, dynamicSourcePrefixes, expandDynamicHandles } = await import(
     '@/app/_authed/(extension-runtime)/_server/node-handles'
   )
   const [graphs, manifests] = await Promise.all([loadAllGraphs(), listExtensionManifestsImpl()])
   const byType = buildNodeTypeHandles(manifests)
-  const dockerExtensionId = findDockerExtensionId(manifests)
+  const listerOf = dynamicHandleListers()
   const wanted = (handle: { role: string; handleType: string }) =>
     (filter?.role === undefined || handle.role === filter.role) &&
     (filter?.handleType === undefined || handle.handleType === filter.handleType)
@@ -434,18 +443,29 @@ export async function listGraphHandleOwners(
       if (matching.length === 0) {
         continue
       }
-      const base = { nodeId: raw.id, spaceSlug: entry.spaceSlug, type, nodeName: (raw.data?.name as string) || type }
-      // Expansion costs a docker.ps, so it happens only when a dynamic handle
-      // survived the filter -- a caller asking for targets, or for some other
-      // handle type, pays nothing.
-      const dynamic = matching.some((handle) => handle.dynamic)
+      const nodeName = values.nodeName(raw.data, byType.get(type)?.name, type)
+      const sources = declared.filter((handle) => handle.role === 'source')
+      const base = {
+        nodeId: raw.id,
+        spaceSlug: entry.spaceSlug,
+        type,
+        nodeName,
+        graph: { address: entry.address, name: entry.name },
+      }
+      const titleOf = (handleId: string) =>
+        terminalTitle({ kind: 'node', name: nodeName }, terminalDetail(sources, handleId))
+      // Expansion can ask a remote host, so it happens only when a dynamic
+      // source handle survived the filter -- a caller asking for targets, or
+      // for some other handle type, pays nothing.
+      const prefixes = dynamicSourcePrefixes(matching)
+      const lister = prefixes.length > 0 ? await listerOf(type) : undefined
       owners.push({
         id: raw.id,
         spaceSlug: entry.spaceSlug,
         type,
-        dynamic,
+        dynamic: lister !== undefined && lister.fromData !== true,
         handles: async () => {
-          const liveIds = dynamic ? await expandDynamicHandles(raw, declared, dockerExtensionId) : []
+          const liveIds = await expandDynamicHandles(raw, prefixes, lister)
           return matching.flatMap((handle): HandleInfo[] => {
             const shared = {
               ...base,
@@ -457,11 +477,12 @@ export async function listGraphHandleOwners(
             // A dynamic handle's declared id is only a prefix -- one entry per
             // live id instead, so every handleId returned is one that
             // terminal.getContext can actually resolve.
+            const titled = (handleId: string) => (handle.role === 'source' ? { title: titleOf(handleId) } : {})
             return handle.dynamic
               ? liveIds
                   .filter((id) => id.startsWith(handle.id))
-                  .map((id) => ({ ...shared, handleId: id, dynamic: true }))
-              : [{ ...shared, handleId: handle.id, dynamic: false }]
+                  .map((id) => ({ ...shared, handleId: id, dynamic: true, ...titled(id) }))
+              : [{ ...shared, handleId: handle.id, dynamic: false, ...titled(handle.id) }]
           })
         },
       })
@@ -485,7 +506,7 @@ export async function listGraphHandleOwners(
             nodeId: handle.instanceId,
             spaceSlug: handle.spaceSlug,
             type: `app:${handle.type}`,
-            nodeName: handle.title,
+            nodeName: handle.name,
             slug: handle.slug,
             // An instance whose space is gone has no address to give.
             ...(handle.spaceSlug ? { address: `${handle.spaceSlug}.${handle.slug}` } : {}),
@@ -496,6 +517,7 @@ export async function listGraphHandleOwners(
             label: handle.label,
             liveLabel: handle.liveLabel,
             dynamic: handle.dynamic,
+            title: handle.handleTitle,
           })),
       })
     }

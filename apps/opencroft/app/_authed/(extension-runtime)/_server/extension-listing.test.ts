@@ -67,6 +67,7 @@ async function waitFor(condition: () => Promise<boolean>, what: string): Promise
     if (Date.now() > deadline) {
       assert.fail(`timed out waiting for ${what}`)
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }

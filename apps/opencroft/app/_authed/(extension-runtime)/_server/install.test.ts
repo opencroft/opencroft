@@ -34,6 +34,7 @@ import {
   getRegistrySources,
   type RegistryExtension,
 } from '@/app/_authed/(extension-runtime)/_server/registry'
+import { isolatedGitEnv } from '@/test-support/git-fixture'
 
 const execFileAsync = promisify(execFile)
 
@@ -71,10 +72,7 @@ async function withScratch(folders: string[], run: (scratch: Scratch) => Promise
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  // An identity and no signing on the command line, so no global git config
-  // decides whether a commit can be made.
-  const identity = ['-c', 'commit.gpgsign=false', '-c', 'user.name=a', '-c', 'user.email=a@example.com']
-  const { stdout } = await execFileAsync('git', [...identity, ...args], { cwd })
+  const { stdout } = await execFileAsync('git', args, { cwd, env: isolatedGitEnv() })
   return stdout.trim()
 }
 

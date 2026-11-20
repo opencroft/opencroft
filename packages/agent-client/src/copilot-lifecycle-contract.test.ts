@@ -3,7 +3,7 @@ import test, { type TestContext } from 'node:test'
 
 import { RequestError } from '@agentclientprotocol/sdk'
 
-import { connectionKey, createAgentClient, handleUpdate } from './agent-client'
+import { type AgentClientOptions, connectionKey, createAgentClient, receiveUpdate } from './agent-client'
 import type { AgentConnection } from './connection'
 import type { AgentSelection, ChatEvent } from './types'
 
@@ -62,8 +62,17 @@ const configOptions = (mode: string, allowAll: string) => [
 
 let counter = 0
 
+// Where the process's notifications enter the engine, as from a real
+// connection.
 const update = (sessionId: string, body: Record<string, unknown>) =>
-  handleUpdate({ sessionId, update: body } as Parameters<typeof handleUpdate>[0])
+  receiveUpdate({ sessionId, update: body } as Parameters<typeof receiveUpdate>[0])
+
+// A finished tool call whose result is a picture.
+const PICTURE_RESULT = {
+  sessionUpdate: 'tool_call_update',
+  status: 'completed',
+  content: [{ type: 'content', content: { type: 'image', data: 'AAAAAA==', mimeType: 'image/png' } }],
+}
 
 const textOfPrompt = (prompt: Array<{ type: string; text?: string }>) =>
   prompt.filter((block) => block.type === 'text').at(-1)?.text ?? ''
@@ -129,7 +138,7 @@ function copilotProcess(
       const replay = [
         { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'first message' } },
         { sessionUpdate: 'tool_call', toolCallId: 'replayed-call', title: 'echo', status: 'pending' },
-        { sessionUpdate: 'tool_call_update', toolCallId: 'replayed-call', status: 'completed' },
+        { ...PICTURE_RESULT, toolCallId: 'replayed-call' },
         { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first reply' } },
         { sessionUpdate: 'current_mode_update', currentModeId: `${MODE_URL}${state.mode}` },
       ]
@@ -189,7 +198,11 @@ function seed(selection: AgentSelection, process: ReturnType<typeof copilotProce
 
 async function copilotSetup(
   t: TestContext,
-  options: { closeSupported?: boolean; loadGates?: Array<Promise<void>> } = {},
+  options: {
+    closeSupported?: boolean
+    loadGates?: Array<Promise<void>>
+    storeToolMedia?: AgentClientOptions['storeToolMedia']
+  } = {},
 ) {
   counter += 1
   const selection: AgentSelection = {
@@ -203,7 +216,7 @@ async function copilotSetup(
   const held = new Set<string>()
   const first = copilotProcess(state, held, options.loadGates)
   seed(selection, first, options.closeSupported ?? true)
-  const client = createAgentClient()
+  const client = createAgentClient({ storeToolMedia: options.storeToolMedia })
   t.after(() => client.reset())
   const meta = await client.createSession(selection)
   return { client, selection, state, held, meta, sessionId: meta.id, process: first }
@@ -314,6 +327,31 @@ test('the commands a reloading Copilot session announces reach it while the repl
   assert.deepEqual(
     after.filter((event) => event.kind === 'available_commands'),
     [{ kind: 'available_commands', commands: [{ name: 'probe-command', description: 'from the reload' }] }],
+  )
+})
+
+test('a picture in a reloading Copilot session’s replay is never stored, and one sent after the reload is', BOUNDED, async (t) => {
+  const stored: string[] = []
+  const h = await copilotSetup(t, {
+    storeToolMedia: async (request) => {
+      stored.push(request.mimeType)
+      return { id: `media-${stored.length}` }
+    },
+  })
+
+  await h.client.refreshMcpServers()
+  assert.deepEqual(h.process.wire, ['close', 'load'], 'the session reloaded, replaying its picture')
+  assert.deepEqual(stored, [], 'nothing of the replay reaches the store')
+
+  update(h.sessionId, { sessionUpdate: 'tool_call', toolCallId: 'live-call', title: 'screenshot', status: 'pending' })
+  update(h.sessionId, { ...PICTURE_RESULT, toolCallId: 'live-call' })
+  await until(() => stored.length === 1, 'the live picture to be stored')
+  await until(
+    () =>
+      (h.client.getSessionEvents(h.sessionId) ?? []).some(
+        (event) => event.kind === 'tool_update' && event.content?.[0]?.type === 'image',
+      ),
+    'the live result to be folded',
   )
 })
 

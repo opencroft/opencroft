@@ -23,7 +23,14 @@ export interface GraphRefDescription {
   kind: 'node' | 'app'
   /** The name its owner gave it, else its type's name. */
   name: string
-  /** For a terminal target: which of the node's terminals, when that needs saying. */
+  /**
+   * For a terminal target: the terminal's one name, the same in every list and
+   * badge. A node's terminal is the node's name, with which of its terminals it
+   * is when that is something else ("Docker · postgres"); an App's is what the
+   * App calls it ("my-repo · main"). For anything else, `name`.
+   */
+  title: string
+  /** For a terminal target: which of the owner's terminals it is, when that needs saying. */
   detail?: string
   /** Lucide icon name of its type. */
   icon?: string
@@ -31,6 +38,10 @@ export interface GraphRefDescription {
   /** The node type's name, or `App`. */
   typeName: string
   spaceSlug: string
+  /** The space's name as its people see it. */
+  spaceName: string
+  /** For a node: the graph it is on, by its address (`<spaceSlug>.<graph>`) and name. */
+  graph?: { address: string; name: string }
   /** For an App instance: its slug, unique in its space; `/space/<spaceSlug>/app/<slug>` opens it. */
   slug?: string
   /** For an App instance: its address, `<spaceSlug>.<slug>`. */

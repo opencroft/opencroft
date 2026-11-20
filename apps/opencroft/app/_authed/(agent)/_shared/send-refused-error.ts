@@ -1,3 +1,6 @@
+import { errorMessage } from 'agent-client/errors'
+import { knownFailure, type PlainFailure, plainFailure } from 'agent-client/plain-failure'
+
 // A send that was deliberately refused, carrying copy meant for the reader.
 //
 // Dependency-free and in _shared for the same reason the group-chat refusal
@@ -25,13 +28,28 @@ export class SendRefusedError extends Error {
   }
 }
 
-/** Shown when a send fails for anything that is not a deliberate refusal. */
-export const GENERIC_SEND_FAILURE = 'Your message could not be sent. It has been put back in the composer.'
+/**
+ * The notice for a failed send: a refusal speaks for itself, anything else is
+ * read in plain words (agent-client's plainFailure) with its own text kept
+ * under Details. What a harness says about a delivered prompt reaches the
+ * conversation as an event, so the text a send throws is the engine's.
+ */
+export function sendFailureNotice(error: unknown): PlainFailure {
+  return error instanceof SendRefusedError
+    ? { title: error.message }
+    : plainFailure(errorMessage(error), 'send', 'engine')
+}
 
 /**
- * The copy for a failed send: a refusal speaks for itself, anything else gets
- * the generic wording.
+ * The notice on a sent message that stays on screen, not sent, with Send again
+ * and Discard beside it. Its words are not in the composer, so the general
+ * send hint, which sends the reader there, is left off; a hint from a rule
+ * that knows the cause names that cause's remedy and is kept.
  */
-export function sendFailureMessage(error: unknown): string {
-  return error instanceof SendRefusedError ? error.message : GENERIC_SEND_FAILURE
+export function outgoingFailureNotice(error: unknown): PlainFailure {
+  const notice = sendFailureNotice(error)
+  if (error instanceof SendRefusedError || knownFailure(errorMessage(error), 'engine')) {
+    return notice
+  }
+  return { title: notice.title, ...(notice.details ? { details: notice.details } : {}) }
 }

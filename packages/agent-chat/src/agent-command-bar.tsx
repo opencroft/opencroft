@@ -25,7 +25,7 @@ import {
   selectLeftoverBooleanOptions,
   selectLeftoverConfigs,
 } from './agent-command-bar-configs'
-import { ChatCommandBar, type ChatComposerHandle } from './chat-composer'
+import { COMPOSER_PLACEHOLDER, ChatCommandBar, type ChatComposerHandle } from './chat-composer'
 import type { ApprovalTitles, CommandBarConfig } from './components/agent-command-bar'
 import type { MentionCandidate } from './components/mention-autocomplete'
 import { AttachButton } from './components/attach-button'
@@ -79,6 +79,7 @@ export type AgentCommandBarSession = Pick<
   | 'cancelEdit'
   | 'commitEdit'
   | 'commands'
+  | 'refuseSend'
 >
 
 // What a `controls` render prop is handed — the primitives it needs to wire
@@ -148,8 +149,6 @@ export interface UseAgentCommandBarOptions {
    *  called with the session key so a flush during a session switch always
    *  targets the session the text actually belonged to. */
   onDraftChange?: (key: string, text: string) => void
-  sendError?: string
-  onDismissSendError?: () => void
   /** Render prop for a host-specific input method (e.g. voice dictation) —
    *  mirrors AgentChat's `renderTool`. Absent renders nothing in that slot. */
   controls?: (ctx: AgentCommandBarControlsContext) => ReactNode
@@ -283,8 +282,6 @@ export function useAgentCommandBar({
   usage,
   savedDraft,
   onDraftChange,
-  sendError,
-  onDismissSendError,
   controls,
   autoApprove,
   onToggleAutoApprove,
@@ -566,7 +563,7 @@ export function useAgentCommandBar({
   autoApproveRef.current = onToggleAutoApprove
   const handleToggleAutoApprove = useCallback(() => autoApproveRef.current?.(), [])
 
-  const inputPlaceholder = placeholder ?? `Message ${shortKey(session.sessionKey)}…`
+  const inputPlaceholder = placeholder ?? COMPOSER_PLACEHOLDER
 
   // The kit component clears its own buffer before handing the text over (see
   // its clear-on-send contract); this settles the stored draft on top —
@@ -607,28 +604,12 @@ export function useAgentCommandBar({
   // words as one thing.
   const composerPictures = useComposerPictures(pictures && !pictures.unavailableReason ? pictures.upload : undefined)
   const { seed: seedPictures, settled: settledPictures } = composerPictures
-  // Which pictures of the message (or of every message of an open edit) could
-  // not be attached, and why (see failedPicturesNotice). Shown where a send
-  // error is from the moment a picture fails, not only once a send or commit
-  // is refused over it: a reader who never presses the button, or whose press
-  // never reaches the composer, is told all the same. Derived from the slots,
-  // so it goes with the last failed picture.
-  //
-  // Dismissing hides this notice until a send is refused over it again.
-  const failedNotice = failedPicturesNotice(
-    edit
-      ? edit.parts.map((part) => composerPictures.slots[editSlot(part.index)])
-      : [composerPictures.slots[COMPOSE_SLOT]],
-  )
-  const [dismissedNotice, setDismissedNotice] = useState<string | undefined>(undefined)
-  const pictureNotice = failedNotice !== dismissedNotice ? failedNotice : undefined
-  const dismissPictureNotice = useCallback(() => setDismissedNotice(failedNotice), [failedNotice])
-  const showPictureNotice = useCallback(() => setDismissedNotice(undefined), [])
-  useEffect(() => {
-    if (!failedNotice) {
-      setDismissedNotice(undefined)
-    }
-  }, [failedNotice])
+  // A send or commit refused over a picture that could not be attached is told
+  // in the conversation, through the session (see failedPicturesNotice for the
+  // wording). Until then each failed picture says so on its own chip.
+  const refuseSendRef = useRef(session.refuseSend)
+  refuseSendRef.current = session.refuseSend
+  const reportPictureRefusal = useCallback((reason: string) => refuseSendRef.current?.(reason), [])
 
   const loadEditPart = useCallback(
     (text: string) => {
@@ -732,8 +713,9 @@ export function useAgentCommandBar({
       // stays open, and the open message's words go back into the composer the
       // kit bar cleared on press; the stored draft is not touched, since an
       // edit never becomes it.
-      if (failedPicturesNotice(current.parts.map((part) => slots[editSlot(part.index)]))) {
-        showPictureNotice()
+      const refused = failedPicturesNotice(current.parts.map((part) => slots[editSlot(part.index)]))
+      if (refused) {
+        reportPictureRefusal(refused)
         if (textRef.current === '') {
           textRef.current = open
           setValue(open)
@@ -742,7 +724,7 @@ export function useAgentCommandBar({
       }
       commitEditRef.current?.(changedEdits(current.parts, drafts, slots))
     },
-    [settledPictures, setValue, showPictureNotice],
+    [settledPictures, setValue, reportPictureRefusal],
   )
 
   // Clamped rather than trusted: `parts` comes from the session and the
@@ -835,8 +817,8 @@ export function useAgentCommandBar({
   // composer, which the kit bar cleared on press. Only into an empty one: a
   // reader who started typing again meanwhile keeps what they typed.
   const refuseSend = useCallback(
-    (text: string) => {
-      showPictureNotice()
+    (text: string, reason: string) => {
+      reportPictureRefusal(reason)
       if (textRef.current !== '') {
         return
       }
@@ -849,13 +831,14 @@ export function useAgentCommandBar({
       setValue(text)
       onDraftChangeRef.current?.(sessionKeyRef.current, text)
     },
-    [setValue, showPictureNotice],
+    [setValue, reportPictureRefusal],
   )
   const sendWithPictures = useCallback(
     async (text: string) => {
       const slots = await settledPictures()
-      if (failedPicturesNotice([slots[COMPOSE_SLOT]])) {
-        refuseSend(text)
+      const refused = failedPicturesNotice([slots[COMPOSE_SLOT]])
+      if (refused) {
+        refuseSend(text, refused)
         return
       }
       const ids = storedIds(slots[COMPOSE_SLOT])
@@ -881,8 +864,9 @@ export function useAgentCommandBar({
       }
       // Refused before this hook clears anything when a picture has already
       // failed; the words the kit bar cleared are put back.
-      if (failedPicturesNotice([composerPictures.slots[COMPOSE_SLOT]])) {
-        refuseSend(text)
+      const refused = failedPicturesNotice([composerPictures.slots[COMPOSE_SLOT]])
+      if (refused) {
+        refuseSend(text, refused)
         return
       }
       void sendWithPictures(text)
@@ -978,8 +962,6 @@ export function useAgentCommandBar({
         onConfigChange={handleConfigChange}
         configExtra={configExtra}
         trailingControls={hostControls}
-        sendError={sendError ?? pictureNotice}
-        onDismissSendError={sendError ? onDismissSendError : pictureNotice ? dismissPictureNotice : undefined}
         editBar={editBarNode}
         attachments={attachmentsRow}
         onFiles={canAttach ? addToOpenSlot : onFiles}
@@ -1019,10 +1001,6 @@ export function useAgentCommandBar({
       handleConfigChange,
       configExtra,
       hostControls,
-      sendError,
-      onDismissSendError,
-      pictureNotice,
-      dismissPictureNotice,
       editBarNode,
       attachmentsRow,
       canAttach,
@@ -1048,10 +1026,3 @@ export function useAgentCommandBar({
 // Debounce composer draft saves so normal typing doesn't POST every keystroke.
 // Flushed immediately (bypassing this delay) on send and on session switch.
 const DRAFT_SAVE_DEBOUNCE_MS = 600
-
-// A session key is long and mostly noise; the tail identifies it well enough
-// for a placeholder.
-function shortKey(key: string): string {
-  const parts = key.split(':')
-  return parts.slice(-1)[0] ?? key
-}

@@ -238,6 +238,7 @@ test('a running job survives the detached TTL', async () => {
 
     const deadline = Date.now() + 2000
     while (manager.get(abandoned.id) && Date.now() < deadline) {
+      // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
 
@@ -447,6 +448,7 @@ test('a job that reaches its time limit is stopped, and the watcher is told why'
     const outcome = await Promise.race([
       stopped.then(() => 'stopped'),
       new Promise<string>((resolve) => {
+        // biome-ignore lint/plugin/noTestFixedTime: a deadline that only bounds failure, when the job never stops
         deadline = setTimeout(() => resolve('still running'), 20_000)
       }),
     ])

@@ -56,9 +56,14 @@ after(() => {
   rmSync(workdir, { recursive: true, force: true })
 })
 
+// The machine's git config switched off, so no setting there changes the
+// repositories these tests build.
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+
 const git = (cwd: string, ...args: string[]) =>
   spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
     cwd,
+    env: GIT_ENV,
     encoding: 'utf8',
   })
 

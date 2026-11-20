@@ -83,6 +83,22 @@ export function NodeInspector({
   const rememberedTab = useInspectorTab(resolved?.type ?? '')
   const errors = useNodeErrors(node)
 
+  // The tab's `updateData`: one identity per node, so a tab given the same data renders nothing
+  // new. A call writes through the `updateNodeData` of the latest render, which the canvas
+  // rebuilds when its edges change. Kept current during render, not in an effect, so a write
+  // from a tab's own layout effect already reaches the latest one.
+  const writeNodeData = useRef(updateNodeData)
+  writeNodeData.current = updateNodeData
+  const nodeId = node?.id
+  const updateData = useCallback(
+    (patch: Record<string, unknown>) => {
+      if (nodeId) {
+        writeNodeData.current(nodeId, patch)
+      }
+    },
+    [nodeId],
+  )
+
   const copyNodeId = useCallback(() => {
     if (!node) {
       return
@@ -152,12 +168,6 @@ export function NodeInspector({
   // the next node that has it.
   const activeEntry = tabs.find((t) => t.id === rememberedTab) ?? tabs[0]
 
-  const inspectorProps = {
-    nodeId: node.id,
-    data: node.data,
-    updateData: (patch: Record<string, unknown>) => updateNodeData(node.id, patch),
-  }
-
   const ExpandIcon = expanded ? Minimize2 : Maximize2
 
   return (
@@ -217,7 +227,8 @@ export function NodeInspector({
           nodeType={resolved.type}
           tabs={tabs}
           active={activeEntry}
-          inspectorProps={inspectorProps}
+          data={node.data}
+          updateData={updateData}
         />
       </InspectedNodeErrors.Provider>
     </Flex>

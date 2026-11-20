@@ -44,9 +44,11 @@ Object.defineProperty(document, 'visibilityState', { configurable: true, get: ()
 // After the DOM exists, never before -- react-dom binds to the globals it finds.
 const { act, createElement } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { OPEN_GAVE_UP_MESSAGE, useAcpSession } = await import('./use-acp-session')
-const { SessionOpenNotice } = await import('./session-open-notice')
-const { SessionOpenRefusedError } = await import('@/app/_authed/(agent)/_shared/session-open-refusal')
+const { useAcpSession } = await import('./use-acp-session')
+const { ChatNotice } = await import('agent-chat/components/chat-turn')
+const { OPEN_GAVE_UP_TITLE, SessionOpenRefusedError } = await import(
+  '@/app/_authed/(agent)/_shared/session-open-refusal'
+)
 const { MAX_FAILURES } = await import('@/app/_authed/(agent)/_lib/use-reconnect')
 const { receiveSessionActivity } = await import('@/app/_authed/(agent)/_lib/use-session-activity')
 const { HISTORY_END_KIND, SESSION_GONE_KIND } = await import('@/app/_authed/(agent)/_lib/acp-stream')
@@ -99,8 +101,10 @@ async function mount(open: Open, source: Source, send?: Send) {
   let current: Hook | undefined
   function Probe({ source }: { source: Source }) {
     current = useAcpSession(source, 'Agent', send, open)
-    // The notice as the thread renders it, so "shown once" is read off the DOM.
-    return createElement(SessionOpenNotice, { message: current.openError, onRetry: current.retryOpen })
+    // The notice as the conversation renders it, so "shown once" is read off
+    // the DOM.
+    const notice = current.session.notice
+    return notice ? createElement(ChatNotice, { item: { kind: 'notice', severity: 'error', ...notice } }) : null
   }
   const root = createRoot(dom.container)
   const render = (next: Source) =>
@@ -153,8 +157,12 @@ test('a failure worth retrying backs off with growing waits, then stops at the l
   assert.deepEqual(waits, [50, 1000, 2000, 4000, 8000, 16_000, 30_000, 30_000, 30_000, 30_000])
   assert.equal(calls.length, MAX_FAILURES + 1, 'the first open, then one per allowed failure')
   // Nothing flashed per attempt: the notice appears only once it stopped.
-  assert.equal(hook().openError, OPEN_GAVE_UP_MESSAGE)
+  assert.equal(hook().openError, OPEN_GAVE_UP_TITLE)
   assert.equal(notices().length, 1)
+  // The open's own failure is the engine's (here the request to it), not the
+  // model server's: told as given up, with the last failure's text kept.
+  assert.equal(hook().session.notice?.title, OPEN_GAVE_UP_TITLE)
+  assert.equal(hook().session.notice?.details, 'fetch failed')
   await elapse(10 * 60_000, 1000)
   assert.equal(calls.length, MAX_FAILURES + 1, 'and it stays stopped')
   await unmount()
@@ -194,7 +202,7 @@ test('a tab that gave up opens again when the reader retries', async () => {
   )
   const { hook, unmount } = await mount(open, SOURCE)
   await elapse(4 * 60_000, 500)
-  assert.equal(hook().openError, OPEN_GAVE_UP_MESSAGE)
+  assert.equal(hook().openError, OPEN_GAVE_UP_TITLE)
   const before = calls.length
   failing = false
   await act(async () => {
@@ -203,6 +211,154 @@ test('a tab that gave up opens again when the reader retries', async () => {
   await elapse(100)
   assert.equal(calls.length, before + 1)
   assert.equal(hook().openError, undefined)
+  await unmount()
+})
+
+test('a harness that died at start is shown at once in plain words, Details holding what it said', async () => {
+  const said = 'Agent failed to start (exit code 127): sh: 1: exec: npx: not found'
+  const { calls, open } = recordingOpen(() => Promise.reject(new SessionOpenRefusedError(said, 'harness')))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(5 * 60_000, 1000)
+  assert.equal(calls.length, 1, 'not retried')
+  assert.equal(hook().session.notice?.title, "The agent couldn't start: Node.js isn't installed where it runs.")
+  assert.equal(hook().session.notice?.details, said)
+  assert.equal(hook().session.notice?.action?.label, 'Try again')
+  assert.equal(notices().length, 1)
+  await unmount()
+})
+
+test('a session start shows as starting until it answers', async () => {
+  let answer: (value: typeof OPENED) => void = () => {}
+  const { open } = recordingOpen(() => new Promise((resolve) => (answer = resolve)))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(1000)
+  assert.equal(hook().session.starting, true)
+  await act(async () => answer(OPENED))
+  await elapse(100)
+  assert.equal(hook().session.starting, false)
+  await unmount()
+})
+
+test('a start whose history ends before the first message is back still reads as working, not as nothing', async () => {
+  // The message a thread is started with is held until the session opens, then
+  // sent; the stream opens at the same moment, and its history can end before
+  // the send's own event arrives in it.
+  const { open } = recordingOpen(() => Promise.resolve(OPENED))
+  const { hook, unmount } = await mount(open, SOURCE, () => new Promise(() => {}))
+  await act(async () => {
+    hook().session.send('say hi')
+  })
+  await elapse(200)
+  const stream = SilentEventSource.opened.at(-1)
+  assert.ok(stream, 'a stream was opened')
+  await act(async () => {
+    stream.onmessage?.({ data: JSON.stringify({ kind: HISTORY_END_KIND, startIndex: 0, hasMore: false }) })
+  })
+  const { session } = hook()
+  assert.equal(session.starting, false)
+  assert.equal(session.loading, false)
+  assert.equal(session.messages.length, 0)
+  assert.equal(session.thinking, true, 'what the chat reads to say the agent is on it, not that nothing was said')
+  await unmount()
+})
+
+test('a session the engine already holds is not shown as starting', async () => {
+  await act(async () => activityWithAlive([SOURCE.tabKey]))
+  const { open } = recordingOpen(() => new Promise(() => {}))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(1000)
+  assert.equal(hook().session.starting, false)
+  await unmount()
+})
+
+test('what the reader sent while a start was out stays, marked not sent, when the start is refused', async () => {
+  let refuse: (error: Error) => void = () => {}
+  const { open } = recordingOpen(() => new Promise((_resolve, reject) => (refuse = reject)))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await act(async () => {
+    hook().session.send('hello there', { attachments: ['picture-1'], quoted: { selection: 'a quote' } })
+  })
+  assert.deepEqual(
+    hook().outgoing.map((message) => [message.text, message.status]),
+    [['hello there', 'sending']],
+    'shown at once, on its way',
+  )
+  await act(async () => refuse(new SessionOpenRefusedError('Agent failed to start: boom', 'harness')))
+  await elapse(100)
+  const [held] = hook().outgoing
+  assert.equal(held?.status, 'failed')
+  assert.deepEqual(
+    held?.options,
+    { attachments: ['picture-1'], quoted: { selection: 'a quote' } },
+    'what it carries is kept',
+  )
+  assert.equal(hook().session.draft, undefined, 'not also back in the composer, where it could be sent twice')
+  assert.equal(hook().session.waiting, false, 'nothing is on its way')
+  await unmount()
+})
+
+test('a send after a refusal opens again, and a second refusal leaves it marked not sent under one notice', async () => {
+  const said = 'Agent failed to start: its terminal could not run it (container is not running)'
+  const { calls, open } = recordingOpen(() => Promise.reject(new SessionOpenRefusedError(said, 'harness')))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(1000)
+  assert.equal(calls.length, 1)
+  await act(async () => {
+    hook().session.send('ping')
+  })
+  await elapse(1000)
+  assert.deepEqual(
+    calls.map((call) => call.wake),
+    [true, true],
+    'the send asked once more, as the reader',
+  )
+  assert.deepEqual(
+    hook().outgoing.map((message) => [message.text, message.status]),
+    [['ping', 'failed']],
+  )
+  assert.equal(hook().session.draft, undefined)
+  assert.equal(hook().session.waiting, false, 'nothing is on its way')
+  assert.equal(hook().session.notice?.title, "The agent couldn't start.")
+  assert.equal(hook().session.notice?.details, said)
+  assert.equal(notices().length, 1)
+  await unmount()
+})
+
+test('a send after a refusal is delivered once the open it asks for succeeds', async () => {
+  const sent: string[] = []
+  const send: Send = async ({ text }) => {
+    sent.push(text)
+  }
+  const { calls, open } = recordingOpen((call) =>
+    call === 1 ? Promise.reject(new SessionOpenRefusedError(REFUSAL)) : Promise.resolve(OPENED),
+  )
+  const { hook, unmount } = await mount(open, SOURCE, send)
+  await elapse(1000)
+  await act(async () => {
+    hook().session.send('after the fix')
+  })
+  await elapse(200)
+  assert.equal(calls.length, 2)
+  assert.deepEqual(sent, ['after the fix'])
+  assert.equal(notices().length, 0)
+  await unmount()
+})
+
+test('a send after the retries gave up opens again rather than waiting on nothing', async () => {
+  const { calls, open } = recordingOpen(() => Promise.reject(new Error('fetch failed')))
+  const { hook, unmount } = await mount(open, SOURCE)
+  await elapse(4 * 60_000, 500)
+  assert.equal(hook().openError, OPEN_GAVE_UP_TITLE)
+  const before = calls.length
+  await act(async () => {
+    hook().session.send('still there?')
+  })
+  await elapse(100)
+  // The send's open, as the reader; it fails too, so a fresh run of retries
+  // follows it (its first one at once).
+  assert.ok(calls.length > before, 'the send asked again')
+  assert.equal(calls[before]?.wake, true)
+  assert.equal(hook().openError, undefined, 'the given-up notice gives way to the new run')
   await unmount()
 })
 

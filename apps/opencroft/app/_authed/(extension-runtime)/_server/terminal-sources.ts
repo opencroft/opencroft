@@ -18,8 +18,8 @@ export interface TerminalSourceTarget {
   /** "node-id/handle-id" -- the form every terminal-taking action accepts. */
   target: string
   handleId: string
-  /** What the owning App calls this terminal, when it says. */
-  label?: string
+  /** The terminal's one name (see `terminalTitle`). */
+  title?: string
   /**
    * On a Terminal Router's route: the terminal the route reaches, and its
    * owner (null when nothing answers to it), so the route is named by it.
@@ -31,29 +31,20 @@ export interface TerminalSourceTarget {
 export interface TerminalSourceInfo {
   ref: GraphRefInfo
   /**
-   * Its terminals; null when listing them asks something at runtime (a docker
-   * host, an App), which `listTerminalSourceTargetsImpl` does for this one
-   * source alone.
+   * Its terminals, never empty; null when listing them asks something at
+   * runtime (a docker host, an App), which `listTerminalSourceTargetsImpl`
+   * does for this one source alone.
    */
   targets: TerminalSourceTarget[] | null
 }
 
 const TERMINAL_SOURCES = { role: 'source', handleType: TERMINAL_CONTEXT_HANDLE_TYPE } as const
 
-// One space's list offers the routes of that space's Terminal Routers: a route
-// is how the space reaches a terminal of another space, which its list does
-// not offer. The list of every space leaves routers out. The terminals their
-// routes reach are on it already under their own names, and it is what a
-// router's own picker shows, where a route to a route is refused.
-function pickable(owner: HandleOwner, spaceSlug: string | undefined): boolean {
-  return spaceSlug !== undefined || owner.type !== TERMINAL_ROUTER_NODE_TYPE
-}
-
 function toTargets(handles: HandleInfo[]): TerminalSourceTarget[] {
   return handles.map((handle) => ({
     target: `${handle.nodeId}/${handle.handleId}`,
     handleId: handle.handleId,
-    label: handle.liveLabel,
+    title: handle.title,
   }))
 }
 
@@ -77,13 +68,14 @@ async function targetsOf(owner: HandleOwner): Promise<TerminalSourceTarget[]> {
 
 /**
  * Every terminal source, optionally of one space, without waiting on any of
- * them: sources whose terminals are declared come with them, the rest with
- * `targets: null`.
+ * them: sources whose terminals are known from their manifest and data come
+ * with them, the rest with `targets: null`. A source known to have no
+ * terminal now (a router with no resolved route) is left out. Every node whose
+ * type declares a terminal is a source, a Terminal Router's routes included; a
+ * consumer that must not offer some of them leaves them out itself.
  */
 export async function listTerminalSourcesImpl(spaceSlug?: string): Promise<TerminalSourceInfo[]> {
-  const owners = (await listGraphHandleOwners(TERMINAL_SOURCES, { spaceSlug })).filter((owner) =>
-    pickable(owner, spaceSlug),
-  )
+  const owners = await listGraphHandleOwners(TERMINAL_SOURCES, { spaceSlug })
   const refs = await describeGraphRefsImpl(owners.map((owner) => owner.id))
   const sources = await Promise.all(
     owners.map(async (owner): Promise<TerminalSourceInfo | null> => {
@@ -91,17 +83,17 @@ export async function listTerminalSourcesImpl(spaceSlug?: string): Promise<Termi
       if (!ref) {
         return null
       }
-      return { ref, targets: owner.dynamic ? null : await targetsOf(owner) }
+      if (owner.dynamic) {
+        return { ref, targets: null }
+      }
+      const targets = await targetsOf(owner)
+      return targets.length > 0 ? { ref, targets } : null
     }),
   )
   return sources.filter((source) => source !== null)
 }
 
-/**
- * The terminals of one source (a node id or App instance id); [] for an id
- * that offers none. A router is asked here only from a space's list, which
- * offers its routes.
- */
+/** The terminals of one source (a node id or App instance id); [] for an id that offers none. */
 export async function listTerminalSourceTargetsImpl(id: string): Promise<TerminalSourceTarget[]> {
   const [owner] = await listGraphHandleOwners(TERMINAL_SOURCES, { ownerId: id })
   return owner ? targetsOf(owner) : []

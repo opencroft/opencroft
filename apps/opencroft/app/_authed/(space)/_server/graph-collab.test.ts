@@ -108,6 +108,7 @@ test('a burst of writes is recorded in a few update rows, not one per write', as
   }
   const deadline = Date.now() + 10_000
   while ((await rows()) === 0 && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   const recorded = await rows()
@@ -304,6 +305,7 @@ test('removing a space removes the documents of its graphs', async () => {
   // The document is removed after the space, without the removal waiting on it.
   const deadline = Date.now() + 10_000
   while ((await loadCollabDoc(graphDocName(graphId))) && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   assert.equal(await loadCollabDoc(graphDocName(graphId)), null)
@@ -368,6 +370,7 @@ function routedHost(ref: Awaited<ReturnType<typeof liveSpace>>['ref']): unknown 
 async function until(check: () => boolean, ms = 5000): Promise<void> {
   const deadline = Date.now() + ms
   while (!check() && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
 }

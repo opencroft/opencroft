@@ -2,12 +2,12 @@
 // moment the message (or the edit) is sent.
 //
 // A failed picture has no stored id, so a send that went ahead would carry the
-// others and drop it without a word: its reason lived on the chip, and the chip
-// is cleared with the composer. These pin the opposite: the composer says which
-// picture failed and why as soon as it fails, a send or commit is refused while
-// it is there, the reader's words stay, and the notice goes with the picture.
-// An edit is covered through both of its controls, Enter in the composer and
-// the Commit button, since either one is how a reader saves it.
+// others and drop it without a word. These pin that a send or commit is
+// refused while it is there, the refusal is reported to the session (which
+// tells it in the conversation) naming the picture and why, the reader's
+// words stay, and nothing is drawn above the composer. An edit is covered
+// through both of its controls, Enter in the composer and the Commit button,
+// since either one is how a reader saves it.
 //
 // Mounted, because the refusal is the hook's and the words are put back into
 // the kit bar, which only a real commit shows.
@@ -57,14 +57,19 @@ const REFUSAL = 'that image is 4.2 MB, over the 4.0 MB limit'
 
 type Upload = NonNullable<UseAgentCommandBarOptions['pictures']>['upload']
 
+// What the bar reported to the session as refused sends, in order.
+let refusals: string[] = []
+
 async function mount(upload: Upload, extra: Partial<AgentCommandBarSession> = {}) {
   await unmount()
+  refusals = []
   const sent: Array<{ text: string; attachments?: readonly string[] }> = []
   const session: AgentCommandBarSession = {
     sessionKey: 'session-under-test',
     send: (text, options) => sent.push({ text, ...(options?.attachments ? { attachments: options.attachments } : {}) }),
     waiting: false,
     sending: false,
+    refuseSend: (reason) => refusals.push(reason),
     ...extra,
   }
   const options: UseAgentCommandBarOptions = {
@@ -131,25 +136,21 @@ test('a send with a picture that failed to attach is refused, keeps the words, a
     return { id: `id-${picked.name}`, byteSize: 6 }
   })
   await attach(file('small.gif'), file('big.gif'))
-  assert.equal(
-    alertText(),
-    `A picture could not be attached: big.gif (${REFUSAL}). Remove it to send the message without it.`,
-    'the notice is up as soon as the picture fails, before any press',
-  )
+  assert.deepEqual(refusals, [], 'nothing is reported before a send is refused')
   await type('look at these')
   await press('Send')
 
   assert.deepEqual(sent, [], 'nothing went out')
   assert.equal(composerText(), 'look at these', 'the words are still in the composer')
-  assert.equal(
-    alertText(),
+  assert.deepEqual(refusals, [
     `A picture could not be attached: big.gif (${REFUSAL}). Remove it to send the message without it.`,
-  )
+  ])
+  assert.equal(alertText(), null, 'nothing is drawn above the composer')
 
   await press('Remove big.gif')
-  assert.equal(alertText(), null, 'the notice goes with the picture it was about')
   await press('Send')
   assert.deepEqual(sent, [{ text: 'look at these', attachments: ['id-small.gif'] }])
+  assert.equal(refusals.length, 1, 'the send that went out reported nothing')
 })
 
 test('a picture that fails while the send waits for it refuses the send and gives the words back', async () => {
@@ -178,7 +179,8 @@ test('a picture that fails while the send waits for it refuses the send and give
 
   assert.deepEqual(sent, [])
   assert.equal(composerText(), 'one more')
-  assert.match(alertText() ?? '', /slow\.gif/)
+  assert.equal(refusals.length, 1)
+  assert.match(refusals[0] ?? '', /slow\.gif/)
 })
 
 test('a send with every picture attached goes as before, with no notice', async () => {
@@ -187,7 +189,7 @@ test('a send with every picture attached goes as before, with no notice', async 
   await type('both')
   await press('Send')
   assert.deepEqual(sent, [{ text: 'both', attachments: ['id-a.gif', 'id-b.gif'] }])
-  assert.equal(alertText(), null)
+  assert.deepEqual(refusals, [])
 })
 
 test('the notice names every failed picture, across slots, and says nothing when none failed', () => {
@@ -200,7 +202,7 @@ test('the notice names every failed picture, across slots, and says nothing when
   )
 })
 
-test('a dismissed notice stays down until a send is refused over the same picture again', async () => {
+test('every refused press is reported, so pressing again says why again', async () => {
   const sent = await mount(async (picked) => {
     if (picked.name === 'big.gif') {
       throw new Error(REFUSAL)
@@ -208,13 +210,12 @@ test('a dismissed notice stays down until a send is refused over the same pictur
     return { id: `id-${picked.name}`, byteSize: 6 }
   })
   await attach(file('big.gif'))
-  await press('Dismiss error')
-  assert.equal(alertText(), null)
-
   await type('try anyway')
   await press('Send')
+  await press('Send')
   assert.deepEqual(sent, [])
-  assert.match(alertText() ?? '', /big\.gif/, 'the refusal says why again')
+  assert.equal(refusals.length, 2)
+  assert.match(refusals[1] ?? '', /big\.gif/)
 })
 
 const EDIT = { eventIndex: 7, parts: [{ index: 0, text: 'first words', pictures: [] }] }
@@ -241,18 +242,16 @@ for (const [control, save] of [
   test(`an edit with a picture that failed to attach is refused through ${control}, keeps its words, and says why`, async () => {
     const commits = await mountEdit()
     await attach(file('big.gif'))
-    assert.match(alertText() ?? '', /big\.gif/, 'the notice is up before any press')
 
     await save()
     assert.deepEqual(commits, [], 'nothing was committed')
     assert.equal(composerText(), 'first words', 'the words are still in the composer')
-    assert.equal(
-      alertText(),
+    assert.deepEqual(refusals, [
       `A picture could not be attached: big.gif (${REFUSAL}). Remove it to send the message without it.`,
-    )
+    ])
+    assert.equal(alertText(), null, 'nothing is drawn above the composer')
 
     await press('Remove big.gif')
-    assert.equal(alertText(), null)
     await save()
     assert.equal(commits.length, 1, 'with the picture gone the edit commits')
   })

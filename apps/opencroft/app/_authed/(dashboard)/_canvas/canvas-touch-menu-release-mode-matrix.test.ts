@@ -110,6 +110,7 @@ function contextMenuEvent(): Event {
 }
 
 function wait(ms: number): Promise<void> {
+  // biome-ignore lint/plugin/noTestFixedTime: fixed sleep that holds a touch past the long-press delay of the component under test
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
@@ -163,6 +164,7 @@ async function mountHarness(nodesDraggable: boolean): Promise<Harness> {
         const touch = e.touches[0]
         touchTargetRef.current = { x: touch.clientX, y: touch.clientY, target: touch.target }
         cancelLongPress()
+        // biome-ignore lint/plugin/noTestFixedTime: the long-press timer of the component under test, not a wait
         longPressTimer.current = setTimeout(() => {
           longPressFired.current = true
           const { x, y, target } = touchTargetRef.current ?? {}

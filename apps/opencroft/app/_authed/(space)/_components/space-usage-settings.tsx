@@ -1,52 +1,26 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { SpaceUsage, type SpaceUsageSeries, type UsageGrouping, type UsagePeriod } from 'ui/admin/space-usage'
+import { useCallback } from 'react'
+import type { UsagePeriod } from 'ui/admin/space-usage'
 
+import type { ChatUsageQuery } from '@/app/_authed/(agent)/_server/chat-usage-store'
+import { UsagePanel } from '@/app/_authed/(space)/_components/usage-panel'
 import { getSpaceUsage, resetSpaceUsage } from '@/app/_authed/(space)/_server/usage-actions'
 
 /**
- * The Usage section of a space's settings: token and cost trends over the
- * period and grouping the reader picks. Grouping/period live as local state
- * rather than the URL (same choice audit-settings.tsx made for its own
- * filters) — refetching on change, same as that page. Both the read and the
- * reset cover this space's spend only.
+ * The Usage section of a space's settings: the Usage page over this space's
+ * spend. Both the read and the reset cover this space only.
  */
 export function SpaceUsageSettings({ spaceSlug }: { spaceSlug: string }) {
-  const [grouping, setGrouping] = useState<UsageGrouping>('all')
-  const [period, setPeriod] = useState<UsagePeriod>({ kind: '7d' })
-  const [series, setSeries] = useState<SpaceUsageSeries[]>([])
-
-  // One query, run on every change and again after a reset. Each run starts
-  // its own request and a superseded one still lands — a half-picked custom
-  // range in particular queries everything since its start — so only the
-  // newest request is allowed to write the result.
-  const latestRequest = useRef(0)
-  const load = useCallback(async () => {
-    const request = ++latestRequest.current
-    const next = await getSpaceUsage({ data: { slug: spaceSlug, grouping, period } })
-    if (request === latestRequest.current) {
-      setSeries(next)
-    }
-  }, [spaceSlug, grouping, period])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  return (
-    <SpaceUsage
-      series={series}
-      grouping={grouping}
-      onGroupingChange={setGrouping}
-      period={period}
-      onPeriodChange={setPeriod}
-      // Re-queried rather than edited in place, so what the page shows after
-      // the write is what the store holds — the same way it is after a switch.
-      onReset={async (target) => {
-        await resetSpaceUsage({ data: { slug: spaceSlug, period: target } })
-        await load()
-      }}
-    />
+  const query = useCallback(
+    (query: ChatUsageQuery) => getSpaceUsage({ data: { slug: spaceSlug, ...query } }),
+    [spaceSlug],
   )
+  const reset = useCallback(
+    async (period: UsagePeriod) => {
+      await resetSpaceUsage({ data: { slug: spaceSlug, period } })
+    },
+    [spaceSlug],
+  )
+  return <UsagePanel query={query} onReset={reset} />
 }

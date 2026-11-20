@@ -2,7 +2,7 @@ import type { ChatContextStartReason } from 'agent-chat/components/chat-context-
 import type { Block } from 'agent-chat/components/chat-conversation'
 import type { ChatUserMessagePart, DetailItem, MessageAttachment, UserText } from 'agent-chat/components/chat-turn'
 import type { ChatUnreadMessage } from 'agent-chat/components/chat-unread'
-import { toolCallState } from 'agent-chat/tool-views'
+import { toolCallState, toolOutputParts } from 'agent-chat/tool-views'
 import { toUserParts } from 'agent-chat/user-parts'
 import type { DeliveredAttachment } from 'agent-client/attachments'
 import { isCompletedCompaction } from 'agent-client/fold'
@@ -11,6 +11,7 @@ import type { QueuedPrompt } from 'agent-client/types'
 import type { AuthoredChatEvent, ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 import { attachmentSrc } from '@/app/_authed/(agent)/_lib/attachment-src'
 import type { ChatMessage } from '@/app/_authed/(agent)/_lib/messages'
+import { MAX_WHAT_LENGTH, splitQuote } from '@/app/_authed/(agent)/_shared/selection-envelope'
 
 // Re-exported rather than redeclared, same reasoning as `UserText` below: the
 // component that renders these is what defines their shape, so there is
@@ -66,31 +67,21 @@ const USER_SELECTION_TAG = /<opencroft-user-selection>([\s\S]*?)<\/opencroft-use
 // session -- nobody attached them, and a chip on the first message of every
 // conversation would say nothing about that message.
 //
-// THE LABEL IS DERIVED, and that is a property of the envelope rather than a
-// shortcut taken here. The tag carries what the AGENT received; the label the
-// composer's chip showed was presentation and never travelled, so there is
-// nothing on the wire to read it from. Every message sent before these chips
-// existed is in that state permanently, which is why deriving it is not a
-// stopgap until the wire changes -- it is the only thing that can ever describe
-// one of those.
+// THE LABEL IS THE BLOCK'S FIRST LINE. A selection the host composed opens its
+// block with the quote the composer showed, a `Space › App › what` path
+// (selection-envelope.ts), so the delivered message shows that same quote:
+// `splitQuote` gives the chip its place and its *what*. The whole block goes on
+// the chip's title, so the choice of line hides nothing.
 //
-// The first line, because these selections introduce themselves: every publisher
-// in this app opens its content with a `Key: value` line naming the source. The
-// whole of it goes on the chip's title, so the choice of line hides nothing.
+// A first line that is not a path has no place and is shown as it is: a
+// block whose first line is a `Key: value` line naming the source
+// (`Selected node: …`, `Documentation: …`), and every block a publisher hands
+// over whole.
 //
-// WHAT THAT COSTS, counted rather than assumed. Enumerated 10.09.2026: five
-// publishers reach this, and the first line names the SOURCE in every one of
-// them -- `Design project: …` for a design-kit project and for a component
-// inside it, `Documentation: …` for an open document and for a highlight within
-// it, `Repository: …` for a file in a repository. So the chip says where the
-// context came from and not which part of it, and the part is what the reader
-// picked. The label the composer's own chip showed was better, and it cannot be
-// recovered: it was presentation and never travelled. Hover carries the rest.
-//
-// The two guards below are not for those five. `useSelection` is on the host
-// API, so any extension can publish any content it likes, and neither an empty
-// first line nor a whole payload on one line is reachable from this app today.
-const MAX_LABEL = 80
+// The two guards below are for those: `useSelection` is on the host API, so an
+// extension can publish any content it likes, an empty first line or a whole
+// payload on one line included.
+const MAX_LABEL = MAX_WHAT_LENGTH
 
 // What a chip says when the attachment gives it nothing to be named by. A chip
 // that says nothing is worse than no chip: it reports that something travelled
@@ -114,6 +105,15 @@ function attachmentLabel(detail: string): string {
   return trimmed.length > MAX_LABEL ? `${trimmed.slice(0, MAX_LABEL - 1)}…` : trimmed
 }
 
+// A selection's chip: its place and its *what*, split before the cut, so a
+// long space or App name never eats into the *what* and the bound applies to
+// the *what* alone.
+function selectionAttachment(detail: string): Pick<MessageAttachment, 'label' | 'place'> {
+  const [firstLine = ''] = detail.split('\n')
+  const { place, what } = splitQuote(firstLine.trim())
+  return { label: attachmentLabel(what), ...(place ? { place } : {}) }
+}
+
 // What one message carried, given the pictures its delivery recorded: the
 // reader's selection, read from the message's own text where this app put it,
 // and the pictures, read from the record beside the text and matched to the
@@ -134,7 +134,7 @@ function attachmentsReader(pictures: readonly DeliveredAttachment[] = [], sessio
       if (!detail) {
         continue
       }
-      attachments.push({ label: attachmentLabel(detail), detail })
+      attachments.push({ ...selectionAttachment(detail), detail })
     }
     for (const picture of pictures) {
       if (picture.message === index) {
@@ -238,6 +238,60 @@ export function buildUnread(
       // holding one would draw an empty row above its words.
       ...(attachments.length ? ({ attachments } satisfies Pick<ChatUnreadMessage, 'attachments'>) : {}),
       sentAt: entry.kind !== 'system' ? entry.sentAt : undefined,
+    }
+  })
+}
+
+// A message the reader sent, as the host knows it until the server holds it:
+// `text` is what will be sent, quote envelope included, and `pictures` the
+// stored ids going with it.
+export interface OutgoingMessageInput {
+  id: string
+  text: string
+  sentAt: string
+  pictures?: readonly string[]
+  status: 'sending' | 'accepted' | 'failed'
+  failure?: { title: string; hint?: string; details?: string }
+}
+
+// What the server answers about a picture it stored is its id; the name and
+// size the queue entry carries come back with the entry.
+const OUTGOING_PICTURE_NAME = 'Picture'
+
+// What the reader just sent, as the conversation draws it until the server
+// holds it: read through the same function a queued message is, so the row
+// and the queue entry that replaces it draw the same words and chips, under the
+// reader's own name. `reader` is who is signed in here; absent, the row has
+// no author line, only its time.
+export function buildOutgoing(
+  outgoing: readonly OutgoingMessageInput[],
+  reader?: ResolvedAuthor,
+  // The key this conversation's pictures are stored under (see userTurn).
+  sessionKey?: string,
+): ChatUserMessagePart[] {
+  return outgoing.map((message): ChatUserMessagePart => {
+    const pictures = (message.pictures ?? []).map(
+      (id): DeliveredAttachment => ({ id, name: OUTGOING_PICTURE_NAME, mimeType: '', message: 0 }),
+    )
+    const attachments = attachmentsReader(pictures, sessionKey)(message.text, 0)
+    const failure = message.failure
+    return {
+      id: message.id,
+      text: userText(message.text) ?? EMPTY_USER_TEXT,
+      ...(reader ? ({ authorAccount: reader } satisfies Pick<ChatUserMessagePart, 'authorAccount'>) : {}),
+      ...(attachments.length ? ({ attachments } satisfies Pick<ChatUserMessagePart, 'attachments'>) : {}),
+      sentAt: message.sentAt,
+      ...(message.status === 'sending'
+        ? ({ delivery: { state: 'sending' } } satisfies Pick<ChatUserMessagePart, 'delivery'>)
+        : message.status === 'failed'
+          ? ({
+              delivery: {
+                state: 'failed',
+                reason: failure?.hint ? `${failure.title} ${failure.hint}` : (failure?.title ?? 'Not sent.'),
+                ...(failure?.details ? { details: failure.details } : {}),
+              },
+            } satisfies Pick<ChatUserMessagePart, 'delivery'>)
+          : {}),
     }
   })
 }
@@ -370,7 +424,7 @@ export function buildBlocks(
         contextStart(`c:${p.sessionId}`, 'new-session', m.id)
         continue
       }
-      const item = partToDetail(p, onStopTask)
+      const item = partToDetail(p, onStopTask, sessionKey)
       if (item) {
         details.push(item)
       }
@@ -388,8 +442,13 @@ export function buildBlocks(
 // One reply part → the detail item that draws it, or null when it renders
 // nothing (an empty text/thinking part). Shared by the parent chain and,
 // recursively, by a subagent's nested transcript, so both draw text, thinking
-// and tools identically.
-function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId: string) => void): DetailItem | null {
+// and tools identically. `sessionKey` is what a tool's kept media is stored
+// under, as a message's pictures are (see userTurn).
+function partToDetail(
+  p: ChatMessage['parts'][number],
+  onStopTask?: (asyncTaskId: string) => void,
+  sessionKey?: string,
+): DetailItem | null {
   if (p.type === 'text') {
     const v = stripOpencroftTags(p.text || '…')
     return v.trim() ? { kind: 'assistant-text', text: v } : null
@@ -405,7 +464,7 @@ function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId
       task: p.task,
       state: p.state,
       items: p.parts
-        .map((child) => partToDetail(child, onStopTask))
+        .map((child) => partToDetail(child, onStopTask, sessionKey))
         .filter((item): item is DetailItem => item !== null),
       ...(p.steps !== undefined ? { steps: p.steps } : {}),
       ...(p.onExpand ? { onExpand: p.onExpand } : {}),
@@ -439,15 +498,17 @@ function partToDetail(p: ChatMessage['parts'][number], onStopTask?: (asyncTaskId
       severity: p.severity,
       title: p.title,
       ...(p.description ? { description: p.description } : {}),
+      ...(p.details ? { details: p.details } : {}),
     }
   }
+  const content = toolOutputParts(p.content, sessionKey ? (id) => attachmentSrc(sessionKey, id) : undefined)
   return {
     kind: 'tool',
     id: p.id,
     name: p.name,
     toolName: p.toolName,
     args: p.args,
-    result: p.result,
+    result: p.result && content ? { ...p.result, content } : p.result,
     state: toolCallState(p.status),
     ...(p.diffs ? { diffs: p.diffs } : {}),
   }

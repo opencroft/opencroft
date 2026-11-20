@@ -20,11 +20,29 @@ async function spaceWith(nodes: Array<{ id: string; type: string; data: Record<s
   return slug
 }
 
-test('a node id resolves to its type, its name and the space it lives in', async () => {
+// The graph a fresh space's nodes are on, as the registry addresses and names it.
+function graphOf(slug: string): { address: string; name: string } {
+  const ref = getSpacesRegistry()
+    .listGraphs()
+    .find((candidate) => candidate.space.slug === slug)
+  assert.ok(ref, `no graph in ${slug}`)
+  return { address: getSpacesRegistry().addressOf(ref), name: ref.graph.name }
+}
+
+test('a node id resolves to its type, its name, its space and the graph it is on', async () => {
   const id = crypto.randomUUID()
   const slug = await spaceWith([{ id, type: 'builtin.core.server', data: { name: 'prod-db' } }])
   const refs = await describeGraphRefsImpl([id])
-  assert.deepEqual(refs[id], { id, kind: 'node', type: 'builtin.core.server', name: 'prod-db', spaceSlug: slug })
+  assert.deepEqual(refs[id], {
+    id,
+    kind: 'node',
+    type: 'builtin.core.server',
+    name: 'prod-db',
+    spaceSlug: slug,
+    spaceName: slug,
+    graph: graphOf(slug),
+  })
+  assert.ok(refs[id]?.graph?.address.startsWith(`${slug}`))
 })
 
 test("a window node's title counts as its name; an unnamed node leaves the name to the caller", async () => {
@@ -39,17 +57,26 @@ test("a window node's title counts as its name; an unnamed node leaves the name 
   assert.equal(refs[unnamed]?.name, '')
 })
 
-test('a terminal target is answered under itself, described by its owner', async () => {
+test("a node's terminal target is answered under itself, described by its owner and named after it", async () => {
   const id = crypto.randomUUID()
   const slug = await spaceWith([{ id, type: 'builtin.core.localhost', data: { name: 'laptop' } }])
   const target = `${id}/terminal`
   const refs = await describeGraphRefsImpl([target])
   assert.deepEqual(refs, {
-    [target]: { id, kind: 'node', type: 'builtin.core.localhost', name: 'laptop', spaceSlug: slug },
+    [target]: {
+      id,
+      kind: 'node',
+      type: 'builtin.core.localhost',
+      name: 'laptop',
+      spaceSlug: slug,
+      spaceName: slug,
+      graph: graphOf(slug),
+      title: 'laptop',
+    },
   })
 })
 
-test('a target on an App whose App names no handles carries no labels, and an unknown owner is null', async () => {
+test('a target on an App that names none of its handles is named after the App, and an unknown owner is null', async () => {
   const slug = await spaceWith([])
   // Every space has its graph App, addressed `<space>.default`; it declares no
   // handleLabel hook.
@@ -60,7 +87,8 @@ test('a target on an App whose App names no handles carries no labels, and an un
   assert.equal(refs[onApp]?.spaceSlug, slug)
   assert.equal(refs[onApp]?.slug, 'default')
   assert.equal(refs[onApp]?.address, `${slug}.default`)
-  assert.equal(refs[onApp]?.handleLabels, undefined)
+  assert.equal(refs[onApp]?.detail, undefined)
+  assert.equal(refs[onApp]?.title, refs[onApp]?.name)
   assert.equal(refs[unknown], null)
 })
 

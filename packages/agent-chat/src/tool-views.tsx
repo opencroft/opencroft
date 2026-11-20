@@ -1,5 +1,5 @@
 import { type ChatMessage, isTerminalToolStatus } from 'agent-client/fold'
-import type { ToolDiff } from 'agent-client/types'
+import type { ToolContent, ToolDiff } from 'agent-client/types'
 import type { ComponentType, ReactNode } from 'react'
 
 export type ToolMessage = Extract<ChatMessage, { kind: 'tool' }>
@@ -28,6 +28,43 @@ export interface ToolViewResult {
   // shape — e.g. one built for a host with its own `{text, isError}`-only
   // convention — stays a valid ToolViewSpec.component without changes.
   output?: unknown
+  // The result with its pictures, sounds, files and links kept, in order,
+  // when it holds any (see ToolOutputPart). A view without a use for them
+  // draws `text`, where each stands as a placeholder.
+  content?: readonly ToolOutputPart[]
+}
+
+// One part of a tool's result as a view draws it: the client's ToolContent,
+// with a stored picture or sound named by the URL a reader loads it from
+// (`src`) rather than by the host's id. No `src` means its bytes are not
+// there to show — never kept, or since let go — and a view says what it was.
+export type ToolOutputPart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image' | 'audio'
+      mimeType: string
+      byteSize: number
+      src?: string
+      width?: number
+      height?: number
+    }
+  | { type: 'resource_link'; uri: string; name: string; title?: string; mimeType?: string; byteSize?: number }
+  | { type: 'resource'; uri: string; mimeType?: string; text?: string; byteSize?: number }
+  | { type: 'terminal'; terminalId: string }
+
+// A call's kept content as its view draws it. `mediaSrc` is the host's URL for
+// a stored id; a host that stores none passes nothing.
+export function toolOutputParts(
+  content: readonly ToolContent[] | undefined,
+  mediaSrc?: (mediaId: string) => string,
+): ToolOutputPart[] | undefined {
+  return content?.map((part) => {
+    if (part.type !== 'image' && part.type !== 'audio') {
+      return part
+    }
+    const { mediaId, ...rest } = part
+    return mediaId && mediaSrc ? { ...rest, src: mediaSrc(mediaId) } : rest
+  })
 }
 
 // Where a call stands, as its card says it: 'running' (announced or in
@@ -112,11 +149,22 @@ export function lookupToolView(registry: ToolViewRegistry, toolId: string): Tool
 // folded tool message. Exported so hosts with their own rendering path (e.g.
 // a standalone approval list, which never gets a ChatMessage) can still reuse
 // the same prop shape by constructing it from whatever data they have.
-export function toolViewProps(message: ToolMessage, mode: ToolViewMode): ToolViewProps {
+// `mediaSrc` as toolOutputParts takes it.
+export function toolViewProps(
+  message: ToolMessage,
+  mode: ToolViewMode,
+  mediaSrc?: (mediaId: string) => string,
+): ToolViewProps {
   const settled = isTerminalToolStatus(message.status)
+  const content = toolOutputParts(message.content, mediaSrc)
   const result: ToolViewResult | undefined =
     settled || message.output !== undefined
-      ? { output: message.output, text: formatToolValue(message.output), isError: message.status === 'failed' }
+      ? {
+          output: message.output,
+          text: formatToolValue(message.output),
+          isError: message.status === 'failed',
+          ...(content ? { content } : {}),
+        }
       : undefined
   return {
     tool: message.title,

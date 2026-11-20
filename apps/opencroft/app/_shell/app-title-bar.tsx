@@ -4,11 +4,12 @@ import { Link, useRouteContext } from '@tanstack/react-router'
 import { cn } from 'cn'
 import type { LucideIcon } from 'lucide-react'
 import { SpaceSelectorIcon } from 'ui/layouts/space-selector'
-import { TitleBar, TitleBarIconButton } from 'ui/layouts/title-bar'
+import { TitleBar, TitleBarIconButton, TitleBarIconLink } from 'ui/layouts/title-bar'
 import { useSidebar } from 'ui/sidebar'
 import { Wordmark } from 'ui/wordmark'
 
 import type { SpaceSummary } from '@/app/_authed/(space)/_server/types'
+import { onPlainClick } from '@/app/_lib/opens-elsewhere'
 import { ACCOUNT_PAGES, AccountAvatar, AccountMenu } from '@/app/_shell/account-menu'
 import { useAppLauncher } from '@/app/_shell/app-launcher-host'
 import { AppTypeMenu } from '@/app/_shell/app-type-menu'
@@ -96,16 +97,7 @@ export function AppTitleBar({ spaces, navigation, hasSidebar }: Props) {
         // Home is a root like the others, so a press goes there in place of
         // the stack rather than on top of it. It is the spaces list, where
         // `/` redirects; a press for a new tab keeps the link.
-        <Link
-          to='/'
-          aria-label='Home'
-          onClick={(event) => {
-            if (event.button === 0 && !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
-              event.preventDefault()
-              stack.switchRoot(SPACES_PATH)
-            }
-          }}
-        >
+        <Link to='/' aria-label='Home' onClick={onPlainClick(() => stack.switchRoot(SPACES_PATH))}>
           <Wordmark />
         </Link>
       }
@@ -122,16 +114,17 @@ export function AppTitleBar({ spaces, navigation, hasSidebar }: Props) {
         ) : (
           <>
             {/* Where the reader is, as one press to the App Launcher: its page on a
-                phone, its dialog from md up. */}
+                phone, its dialog from md up. Both are links to the page, so a
+                press for a new tab opens it there. */}
             {/* On a phone a top-level page is named by the bottom navigation already. */}
             {!topLevel && (
               <Link to={APPS_PATH} className={cn(HERE, 'md:hidden')}>
                 {here}
               </Link>
             )}
-            <button type='button' onClick={launcher.open} className={cn(HERE, 'max-md:hidden')}>
+            <Link to={APPS_PATH} onClick={onPlainClick(launcher.open)} className={cn(HERE, 'max-md:hidden')}>
               {here}
-            </button>
+            </Link>
           </>
         ))
       }
@@ -139,17 +132,19 @@ export function AppTitleBar({ spaces, navigation, hasSidebar }: Props) {
         <>
           {/* Roots, so a switch to one replaces the stack, as the bottom
               navigation's do on a phone; Apps opens the App Launcher's
-              dialog, and the account has its menu. */}
+              dialog, and the account has its menu. Each is a link to its
+              page, so a press for a new tab opens that page there. */}
           {ROOTS.filter((root) => root.path !== ACCOUNT_PATH).map(({ path, label, icon: Icon }) => (
-            <TitleBarIconButton
+            <TitleBarIconLink
               key={path}
+              href={path}
               aria-label={label}
               title={label}
-              onClick={path === APPS_PATH ? launcher.open : () => stack.switchRoot(path)}
+              onClick={onPlainClick(path === APPS_PATH ? launcher.open : () => stack.switchRoot(path))}
               className='max-md:hidden'
             >
               <Icon />
-            </TitleBarIconButton>
+            </TitleBarIconLink>
           ))}
           <AccountMenu
             trigger={

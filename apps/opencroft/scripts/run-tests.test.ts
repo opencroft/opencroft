@@ -24,6 +24,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
+// biome-ignore lint/style/noRestrictedImports: polls the child processes the runner starts, until they stop or the run is cancelled; a child's clock can't be faked
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { fileTimeouts } from '../../../scripts/test-file-limit.mjs'
@@ -46,23 +47,22 @@ function workspace(files: Record<string, string>): string {
 
 function runnerEnv(env: Record<string, string>): NodeJS.ProcessEnv {
   // The run this case is part of has a run directory of its own; inheriting
-  // it would hand the child someone else's. NODE_TEST_CONTEXT marks this
-  // process as a file of that run, and a test runner that inherits it reports
-  // to a parent that is not listening instead of printing a report.
+  // it would hand the child someone else's. The outer run's timings directory
+  // would collect this child's tests as its own.
   const {
     OPENCROFT_TEST_RUN_DIR: _outer,
     OPENCROFT_TEST_CONCURRENCY: _requested,
     OPENCROFT_TEST_FILE_TIMEOUT: _limit,
-    NODE_TEST_CONTEXT: _context,
+    OPENCROFT_TEST_TIMINGS: _timings,
     ...inherited
   } = process.env
   return { ...inherited, OPENCROFT_TEST_TAP: '1', ...env }
 }
 
-function runIn(dir: string, env: Record<string, string> = {}) {
+function runIn(dir: string, env: Record<string, string> = {}, roots = ['.']) {
   // Bounded, so a runner that never ends fails the case instead of holding
   // this file open: what is asserted below includes that it ended by itself.
-  const result = spawnSync(process.execPath, [RUNNER, '.'], {
+  const result = spawnSync(process.execPath, [RUNNER, ...roots], {
     cwd: dir,
     encoding: 'utf8',
     env: runnerEnv(env),
@@ -178,6 +178,25 @@ test('test files run side by side', () => {
   assert.match(run.stdout, /^# pass 2$/m)
 })
 
+test('a test file given as a root runs alone; any other file as a root stops the run', () => {
+  const dir = workspace({
+    'src/a.test.ts': "import test from 'node:test'\ntest('a runs', () => {})\n",
+    'src/b.test.ts': "import test from 'node:test'\ntest('b runs', () => {})\n",
+    'src/helper.ts': 'export {}\n',
+  })
+
+  const single = runIn(dir, {}, ['src/a.test.ts'])
+  assert.equal(single.status, 0, single.stdout + single.stderr)
+  assert.match(single.stdout, /^Found 1 test files\.$/m)
+  assert.match(single.stdout, /^ok 1 - a runs$/m)
+  assert.doesNotMatch(single.stdout, /b runs/)
+
+  const other = runIn(dir, {}, ['src/helper.ts'])
+  assert.equal(other.status, 1, other.stdout + other.stderr)
+  assert.match(other.stderr, /src\/helper\.ts is neither a directory nor a \*\.test\.ts\(x\) file\./)
+  assert.doesNotMatch(other.stdout, /^Found/m)
+})
+
 const PREPARED = "readFileSync(process.env.OPENCROFT_TEST_RUN_DIR + '/prepared', 'utf8')"
 
 test('the global setup runs once, before any file, and its output stays out of the report', () => {
@@ -236,6 +255,45 @@ test('an OPENCROFT_PGLITE_PATH the caller exported is not handed to every file',
 
   assert.equal(run.status, 0, run.stdout + run.stderr)
   assert.equal(readFileSync(out, 'utf8'), 'unset')
+})
+
+// How npm carries a registry credential in the environment: `npm_config_`
+// followed by the scoped `_authToken` key of an .npmrc.
+const NPM_REGISTRY_TOKEN = 'npm_config_//registry.example.com/:_authToken'
+
+test("credentials in the caller's environment never reach a test file; the listed variables do", () => {
+  const out = join(scratch, 'environment-seen')
+  const dir = workspace({
+    'src/a.test.ts': records(out, 'JSON.stringify(process.env)'),
+  })
+
+  const run = runIn(dir, {
+    GIT_ASKPASS: '/planted/askpass',
+    GIT_CONFIG_PARAMETERS: "'credential.helper=planted'",
+    SSH_AUTH_SOCK: '/planted/agent.sock',
+    alice: 'sk-test-planted-secret',
+    NODE_AUTH_TOKEN: 'sk-test-planted-node-token',
+    [NPM_REGISTRY_TOKEN]: 'sk-test-planted-npm-token',
+    LC_ALL: 'C',
+    NODE_OPTIONS: '--no-deprecation',
+  })
+
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  const seen = JSON.parse(readFileSync(out, 'utf8'))
+  for (const name of [
+    'GIT_ASKPASS',
+    'GIT_CONFIG_PARAMETERS',
+    'SSH_AUTH_SOCK',
+    'alice',
+    'NODE_AUTH_TOKEN',
+    NPM_REGISTRY_TOKEN,
+  ]) {
+    assert.equal(seen[name], undefined, `${name} was planted and must not arrive`)
+  }
+  assert.equal(seen.LC_ALL, 'C', 'a listed variable arrives')
+  assert.equal(seen.NODE_OPTIONS, '--no-deprecation', "node's options arrive beside the dropped NODE_ name")
+  assert.equal(seen.PATH, process.env.PATH, 'PATH arrives')
+  assert.equal(seen.OPENCROFT_AUTH_SECRET, 'test-auth-secret-not-a-real-one', "the runner's own keys arrive")
 })
 
 test('a run removes the run directories a dead run left behind, and nothing else', () => {

@@ -106,6 +106,7 @@ test('a worker thread asked to stop releases its database and says so', async ()
 
     let timer: ReturnType<typeof setTimeout> | undefined
     const stopped = new Promise<void>((resolve, reject) => {
+      // biome-ignore lint/plugin/noTestFixedTime: a deadline that only bounds failure, when the worker never answers
       timer = setTimeout(() => reject(new Error('the worker never answered the stop request')), STOP_ANSWER_DEADLINE_MS)
       worker.on('message', (message: { type?: unknown }) => {
         if (message?.type === WORKER_STOPPED) resolve()

@@ -45,11 +45,14 @@
 //   - thread exists       → the shared assembly reattaches to it. No agent
 //                           picker: the thread names its agent, and switching
 //                           conversations is the chat's home screen's job.
-//   - a selected thread
-//     is not in the chat  → "This thread was deleted", and the host is told
-//                           so it can forget the selection. A reader who lost
-//                           the chat itself gets the chat's states above
-//                           instead; any other failure offers Try again.
+//   - the thread is not
+//     in the chat         → the chat's home screen, chosen as the selection
+//                           so a host that remembers it lands there next
+//                           time too. The same when the open thread is
+//                           deleted while it is read. A reader who lost the
+//                           chat itself is sent home too, which then shows
+//                           the chat's states above; any other failure offers
+//                           Try again.
 
 import { cn } from 'cn'
 import { MessageCirclePlus, UserPlus } from 'lucide-react'
@@ -73,11 +76,7 @@ import {
   type GroupChatDetailHeader,
   GroupChatDetailScreen,
 } from '@/app/_authed/(group-chats)/_components/group-chat-detail-screen'
-import {
-  GroupChatRefusal,
-  GroupChatThreadGone,
-  GroupChatThreadLoadFailed,
-} from '@/app/_authed/(group-chats)/_components/group-chat-error'
+import { GroupChatRefusal, GroupChatThreadLoadFailed } from '@/app/_authed/(group-chats)/_components/group-chat-error'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import {
   GroupChatThreadChat,
@@ -86,6 +85,7 @@ import {
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { GroupChatRefreshProvider } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
+import { useSignedInReader } from '@/app/_authed/(group-chats)/_lib/use-signed-in-reader'
 import type {
   DirectoryAgent,
   DirectoryUser,
@@ -191,12 +191,6 @@ export interface EmbeddedAgentChatProps {
    * has one header whichever screen is up.
    */
   onHomeHeader?: (header: GroupChatDetailHeader | null) => void
-  /**
-   * The thread `thread` selected no longer exists in this chat: it was deleted.
-   * The surface says so in place; a host that remembers the selection should
-   * forget it, so the next visit does not land on it again.
-   */
-  onThreadGone?: (threadId: string) => void
   className?: string
 }
 
@@ -217,7 +211,6 @@ export function EmbeddedAgentChat({
   onChatAvailable,
   onThreadContext,
   onHomeHeader,
-  onThreadGone,
   className,
 }: EmbeddedAgentChatProps) {
   const [state, setState] = useState<EmbedPhase>({ phase: 'loading' })
@@ -316,7 +309,6 @@ export function EmbeddedAgentChat({
           onSelectionChange={onSelectionChange}
           onThreadContext={onThreadContext}
           onHomeHeader={onHomeHeader}
-          onThreadGone={onThreadGone}
           onChatLost={reload}
           onChatChanged={refreshChat}
           className={className}
@@ -369,7 +361,6 @@ function EmbeddedThread({
   onSelectionChange,
   onThreadContext,
   onHomeHeader,
-  onThreadGone,
   onChatLost,
   onChatChanged,
   className,
@@ -382,7 +373,6 @@ function EmbeddedThread({
   onSelectionChange?: (selection: EmbeddedChatSelection) => void
   onThreadContext?: (context: EmbeddedThreadContext | null) => void
   onHomeHeader?: (header: GroupChatDetailHeader | null) => void
-  onThreadGone?: (threadId: string) => void
   /** The reader is no longer a member: resolve the chat again, whose own
    *  states say what access they have. */
   onChatLost: () => void
@@ -404,6 +394,7 @@ function EmbeddedThread({
   const revealPosition = selection && 'threadId' in selection ? selection.at : undefined
   const newId = selection && 'newId' in selection ? selection.newId : null
   const effectiveId = newId ?? id
+  const reader = useSignedInReader()
   // MEMBER agents only: any other agent is refused by startThread, so
   // offering one would be offering a choice that cannot succeed.
   const memberAgents = useMemo(
@@ -430,20 +421,26 @@ function EmbeddedThread({
   // null = the first send will create it.
   const [thread, setThread] = useState<GroupChatThreadView | null | undefined>(undefined)
   const [threadError, setThreadError] = useState<string>()
-  // The selected thread is not in this chat any more -- it was deleted.
-  const [threadGone, setThreadGone] = useState(false)
   const [threadTick, setThreadTick] = useState(0)
-  // Through a ref, like onThreadContext below, so an inline host callback
-  // never re-runs the load.
-  const onThreadGoneRef = useRef(onThreadGone)
-  onThreadGoneRef.current = onThreadGone
+  // A thread that is not in the chat leads to the chat's home: chosen, so a
+  // host that remembers the selection forgets the thread. Through a ref, like
+  // onThreadContext below, so an inline host callback never re-runs the load.
+  const chooseRef = useRef(choose)
+  chooseRef.current = choose
+  const leaveForHome = useCallback(() => chooseRef.current({ home: true }), [])
+  // Out of the reader's reach, the chat included: the thread is forgotten the
+  // same way, and the panel opens as it would fresh -- the chat's own states
+  // say what access the reader has now.
+  const leaveChat = useCallback(() => {
+    leaveForHome()
+    onChatLost()
+  }, [leaveForHome, onChatLost])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(threadTick): not read in the body — it exists to re-resolve the thread after the first send creates it, or on Try again
   useEffect(() => {
     let cancelled = false
     setThread(undefined)
     setThreadError(undefined)
-    setThreadGone(false)
     // The home screen names no thread; nothing to resolve.
     if (home) {
       setThread(null)
@@ -462,11 +459,11 @@ function EmbeddedThread({
           if (result.state === 'ok') {
             setThread(result.thread)
           } else if (result.state === 'gone') {
-            setThread(null)
-            setThreadGone(true)
-            onThreadGoneRef.current?.(explicitThreadId)
+            // The loader stays up until the home screen replaces it: a null
+            // thread here would draw the load-failed state for a moment.
+            leaveForHome()
           } else {
-            onChatLost()
+            leaveChat()
           }
         })
         .catch(() => {
@@ -498,7 +495,7 @@ function EmbeddedThread({
     return () => {
       cancelled = true
     }
-  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, home, threadTick, onChatLost])
+  }, [chat.id, selectedAgent, effectiveId, explicitThreadId, home, threadTick, leaveForHome, leaveChat])
 
   const reloadThread = useCallback(() => setThreadTick((tick) => tick + 1), [])
   const openThread = useCallback(
@@ -567,6 +564,8 @@ function EmbeddedThread({
           revealPosition={revealPosition}
           onHeaderChange={setControls}
           onTurnSettled={refreshArtifacts}
+          onUnavailable={(removal) => (removal === 'gone' ? leaveForHome() : leaveChat())}
+          reader={reader}
         />
       </div>
     )
@@ -576,11 +575,7 @@ function EmbeddedThread({
     // start composer — that would offer to start the DEFAULT thread under a
     // heading the reader did not choose. The way out is the host's Back,
     // which the dock shows whenever a thread is selected.
-    return threadGone ? (
-      <GroupChatThreadGone className={cn('h-full', className)} />
-    ) : (
-      <GroupChatThreadLoadFailed onRetry={reloadThread} className={cn('h-full', className)} />
-    )
+    return <GroupChatThreadLoadFailed onRetry={reloadThread} className={cn('h-full', className)} />
   }
   // No thread to show: the chat's home screen, unless a specific new id was
   // asked for. The default thread not existing yet lands here too -- the

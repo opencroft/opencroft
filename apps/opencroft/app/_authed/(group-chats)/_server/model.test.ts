@@ -27,6 +27,7 @@ import { decodeBatch } from 'agent-client/queue-tags'
 import type { AgentSelection } from 'agent-client/types'
 import { and, eq, inArray, isNull, like } from 'drizzle-orm'
 
+import { readAttachment, saveAttachment, saveToolMedia } from '@/app/_authed/(agent)/_server/attachment-store'
 import { MAX_MESSAGE_TEXT_BYTES } from '@/app/_authed/(agent)/_shared/message-size'
 import { agentPlacement } from '@/app/_authed/(extension-runtime)/_builtin/core/src/nodes/agent-placement-shared'
 import type { ToolCallerContext } from '@/app/_authed/(mcp)/_server/tool-caller'
@@ -1410,6 +1411,7 @@ async function waitForPrompts(prompts: string[], count: number): Promise<void> {
     if (prompts.length >= count) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error(`expected ${count} prompt(s) to reach the agent, saw ${prompts.length}`)
@@ -2953,6 +2955,7 @@ test('two concurrent deliveries into a brand-new thread session produce exactly 
       newSessionCalls += 1
       // Widens the race window: without the lock, both callers would already
       // have read "no session" before either finishes creating one.
+      // biome-ignore lint/plugin/noTestFixedTime: widens the race window inside the fake; the delay is an input, not a wait
       await new Promise((resolve) => setTimeout(resolve, 5))
       return { sessionId: `race-${crypto.randomUUID()}` }
     },
@@ -5363,6 +5366,7 @@ async function waitForLog(log: string[], entry: RegExp): Promise<void> {
     if (log.some((line) => entry.test(line))) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error(`expected ${entry} in ${JSON.stringify(log)}`)
@@ -5770,6 +5774,24 @@ async function archivedAtOf(threadId: string): Promise<Date | null> {
   return row.archivedAt
 }
 
+test('archiving a thread lets go of the media its tools returned, and keeps what a reader attached', async () => {
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('archive-media@example.test', 'archive drops tool media')
+  const { thread } = await model.startThread(reqAs(owner), chatId, 'agent-session', 'first')
+  await waitForPrompts(inbox, 1)
+  const key = thread.sessionKey
+  const picture = await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data: 'AAAA' })
+  const attached = await saveAttachment({ sessionKey: key, name: 'a.png', mimeType: 'image/png', data: 'AAAA' })
+  assert.ok(picture)
+  assert.ok(await readAttachment(key, picture.id), 'kept while the thread is open')
+
+  await model.setThreadArchived(reqAs(owner), thread.id, true)
+
+  assert.equal(await readAttachment(key, picture.id), null)
+  assert.ok(await readAttachment(key, attached.id))
+})
+
 test('a member archives a thread: it keeps its folder in the archive, and every write into it is refused by name', async () => {
   const inbox: string[] = []
   seedMockConnection(inbox, 'Agent Session')
@@ -6067,6 +6089,7 @@ test('a message waiting behind a running turn is dropped when the thread is arch
   // The durable row is written after the in-memory queue changes; wait for it
   // so the assertion below is about the archive, not about a write in flight.
   for (let attempt = 0; attempt < 200 && (await waiting()).length === 0; attempt += 1) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.equal((await waiting()).length, 1, 'precondition: the message is waiting behind the turn')
@@ -6078,6 +6101,7 @@ test('a message waiting behind a running turn is dropped when the thread is arch
   }
 
   // Give a drain every chance to happen before asserting it did not.
+  // biome-ignore lint/plugin/noTestFixedTime: fixed window in which a drain must not happen
   await new Promise((resolve) => setTimeout(resolve, 200))
   assert.equal(prompts.length, 1, 'the waiting message never reached the agent')
   assert.equal((await waiting()).length, 0, 'and nothing durable is left to bring it back on a later load')
@@ -6115,4 +6139,29 @@ test('message text over the limit is refused by name on every send surface, and 
   // Exactly at the limit is a message like any other.
   await model.sendMessageInThread(reqAs(owner), thread.id, 'y'.repeat(MAX_MESSAGE_TEXT_BYTES), { queue: 'wait' })
   await waitForPrompts(inbox, 2)
+})
+
+test("a person's minted thread opens no session and sends nothing; a refused mint leaves no thread", async () => {
+  const inbox: string[] = []
+  seedMockConnection(inbox, 'Agent Session')
+  const { owner, chatId } = await chatWithBothAgents('mint-for-person@example.test', 'mint for person')
+  const sessionCount = agentClient.listSessions().length
+
+  const thread = await model.mintThreadForPerson(reqAs(owner), chatId, 'agent-session', 'first')
+  assert.deepEqual(await threadRowsFor(chatId), [thread.id], 'the row is there')
+  assert.equal(agentClient.listSessions().length, sessionCount, 'no session was opened for it')
+  assert.ok(!agentClient.listSessions().some((s) => s.sessionKey === thread.sessionKey))
+  assert.deepEqual(inbox, [], 'the opening message is left to the thread to send')
+
+  const refusals = [
+    await captureRefusal(() =>
+      model.mintThreadForPerson(reqAs(owner), chatId, 'agent-session-2', 'x'.repeat(MAX_MESSAGE_TEXT_BYTES + 1)),
+    ),
+    await captureRefusal(() => model.mintThreadForPerson(reqAs(owner), chatId, 'agent-not-in-chat', 'first')),
+  ]
+  assert.deepEqual(
+    refusals.map((refusal) => refusal.code),
+    ['message-too-large', 'agent-not-a-member'],
+  )
+  assert.deepEqual(await threadRowsFor(chatId), [thread.id], 'no refused mint left a thread behind')
 })

@@ -225,6 +225,13 @@ const COMPOSER_CONTENT_CLASS = 'prose-chat max-w-none px-2 py-1.5 text-base md:t
 const COMPOSER_FIELD_CLASS = 'min-h-8 rounded-md dark:bg-input/30'
 
 /**
+ * What an empty message composer says when its host gives no placeholder of
+ * its own. It names no agent or chat: a name can be any length, and the field
+ * reads the same wherever a message is written.
+ */
+export const COMPOSER_PLACEHOLDER = 'Write a message…'
+
+/**
  * The plain text of a paste whose HTML only lays it out as preformatted text,
  * as a code editor copies code: one element styled `white-space: pre`, around
  * a block per line. ProseMirror would read each line as a paragraph. A `pre`

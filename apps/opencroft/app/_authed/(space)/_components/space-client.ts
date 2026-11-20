@@ -6,6 +6,9 @@ export interface SpaceGraphResult {
   updatedAt: string | null
   /** Where to open the graph's document; null when the graph could not be fetched. */
   live: LiveGraphSession | null
+  /** The graph's full address, `<space>.<graph>`, and its name; absent when the graph could not be fetched. */
+  address?: string
+  name?: string
 }
 
 export async function fetchSpaceGraph(slug: string): Promise<SpaceGraphResult> {

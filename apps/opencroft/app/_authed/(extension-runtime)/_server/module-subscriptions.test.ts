@@ -74,9 +74,11 @@ async function heard(logFile: string, expected: number): Promise<number> {
     if (count >= expected) {
       // Past the expected count, give a listener left over from an earlier
       // evaluation the same chance to write before the count is final.
+      // biome-ignore lint/plugin/noTestFixedTime: fixed window for a leftover listener to write before the count is final
       await new Promise((resolve) => setTimeout(resolve, 100))
       return (await fs.readFile(logFile, 'utf-8')).split('\n').filter(Boolean).length
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   } while (Date.now() < deadline)
   return count

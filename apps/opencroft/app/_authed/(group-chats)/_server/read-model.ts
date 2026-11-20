@@ -98,6 +98,12 @@ export interface GroupChatDetailView {
   /** How many threads the chat's archive holds. The archived threads
    *  themselves are a separate read, made only where they are drawn. */
   archivedThreadCount: number
+  /**
+   * The id of the space this is the chat of (see `spaceIdOfChat`); absent for
+   * a chat that is no space's. The chats page scopes the selections it takes
+   * from the browser's other windows to this space.
+   */
+  spaceId?: string
 }
 
 export interface GroupChatThreadEntry {
@@ -385,12 +391,14 @@ export async function getGroupChatDetailView(request: Request, groupChatId: stri
   const agents = await agentsByNodeId()
   const users = await usersById(memberRows.flatMap((r) => (r.userId ? [r.userId] : [])))
   const usernames = await memberUsernames(memberRows, agents, users)
+  const chatSpace = (await spacesOfChats([chat])).get(chat.id)
   return {
     id: chat.id,
     name: chat.name,
     topic: chat.topic,
     members: toMemberRefs(memberRows, agents, users, usernames),
     archivedThreadCount: await countThreadsInGroupChat(request, groupChatId, 'archive'),
+    ...(chatSpace ? { spaceId: chatSpace.id } : {}),
   }
 }
 

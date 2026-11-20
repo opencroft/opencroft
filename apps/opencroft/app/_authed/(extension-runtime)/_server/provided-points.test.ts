@@ -58,6 +58,7 @@ async function readAgain(id: string) {
   const deadline = Date.now() + 20_000
   let declares = await bundleDeclares(id)
   while (declares.providedPoints === null && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 50))
     declares = await bundleDeclares(id)
   }

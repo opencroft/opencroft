@@ -1,7 +1,7 @@
 'use client'
 
 import type { AvailableCommand } from 'agent-client/types'
-import { Check, Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react'
+import { Check, Send, ShieldAlert, ShieldCheck, ShieldCog, SlidersHorizontal, Sparkles, Square } from 'lucide-react'
 import { Fragment, useState } from 'react'
 import type { ReactNode } from 'react'
 
@@ -154,29 +154,16 @@ export interface AgentCommandBarProps {
   // per-setting pickers and input controls independently, without either
   // fighting the other for position.
   trailingControls?: ReactNode
-  // Copy for a send that did not go through, rendered directly above the
-  // composer. One shape for every chat, so a refusal reads the same wherever
-  // the panel is mounted -- a host wrapping the panel in its own error layout
-  // is what made this differ per surface.
+  // Host slot: rendered directly above the composer. For a strip that says
+  // something about the text currently in the input -- what is being edited,
+  // which of a turn's messages it is.
   //
-  // The panel displays it and decides nothing: what failed, how it is worded
-  // and when it clears are the host's. See the clear-on-send contract on this
-  // component -- the host is also what puts the typed text back.
-  sendError?: string
-  // Delegation, not notification: the panel does not own `sendError`, so
-  // without this there is no way to clear it and no dismiss control is
-  // offered. (Contrast `configs`, where the feature is gated on the data the
-  // host provides rather than on a callback.)
-  onDismissSendError?: () => void
-  // Host slot: rendered directly above the composer, under `sendError`. For a
-  // strip that says something about the text currently in the input -- what is
-  // being edited, which of a turn's messages it is. Nearer the input than the
-  // error is, because it describes what is IN the input rather than what
-  // happened to the last thing that left it.
+  // A conditional slot that holds its position whether or not it renders: see
+  // the structural rule in this component's doc comment.
   //
-  // A conditional slot that holds its position whether or not it renders, for
-  // the same reason `sendError` is one: see the structural rule in this
-  // component's doc comment.
+  // There is no error slot. A send that did not go through is told in the
+  // conversation, where the reader reads what happened; the panel only takes
+  // the words back (see the clear-on-send contract).
   editBar?: ReactNode
   // Host slot: a row of its own directly ABOVE the composer -- what is going
   // out ATTACHED to the next message. A selection being carried along, a
@@ -328,7 +315,7 @@ export const commandBarControlClass = 'size-7 shrink-0'
 // successful send to tidy up a rare failing one.
 //
 // So the failure path is the host's, and it has both halves: put the text back
-// (through its composer) and say what happened (through `sendError`). A host that
+// (through its composer) and say what happened (in its conversation). A host that
 // restores the ORIGINAL typed text rather than what it actually transmitted is
 // doing it right -- an outgoing transform is machinery the user never typed.
 // The visible cost of this choice is one frame of empty composer before the
@@ -368,7 +355,7 @@ export const commandBarControlClass = 'size-7 shrink-0'
 //
 // One structural rule matters more than it looks: **the wrapper column, the
 // composer and the action row are rendered unconditionally**, even with no
-// error above the composer. If the element structure changed as a conditional
+// strip above the composer. If the element structure changed as a conditional
 // slot appeared and cleared, the composer's text would be a different element
 // afterwards -- React would remount it and the caret would vanish mid-sentence.
 // A host memoising this panel has to preserve the same property on its side.
@@ -386,8 +373,6 @@ export function AgentCommandBar({
   onConfigChange,
   configExtra,
   trailingControls,
-  sendError,
-  onDismissSendError,
   editBar,
   attachments,
   onFiles,
@@ -499,34 +484,12 @@ export function AgentCommandBar({
           : undefined
       }
     >
-      {/* A failed send, directly above the composer with the text that failed
-          already back in it. `role='alert'` so it is announced rather than
-          only seen -- the text reappearing under the cursor is not something a
-          screen reader reports.
-
-          A conditional slot that holds its position whether or not it renders,
-          so the composer's text below keeps its place among the children and
-          is never remounted. See the structural rule in this component's doc comment --
-          an element that appears and disappears ABOVE the composer is exactly
-          the shape that would break it if it were spliced in instead. */}
-      {sendError ? (
-        <div role='alert' className='flex min-w-0 items-start gap-2 px-1 text-sm text-destructive'>
-          <span className='min-w-0 flex-1 wrap-break-word'>{sendError}</span>
-          {onDismissSendError ? (
-            <button
-              type='button'
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={onDismissSendError}
-              className='shrink-0 opacity-70 transition-opacity hover:opacity-100'
-              title='Dismiss'
-              aria-label='Dismiss error'
-            >
-              <X className='size-3.5' />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
+      {/* A conditional slot that holds its position whether or not it
+          renders, so the composer's text below keeps its place among the
+          children and is never remounted. See the structural rule in this
+          component's doc comment -- an element that appears and disappears
+          ABOVE the composer is exactly the shape that would break it if it
+          were spliced in instead. */}
       {editBar ? <div className='min-w-0'>{editBar}</div> : null}
 
       {/* What is going out with the next message, on its own row directly
@@ -555,7 +518,7 @@ export function AgentCommandBar({
           `null` produces no child, and therefore no gap.
 
           Conditional and still safe for the composer below it, by the same
-          mechanism `sendError` and `editBar` already rely on: a ternary in a
+          mechanism `editBar` already relies on: a ternary in a
           fixed child position keeps every sibling's place in the child list,
           so nothing around it is remounted as this appears and clears. See the
           structural rule in this component's doc comment.

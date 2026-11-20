@@ -1,18 +1,10 @@
 'use client'
 
 import { useLocation, useRouter } from '@tanstack/react-router'
-import {
-  type ComponentProps,
-  createContext,
-  type MouseEvent,
-  type ReactNode,
-  useCallback,
-  useContext,
-  useMemo,
-  useRef,
-} from 'react'
+import { type ComponentProps, createContext, type ReactNode, useCallback, useContext, useMemo, useRef } from 'react'
 
 import { appInstanceBase, appPathOf, resolveAppHref } from '@/app/_authed/(apps)/_lib/app-routes'
+import { opensElsewhere } from '@/app/_lib/opens-elsewhere'
 
 /**
  * An App's pages live under its instance's address, as real paths: the host
@@ -137,18 +129,6 @@ export function useOpenApp(): (address: string, to: string, options?: AppNavigat
 export interface AppLinkProps extends Omit<ComponentProps<'a'>, 'href'> {
   to: string
   replace?: boolean
-}
-
-function opensElsewhere(event: MouseEvent<HTMLAnchorElement>): boolean {
-  const target = event.currentTarget.getAttribute('target')
-  return (
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey ||
-    (target !== null && target !== '_self')
-  )
 }
 
 /**

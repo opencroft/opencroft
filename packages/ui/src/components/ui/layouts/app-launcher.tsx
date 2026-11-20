@@ -1,12 +1,14 @@
 import { Command as CommandPrimitive } from 'cmdk'
 import { cn } from 'cn'
-import { History, SearchIcon } from 'lucide-react'
+import { History, SearchIcon, Settings as SettingsIcon } from 'lucide-react'
 import { type ComponentType, type MouseEvent, type ReactNode, useMemo, useRef, useState } from 'react'
-import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandItem, CommandList } from 'ui/components/ui/command'
+
+import { buttonVariants } from '../button'
+import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandItem, CommandList } from '../command'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/components/ui/empty'
-import { InputGroup, InputGroupAddon } from 'ui/components/ui/input-group'
+import { InputGroup, InputGroupAddon } from '../input-group'
 import { Kbd, KbdGroup } from 'ui/components/ui/kbd'
-import { ScrollArea } from 'ui/components/ui/layout/scroll-area'
+import { ScrollArea } from '../layout/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from 'ui/components/ui/tooltip'
 
 import { groupBySpace, groupByType, matchesSearch, searchSpaces, type TypeGroup } from './app-launcher-groups'
@@ -23,6 +25,11 @@ export interface AppLauncherApp {
   icon?: Icon
   /** What kind of app it is (docs, graph, tasks); searchable alongside the name. */
   type: string
+  /**
+   * The app's settings. Given, the row ends in a settings button that opens
+   * them; the host gives it only to whoever may change them.
+   */
+  settingsHref?: string
 }
 
 /** A page outside the spaces, such as the chats or the settings. */
@@ -44,6 +51,11 @@ export interface AppLauncherSearchProps {
   /** Pages outside the spaces; found by searching. */
   pages: AppLauncherPage[]
   hrefFor: (slug: string) => string
+  /**
+   * A space's settings. Given, the chosen space's heading ends in a settings
+   * button that opens them; the host gives it only to whoever may change them.
+   */
+  settingsHrefFor?: (slug: string) => string
   /**
    * A plain press or Enter on any link here, so a client router can take the
    * navigation over. Without it the browser follows the link. A modified press
@@ -82,6 +94,15 @@ interface Row {
   label: string
   caption?: string
   checked?: boolean
+  /** Ends the row in a settings button. */
+  settings?: Settings
+}
+
+/** A settings button: where it goes, whose settings they are, and what kind (its tooltip). */
+interface Settings {
+  href: string
+  name: string
+  tooltip: string
 }
 
 function opensElsewhere(event: MouseEvent) {
@@ -108,6 +129,7 @@ export function AppLauncherSearch({
   activeAppId,
   pages,
   hrefFor,
+  settingsHrefFor,
   onNavigate,
   onChoose,
   shortcut,
@@ -169,13 +191,45 @@ export function AppLauncherSearch({
     }
   }
 
-  function row({ value, href, glyph, label, caption, checked = false }: Row) {
+  // A link drawn as an icon button, named by its label and its tooltip, so a
+  // new tab works from it as from any row. It is always shown, never only on
+  // hover, so a touch screen reaches it. Enter on it stays with the link:
+  // the list's own Enter would open the highlighted row instead.
+  function settingsLink({ href, name, tooltip }: Settings) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <a
+              href={href}
+              aria-label={`${name} settings`}
+              className={cn(
+                buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+                'text-muted-foreground pointer-coarse:size-10',
+              )}
+              onClick={linkClick(href)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.stopPropagation()
+                }
+              }}
+            />
+          }
+        >
+          <SettingsIcon />
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  function row({ value, href, glyph, label, caption, checked = false, settings }: Row) {
     return (
       <CommandItem
         key={value}
         value={value}
         data-checked={checked}
-        className='p-0 pr-2'
+        className={cn('p-0', settings ? 'pr-1' : 'pr-2')}
         onSelect={() => go(href)}
       >
         <a
@@ -188,6 +242,7 @@ export function AppLauncherSearch({
           <span className='min-w-0 flex-1 truncate'>{label}</span>
           {caption && <span className='max-w-[40%] shrink-0 truncate text-xs text-muted-foreground'>{caption}</span>}
         </a>
+        {settings && settingsLink(settings)}
       </CommandItem>
     )
   }
@@ -200,6 +255,7 @@ export function AppLauncherSearch({
       glyph: Glyph ? <Glyph className='size-4 shrink-0' /> : null,
       label: app.label,
       checked: app.id === activeAppId,
+      settings: app.settingsHref ? { href: app.settingsHref, name: app.label, tooltip: 'App settings' } : undefined,
     })
   }
 
@@ -285,11 +341,18 @@ export function AppLauncherSearch({
   const shelfSpace = shelf.recent ? undefined : spacesBySlug.get(shelf.slug)
   const shelfApps = shelf.recent ? recent : (appsBySpace.get(shelf.slug) ?? [])
   // The shelf is named once, at the list's head; the column already shows
-  // its icon.
+  // its icon. A space's heading ends in its settings when the host gives
+  // them.
+  const shelfName = shelf.recent ? 'Recent' : (shelfSpace?.name ?? shelf.slug)
+  const shelfSettings =
+    !shelf.recent && settingsHrefFor
+      ? { href: settingsHrefFor(shelf.slug), name: shelfName, tooltip: 'Space settings' }
+      : undefined
   const browsing = (
     <>
-      <div className='truncate px-2 pt-2 pb-1 text-base font-semibold'>
-        {shelf.recent ? 'Recent' : (shelfSpace?.name ?? shelf.slug)}
+      <div className='flex items-center gap-2 pt-2 pr-1 pb-1 pl-2'>
+        <span className='min-w-0 flex-1 truncate text-base font-semibold'>{shelfName}</span>
+        {shelfSettings && settingsLink(shelfSettings)}
       </div>
       {loading ? null : shelfApps.length === 0 ? (
         <Empty className='p-8'>

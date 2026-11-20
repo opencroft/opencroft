@@ -8,5 +8,32 @@
   },
   "files": {
     "includes": ["**", "!packages/db/migrations", "!packages/agent-chat", "!packages/agent-client"]
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/*.test.mjs", "**/*.test.js"],
+      "plugins": [
+        "./packages/dev-tools/test-rules/noBareTestSkip.grit",
+        "./packages/dev-tools/test-rules/noTrackerKeyInTestName.grit"
+      ]
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/*.test.mjs", "**/*.test.js", "!**/test-support/**"],
+      "plugins": ["./packages/dev-tools/test-rules/noTestFixedTime.grit"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "node:timers/promises": "A test does not sleep. Await the event or promise itself, poll with waitFor(condition) from test-support, or fake the clock with t.mock.timers (which does not fake node:timers/promises)."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

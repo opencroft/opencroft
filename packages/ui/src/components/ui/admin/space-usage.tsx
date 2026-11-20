@@ -1,7 +1,7 @@
 'use client'
 
 import { Calendar as CalendarIcon, Trash2 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { type CSSProperties, useRef, useState } from 'react'
 
 import { SegmentedButton } from 'ui/components/experimental/segmented-button'
 import {
@@ -16,12 +16,31 @@ import {
 } from 'ui/components/ui/alert-dialog'
 import { Button } from 'ui/components/ui/button'
 import { Calendar } from 'ui/components/ui/calendar'
+import { MultiSelect } from 'ui/components/ui/multi-select'
 import { Popover, PopoverContent, PopoverTrigger } from 'ui/components/ui/popover'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'ui/components/ui/table'
 import { cn } from 'cn'
 
 import { formatCompactNumber } from '../utils/compact-number'
 
-export type UsageGrouping = 'all' | 'agent' | 'model'
+export type UsageGrouping = 'all' | 'agent' | 'model' | 'space'
+
+const GROUPING_LABELS: Record<UsageGrouping, string> = {
+  all: 'All',
+  agent: 'Per agent',
+  model: 'Per model',
+  space: 'Per space',
+}
+
+const DEFAULT_GROUPINGS: UsageGrouping[] = ['all', 'agent', 'model']
+
+// What a grouping's series are, as the choice of them reads: "All agents",
+// "3 agents", "No usage on the chosen agents".
+const GROUP_NOUNS: Record<Exclude<UsageGrouping, 'all'>, { one: string; many: string }> = {
+  agent: { one: 'agent', many: 'agents' },
+  model: { one: 'model', many: 'models' },
+  space: { one: 'space', many: 'spaces' },
+}
 
 export type UsagePeriod =
   | { kind: 'today' }
@@ -57,21 +76,64 @@ export interface SpaceUsageSeries {
   key: string
   label: string
   points: SpaceUsagePoint[]
+  /**
+   * The series' colour slot, 0 for the first colour. Absent, the series takes
+   * the slot of its position in the array. Slots are distinct: two series
+   * given one slot draw in one colour. A host that narrows the list keeps each
+   * remaining series in the slot it had, so it keeps its colour when one above
+   * it goes.
+   */
+  colorIndex?: number
+  /**
+   * The series gathers the groups not drawn on their own ("Other"). It is
+   * drawn in the theme's neutral colour, outside the palette, so no group's
+   * colour is ever Other's; its `colorIndex` is not read.
+   */
+  folded?: boolean
+}
+
+/**
+ * One group's figures over the whole period: a row of the list beneath the
+ * charts. Every group the series were made from, the ones folded into
+ * "Other" included, so each has its own figure even where it has no line.
+ */
+export interface SpaceUsageGroup extends Omit<SpaceUsagePoint, 'date'> {
+  key: string
+  label: string
+  /** The colour slot of the group's own series. Absent, and not folded, the row has no dot. */
+  colorIndex?: number
+  /** The group is drawn in the "Other" series: its dot is Other's neutral colour. */
+  folded?: boolean
+}
+
+/** A group of the grouping shown that the reader may choose to draw. */
+export interface SpaceUsageOption {
+  /** The key the group's series and its row in `groups` carry. */
+  key: string
+  label: string
 }
 
 export interface SpaceUsageProps {
   /**
-   * One series when grouping is `all`, one per agent or per model otherwise —
-   * at most five (fold the rest into an "Other" series before passing; a
-   * sixth line would need a colour the categorical set does not have). Every
-   * series must share one date axis: same buckets, same order. Colour is
-   * assigned by position, so keep the array order stable across refetches —
-   * a filter that reorders survivors repaints them, and a repainted series
-   * reads as a different entity.
+   * One series when grouping is `all`, one per agent, model or space otherwise.
+   * The palette has 17 colours and an 18th series takes the first again,
+   * so a host drawing every group unasked folds its tail into an "Other"
+   * series. Every series must share one date axis: same buckets, same order. Colour is
+   * each series' `colorIndex`, or its position when that is absent, so keep
+   * both stable across refetches — a repainted series reads as a different
+   * entity.
    */
   series: SpaceUsageSeries[]
+  /**
+   * Each group's period figures, in the order to list them, for the list
+   * beneath the charts. Absent or empty, no list is drawn: under `all` the
+   * one group's figures are the cards' own.
+   */
+  groups?: SpaceUsageGroup[]
   grouping: UsageGrouping
   onGroupingChange: (grouping: UsageGrouping) => void
+  /** The groupings the switch offers, in order: All, Per agent and Per model when absent. */
+  groupings?: UsageGrouping[]
   /**
    * The reporting window. Same contract as the grouping: the choice leaves
    * as a callback and the host comes back with different rows — the
@@ -90,18 +152,45 @@ export interface SpaceUsageProps {
    * pass it.
    */
   onReset?: (period: UsagePeriod) => void | Promise<void>
+  /**
+   * The groups of the grouping shown that the reader may choose to draw: those
+   * with turns in the period. Same contract as the period and the grouping:
+   * the choice leaves as a callback and the host comes back with a series for
+   * each chosen group that has turns, none folded, and nothing else. Any
+   * number may be chosen. Without `onChosenChange`, and under `all`, no choice
+   * is drawn. The host owns the labels: a chosen key missing here is shown by
+   * the key itself, so a host keeps each chosen group in the list, with its
+   * label, even when the period has no turns for it.
+   */
+  options?: SpaceUsageOption[]
+  /** The chosen group keys of the grouping shown; empty draws every group, as without a choice. */
+  chosen?: string[]
+  onChosenChange?: (keys: string[]) => void
   /** ISO currency code for the cost figures. */
   currency?: string
   className?: string
 }
 
-// The categorical set, in fixed order. Position five is the last one there is:
-// an overflowing series list reuses it, visibly, which is the design telling
-// the host to fold instead of the chart inventing a hue.
-const SERIES_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
+// The categorical set: the theme's 17 chart tokens, one per chromatic hue
+// family. Slot 1 is blue, and each next slot is two hues further round the
+// wheel, so neighbouring series skip the hue between them: blue, violet,
+// fuchsia, rose, orange, yellow, green, teal, sky, then the hues skipped on
+// the first lap, indigo, purple, pink, red, amber, lime, emerald, cyan. 17 is
+// odd, so the second lap visits every hue the first did not. The order lives
+// here, not in the tokens' numbering, because other charts draw the theme's
+// first tokens as their own set. Past the 17th the slots cycle, the 18th
+// taking the first colour again, rather than the chart inventing a hue the
+// theme does not have.
+const SERIES_COLORS = [9, 6, 10, 17, 1, 13, 11, 2, 12, 16, 14, 8, 5, 4, 7, 15, 3].map(
+  (token) => `var(--chart-${token})`,
+)
+
+// "Other" is not one entity but the remainder, so it takes the theme's
+// neutral rather than a hue a group could also hold.
+const FOLDED_COLOR = 'var(--muted-foreground)'
 
 function seriesColor(index: number): string {
-  return SERIES_COLORS[Math.min(index, SERIES_COLORS.length - 1)]
+  return SERIES_COLORS[index % SERIES_COLORS.length]
 }
 
 // The smallest "nice" step — 1, 2 or 5 times a power of ten — whose fifth
@@ -194,6 +283,7 @@ function fromDay(day?: string): Date | undefined {
 }
 
 interface ChartSeries {
+  key: string
   label: string
   color: string
   values: (number | undefined)[]
@@ -312,7 +402,7 @@ function ChartCard({
               ) : null}
               {series.map((s, i) => (
                 <polyline
-                  key={s.label}
+                  key={s.key}
                   points={paths[i]}
                   fill='none'
                   stroke={s.color}
@@ -348,7 +438,7 @@ function ChartCard({
                   }
                   return (
                     <div
-                      key={s.label}
+                      key={s.key}
                       aria-hidden='true'
                       className='absolute size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background'
                       style={{ left: `${x(marker)}%`, top: `${y(v)}%`, backgroundColor: s.color }}
@@ -368,7 +458,7 @@ function ChartCard({
                     return null
                   }
                   return (
-                    <span key={s.label} className='flex items-center gap-1.5 whitespace-nowrap tabular-nums'>
+                    <span key={s.key} className='flex items-center gap-1.5 whitespace-nowrap tabular-nums'>
                       {series.length > 1 ? (
                         <span aria-hidden='true' className='size-1.5 rounded-full' style={{ backgroundColor: s.color }} />
                       ) : null}
@@ -390,7 +480,65 @@ function ChartCard({
   )
 }
 
-// The usage page for a space's settings: what was spent, then how it moved.
+// Each group's figures over the period, beneath the charts: the one place a
+// group's own sum is read, the only place a group folded into "Other" shows
+// at all, and the page's only legend. The same six figures as the cards, in
+// the same order, so a column reads down to its card's total. The dot is the
+// colour of the line the group is drawn in, so the groups folded into
+// "Other" wear its neutral.
+function groupDotStyle(group: SpaceUsageGroup): CSSProperties | undefined {
+  if (group.folded) {
+    return { backgroundColor: FOLDED_COLOR }
+  }
+  return group.colorIndex === undefined ? undefined : { backgroundColor: seriesColor(group.colorIndex) }
+}
+
+function GroupList({ groups, hasCost, currency }: { groups: SpaceUsageGroup[]; hasCost: boolean; currency: string }) {
+  return (
+    <div className='rounded-lg border'>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead className='text-right'>Cost</TableHead>
+            <TableHead className='text-right'>Total tokens</TableHead>
+            <TableHead className='text-right'>Input</TableHead>
+            <TableHead className='text-right'>Output</TableHead>
+            <TableHead className='text-right'>Cache reads</TableHead>
+            <TableHead className='text-right'>Cache writes</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groups.map((group) => (
+            <TableRow key={group.key}>
+              <TableCell>
+                <span className='flex items-center gap-1.5'>
+                  <span
+                    aria-hidden='true'
+                    className='size-2 shrink-0 rounded-full'
+                    style={groupDotStyle(group)}
+                  />
+                  {group.label}
+                </span>
+              </TableCell>
+              <TableCell className='text-right tabular-nums'>
+                {hasCost && group.cost !== undefined ? formatCost(group.cost, currency) : '—'}
+              </TableCell>
+              <TableCell className='text-right tabular-nums'>{formatCompactNumber(group.totalTokens)}</TableCell>
+              <TableCell className='text-right tabular-nums'>{formatCompactNumber(group.inputTokens)}</TableCell>
+              <TableCell className='text-right tabular-nums'>{formatCompactNumber(group.outputTokens)}</TableCell>
+              <TableCell className='text-right tabular-nums'>{formatCompactNumber(group.cacheReadTokens)}</TableCell>
+              <TableCell className='text-right tabular-nums'>{formatCompactNumber(group.cacheWriteTokens)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+// The usage page for a space's settings or the whole instance's: what was
+// spent, then how it moved.
 //
 // The reading order is the design, and it lives inside each card: the
 // metric's period sum stands in the card's header, in the largest type on
@@ -403,13 +551,18 @@ function ChartCard({
 // combined: tokens and currency do not share a scale, and a second y-axis
 // is how one chart lies twice.
 //
-// The grouping switch redraws the whole page, not one chart. All, per agent
-// and per model are different queries over the same records, so the choice
+// The grouping switch redraws the whole page, not one chart. All, per agent,
+// per model and per space are different queries over the same records, so the choice
 // leaves as a callback and the host comes back with different series — this
 // component never aggregates, splits, or differences anything. Colour then
 // follows the series across every chart on the page: whichever line Ada is
-// in the tokens chart, she is in the cost chart too, named once in the one
-// legend all four share.
+// in the tokens chart, she is in the cost chart too, named once in the list
+// of groups beneath them.
+//
+// Per agent, model or space the reader may choose which groups are drawn,
+// through the same round trip: the host comes back with those groups' series
+// alone, so every figure on the page is theirs. The choice is one fixed-size
+// button, so the controls row keeps its height whatever is chosen.
 //
 // The reset control is the one thing on the page that writes, and it writes
 // through the same door everything reads: it asks, then hands the period to
@@ -417,19 +570,27 @@ function ChartCard({
 // any other switch. Drawn only when a host offers it.
 export function SpaceUsage({
   series,
+  groups = [],
   grouping,
   onGroupingChange,
+  groupings = DEFAULT_GROUPINGS,
   period,
   onPeriodChange,
   onReset,
+  options = [],
+  chosen = [],
+  onChosenChange,
   currency = 'USD',
   className,
 }: SpaceUsageProps) {
+  const nouns = grouping === 'all' ? undefined : GROUP_NOUNS[grouping]
+  // The nouns while a choice narrows the page, for the copy that says so.
+  const chosenNouns = chosen.length > 0 ? nouns : undefined
   const [pickerOpen, setPickerOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [resetting, setResetting] = useState(false)
   const dates = series[0]?.points.map((p) => p.date) ?? []
-  const coloured = series.map((s, i) => ({ ...s, color: seriesColor(i) }))
+  const coloured = series.map((s, i) => ({ ...s, color: s.folded ? FOLDED_COLOR : seriesColor(s.colorIndex ?? i) }))
 
   const totalOf = (metric: (p: SpaceUsagePoint) => number) =>
     series.reduce((sum, s) => sum + s.points.reduce((a, p) => a + metric(p), 0), 0)
@@ -440,7 +601,7 @@ export function SpaceUsage({
   const totalCost = totalOf((p) => p.cost ?? 0)
 
   const chartSeries = (metric: (p: SpaceUsagePoint) => number | undefined): ChartSeries[] =>
-    coloured.map((s) => ({ label: s.label, color: s.color, values: s.points.map(metric) }))
+    coloured.map((s) => ({ key: s.key, label: s.label, color: s.color, values: s.points.map(metric) }))
 
   // A half-picked custom range names no window, so there is nothing yet to
   // confirm wiping; an empty window has nothing to wipe at all.
@@ -459,11 +620,10 @@ export function SpaceUsage({
 
   return (
     <div className={cn('flex flex-col gap-3', className)}>
-      {/* Both switches read the whole page — the period picks the rows, the
-          grouping picks the series — so they stand above everything they
-          redraw. The legend gets its own line beneath them: it spans every
-          chart, and repeating it per card would say the same names six
-          times. */}
+      {/* The switches read the whole page — the period picks the rows, the
+          grouping and its choice the series — so they stand above everything
+          they redraw. The series are named once, in the list of groups
+          beneath the charts. */}
       <div className='flex flex-wrap items-center justify-between gap-3'>
         <div className='flex flex-wrap items-center gap-2'>
           <SegmentedButton
@@ -520,15 +680,23 @@ export function SpaceUsage({
           ) : null}
         </div>
         <div className='flex flex-wrap items-center gap-2'>
+          {nouns && onChosenChange ? (
+            <MultiSelect
+              options={options.map((option) => ({ value: option.key, label: option.label }))}
+              value={chosen}
+              onValueChange={onChosenChange}
+              placeholder={`All ${nouns.many}`}
+              summary={(count) => `${count} ${nouns.many}`}
+              label={nouns.many.charAt(0).toUpperCase() + nouns.many.slice(1)}
+              searchPlaceholder={`Search ${nouns.many}…`}
+              emptyText={`No ${nouns.one} matches.`}
+            />
+          ) : null}
           <SegmentedButton
             size='sm'
             value={grouping}
             onChange={onGroupingChange}
-            options={[
-              { value: 'all', label: 'All' },
-              { value: 'agent', label: 'Per agent' },
-              { value: 'model', label: 'Per model' },
-            ]}
+            options={groupings.map((value) => ({ value, label: GROUPING_LABELS[value] }))}
           />
           {onReset ? (
             // Quiet in the row — an outline in the destructive ink, not a
@@ -548,19 +716,9 @@ export function SpaceUsage({
           ) : null}
         </div>
       </div>
-      {coloured.length > 1 ? (
-        <div className='flex flex-wrap items-center gap-3'>
-          {coloured.map((s) => (
-            <span key={s.key} className='flex items-center gap-1.5 text-xs text-muted-foreground'>
-              <span aria-hidden='true' className='size-2 rounded-full' style={{ backgroundColor: s.color }} />
-              {s.label}
-            </span>
-          ))}
-        </div>
-      ) : null}
       {dates.length === 0 ? (
         <div className='flex h-40 items-center justify-center text-sm text-muted-foreground'>
-          No usage recorded yet
+          {chosenNouns ? `No usage on the chosen ${chosenNouns.many}` : 'No usage recorded yet'}
         </div>
       ) : (
         <div className='grid gap-3 sm:grid-cols-2'>
@@ -609,14 +767,19 @@ export function SpaceUsage({
           />
         </div>
       )}
+      {dates.length > 0 && groups.length > 0 ? (
+        <GroupList groups={groups} hasCost={hasCost} currency={currency} />
+      ) : null}
       {onReset ? (
         <AlertDialog open={resetOpen} onOpenChange={setResetOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Reset usage for {periodLabel(period)}?</AlertDialogTitle>
               <AlertDialogDescription>
-                Every turn recorded in this window is deleted — its cost and token figures go back to zero, and
-                nothing brings them back.
+                Every turn recorded in this window is deleted
+                {chosenNouns ? `, for every ${chosenNouns.one}, not only the chosen ${chosenNouns.many}` : ''} — its
+                cost and token
+                figures go back to zero, and nothing brings them back.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

@@ -1,4 +1,4 @@
-import { isSnapshotEvent } from './fold'
+import { isSnapshotEvent, nextToolContent } from './fold'
 import type { ChatEvent } from './types'
 
 // The log a write landed in: '' for the session's own, a subagent's session id
@@ -88,6 +88,7 @@ function mergeToolUpdate(earlier: ToolUpdate, later: ToolUpdate): ToolUpdate {
   const input = later.input ?? earlier.input
   const output = later.output ?? earlier.output
   const diffs = later.diffs ?? earlier.diffs
+  const content = nextToolContent(earlier.content, later)
   return {
     kind: 'tool_update',
     toolCallId: later.toolCallId,
@@ -96,6 +97,7 @@ function mergeToolUpdate(earlier: ToolUpdate, later: ToolUpdate): ToolUpdate {
     ...(input !== undefined ? { input } : {}),
     ...(output !== undefined ? { output } : {}),
     ...(diffs !== undefined ? { diffs } : {}),
+    ...(content !== undefined ? { content } : {}),
   }
 }
 

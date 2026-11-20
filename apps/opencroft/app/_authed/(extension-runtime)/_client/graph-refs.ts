@@ -7,7 +7,6 @@ import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/reg
 import { extensionIdOfType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { describeGraphRefs as describeGraphRefsOnServer } from '@/app/_authed/(extension-runtime)/_server/actions'
 import type { GraphRefInfo } from '@/app/_authed/(extension-runtime)/_server/graph-refs'
-import { findExtensionHandle } from '@/app/_authed/(extension-runtime)/_types'
 import { sseEventsStore } from '@/app/_authed/(sse)/_lib/sse-events-store'
 
 // Every ref asked for in the same tick goes out as ONE request: a list of
@@ -101,6 +100,11 @@ export interface GraphRefDescription {
   kind: 'node' | 'app'
   /** The name its owner gave it, else its type's name. */
   name: string
+  /**
+   * For a terminal target: the terminal's one name, the same in every list and
+   * badge ("Docker · postgres", "my-repo · main"); for anything else, `name`.
+   */
+  title: string
   /** For a terminal target: which of the node's terminals, when that needs saying. */
   detail?: string
   /** Lucide icon name of its type. */
@@ -109,6 +113,10 @@ export interface GraphRefDescription {
   /** The node type's name, or `App`. */
   typeName: string
   spaceSlug: string
+  /** The space's name as its people see it. */
+  spaceName: string
+  /** For a node: the graph it is on, by its address and name. */
+  graph?: { address: string; name: string }
   /** For an App instance: its slug, and its address `<spaceSlug>.<slug>`. */
   slug?: string
   address?: string
@@ -122,40 +130,22 @@ export function splitTarget(target: string): { nodeId: string; handleId: string 
     : { nodeId: target, handleId: '' }
 }
 
-// What tells this terminal apart from its node's other outputs: a dynamic
-// handle's expanded remainder (a container), or what an App calls the handle
-// (a worktree's "repo · name") when it was asked as a target. A node's one plain
-// terminal output needs nothing -- its label would only repeat "Terminal" --
-// so a static label is shown only when the node has several to choose from.
-function handleDetail(info: GraphRefInfo, handleId: string): string {
-  if (!handleId) {
-    return ''
+// The name and place of a reference the host described; for a terminal target
+// the host also named the terminal, by the one rule every list and badge shows.
+export function describeGraphRef(info: GraphRefInfo): GraphRefDescription {
+  const shared = {
+    spaceSlug: info.spaceSlug,
+    spaceName: info.spaceName || info.spaceSlug,
+    ...(info.detail ? { detail: info.detail } : {}),
   }
-  if (info.kind !== 'node') {
-    return info.handleLabels?.[handleId] ?? (handleId === 'terminal' ? '' : handleId)
-  }
-  const handles = extensionRegistry.resolveNode(info.type)?.handles ?? []
-  const handle = findExtensionHandle(handles, handleId, 'source')
-  if (!handle) {
-    return handleId
-  }
-  if (handle.dynamic) {
-    return handleId.slice(handle.id.length)
-  }
-  const plainTerminals = handles.filter((h) => h.role === 'source' && h.handleType === handle.handleType && !h.dynamic)
-  return plainTerminals.length > 1 ? (handle.label ?? handleId) : ''
-}
-
-export function describeGraphRef(info: GraphRefInfo, handleId = ''): GraphRefDescription {
-  const detail = handleDetail(info, handleId) || undefined
   if (info.kind === 'app') {
     return {
       kind: 'app',
       name: info.name,
-      detail,
+      title: info.title ?? info.name,
       icon: 'AppWindow',
       typeName: 'App',
-      spaceSlug: info.spaceSlug,
+      ...shared,
       ...(info.slug ? { slug: info.slug } : {}),
       ...(info.address ? { address: info.address } : {}),
     }
@@ -164,15 +154,17 @@ export function describeGraphRef(info: GraphRefInfo, handleId = ''): GraphRefDes
   // registry's default); the declaration for the icon's name, which the
   // resolved type has already turned into a component.
   const type = extensionRegistry.resolveNode(info.type)
+  // The same fallback the canvas outline uses for an unnamed node.
+  const name = info.name || type?.name || info.type
   return {
     kind: 'node',
-    // The same fallback the canvas outline uses for an unnamed node.
-    name: info.name || type?.name || info.type,
-    detail,
+    name,
+    title: info.title ?? name,
     icon: type?.extension.nodes?.[type.nodeIndex]?.icon,
     accent: type?.accent,
     typeName: type?.name ?? info.type,
-    spaceSlug: info.spaceSlug,
+    ...shared,
+    ...(info.graph ? { graph: info.graph } : {}),
   }
 }
 
@@ -187,7 +179,7 @@ export async function describeGraphRefs(refs: string[]): Promise<Record<string, 
     refs.map(async (ref) => {
       // Asked whole, so an App's answer can carry its name for the handle.
       const info = await describeWithType(ref)
-      return [ref, info ? describeGraphRef(info, splitTarget(ref).handleId) : null] as const
+      return [ref, info ? describeGraphRef(info) : null] as const
     }),
   )
   return Object.fromEntries(entries)

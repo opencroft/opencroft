@@ -120,6 +120,7 @@ async function waitFor(cond: () => boolean, label: string): Promise<void> {
     if (cond()) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((r) => setTimeout(r, 10))
   }
   throw new Error(`timed out waiting for: ${label}`)

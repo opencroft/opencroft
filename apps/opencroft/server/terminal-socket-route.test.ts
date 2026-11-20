@@ -91,6 +91,7 @@ async function settle(request: Request): Promise<void> {
 
 async function until(condition: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 500 && !condition(); i++) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.ok(condition(), `timed out waiting for ${what}`)

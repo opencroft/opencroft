@@ -38,7 +38,7 @@ export function agentShell(target: string): RemoteShell {
       spawn: (ctx, argv, opts) => getBackend(ctx).spawn(ctx, argv, opts),
       ownerName: async (asked) => {
         const info = (await describeGraphRefsImpl([asked]))[asked]
-        return info ? info.name || info.type.split('.').pop() : undefined
+        return info ? info.title || info.name || info.type.split('.').pop() : undefined
       },
     },
     () => `${publicOrigin()}${AGENT_MCP_PATH}`,

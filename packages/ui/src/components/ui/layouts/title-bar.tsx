@@ -1,3 +1,5 @@
+import { mergeProps } from '@base-ui/react/merge-props'
+import { useRender } from '@base-ui/react/use-render'
 import { cn } from 'cn'
 import { ArrowLeft, ArrowRight, Copy, Ellipsis, ExternalLink, PanelLeft } from 'lucide-react'
 import {
@@ -12,7 +14,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Button } from 'ui/components/ui/button'
+import { Button, buttonVariants } from 'ui/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -131,6 +133,24 @@ function useIsInstalledApp(): boolean {
 
 export function TitleBarIconButton({ className, ...props }: ComponentProps<typeof Button>) {
   return <Button type='button' variant='ghost' size='icon' className={cn(ICON_BUTTON, className)} {...props} />
+}
+
+/**
+ * A TitleBarIconButton that goes somewhere: a real `<a href>`, so a middle
+ * click, Ctrl/Cmd+click and the browser's link menu open it in a new tab, and
+ * hovering shows its address. Pass `render` to draw the host router's link
+ * instead (`render={<Link to='/chats' />}`); the classes and props are merged
+ * onto it. A control that opens a menu or a dialog stays a TitleBarIconButton.
+ */
+export function TitleBarIconLink({ className, render, ...props }: useRender.ComponentProps<'a'>) {
+  return useRender({
+    defaultTagName: 'a',
+    render,
+    props: mergeProps<'a'>(
+      { className: cn(buttonVariants({ variant: 'ghost', size: 'icon' }), ICON_BUTTON, className) },
+      props,
+    ),
+  })
 }
 
 // Actions are declared once and drawn twice: as buttons on a wide bar and as

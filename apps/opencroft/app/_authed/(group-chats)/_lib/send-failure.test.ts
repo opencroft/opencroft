@@ -15,11 +15,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  GENERIC_SEND_FAILURE,
-  SendRefusedError,
-  sendFailureMessage,
-} from '@/app/_authed/(agent)/_shared/send-refused-error'
+import { SendRefusedError, sendFailureNotice } from '@/app/_authed/(agent)/_shared/send-refused-error'
 import { groupChatAccessCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import type { SendThreadMessageResult } from '@/app/_authed/(group-chats)/_server/actions'
 import { threadSendRefusal } from './send-failure'
@@ -53,15 +49,15 @@ test('a refused result becomes a SendRefusedError carrying the mapped copy', () 
 
   assert.ok(refusal instanceof SendRefusedError, 'a refusal must be marked as one so its copy is shown verbatim')
   assert.equal(refusal.message, 'That agent is not part of this group chat.')
-  assert.equal(sendFailureMessage(refusal), 'That agent is not part of this group chat.')
+  assert.deepEqual(sendFailureNotice(refusal), { title: 'That agent is not part of this group chat.' })
 })
 
-// The bug, stated as an assertion: the reader must get the specific
-// sentence, never the fallback, for a refusal the server actually identified.
+// The reader must get the specific sentence, never the fallback, for a
+// refusal the server actually identified.
 test('a refused send never reads as the generic failure', () => {
   const refusal = threadSendRefusal({ ok: false, code: 'agent-not-a-member' })
   assert.ok(refusal)
-  assert.notEqual(sendFailureMessage(refusal), GENERIC_SEND_FAILURE)
+  assert.notEqual(sendFailureNotice(refusal).title, sendFailureNotice(new Error('boom')).title)
 })
 
 test('every refusal code maps to its own copy, not a shared one', () => {
@@ -73,7 +69,7 @@ test('every refusal code maps to its own copy, not a shared one', () => {
   })
   assert.equal(new Set(messages).size, codes.length, 'each code must produce distinct copy')
   for (const message of messages) {
-    assert.notEqual(message, GENERIC_SEND_FAILURE)
+    assert.notEqual(message, sendFailureNotice(new Error('boom')).title)
   }
 })
 
@@ -81,8 +77,12 @@ test('a delivered send produces no refusal at all', () => {
   assert.equal(threadSendRefusal({ ok: true }), null)
 })
 
-test('the generic copy says the message was kept, because it is', () => {
-  // Load-bearing wording: the composer text is restored on every failed send,
-  // so saying so is what makes the failure recoverable rather than just visible.
-  assert.match(GENERIC_SEND_FAILURE, /composer/i)
+test('an unexplained failure says the message was kept, and keeps its own text under details', () => {
+  // Load-bearing wording: a failed send this notice is shown for has its text
+  // put back in the composer, so saying so is what makes the failure
+  // recoverable rather than just visible. A sent message kept on screen says
+  // something else (outgoingFailureNotice).
+  const notice = sendFailureNotice(new Error('Internal error'))
+  assert.match(notice.hint ?? '', /composer/i)
+  assert.equal(notice.details, 'Internal error')
 })

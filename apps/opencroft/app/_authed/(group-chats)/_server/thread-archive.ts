@@ -2,6 +2,7 @@ import { db, groupChatThread } from '@opencroft/db'
 import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import { clearQueueLocalImpl } from '@/app/_authed/(agent)/_server/acp-impl'
+import { releaseToolMedia } from '@/app/_authed/(agent)/_server/attachment-store'
 import { announceGroupChatChange } from '@/app/_authed/(group-chats)/_server/chat-changes'
 import {
   folderNameByThreadId,
@@ -52,7 +53,10 @@ export function threadListOf(thread: { archivedAt: Date | null }): ThreadList {
  *
  * Archiving also drops whatever was waiting in the thread's queue. Those
  * messages were accepted before the thread closed and would otherwise be
- * delivered after it; a turn already running is left to finish.
+ * delivered after it; a turn already running is left to finish. And it lets
+ * go of the pictures and sounds tools returned in the thread
+ * (releaseToolMedia): its transcript then says what each one was. Unarchiving
+ * brings none of them back.
  */
 export async function moveThreadBetweenLists(thread: ArchivableThread, archived: boolean): Promise<void> {
   const [moved] = await db
@@ -70,6 +74,7 @@ export async function moveThreadBetweenLists(thread: ArchivableThread, archived:
   }
   if (archived) {
     await clearQueueLocalImpl(thread.sessionKey)
+    await releaseToolMedia(thread.sessionKey)
   }
   const from: ThreadList = archived ? 'active' : 'archive'
   const to: ThreadList = archived ? 'archive' : 'active'

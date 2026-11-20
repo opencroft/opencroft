@@ -7,6 +7,7 @@ import {
   useInspectorIntent,
   useUpdateNodeInternals,
 } from '@opencroft/client/canvas'
+import { extensionId } from '@opencroft/client/extension'
 import {
   connectionFromContext,
   Terminal,
@@ -14,6 +15,7 @@ import {
   TerminalList,
   TerminalRef,
   TerminalSelector,
+  type TerminalSourceOwner,
 } from '@opencroft/client/terminal'
 import {
   Button,
@@ -34,9 +36,11 @@ import { Split } from 'lucide-react'
 import { type ChangeEvent, useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { storedType } from './stored-type'
 import {
   routeHandleId,
   routeOutput,
+  TERMINAL_ROUTER_TYPE,
   type TerminalRoute,
   type TerminalRouteResolution,
   type TerminalRouterData,
@@ -47,6 +51,11 @@ export const TERMINAL_ROUTER_HANDLES: ExtensionHandle[] = [
 ]
 
 export const terminalRouterExposeOutput = (handleId: string, data: TerminalRouterData) => routeOutput(handleId, data)
+
+// A route reaches a terminal, never another route, so the Add terminal picker
+// leaves out every router's routes, this one's included: it offers no row
+// that adding would refuse.
+const isRouter = (source: TerminalSourceOwner) => source.type === storedType(extensionId, TERMINAL_ROUTER_TYPE)
 
 export function TerminalRouterNode({
   id,
@@ -96,7 +105,8 @@ export function TerminalRouterNode({
                 title={route.context ? undefined : 'Terminal unavailable'}
                 onClick={() => openTerminal(route.id)}
               >
-                <TerminalRef target={route.target} />
+                {/* A route reaches a terminal of another space, so it says where. */}
+                <TerminalRef target={route.target} path />
               </Button>
             </OutputHandle>
           ))}
@@ -172,7 +182,13 @@ export function TerminalRouterInspector({
             </EmptyHeader>
           </Empty>
         )}
-        <TerminalSelector value='' onChange={addRoute} placeholder='Add terminal…' disabled={adding} />
+        <TerminalSelector
+          value=''
+          onChange={addRoute}
+          exclude={isRouter}
+          placeholder='Add terminal…'
+          disabled={adding}
+        />
       </Field>
     </FieldGroup>
   )

@@ -212,10 +212,10 @@ interface Props {
  * the arrangement switch, the conversation switch and the Back behaviour are
  * one implementation, and a fix to any of them reaches every surface at once.
  *
- * It does NOT provide the selection scope: which elements feed the composer
- * is the surface's own affair, so callers mount their SelectionProvider
- * around this component and their selection bridges inside it. What it does
- * provide is `useChatDock`, so the surface can open a thread in the panel.
+ * It does NOT provide the selection scope: the host mounts one around every
+ * App page and around the canvas, and the surface publishes into it with
+ * `usePublishSelection`. What it does provide is `useChatDock`, so the
+ * surface can open a thread in the panel.
  *
  * The covering container is a plain positioned element rather than the kit's
  * Sheet, deliberately: it is not a modal at all. No overlay, no focus trap,
@@ -257,31 +257,11 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     lastChatKey(session?.user.id ?? 'unresolved', space),
     undefined,
   )
-  // A selected thread the surface found deleted. The REMEMBERED selection
-  // goes back to the chat's home at once, so the next opening lands there;
-  // this keeps the deleted thread on screen for the rest of this visit, so
-  // the reader is told what happened rather than moved without a word. Any
-  // other choice, and closing the chat, ends it.
-  const [goneThreadId, setGoneThreadId] = useState<string | null>(null)
-  const shownSelection: EmbeddedChatSelection | undefined = goneThreadId ? { threadId: goneThreadId } : chatSelection
-  const select = useCallback(
-    (selection: EmbeddedChatSelection) => {
-      setGoneThreadId(null)
-      setChatSelection(selection)
-    },
-    [setChatSelection],
-  )
-  const onThreadGone = useCallback(
-    (threadId: string) => {
-      setGoneThreadId(threadId)
-      setChatSelection({ home: true })
-    },
-    [setChatSelection],
-  )
-  const close = () => {
-    setGoneThreadId(null)
-    setOpen(false)
-  }
+  // A thread the surface finds deleted -- opened from here, or deleted while
+  // it was read -- is replaced by the chat's home through this same select,
+  // so the remembered selection never points at it again.
+  const select = useCallback((selection: EmbeddedChatSelection) => setChatSelection(selection), [setChatSelection])
+  const close = () => setOpen(false)
   // On a phone the open chat is a full-screen cover, and the sidebar's sheet
   // steps aside for it rather than staying on top of it.
   const closeSidebarSheet = useCloseSidebarSheet()
@@ -402,12 +382,11 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
     <EmbeddedAgentChat
       space={space}
       id={id}
-      thread={shownSelection}
+      thread={chatSelection}
       onSelectionChange={select}
       title={chatName}
       onThreadContext={setThreadContext}
       onHomeHeader={setHomeHeader}
-      onThreadGone={onThreadGone}
       className='min-h-0 flex-1'
     />
   )
@@ -430,9 +409,9 @@ export function ChatDock({ space, id, title, chatName, children }: Props) {
   // and the arrow returns to the first -- the chat's home, where the threads
   // are listed, searched and started. That home is what replaced the "Choose
   // a chat" menu this header used to carry. It is there for a SELECTED thread
-  // before and without its context too -- while it loads, and when it is
-  // deleted or fails -- because those screens have no other way out.
-  const selectsThread = shownSelection !== undefined && 'threadId' in shownSelection
+  // before and without its context too -- while it loads, and when it fails
+  // -- because those screens have no other way out.
+  const selectsThread = chatSelection !== undefined && 'threadId' in chatSelection
   const cluster =
     threadContext || selectsThread ? (
       <div className='flex min-w-0 flex-1 items-center gap-1'>

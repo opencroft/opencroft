@@ -1,0 +1,30 @@
+language js
+
+// A skipped or todo test says why, in words: node:test prints the string
+// beside the test, and a bare skip reads as a pass nobody has to explain.
+// `test.skip(name, fn)` has no place for a reason, so the reason goes in the
+// options (`{ skip: 'what fails and why' }`) or in `t.skip('…')`.
+or {
+  `$runner.skip($args)` where {
+    $runner <: or {
+      `test`,
+      `it`,
+      `describe`,
+      `suite`
+    }
+  },
+  `$runner.todo($args)` where {
+    $runner <: or {
+      `test`,
+      `it`,
+      `describe`,
+      `suite`
+    }
+  },
+  `$context.skip()`,
+  `$context.todo()`,
+  `skip: true`,
+  `todo: true`
+} as $bare where {
+  register_diagnostic(span=$bare, message="A skipped or todo test carries its reason as a string: { skip: 'what fails and why' } or t.skip('what fails and why').", severity="error")
+}

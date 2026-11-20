@@ -49,7 +49,8 @@ function setup() {
           nodeType: 'acme.widgets.gauge',
           tabs,
           active: tabs.find((tab) => tab.id === activeId) as InspectorTabEntry,
-          inspectorProps: { nodeId },
+          data: {},
+          updateData: () => {},
         }),
       ),
     )

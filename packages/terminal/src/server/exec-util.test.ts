@@ -49,6 +49,7 @@ test("an injected value never appears in the spawned process's own argv while it
 
   // Real observation while the process is alive -- /proc/<pid>/cmdline is the same interface
   // `ps`/`pgrep -fa` read from. A value that leaked into argv, encoded or not, would appear here.
+  // biome-ignore lint/plugin/noTestFixedTime: fixed delay for the child process to start before its /proc cmdline is read; a child can't be faked
   await new Promise((resolve) => setTimeout(resolve, 300))
   const cmdline = (await readFile(`/proc/${child.pid}/cmdline`, 'utf8')).replaceAll('\0', ' ')
   assert.ok(!cmdline.includes(secretValue), 'raw value must not appear in argv')

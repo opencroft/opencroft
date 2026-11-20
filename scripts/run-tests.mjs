@@ -4,8 +4,8 @@
 // instead resolves the wrong (or no) path aliases and every `@/...` import
 // fails to resolve.
 //
-// Finds every *.test.ts(x) under the given roots (relative to cwd, default
-// ["src"]) and runs them through Node's test runner via tsx, several files at
+// Finds every *.test.ts(x) under the given roots (directories or single test
+// files, relative to cwd, default ["src"]) and runs them through Node's test runner via tsx, several files at
 // once. Node gives every file its own process, and a process that touches the
 // database gets its own throwaway PGlite datadir from the workspace preload
 // (@opencroft/db's test-env) or from the suite itself -- so files running side
@@ -26,6 +26,7 @@ import { join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { testConcurrency } from './test-concurrency.mjs'
+import { testEnvironment } from './test-environment.mjs'
 import { defaultFileTimeout, fileTimeouts, startWatchdog } from './test-file-limit.mjs'
 
 // The repository's own tsx, as a loader of this node's rather than through
@@ -40,6 +41,8 @@ const TSX = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href
 const SLOT_GATE = pathToFileURL(join(import.meta.dirname, 'test-slot.mjs')).href
 
 const FILE_WATCHDOG = pathToFileURL(join(import.meta.dirname, 'test-file-watchdog.mjs')).href
+
+const TIMINGS_REPORTER = pathToFileURL(join(import.meta.dirname, 'test-timings.mjs')).href
 
 const RUN_DIR_PREFIX = 'opencroft-test-run-'
 
@@ -63,21 +66,33 @@ if (roots.length === 0) {
 
 const testFiles = []
 
+function isTestFile(name) {
+  return name.endsWith('.test.ts') || name.endsWith('.test.tsx')
+}
+
 function walk(dir) {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules') continue
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) {
       walk(full)
-    } else if (entry.endsWith('.test.ts') || entry.endsWith('.test.tsx')) {
+    } else if (isTestFile(entry)) {
       testFiles.push(full)
     }
   }
 }
 
+// A root is a directory to walk or a single test file. Any other file stops
+// the run: it would otherwise run nothing and end as a pass.
 for (const root of roots) {
-  if (existsSync(root)) {
+  if (!existsSync(root)) continue
+  if (statSync(root).isDirectory()) {
     walk(root)
+  } else if (isTestFile(root)) {
+    testFiles.push(root)
+  } else {
+    console.error(`${root} is neither a directory nor a *.test.ts(x) file.`)
+    process.exit(1)
   }
 }
 
@@ -126,36 +141,47 @@ args.push('--test', `--test-concurrency=${testConcurrency()}`)
 // captures this output gets one format interactively and another through a
 // pipe. A caller that parses the results asks for the machine-readable one by
 // name rather than depending on which side of that default it landed on.
-if (process.env.OPENCROFT_TEST_TAP) {
-  args.push('--test-reporter=tap', '--test-reporter-destination=stdout')
+//
+// Naming any reporter replaces that default, so when the timings reporter is
+// added the report on stdout is named too, as Node would have picked it.
+const timingsDir = process.env.OPENCROFT_TEST_TIMINGS
+if (process.env.OPENCROFT_TEST_TAP || timingsDir) {
+  const report = process.env.OPENCROFT_TEST_TAP || !process.stdout.isTTY ? 'tap' : 'spec'
+  args.push(`--test-reporter=${report}`, '--test-reporter-destination=stdout')
+}
+// Each finished test's time, for the slowest-tests list the root run ends
+// with (test-timings.mjs). One file per workspace, named by this process.
+if (timingsDir) {
+  args.push(
+    `--test-reporter=${TIMINGS_REPORTER}`,
+    `--test-reporter-destination=${join(timingsDir, `${process.pid}.jsonl`)}`,
+  )
 }
 args.push(...testFiles.map((f) => relative('.', f)))
 
-const env = { ...process.env }
-// Cleared before it can be set, because it is inherited like any other
-// variable: a caller with one exported decides what every workspace here
-// compiles against. That is not a matter of degree. A tsconfig from elsewhere
-// resolves path aliases this package cannot, so files that fail to load under
-// the package's own configuration load under someone else's and run different
-// code -- and a file the named tsconfig does not claim is compiled with no
-// tsconfig at all rather than with its own, losing settings the package
-// depends on. Which environment you start a test run from must not decide
-// what gets tested.
-delete env.TSX_TSCONFIG_PATH
-// Inherited by every file at once, a datadir is shared by all of them. Left
-// unset, each process makes its own (see the header). Under its former name
-// too, which the database code still honours.
-delete env.OPENCROFT_PGLITE_PATH
-delete env.PGLITE_PATH
+// Only the variables test-environment.mjs lists reach a file; credentials and
+// anything else the caller's shell holds stay behind. These dropped ones
+// matter here in particular:
+// - TSX_TSCONFIG_PATH: a caller with one exported would decide what every
+//   workspace compiles against. A tsconfig from elsewhere resolves path
+//   aliases this package cannot, so files that fail to load under the
+//   package's own configuration load under someone else's and run different
+//   code -- and a file the named tsconfig does not claim is compiled with no
+//   tsconfig at all, losing settings the package depends on. The package's own
+//   is set below.
+// - OPENCROFT_PGLITE_PATH (and its former name PGLITE_PATH, which the database
+//   code still honours): inherited by every file at once, one datadir would be
+//   shared by all of them. Left unset, each process makes its own (see the
+//   header).
+// - BETTER_AUTH_SECRET and SECRETS_KEY, former names that could otherwise
+//   stand in for the two keys set below.
+const env = testEnvironment(process.env)
 // Set for every file, so no test that signs a session or encrypts a secret
 // falls through to the instance key file, which would be created in the data
 // directory of the checkout the run started from. Tests of the key file
 // itself unset them and point OPENCROFT_DATA_DIR at a directory of their own.
-// The former names are dropped so an exported one cannot stand in for these.
 env.OPENCROFT_AUTH_SECRET = 'test-auth-secret-not-a-real-one'
 env.OPENCROFT_SECRETS_KEY = 'test-secrets-key-not-a-real-one'
-delete env.BETTER_AUTH_SECRET
-delete env.SECRETS_KEY
 // A workspace-local tsconfig.test.json is the test runner's own answer to
 // rendering JSX: the shared tsconfig leaves the transform to the bundler
 // (`jsx: preserve`), which the runner has none of, so a component throws

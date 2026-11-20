@@ -54,7 +54,11 @@ import { NodeRef } from '@/app/_authed/(extension-runtime)/_client/node-ref'
 import { PinTip } from '@/app/_authed/(extension-runtime)/_client/pin-tip'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
 import { createSafeIcons } from '@/app/_authed/(extension-runtime)/_client/safe-icons'
-import { SelectionProvider, useSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
+import {
+  SelectionProvider,
+  usePublishSelection,
+  useSelection,
+} from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import {
   broadcast,
   getStream,
@@ -746,6 +750,7 @@ export const extensionClientModules = {
     useChatDock,
     SelectionProvider,
     useSelection,
+    usePublishSelection,
     describeMentionedAccounts: extensionHostApi.describeMentionedAccounts,
   },
   code: { CodeBlock, CodeBlockEditor, CodeEditor },

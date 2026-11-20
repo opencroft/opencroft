@@ -2,6 +2,7 @@ import { Moon, ScrollText, ShieldAlert } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 
 import { Badge } from 'ui/components/ui/badge'
+import { FieldHint } from '../field-hint'
 import { Button } from '../button'
 import { Input } from '../input'
 import { Spinner } from 'ui/components/ui/spinner'
@@ -195,14 +196,16 @@ function BackgroundTasksCard({ tasks, error }: { tasks: AgentBackgroundTask[] | 
   return (
     <div className='rounded-lg border'>
       <div className='flex items-center justify-between gap-4 px-4 py-3 border-b'>
-        <div>
+        <FieldHint
+          about='Background tasks'
+          text={
+            'Work tools and actions started and did not wait for: everything still running, and what ended ' +
+            'recently.\n\nMost of it runs **in the server**, and a restart fails it; a command on the background ' +
+            'task runner (experimental) runs **on its node** and outlives a restart.'
+          }
+        >
           <div className='text-sm font-medium'>Background tasks</div>
-          <div className='text-xs text-muted-foreground'>
-            Work tools and actions started and did not wait for: everything still running, and what ended
-            recently. Most of it runs in the server, and a restart fails it; a command on the background task
-            runner (experimental) runs on its node and outlives a restart.
-          </div>
-        </div>
+        </FieldHint>
         {error ? (
           <Badge variant='destructive'>unknown</Badge>
         ) : tasks ? (
@@ -268,8 +271,9 @@ function parseField(text: string): number | null | undefined {
 
 // The chat history settings: a limit per session, and a cleanup after a
 // number of days that a switch turns on. Both off keeps every session's whole
-// history. Each says what it removes, because what it removes does not come
-// back. Edited here and saved together; a new value from the host (a save
+// history. Each keeps one line in view saying that what it removes is gone for
+// good, because it does not come back; the rest of what it does is in its
+// hint. Edited here and saved together; a new value from the host (a save
 // coming back, another admin's) replaces the edit.
 function ChatHistoryCard({
   settings,
@@ -299,25 +303,33 @@ function ChatHistoryCard({
     <div className='rounded-lg border p-4 space-y-4'>
       <div className='flex items-center gap-3'>
         <ScrollText className='size-5 text-muted-foreground' aria-hidden='true' />
-        <div>
+        <FieldHint
+          about='Chat history'
+          text={
+            'Every session keeps its whole chat history, archived threads included, unless one of these is ' +
+            'set.\n\nA chat opens on its newest messages and loads older ones as the reader scrolls up.'
+          }
+        >
           <div className='text-sm font-medium'>Chat history</div>
-          <div className='text-xs text-muted-foreground'>
-            Every session keeps its whole chat history, archived threads included, unless one of these is set.
-            A chat opens on its newest messages and loads older ones as the reader scrolls up.
-          </div>
-        </div>
+        </FieldHint>
         {!settings && <Spinner className='ml-auto' />}
       </div>
 
       <div className='flex items-center justify-between gap-4'>
         <div>
-          <label htmlFor={`${id}-limit`} className='text-sm'>
-            Limit per session
-          </label>
-          <div className='text-xs text-muted-foreground'>
-            Keeps the newest events of each session's chat and removes the older ones, a whole turn at a time;
-            the newest turn always stays. Removed messages no longer show in search. Empty keeps everything.
-          </div>
+          <FieldHint
+            about='Limit per session'
+            text={
+              "Keeps the newest events of each session's chat and removes the older ones, **a whole turn at a " +
+              'time**; the newest turn always stays.\n\nRemoved messages no longer show in search. Empty keeps ' +
+              'everything.'
+            }
+          >
+            <label htmlFor={`${id}-limit`} className='text-sm'>
+              Limit per session
+            </label>
+          </FieldHint>
+          <div className='text-xs text-muted-foreground'>Older events are removed for good.</div>
         </div>
         <Input
           id={`${id}-limit`}
@@ -335,13 +347,19 @@ function ChatHistoryCard({
 
       <div className='flex items-center justify-between gap-4'>
         <div>
-          <label htmlFor={`${id}-days`} className='text-sm'>
-            Clean up after
-          </label>
-          <div className='text-xs text-muted-foreground'>
-            Removes the turns that started more than this many days ago from every session's chat, archived
-            threads included; the newest turn of each always stays. Removed messages no longer show in search.
-          </div>
+          <FieldHint
+            about='Clean up after'
+            text={
+              "Removes the turns that started more than this many days ago from every session's chat, " +
+              'archived threads included; the newest turn of each always stays.\n\nRemoved messages no longer ' +
+              'show in search.'
+            }
+          >
+            <label htmlFor={`${id}-days`} className='text-sm'>
+              Clean up after
+            </label>
+          </FieldHint>
+          <div className='text-xs text-muted-foreground'>Older turns are removed for good.</div>
         </div>
         <div className='flex shrink-0 items-center gap-2'>
           <Switch
@@ -421,17 +439,22 @@ export function AgentSessions({
           <Moon className={`size-5 ${sleepEnabled ? 'text-amber-500' : 'text-muted-foreground'}`} aria-hidden='true' />
           <div>
             <div className='text-sm font-medium'>
-              Sleep Mode
+              <FieldHint
+                about='Sleep Mode'
+                text={
+                  'Hold all agent deliveries. Running turns finish, new messages enqueue and are kept, nothing ' +
+                  'is delivered until the instance wakes.\n\n**Survives a restart** — that is the point: raise ' +
+                  'it, wait for everyone below to go idle, restart calmly, then switch it off to deliver what ' +
+                  'accumulated.'
+                }
+              >
+                Sleep Mode
+              </FieldHint>
               {sleepEnabled && (
                 <Badge variant='outline' className='ml-2 border-amber-500 text-amber-500'>
                   ASLEEP
                 </Badge>
               )}
-            </div>
-            <div className='text-xs text-muted-foreground'>
-              Hold all agent deliveries. Running turns finish, new messages enqueue and are kept, nothing is
-              delivered until the instance wakes. Survives a restart — that is the point: raise it, wait for
-              everyone below to go idle, restart calmly, then switch it off to deliver what accumulated.
             </div>
           </div>
         </div>
@@ -448,18 +471,28 @@ export function AgentSessions({
           <ShieldAlert className={`size-5 ${yoloEnabled ? 'text-red-500' : 'text-muted-foreground'}`} aria-hidden='true' />
           <div>
             <div className='text-sm font-medium'>
-              YOLO Mode
+              <FieldHint
+                about='YOLO Mode'
+                text={
+                  'Skip all MCP tool approvals: agents execute without confirmation, and what already ran ' +
+                  'cannot be taken back.\n\nSet by the `OPENCROFT_YOLO_MODE` environment variable, or switched ' +
+                  'here until the next restart.'
+                }
+              >
+                YOLO Mode
+              </FieldHint>
               {yoloEnabled && (
                 <Badge variant='destructive' className='ml-2'>
                   ACTIVE
                 </Badge>
               )}
             </div>
-            <div className='text-xs text-muted-foreground'>
-              Skip all MCP tool approvals. Agents execute without confirmation.
-              {yoloSource === 'env' && ' (set via OPENCROFT_YOLO_MODE env)'}
-              {yoloSource === 'runtime' && ' (runtime override, resets on restart)'}
-            </div>
+            {yoloSource === 'env' && (
+              <div className='text-xs text-muted-foreground'>Set via OPENCROFT_YOLO_MODE env</div>
+            )}
+            {yoloSource === 'runtime' && (
+              <div className='text-xs text-muted-foreground'>Runtime override, resets on restart</div>
+            )}
           </div>
         </div>
         <Switch
@@ -475,11 +508,16 @@ export function AgentSessions({
       <div className='rounded-lg border'>
         <div className='flex items-center justify-between px-4 py-3 border-b'>
           <div>
-            <div className='text-sm font-medium'>Active sessions</div>
-            <div className='text-xs text-muted-foreground'>
-              Every session that is not offline. Safe to restart when nothing is working or waiting and no
-              queue is left you would rather deliver first{sleepEnabled ? ' — deliveries are currently held' : ''}.
-            </div>
+            <FieldHint
+              about='Active sessions'
+              text={
+                'Every session that is not offline. Safe to restart when nothing is working or waiting and no ' +
+                'queue is left you would rather deliver first.'
+              }
+            >
+              <div className='text-sm font-medium'>Active sessions</div>
+            </FieldHint>
+            {sleepEnabled && <div className='text-xs text-muted-foreground'>Deliveries are currently held.</div>}
           </div>
           <Badge variant={sessions.some((s) => s.status !== 'idle') ? 'default' : 'secondary'}>
             {sessions.filter((s) => s.status !== 'idle').length} busy / {sessions.length} live

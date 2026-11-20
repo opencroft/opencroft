@@ -79,3 +79,15 @@ export class ActionRequiredError extends Error {
     this.name = 'ActionRequiredError'
   }
 }
+
+// A harness process that exited (or never spawned) before it finished the ACP
+// handshake, with what it said on the way out -- or, never spawned, what the
+// place it runs said when it could not start it. Its own class so a caller can
+// show it to the person at once instead of retrying: the process ran and
+// died, and starting it again the same way usually dies the same way.
+export class HarnessStartError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HarnessStartError'
+  }
+}

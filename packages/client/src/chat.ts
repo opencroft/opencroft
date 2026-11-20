@@ -80,8 +80,70 @@ export interface ChatDockControl {
 /** The `ChatDock` around the calling surface, or null when it has none. */
 export declare const useChatDock: () => ChatDockControl | null
 
+/** A range of lines, 1-based and inclusive. */
+export interface LineRange {
+  from: number
+  to: number
+}
+
+/**
+ * One thing the reader has selected or open, as a reference an agent resolves
+ * with one tool call. The host writes the call from the item's kind and fields.
+ *
+ * - `node`: a canvas node, on the graph at `graph` (`<space>.<graph>`).
+ * - `file`: a file or folder on a terminal. `terminal` is a `remote_*` target
+ *   (`<node-id>/<handle-id>`, or `<app address or uuid>/<handle-id>`); `path`
+ *   is absolute or relative to the terminal's working directory; `on` is the
+ *   terminal's name as the host shows it.
+ * - `commit`: a commit in the repository at `repository` on a terminal (absent:
+ *   the terminal's own checkout); with `path`, the call shows that file's change.
+ * - `app`: anything an App's own action reads, given as the App's address, the
+ *   action and its parameters. `noun` names it in counts (`['task', 'tasks']`).
+ *
+ * `text` is the highlighted text: of `lines` when the item has them, otherwise
+ * text the surface can't place on a line (a highlight in an editor). At most
+ * 4,000 characters per selection travel, the rest cut with a note.
+ */
+export type SelectionItem =
+  | { kind: 'node'; graph: string; id: string; name: string; type: string }
+  | {
+      kind: 'file'
+      terminal: string
+      path: string
+      folder?: boolean
+      lines?: LineRange
+      text?: string
+      on?: string
+    }
+  | { kind: 'commit'; terminal: string; repository?: string; sha: string; subject?: string; path?: string }
+  | {
+      kind: 'app'
+      app: string
+      action: string
+      params: Record<string, unknown>
+      name: string
+      noun?: [singular: string, plural: string]
+      lines?: LineRange
+      text?: string
+    }
+
+/** What a surface publishes: its items, and where the reader is. */
+export interface Selection {
+  items: SelectionItem[]
+  /** Where the reader is, for the quote: the graph's or App's name. Default: the App's name. */
+  place?: string
+}
+
+/**
+ * A selection as the scope holds it: the quote (`Space › App › what`) and the
+ * block the agent receives, whose first line is the quote.
+ *
+ * Publishing one of these instead of a `Selection` is deprecated: the host
+ * composes the quote and the block from a `Selection`'s items, with the call
+ * that resolves each one.
+ */
 export interface UserSelection {
-  /** What the quotation shows. Presentation only — never sent to the agent. */
+  /** What the quotation shows. */
   label: string
   /** What the agent receives when passing is on. */
   content: string
@@ -102,14 +164,34 @@ export interface SelectionContextValue {
    * last answer.
    */
   passEnabled: boolean
-  setSelection: (selection: UserSelection | null) => void
+  /** Replace the selection; one with no items, and `null`, clear it. For a surface that publishes on events. */
+  setSelection(selection: Selection | null): void
+  /** @deprecated Publish a `Selection`: the host writes the quote and the block from its items. */
+  setSelection(selection: UserSelection | null): void
   clearSelection: () => void
   togglePass: () => void
 }
 
+/**
+ * A selection scope. The host mounts one around every App page and around the
+ * canvas, so a surface needs none of its own; one mounted inside a scope adds
+ * no second scope and publishes into the one above.
+ */
 export declare const SelectionProvider: FC<{ children: ReactNode }>
 /** Throws outside a `SelectionProvider` rather than returning an empty scope. */
 export declare const useSelection: () => SelectionContextValue
+
+/**
+ * Publish what the surface has selected, declaratively: the scope gets
+ * `selection` whenever its value changes, and a clear on `null`, on an empty
+ * list and when the calling component unmounts while its last value selected
+ * something. Compared by value, so a
+ * selection built afresh on every render publishes once. Does nothing outside
+ * a scope.
+ */
+export declare function usePublishSelection(selection: Selection | null): void
+/** @deprecated Publish a `Selection`: the host writes the quote and the block from its items. */
+export declare function usePublishSelection(selection: UserSelection | null): void
 
 /** One account a username names: what the directory already shows any signed-in member. */
 export interface MentionedAccount {

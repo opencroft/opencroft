@@ -38,7 +38,7 @@ import { findSelectOption, MODE_SELECTOR, MODEL_SELECTOR, THOUGHT_LEVEL_SELECTOR
 import type { AgentConnection } from './connection'
 import { normalizeUsage } from './context-window'
 import { deliveryNoteBlock, hasUnresolvedToolCalls, isDeliveryNote } from './delivery-note'
-import { ActionRequiredError, errorMessage, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
+import { ActionRequiredError, errorMessage, HarnessStartError, rpcErrorDetail, rpcErrorParts, safeJson } from './errors'
 import { foldEvents, isTerminalToolStatus, lastConversationEvent } from './fold'
 import type { HarnessAdapter, HarnessTurnEnd } from './harness-adapters'
 import { type HarnessFailure, harnessStartError } from './harness-failure'
@@ -95,6 +95,7 @@ import {
 import { offeredModeId } from './session-modes'
 import { foldRestoredState, restorableEvents } from './session-restore'
 import { fileSkillHandler, fileSkills } from './skills'
+import { type StoredToolMedia, type ToolMedia, toolContent, toolMedia } from './tool-content'
 import { type HistoryPort, type LogWrite, type PlacedEntry, SESSION_LOG, TranscriptLog } from './transcript-log'
 import { TURN_FAILURE_LOGS, type TurnFailureLog } from './turn-failure-log'
 import { findTurnBoundary } from './turns'
@@ -120,6 +121,7 @@ import type {
   SessionUsage,
   SpawnConfig,
   SubagentInfo,
+  ToolContent,
   ToolDiff,
   TurnQuota,
   TurnTokenUsage,
@@ -182,6 +184,20 @@ export interface AgentClientOptions {
   // run out of memory doing it (see promptBlocks). A host should read the one
   // row it is asked for, not batch them.
   loadAttachments?: (request: { sessionKey?: string; ids: readonly string[] }) => Promise<readonly PromptAttachment[]>
+  // Keep a picture or a sound a tool returned, and answer with the id a reader
+  // fetches it by — or null for one the host does not keep (a type it will not
+  // serve, a size over its limit). Host-provided for the reason
+  // `loadAttachments` is: the bytes belong in the host's store, and the
+  // transcript carries only what names them (see ToolContent).
+  //
+  // Called once per piece, in the order the result holds them, before the
+  // update that carries them is folded. Every later update of the same
+  // session waits behind it, so the transcript keeps the harness's order, and
+  // so does the end of the turn. A call that throws counts as not kept.
+  //
+  // Absent means a host that keeps none: the transcript then says what each
+  // piece was, and nothing more.
+  storeToolMedia?: (request: { sessionKey?: string; mimeType: string; data: string }) => Promise<StoredToolMedia | null>
   tools?: ToolsInput
   skills?: SkillsInput
   skillHandler?: SkillHandler
@@ -673,8 +689,9 @@ interface SessionState {
   replaying?: boolean
   // True only while a resume by reload (HarnessAdapter.resumeByReload) has the
   // harness load this session again. The load replays history this record
-  // already holds, so handleUpdate drops the replayed kinds for the session
-  // while this is set (see REPLAYED_ON_LOAD) and lets session state through.
+  // already holds, so receiveUpdate drops the replayed kinds for the session
+  // while this is set (see REPLAYED_ON_LOAD), before any tool media in them is
+  // stored, and lets session state through.
   // No turn of ours runs in that span: a refresh starts only on an idle
   // session, the reload runs inside `resuming`, which connectionForSession
   // waits out before any call reaches the harness, and reloads of one session
@@ -926,8 +943,8 @@ function isTaskNotification(text: string): boolean {
 // Extract display text from an ACP/MCP content shape (a block, an array of
 // blocks, or a { content } envelope). Returns null when the value isn't a
 // recognizable block so the caller can pick a fallback. Non-text blocks
-// (image, resource, diff, terminal, …) become a typed placeholder for now;
-// rich rendering is tracked separately.
+// (image, resource, diff, terminal, …) become a typed placeholder in the text;
+// the blocks themselves are kept as the event's `content` (toolContentField).
 function blockText(value: unknown): string | null {
   if (typeof value === 'string') {
     return value
@@ -994,11 +1011,13 @@ type ToolCallUpdateNotification = Extract<SessionNotification['update'], { sessi
 // command whose output was its description.
 //
 // `stopping` says a Stop was sent for the running turn (stopRequested): a call
-// that settles `failed` then was stopped, and settles `cancelled`.
+// that settles `failed` then was stopped, and settles `cancelled`. `stored` is
+// the host's answer for the update's tool media (see receiveUpdate).
 function toolUpdateEvent(
   update: ToolCallUpdateNotification,
   adapter?: HarnessAdapter,
   stopping = false,
+  stored?: readonly (StoredToolMedia | null)[],
 ): Extract<ChatEvent, { kind: 'tool_update' }> {
   const output = toolOutputText(update.content, update.rawOutput)
   const description = (update.rawInput as { description?: unknown } | null | undefined)?.description
@@ -1018,7 +1037,18 @@ function toolUpdateEvent(
     input: update.rawInput ?? undefined,
     output: restatesInput ? undefined : output,
     ...toolDiffs(update.content),
+    ...toolContentField(update, stored),
   }
+}
+
+// The call's result with its pictures, sounds and files kept, as an event's
+// `content` (see ToolContent) — nothing for a result of text alone.
+function toolContentField(
+  update: { content?: ToolCallContent[] | null; rawOutput?: unknown },
+  stored?: readonly (StoredToolMedia | null)[],
+): { content?: ToolContent[] } {
+  const content = toolContent(update.content, update.rawOutput, stored)
+  return content ? { content } : {}
 }
 
 // The file changes among a tool call's `content` blocks, as an event's
@@ -1133,6 +1163,90 @@ let onHarnessTurnEndHook: ((sessionId: string, signal: HarnessTurnEnd) => void) 
 // Where a compaction hold that ended mid-turn hands back to the client, which
 // owns the queue and the notifications it was holding (createAgentClient).
 let onCompactionHoldEndHook: ((sessionId: string) => void) | undefined
+
+// AgentClientOptions.storeToolMedia, for receiveUpdate — module-level for the
+// reason the hooks above are.
+let storeToolMediaHook: AgentClientOptions['storeToolMedia']
+
+// Per session (its root id), the last update waiting behind tool media being
+// stored. Absent while nothing waits, which is nearly always: then an update
+// is folded the moment it arrives.
+const toolMediaChains = new Map<string, Promise<void>>()
+
+async function storeMediaInOrder(
+  store: NonNullable<AgentClientOptions['storeToolMedia']>,
+  sessionKey: string | undefined,
+  media: readonly ToolMedia[],
+): Promise<(StoredToolMedia | null)[]> {
+  const stored: (StoredToolMedia | null)[] = []
+  for (const piece of media) {
+    try {
+      stored.push(await store({ sessionKey, mimeType: piece.mimeType, data: piece.data }))
+    } catch (error) {
+      console.error('[agent-client] a tool result could not be kept', errorMessage(error))
+      stored.push(null)
+    }
+  }
+  return stored
+}
+
+function updateToolMedia(update: SessionNotification['update']): ToolMedia[] {
+  return update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update'
+    ? toolMedia(update.content, update.rawOutput)
+    : []
+}
+
+/**
+ * Where every session/update notification enters. An update carrying tool
+ * media is folded once the host has stored it (storeToolMedia), and every
+ * update of the same session after it waits its turn behind it, so the
+ * transcript reads in the order the harness sent. Anything else is folded at
+ * once (handleUpdate).
+ */
+export function receiveUpdate(notification: SessionNotification): void {
+  const rootId = subagentRoute(notification.sessionId).rootId
+  // Decided on arrival, before anything is stored: the replay is history the
+  // reloaded session already shows, and an update that arrived before the
+  // reload began stays live however long it waits behind tool media.
+  if (isReplayedHistory(rootId, notification.update.sessionUpdate)) {
+    return
+  }
+  const waiting = toolMediaChains.get(rootId)
+  const keep = storeToolMediaHook
+  const media = keep ? updateToolMedia(notification.update) : []
+  if (!waiting && media.length === 0) {
+    handleUpdate(notification)
+    return
+  }
+  const sessionKey = store.sessions.get(rootId)?.selection.sessionKey
+  const next = (waiting ?? Promise.resolve())
+    .then(() => (keep && media.length > 0 ? storeMediaInOrder(keep, sessionKey, media) : []))
+    .then((stored) => handleUpdate(notification, stored))
+    .catch((error: unknown) => {
+      console.error('[agent-client] session update failed', error)
+    })
+  toolMediaChains.set(rootId, next)
+  void next.then(() => {
+    if (toolMediaChains.get(rootId) === next) {
+      toolMediaChains.delete(rootId)
+    }
+  })
+}
+
+/**
+ * Run `then` once every update of the session received so far has been
+ * folded: at once when none is waiting, else after the last of them. For what
+ * the client says about a session itself (the end of a turn, a permission
+ * request) that must not overtake an update the harness sent before it.
+ */
+function afterReceivedUpdates(sessionId: string, then: () => void): void {
+  const waiting = toolMediaChains.get(subagentRoute(sessionId).rootId)
+  if (waiting) {
+    void waiting.then(then)
+  } else {
+    then()
+  }
+}
 
 function isCompacting(session: SessionState): boolean {
   return session.compactionHold !== undefined
@@ -1747,6 +1861,7 @@ function childEventOf(
   update: SessionNotification['update'],
   adapter?: HarnessAdapter,
   stopping = false,
+  stored?: readonly (StoredToolMedia | null)[],
 ): ChatEvent | null {
   switch (update.sessionUpdate) {
     case 'user_message_chunk': {
@@ -1771,9 +1886,10 @@ function childEventOf(
         input: update.rawInput,
         ...toolName(update as unknown as Record<string, unknown>),
         ...toolDiffs(update.content),
+        ...toolContentField(update, stored),
       }
     case 'tool_call_update':
-      return toolUpdateEvent(update, adapter, stopping)
+      return toolUpdateEvent(update, adapter, stopping, stored)
     default:
       return null
   }
@@ -2001,7 +2117,7 @@ function isDraftSessionUpdate(message: unknown): boolean {
 export function interceptDraftSessionUpdates(stream: Stream): Stream {
   const consume = (frame: unknown) => {
     try {
-      handleUpdate((frame as { params: SessionNotification }).params)
+      receiveUpdate((frame as { params: SessionNotification }).params)
     } catch (error) {
       console.error('[agent-client] draft session update failed', error)
     }
@@ -2108,15 +2224,19 @@ const REPLAYED_ON_LOAD = new Set([
   ...DRAFT_SESSION_UPDATE_KINDS,
 ])
 
+function isReplayedHistory(rootId: string, kind: string): boolean {
+  return store.sessions.get(rootId)?.reloading === true && REPLAYED_ON_LOAD.has(kind)
+}
+
 // Dispatches an inbound session/update notification to store state + a
-// ChatEvent. Exported so tests can drive it directly — the real caller is the
-// ACP Client wired up per spawned connection (buildClient below), which test
-// mocks bypass entirely by seeding store.connections with a fake AgentConnection.
-export function handleUpdate(notification: SessionNotification): void {
+// ChatEvent. Exported so tests can drive it directly — the real caller is
+// receiveUpdate, from the ACP Client wired up per spawned connection
+// (buildClient below), which test mocks bypass entirely by seeding
+// store.connections with a fake AgentConnection. receiveUpdate has already
+// dropped a reload's replay. `stored` is the host's answer for the tool media
+// the update carries, in the order toolMedia lists it.
+export function handleUpdate(notification: SessionNotification, stored?: readonly (StoredToolMedia | null)[]): void {
   const { sessionId, update } = notification
-  if (store.sessions.get(subagentRoute(sessionId).rootId)?.reloading && REPLAYED_ON_LOAD.has(update.sessionUpdate)) {
-    return
-  }
   // Draft update kinds (subagents, async tasks — ACP #1992 / AIR) aren't in
   // the SDK's typed union yet; recognized by name ahead of the switch below.
   if (handleExtensionUpdate(sessionId, update as unknown as Record<string, unknown> & { sessionUpdate: string })) {
@@ -2142,7 +2262,12 @@ export function handleUpdate(notification: SessionNotification): void {
   // is what a subscriber is actually watching.
   if (route.chain.length > 0) {
     const root = store.sessions.get(route.rootId)
-    const childEvent = childEventOf(update, findAdapter(root?.selection.adapterId ?? ''), root?.stopRequested === true)
+    const childEvent = childEventOf(
+      update,
+      findAdapter(root?.selection.adapterId ?? ''),
+      root?.stopRequested === true,
+      stored,
+    )
     if (childEvent) {
       emit(route.rootId, nestUnder(route.chain, childEvent))
     }
@@ -2215,13 +2340,19 @@ export function handleUpdate(notification: SessionNotification): void {
         input: update.rawInput,
         ...toolName(update as unknown as Record<string, unknown>),
         ...toolDiffs(update.content),
+        ...toolContentField(update, stored),
       })
       break
     }
     case 'tool_call_update': {
       emit(
         sessionId,
-        toolUpdateEvent(update, findAdapter(holding?.selection.adapterId ?? ''), holding?.stopRequested === true),
+        toolUpdateEvent(
+          update,
+          findAdapter(holding?.selection.adapterId ?? ''),
+          holding?.stopRequested === true,
+          stored,
+        ),
       )
       break
     }
@@ -2567,7 +2698,7 @@ export function buildClient(
 ): Client {
   return {
     sessionUpdate: async (notification: SessionNotification) => {
-      handleUpdate(notification)
+      receiveUpdate(notification)
     },
     requestPermission: async (request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
       // A subagent asks under its OWN session id (ACP #1992), which no
@@ -2578,6 +2709,17 @@ export function buildClient(
       // answer nobody can give.
       const route = subagentRoute(request.sessionId)
       const sessionId = route.rootId
+      // Read on arrival, not after the host's verdict: the handler may be
+      // async, and a turn that ends while it decides would otherwise make an
+      // in-turn request look like one raised between turns.
+      const turnBound = hasTurnInFlight(sessionId)
+      // The harness asked after every update it had sent, so the request is
+      // drawn after them too, the ones still waiting on their tool media
+      // included (see receiveUpdate).
+      const waiting = toolMediaChains.get(sessionId)
+      if (waiting) {
+        await waiting
+      }
       // The request's tool call is an update to the call it names (ACP), and
       // the change it asks to make may be reported here and nowhere else — a
       // harness can send the exact approval patch only with the request. The
@@ -2595,10 +2737,6 @@ export function buildClient(
       if (isAlwaysAllowed(perms, title)) {
         return { outcome: { outcome: 'selected', optionId: pickAllowOption(request) } }
       }
-      // Read on arrival, not after the host's verdict: the handler may be
-      // async, and a turn that ends while it decides would otherwise make an
-      // in-turn request look like one raised between turns.
-      const turnBound = hasTurnInFlight(sessionId)
       const outcome = permissionHandler
         ? await permissionHandler(
             permissionContext(request, mcpServerName, {
@@ -2784,7 +2922,8 @@ function redact(text: string, secrets: string[]): string {
 // An error safe to surface: its message (and its cause chain's) with the
 // secrets replaced. A fresh Error, so the original — which may carry the
 // secret in a message, a cause or an attached request — goes no further. An
-// ActionRequiredError stays one: a caller decides whether to retry on its class.
+// ActionRequiredError or a HarnessStartError stays one: a caller decides
+// whether to retry on its class.
 function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
   const parts: string[] = []
   let cursor: unknown = error
@@ -2794,7 +2933,10 @@ function redactedError(error: unknown, secrets: string[], prefix = ''): Error {
   }
   const [first, ...rest] = parts.map((part) => redact(part, secrets))
   const message = `${prefix}${first ?? 'unknown error'}${rest.length ? ` (${rest.join('; ')})` : ''}`
-  return error instanceof ActionRequiredError ? new ActionRequiredError(message) : new Error(message)
+  if (error instanceof ActionRequiredError) {
+    return new ActionRequiredError(message)
+  }
+  return error instanceof HarnessStartError ? new HarnessStartError(message) : new Error(message)
 }
 
 // How much of an error's `data` a chat line carries, and how much the server
@@ -2841,7 +2983,7 @@ function reportAgentError(sessionId: string, call: string, error: unknown, prefi
   const session = store.sessions.get(sessionId)
   const secrets = session ? secretsOf(session.selection) : []
   logAgentError(sessionId, call, error, secrets)
-  emit(sessionId, { kind: 'error', message: `${prefix}${describedAgentError(error, secrets)}` })
+  emit(sessionId, { kind: 'error', message: `${prefix}${describedAgentError(error, secrets)}`, source: 'harness' })
 }
 
 // ACP's `auth_required` error code (the SDK's ErrorCode union names the number
@@ -3321,6 +3463,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
   historyPort = options.history
   onActivityChangeHook = options.onActivityChange
   onCompactionHook = options.onCompaction
+  storeToolMediaHook = options.storeToolMedia
   onHarnessTurnEndHook = (sessionId, signal) => endHarnessTurns(sessionId, signal)
   onCompactionHoldEndHook = (sessionId) => deliverAfterCompaction(sessionId)
   const mcpServerName = options.mcpServerName ?? 'local'
@@ -3661,12 +3804,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     try {
       child = await startHarnessProcess(spawnConfig, options.shells)
     } catch (error) {
-      throw redactedError(
-        new Error(`The agent could not be started on ${placementLabel(placement)}`, {
-          cause: error,
-        }),
-        secrets,
-      )
+      // Never spawned: the place it runs refused to start it (a stopped
+      // container, a terminal refused to agents). Starting it the same way
+      // gets the same answer, so it is a harness that could not start. Its
+      // cause's words follow in parentheses (redactedError).
+      const failed = new HarnessStartError(`Agent failed to start: ${placementLabel(placement)} could not start it`)
+      failed.cause = error
+      throw redactedError(failed, secrets)
     }
     // A shell starts its process asynchronously: another caller may have
     // connected meanwhile, and the one already stored is the connection.
@@ -4784,14 +4928,20 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     // place the prompt promise settles, so a host reads them off the turn_end
     // event instead of re-parsing `_meta` — none of it is spec-guaranteed
     // shape, and the parse rules live in one module (usage-meta).
+    //
+    // The harness answers the prompt after the last update of its turn, so the
+    // turn ends after those updates are folded, the ones still waiting on
+    // their tool media included (see receiveUpdate).
     void connection.prompt({ sessionId, prompt: instructionNote ? [instructionNote, ...prompt] : prompt }).then(
       (response) =>
-        settleTurn(sessionId, {
-          stopReason: response.stopReason,
-          usage: normalizeTurnUsage(response.usage),
-          quota: parseTurnQuota(response._meta),
-          failure: parseSessionFailure(response._meta),
-        }),
+        afterReceivedUpdates(sessionId, () =>
+          settleTurn(sessionId, {
+            stopReason: response.stopReason,
+            usage: normalizeTurnUsage(response.usage),
+            quota: parseTurnQuota(response._meta),
+            failure: parseSessionFailure(response._meta),
+          }),
+        ),
       (error: unknown) => {
         // Failures surface immediately, even while other prompts are still in
         // flight on this session — visibility beats state purity, at the cost
@@ -4799,7 +4949,7 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         // the end of a turn. The terminal bookkeeping still waits for the last
         // settlement (see settleTurn).
         reportAgentError(sessionId, 'session/prompt', error)
-        settleTurn(sessionId, {})
+        afterReceivedUpdates(sessionId, () => settleTurn(sessionId, {}))
       },
     )
   }

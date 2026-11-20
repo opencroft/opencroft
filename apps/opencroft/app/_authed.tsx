@@ -1,5 +1,7 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
+import { Markdown } from 'agent-chat/components/markdown'
 import { useEffect } from 'react'
+import { FieldHintMarkdownProvider } from 'ui/field-hint'
 import { preloadIcons } from 'ui/media/named-icon'
 
 import { useFullPageAppRoute } from '@/app/_authed/(apps)/_components/full-page-route'
@@ -86,9 +88,12 @@ function AuthedLayout() {
       <MarkdownResolversHost />
       <MarkdownMentionsHost />
       <ThemePreferenceSync />
-      <AppShell spaces={spaces} chrome={!fullPage}>
-        <Outlet />
-      </AppShell>
+      {/* Field hints are markdown; every page and extension below draws them with the chat's renderer. */}
+      <FieldHintMarkdownProvider markdown={Markdown}>
+        <AppShell spaces={spaces} chrome={!fullPage}>
+          <Outlet />
+        </AppShell>
+      </FieldHintMarkdownProvider>
       <SponsorPrompt />
     </SSEProvider>
   )

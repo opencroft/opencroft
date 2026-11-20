@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'ui/dialog'
+import { FieldHint } from 'ui/field-hint'
 import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
@@ -115,7 +116,12 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
             />
           </div>
           <div className='flex flex-col gap-1.5'>
-            <Label htmlFor='install-id'>Extension id (optional)</Label>
+            <FieldHint
+              about='Extension id'
+              text='Leave empty to use `owner.repo` from the URL. Required when the URL path is not exactly `owner/repo`.'
+            >
+              <Label htmlFor='install-id'>Extension id (optional)</Label>
+            </FieldHint>
             <Input
               id='install-id'
               value={extensionId}
@@ -124,10 +130,6 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
               placeholder='owner.extension'
               disabled={busy}
             />
-            <p className='text-[10px] text-muted-foreground'>
-              Leave empty to use <code>owner.repo</code> from the URL. Required when the URL path is not exactly{' '}
-              <code>owner/repo</code>.
-            </p>
           </div>
           <div className='flex flex-col gap-1.5'>
             <Label htmlFor='install-ref'>Tag or branch (optional)</Label>
@@ -141,7 +143,12 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
             />
           </div>
           <div className='flex flex-col gap-1.5'>
-            <Label htmlFor='install-auth'>Authentication (private repos)</Label>
+            <FieldHint
+              about='Authentication'
+              text='Reads the keys `token` (required) and `username` (optional, `x-access-token` when not set) from the chosen Secrets Store.'
+            >
+              <Label htmlFor='install-auth'>Authentication (private repos)</Label>
+            </FieldHint>
             <Select
               value={storeId}
               items={[
@@ -170,10 +177,6 @@ export function InstallExtensionDialog({ open, onOpenChange, onInstalled }: Inst
                 ))}
               </SelectContent>
             </Select>
-            <p className='text-[10px] text-muted-foreground'>
-              Reads keys <code>token</code> (required) and <code>username</code> (optional, defaults to{' '}
-              <code>x-access-token</code>) from the chosen Secrets Store.
-            </p>
           </div>
         </div>
         <DialogFooter>

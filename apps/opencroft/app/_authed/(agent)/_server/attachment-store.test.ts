@@ -21,8 +21,10 @@ import {
   MAX_ATTACHMENT_BYTES,
   moveAttachments,
   readAttachment,
+  releaseToolMedia,
   resolveAttachmentRefs,
   saveAttachment,
+  saveToolMedia,
 } from './attachment-store'
 
 let counter = 0
@@ -236,4 +238,75 @@ test('a refusal over the ceiling states both sizes to one decimal', async () => 
     (error: unknown) =>
       error instanceof AttachmentRejected && error.message === 'that image is 4.2 MB, over the 4.0 MB limit',
   )
+})
+
+// ── media a tool returned ──────────────────────────────────────────────────
+
+const toolRows = async (sessionKey: string) =>
+  (await db.select({ rows: count() }).from(chatAttachment).where(eq(chatAttachment.sessionKey, sessionKey)))[0].rows
+
+test("a tool's picture is kept with the size it displays at, and served back by id", async () => {
+  const key = nextKey()
+  const data = await base64(canvas(30, 20).png())
+  const kept = await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data })
+  assert.ok(kept)
+  assert.equal(kept.width, 30)
+  assert.equal(kept.height, 20)
+  assert.deepEqual(await readAttachment(key, kept.id), { name: 'image/png', mimeType: 'image/png', data })
+})
+
+test("a tool's sound is kept, with no picture size", async () => {
+  const key = nextKey()
+  const kept = await saveToolMedia({ sessionKey: key, mimeType: 'audio/wav', data: 'AAAA' })
+  assert.ok(kept)
+  assert.deepEqual(Object.keys(kept), ['id'])
+  assert.equal((await readAttachment(key, kept.id))?.mimeType, 'audio/wav')
+})
+
+test('a tool result is not kept as a type a browser would run, nor empty, nor over the ceiling', async () => {
+  const key = nextKey()
+  for (const mimeType of ['image/svg+xml', 'text/html', 'application/pdf', 'audio/x-unknown']) {
+    assert.equal(await saveToolMedia({ sessionKey: key, mimeType, data: 'AAAA' }), null, mimeType)
+  }
+  assert.equal(await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data: '' }), null)
+  const over = 'A'.repeat(Math.ceil((MAX_ATTACHMENT_BYTES + 3) * (4 / 3)))
+  assert.equal(await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data: over }), null)
+  assert.equal(await toolRows(key), 0)
+})
+
+test("a send cannot name a tool's picture as an attachment, nor can a message's text deliver it", async () => {
+  const key = nextKey()
+  const kept = await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data: 'AAAA' })
+  assert.ok(kept)
+  await assert.rejects(resolveAttachmentRefs(key, [kept.id]), AttachmentRejected)
+  assert.deepEqual(await loadAttachments(key, [kept.id]), [])
+})
+
+test("releasing a conversation's tool media takes only the tool's, and only what came before the cut", async () => {
+  const key = nextKey()
+  const other = nextKey()
+  const attached = await png(key, 'attached.png')
+  const earlier = await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data: 'AAAA' })
+  const later = await saveToolMedia({ sessionKey: key, mimeType: 'image/png', data: 'AAAA' })
+  const elsewhere = await saveToolMedia({ sessionKey: other, mimeType: 'image/png', data: 'AAAA' })
+  assert.ok(earlier && later && elsewhere)
+  // The cut is placed by the rows' own stamps rather than by a clock: one tool
+  // row is dated an hour before the others, and the cut falls between.
+  const [stamped] = await db
+    .select({ createdAt: chatAttachment.createdAt })
+    .from(chatAttachment)
+    .where(eq(chatAttachment.id, later.id))
+  const cut = new Date(stamped.createdAt.getTime() - 30 * 60_000)
+  await db
+    .update(chatAttachment)
+    .set({ createdAt: new Date(stamped.createdAt.getTime() - 60 * 60_000) })
+    .where(eq(chatAttachment.id, earlier.id))
+  await releaseToolMedia(key, cut)
+  assert.equal(await readAttachment(key, earlier.id), null, 'the tool media before the cut is gone')
+  assert.ok(await readAttachment(key, attached.id), "the reader's attachment stays")
+  assert.ok(await readAttachment(key, later.id), 'the tool media after the cut stays')
+  assert.ok(await readAttachment(other, elsewhere.id), "another conversation's stays")
+  await releaseToolMedia(key)
+  assert.equal(await readAttachment(key, later.id), null, 'with no cut, all of it goes')
+  assert.ok(await readAttachment(key, attached.id))
 })

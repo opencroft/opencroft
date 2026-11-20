@@ -14,6 +14,7 @@ import { withSessionKeyLock } from './stream'
 // the recorded order, and the assertions are on that order -- a broken lock
 // interleaves whatever the duration is. Examined during a sweep for tests
 // bounded by a guess; this is not one.
+// biome-ignore lint/plugin/noTestFixedTime: lengthens the critical section so a broken lock interleaves; the assertions are on order, not time
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5))
 
 test('two callers on one key run one after the other, not interleaved', async () => {

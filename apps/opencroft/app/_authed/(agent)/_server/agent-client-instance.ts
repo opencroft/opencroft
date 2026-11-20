@@ -6,7 +6,7 @@ import type { ChatEvent, CompactionState } from 'agent-client/types'
 
 import { readPersistedPresence, writePersistedUsage } from '@/app/_authed/(agent)/_server/acp-session-store'
 import { agentShell } from '@/app/_authed/(agent)/_server/agent-terminal'
-import { loadAttachments } from '@/app/_authed/(agent)/_server/attachment-store'
+import { loadAttachments, releaseToolMedia, saveToolMedia } from '@/app/_authed/(agent)/_server/attachment-store'
 import { recordChatUsageTurn } from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { loadInstructionTexts } from '@/app/_authed/(agent)/_server/instruction-store'
 import { readMcpServersForAgent } from '@/app/_authed/(agent)/_server/mcp-store'
@@ -166,6 +166,21 @@ export function registerCompactionHandler(handler: CompactionHandler): void {
   compactionHandler = handler
 }
 
+// A completed compaction lets go of the media tools returned before it: the
+// agent's context no longer holds what it looked at, and the transcript says
+// what each piece was instead of showing it. What arrives after the compaction
+// stays. The engine reports only live compactions (never a replay), so this
+// runs once per real one.
+function releaseCompactedToolMedia(sessionId: string): void {
+  const sessionKey = agentClient.listSessions().find((meta) => meta.id === sessionId)?.sessionKey
+  if (!sessionKey) {
+    return
+  }
+  void releaseToolMedia(sessionKey, new Date()).catch((error: unknown) => {
+    console.error('Could not release tool media after a compaction of session', sessionId, error)
+  })
+}
+
 // Bridge-side forensics: claude-agent-acp appends a per-process decision log
 // (session/replay phases, subagent routing, steering) to this directory when
 // the variable is set — spawned bridges inherit process.env. Under the app's
@@ -255,6 +270,11 @@ export const agentClient = createAgentClient({
   // picture. A session with no key resolves nothing at all, which is the honest
   // answer — there is no conversation to have stored one under.
   loadAttachments: ({ sessionKey, ids }) => (sessionKey ? loadAttachments(sessionKey, ids) : Promise.resolve([])),
+  // The pictures and sounds a tool returns, kept beside the attachments under
+  // the same key and served by the same route; the transcript carries their
+  // ids. A session with no key keeps none, for the reason above.
+  storeToolMedia: ({ sessionKey, mimeType, data }) =>
+    sessionKey ? saveToolMedia({ sessionKey, mimeType, data }) : Promise.resolve(null),
   // Global skill catalog from the settings DB, resolved per turn. For now every
   // configured skill is exposed to this agent client (not scoped per node).
   skills: loadSkillDefs,
@@ -297,6 +317,9 @@ export const agentClient = createAgentClient({
     void compactionHandler?.(sessionId, compaction).catch((error) => {
       console.error('Compaction handler failed for session', sessionId, error)
     })
+    if (compaction.status === 'completed') {
+      releaseCompactedToolMedia(sessionId)
+    }
   },
   // A task this host runs (see (background-tasks)) is stopped by the registry
   // that runs it. The engine hands a stop pressed on one here instead of to the

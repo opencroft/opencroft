@@ -19,6 +19,7 @@ test('the refusal mapped from its code says the same limit and remedy, without a
   )
 })
 
+// biome-ignore lint/plugin/noTrackerKeyInTestName: UTF-8 names an encoding, not a tracker key
 test('the limit is in UTF-8 bytes, not characters', () => {
   // '€' is three bytes: half the limit in characters is half again over it in
   // bytes, which a count of characters would let through.

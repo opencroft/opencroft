@@ -93,14 +93,10 @@ export function GroupChatSettings({ groupChatId, members, directory, agents, rev
   const senders = useSystemSenderGrants(groupChatId, open, `${sendersRead}:${grantWrite.settled}`)
 
   // While the dialog is open, a change to this chat made anywhere else -- by
-  // another tab, an agent, an App action -- reloads what every section shows:
-  // the members and the archive through the host's reload, the grants here.
-  useGroupChatChanges(groupChatId, open, () => {
-    setSendersRead((n) => n + 1)
-    void refresh().catch(() => {
-      // The next change, or reopening the dialog, reads it again.
-    })
-  })
+  // another tab, an agent, an App action -- reads the grants again here. The
+  // members and the archive arrive through the chat screen, which reloads
+  // itself on the same change whether or not this dialog is open.
+  useGroupChatChanges(groupChatId, open, () => setSendersRead((n) => n + 1))
 
   return (
     <>

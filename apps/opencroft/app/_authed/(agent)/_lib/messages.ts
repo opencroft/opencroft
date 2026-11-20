@@ -1,5 +1,5 @@
 import type { DeliveredAttachment } from 'agent-client/attachments'
-import type { SessionNotice, ToolDiff } from 'agent-client/types'
+import type { SessionNotice, ToolContent, ToolDiff } from 'agent-client/types'
 
 import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
 
@@ -19,7 +19,8 @@ export type ChatPart =
   // field. Absent when the agent named no tool. `diffs` are the file changes
   // the call reported (see ToolDiff), absent when it reported none. `status`
   // is the call's folded status, `result` its output so far: a running call
-  // can already have one.
+  // can already have one. `content` is that output with its pictures, sounds
+  // and files kept (see ToolContent), when it holds any.
   | {
       type: 'tool-call'
       id: string
@@ -29,6 +30,7 @@ export type ChatPart =
       status: string
       result?: { text: string; isError?: boolean }
       diffs?: ToolDiff[]
+      content?: ToolContent[]
     }
   // A subagent the harness spawned under this turn (see SubagentInfo). Its own
   // transcript is nested verbatim in `parts`, folded from the subagent's
@@ -70,8 +72,10 @@ export type ChatPart =
       summary?: string
     }
   // An advisory the agent addressed to the reader (see SessionNotice), at the
-  // position it arrived. Not text: it never merges with the reply around it.
-  | ({ type: 'notice' } & SessionNotice)
+  // position it arrived, or an error the turn met, told in plain words with
+  // the technical text in `details`. Not text: it never merges with the reply
+  // around it.
+  | ({ type: 'notice'; details?: string } & SessionNotice)
   // Where a new session's agent context begins, below the history it carries
   // (the `session_start` event). Drawn as a rule across the conversation, not
   // as a step of the reply it sits in.

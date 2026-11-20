@@ -1,8 +1,15 @@
-import { chatUsageTurn, chatUsageTurnModel, db } from '@opencroft/db'
+import { chatUsageTurn, chatUsageTurnModel, db, space } from '@opencroft/db'
 import type { UsageTokens } from 'agent-chat/components/usage-cost'
 import type { SessionCost, TurnQuota, TurnTokenUsage } from 'agent-client/types'
 import { and, count, eq, gte, inArray, lt, lte, sql, sum } from 'drizzle-orm'
-import type { SpaceUsagePoint, SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
+import type {
+  SpaceUsageGroup,
+  SpaceUsageOption,
+  SpaceUsagePoint,
+  SpaceUsageSeries,
+  UsageGrouping,
+  UsagePeriod,
+} from 'ui/admin/space-usage'
 
 import { turnModelUsage } from '@/app/_authed/(agent)/_lib/turn-model-usage'
 import { spaceIdForSessionKey } from '@/app/_authed/(group-chats)/_server/thread-space'
@@ -312,16 +319,17 @@ export async function moveChatUsageTurns(moves: readonly { from: string; to: str
 
 // ── Read side: SpaceUsage series ────────────────────────────────────────────
 //
-// Scoped to ONE space: the turns whose `spaceId` was recorded as it (see
-// recordChatUsageTurn). A turn no space's chat held is in no space's read, and
-// no space's reset removes it.
+// Two scopes over one read. A space's read covers the turns whose `spaceId`
+// was recorded as it (see recordChatUsageTurn): a turn no space's chat held is
+// in no space's read, and no space's reset removes it. The instance's read
+// covers every turn, so its totals are every space's plus those in none.
 
 const ALL_SERIES_KEY = 'all'
 const UNKNOWN_GROUP_KEY = '__unknown__'
 const OTHER_SERIES_KEY = '__other__'
-// SpaceUsage assigns colour by series position from a five-entry palette; a
-// sixth group would repeat one, so the tail folds into one "Other" series
-// instead of either overflowing the palette or being dropped silently.
+// With nothing chosen a page draws its five largest groups and folds the
+// tail into one "Other" series, so a long tail is neither a tangle of lines
+// nor dropped silently. Chosen groups are never folded (see readChatUsage).
 const MAX_SERIES = 5
 
 function addDaysUTC(day: string, delta: number): string {
@@ -347,10 +355,15 @@ function dayRangeOf(period: UsagePeriod): { from?: string; to?: string } {
   }
 }
 
-/** The space and bounds as one turn-table predicate — the read and the reset select the same rows by construction. */
-function turnWhereOf(spaceId: string, range: { from?: string; to?: string }) {
+/**
+ * The space, when there is one, and the bounds as one turn-table predicate —
+ * a space's read and its reset select the same rows by construction. Without
+ * a space it is the instance's read, which the reset never takes (see
+ * deleteChatUsage).
+ */
+function turnWhereOf(spaceId: string | undefined, range: { from?: string; to?: string }) {
   return and(
-    eq(chatUsageTurn.spaceId, spaceId),
+    spaceId === undefined ? undefined : eq(chatUsageTurn.spaceId, spaceId),
     range.from ? gte(chatUsageTurn.day, range.from) : undefined,
     range.to ? lte(chatUsageTurn.day, range.to) : undefined,
   )
@@ -447,35 +460,79 @@ function emptyCell(): UsageCell {
   return { totalTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
 }
 
-/** The series a (agent, model) pair belongs to, before any overflow folding. */
-function groupKeyOf(grouping: UsageGrouping, agent: string | null, model: string | null): string {
-  if (grouping === 'all') {
-    return ALL_SERIES_KEY
+/** What a summed row is grouped by: the turn's agent and space, and the model it is counted on. */
+interface GroupedRow {
+  agent: string | null
+  model: string | null
+  spaceId: string | null
+}
+
+/**
+ * The series a row belongs to, before any overflow folding. A space is keyed
+ * by its id and named from `spaceNames`, the spaces that exist; a turn of a
+ * deleted space keeps that space's id but is in no existing space's read, so
+ * it counts with the turns recorded in none.
+ */
+function groupKeyOf(grouping: UsageGrouping, row: GroupedRow, spaceNames: ReadonlyMap<string, string>): string {
+  switch (grouping) {
+    case 'all':
+      return ALL_SERIES_KEY
+    case 'agent':
+      return row.agent ?? UNKNOWN_GROUP_KEY
+    case 'model':
+      return row.model ?? UNKNOWN_GROUP_KEY
+    case 'space':
+      return row.spaceId !== null && spaceNames.has(row.spaceId) ? row.spaceId : UNKNOWN_GROUP_KEY
   }
-  return (grouping === 'agent' ? agent : model) ?? UNKNOWN_GROUP_KEY
 }
 
 // Within one read every bucket is the same width, so whatever a series is
 // named, two different (series, bucket) pairs cannot produce the same key.
 const cellKey = (seriesKey: string, bucket: string) => `${seriesKey}|${bucket}`
 
-function labelOf(grouping: UsageGrouping, key: string): string {
+const UNKNOWN_GROUP_LABELS: Record<Exclude<UsageGrouping, 'all'>, string> = {
+  agent: 'Direct chats',
+  model: 'Unknown model',
+  space: 'No space',
+}
+
+function labelOf(grouping: UsageGrouping, key: string, spaceNames: ReadonlyMap<string, string>): string {
   if (key === OTHER_SERIES_KEY) {
     return 'Other'
   }
   if (key === ALL_SERIES_KEY) {
     return 'All'
   }
-  if (key === UNKNOWN_GROUP_KEY) {
-    return grouping === 'agent' ? 'Direct chats' : 'Unknown model'
+  if (grouping !== 'all' && key === UNKNOWN_GROUP_KEY) {
+    return UNKNOWN_GROUP_LABELS[grouping]
   }
-  return key
+  return grouping === 'space' ? (spaceNames.get(key) ?? key) : key
 }
 
 /**
- * Aggregate ChatUsageTurnModel (joined to its turn for day/agent) into the
- * SpaceUsage chart's series shape: one series for `all`, one per agent or
- * model otherwise, every series padded to the same date axis (see
+ * The groups that get a series of their own, from a ranking: the first
+ * MAX_SERIES, the rest folding into Other. Per space, the turns in no space
+ * are never folded: the instance's totals are the spaces' plus theirs, and a
+ * reader checking that sum needs their figure on its own.
+ */
+function keptOf(grouping: UsageGrouping, ranking: readonly string[]): string[] {
+  const kept = ranking.slice(0, MAX_SERIES)
+  if (grouping !== 'space' || kept.includes(UNKNOWN_GROUP_KEY) || !ranking.includes(UNKNOWN_GROUP_KEY)) {
+    return kept
+  }
+  return [...ranking.slice(0, MAX_SERIES - 1), UNKNOWN_GROUP_KEY]
+}
+
+/** The names of the spaces that exist, by id: what the per-space grouping names its series by. */
+async function spaceNamesById(): Promise<Map<string, string>> {
+  const rows = await db.select({ id: space.id, name: space.name }).from(space)
+  return new Map(rows.map((row) => [row.id, row.name]))
+}
+
+/**
+ * Aggregate ChatUsageTurnModel (joined to its turn for day/agent/space) into the
+ * SpaceUsage chart's series shape: one series for `all`, one per agent,
+ * model or space otherwise, every series padded to the same date axis (see
  * dateAxisOf). Token counts come from the MODEL rows, never the turn's own,
  * and every recorded turn has at least one — see the ChatUsageTurnModel
  * schema comment for why those rows, not the turn's, are the true spend.
@@ -486,31 +543,87 @@ function labelOf(grouping: UsageGrouping, key: string): string {
  * turn's model rows (a subagent's, say) — stated attribution, not a
  * measurement, same as the schema comment on costAmount already notes.
  *
- * Both reads GROUP BY the full (bucket, agent, model) triple in SQL,
+ * Both reads GROUP BY the full (bucket, agent, space, model) tuple in SQL,
  * regardless of `grouping` — the database sums the counters instead of every
  * matching turn/model row crossing the wire. The bucket is a UTC day or, for
  * a short window, a UTC hour (see resolutionOf). The result set stays one row
- * per triple actually recorded (not one per turn), so the JS below still does
+ * per tuple actually recorded (not one per turn), so the JS below still does
  * the grouping-dependent work: ranking groups, folding the tail into "Other",
  * building the date axis and padding cells — unchanged, just fed rows that
  * are already summed instead of raw ones.
+ *
+ * `chosen` names groups of `grouping` by their series keys (see groupKeyOf):
+ * only those groups' rows count, and each chosen group with turns in the
+ * period is a series of its own, none folded into "Other". So a chosen
+ * group's figures equal its row in `groups` with nothing chosen, and the
+ * page's totals are the chosen groups' sum. Empty, and always under `all`,
+ * every group counts. The choice is applied to the summed rows after both
+ * reads, so the answer's `options` (every group with token rows in the
+ * period, what the reader picks from) and the date axis of an open-ended
+ * range come from the whole period, whatever is chosen.
+ *
+ * `groups` is every group the series were made from, folded or not, with its
+ * figures over the whole period, largest first by the period's tokens (the
+ * ranking the series are cut from, so a pinned No space row sits at its own
+ * rank, not where its series is drawn): the page's list of
+ * each group's spend. Empty for `all`, whose one group is the page's totals.
  */
-export async function queryChatUsage(
+export function queryChatUsage(
   spaceId: string,
   grouping: UsageGrouping,
   period: UsagePeriod,
-): Promise<SpaceUsageSeries[]> {
+  chosen: readonly string[] = [],
+): Promise<ChatUsageAnswer> {
+  return readChatUsage(spaceId, grouping, period, chosen)
+}
+
+/**
+ * The same read as queryChatUsage over every turn the instance recorded, in
+ * whatever space or none: the Administration page's Usage. Its `space`
+ * grouping has a series per space and one for the turns in no space.
+ */
+export function queryInstanceChatUsage(
+  grouping: UsageGrouping,
+  period: UsagePeriod,
+  chosen: readonly string[] = [],
+): Promise<ChatUsageAnswer> {
+  return readChatUsage(undefined, grouping, period, chosen)
+}
+
+/** What a Usage page asks for: the reader's grouping, period and the groups chosen in that grouping. */
+export interface ChatUsageQuery {
+  grouping: UsageGrouping
+  period: UsagePeriod
+  /** Series keys of `grouping` to draw; empty draws every group. */
+  chosen: string[]
+}
+
+/** A usage read's answer: SpaceUsage's series, the groups the reader may choose from, and each group's figures. */
+export interface ChatUsageAnswer {
+  series: SpaceUsageSeries[]
+  options: SpaceUsageOption[]
+  groups: SpaceUsageGroup[]
+}
+
+async function readChatUsage(
+  spaceId: string | undefined,
+  grouping: UsageGrouping,
+  period: UsagePeriod,
+  chosen: readonly string[],
+): Promise<ChatUsageAnswer> {
   const range = dayRangeOf(period)
   const where = turnWhereOf(spaceId, range)
   const resolution = resolutionOf(range)
   const bucket = bucketOf(resolution)
 
-  // Nothing links the two reads, so they go out together.
-  const [tokenRows, costRows] = await Promise.all([
+  // Nothing links the reads, so they go out together. The names are read only
+  // when the grouping names its series by them.
+  const [tokenRows, costRows, spaceNames] = await Promise.all([
     db
       .select({
         bucket,
         agent: chatUsageTurn.agent,
+        spaceId: chatUsageTurn.spaceId,
         model: chatUsageTurnModel.model,
         // sum() over a bigint column comes back as a driver string; mapWith
         // decodes it to a number, and is only ever invoked for a non-null
@@ -526,11 +639,12 @@ export async function queryChatUsage(
       .from(chatUsageTurnModel)
       .innerJoin(chatUsageTurn, eq(chatUsageTurnModel.turnId, chatUsageTurn.id))
       .where(where)
-      .groupBy(bucket, chatUsageTurn.agent, chatUsageTurnModel.model),
+      .groupBy(bucket, chatUsageTurn.agent, chatUsageTurn.spaceId, chatUsageTurnModel.model),
     db
       .select({
         bucket,
         agent: chatUsageTurn.agent,
+        spaceId: chatUsageTurn.spaceId,
         model: chatUsageTurn.model,
         // Left undecoded (driver string | null): SQL SUM ignores NULL
         // costAmount rows and itself returns NULL — not 0 — for a group
@@ -541,61 +655,127 @@ export async function queryChatUsage(
       })
       .from(chatUsageTurn)
       .where(where)
-      .groupBy(bucket, chatUsageTurn.agent, chatUsageTurn.model),
+      .groupBy(bucket, chatUsageTurn.agent, chatUsageTurn.spaceId, chatUsageTurn.model),
+    grouping === 'space' ? spaceNamesById() : new Map<string, string>(),
   ])
 
   const dates = dateAxisOf(resolution, range, tokenRows)
   if (dates.length === 0) {
-    return []
+    return { series: [], options: [], groups: [] }
   }
 
-  // Rank groups by total tokens; past the chart's colours (see MAX_SERIES)
-  // the tail folds into one "Other" series rather than being dropped.
+  const groupOf = (row: GroupedRow) => groupKeyOf(grouping, row, spaceNames)
+
+  // Rank groups by total tokens over the whole period. With nothing chosen
+  // the first MAX_SERIES (see keptOf) are drawn and the tail folds into one
+  // "Other" series rather than being dropped. Chosen groups are drawn each as
+  // its own, none folded, in the period's order, and a chosen group with no
+  // turns in the period has no series. With a choice there is no "Other", so
+  // an unchosen group's rows reach no series and every figure is the chosen
+  // groups'.
   const totalsByGroup = new Map<string, number>()
   for (const row of tokenRows) {
-    const group = groupKeyOf(grouping, row.agent, row.model)
+    const group = groupOf(row)
     totalsByGroup.set(group, (totalsByGroup.get(group) ?? 0) + row.totalTokens)
   }
-  const ranked = [...totalsByGroup.entries()].sort((a, b) => b[1] - a[1]).map(([group]) => group)
-  const kept = ranked.slice(0, MAX_SERIES)
+  const periodRanking = [...totalsByGroup.entries()].sort((a, b) => b[1] - a[1]).map(([group]) => group)
+  const periodKept = keptOf(grouping, periodRanking)
+  const chosenSet = new Set(grouping === 'all' ? [] : chosen)
+  const choosing = chosenSet.size > 0
+  const ranked = choosing ? periodRanking.filter((group) => chosenSet.has(group)) : periodRanking
+  const kept = choosing ? ranked : periodKept
   const keptSet = new Set(kept)
-  const seriesKeys = ranked.length > MAX_SERIES ? [...kept, OTHER_SERIES_KEY] : kept
+  const seriesKeys = ranked.length > kept.length ? [...kept, OTHER_SERIES_KEY] : kept
   const seriesKeyOf = (group: string) => (keptSet.has(group) ? group : OTHER_SERIES_KEY)
+  // Colour slots, distinct per series. A group with a series of its own when
+  // nothing is chosen keeps that slot whatever is chosen, so choosing never
+  // repaints it. Any other group takes the lowest slot no kept series holds.
+  // Slots are never shared; past the chart's palette SpaceUsage cycles its
+  // colours. "Other" and the groups folded into it have no slot: they are
+  // marked folded, which SpaceUsage draws in its neutral.
+  const periodSlot = new Map(periodKept.map((group, index) => [group, index]))
+  const slots = new Map<string, number>()
+  for (const group of kept) {
+    const own = periodSlot.get(group)
+    if (own !== undefined) {
+      slots.set(group, own)
+    }
+  }
+  const held = new Set(slots.values())
+  let free = 0
+  for (const group of kept.filter((group) => !slots.has(group))) {
+    while (held.has(free)) {
+      free++
+    }
+    slots.set(group, free)
+    held.add(free)
+  }
+  const colorOf = (seriesKey: string) =>
+    seriesKey === OTHER_SERIES_KEY ? { folded: true } : { colorIndex: slots.get(seriesKey) }
 
-  // One cell per (series, bucket). Tokens and cost are summed over two
-  // different row sets (see the function doc on why cost cannot share the
-  // model rows' grouping) into the SAME cell map.
+  // One cell per (series, bucket), and one per group over the whole period.
+  // Tokens and cost are summed over two different row sets (see the function
+  // doc on why cost cannot share the model rows' grouping) into the SAME
+  // cells.
   const cells = new Map<string, UsageCell>()
-  const cellOf = (row: { bucket: string; agent: string | null; model: string | null }): UsageCell => {
-    const key = cellKey(seriesKeyOf(groupKeyOf(grouping, row.agent, row.model)), row.bucket)
-    let cell = cells.get(key)
+  const groupCells = new Map<string, UsageCell>()
+  const cellIn = (map: Map<string, UsageCell>, key: string): UsageCell => {
+    let cell = map.get(key)
     if (!cell) {
       cell = emptyCell()
-      cells.set(key, cell)
+      map.set(key, cell)
     }
     return cell
   }
+  const cellsOf = (row: GroupedRow & { bucket: string }): UsageCell[] => {
+    const group = groupOf(row)
+    return [cellIn(cells, cellKey(seriesKeyOf(group), row.bucket)), cellIn(groupCells, group)]
+  }
   for (const row of tokenRows) {
-    const cell = cellOf(row)
-    cell.inputTokens += row.inputTokens
-    cell.outputTokens += row.outputTokens
-    cell.cacheReadTokens += row.cacheReadTokens
-    cell.cacheWriteTokens += row.cacheWriteTokens
-    cell.totalTokens += row.totalTokens
+    for (const cell of cellsOf(row)) {
+      cell.inputTokens += row.inputTokens
+      cell.outputTokens += row.outputTokens
+      cell.cacheReadTokens += row.cacheReadTokens
+      cell.cacheWriteTokens += row.cacheWriteTokens
+      cell.totalTokens += row.totalTokens
+    }
   }
   for (const row of costRows) {
     if (row.costAmount === null) {
       continue
     }
-    const cell = cellOf(row)
-    cell.cost = (cell.cost ?? 0) + Number(row.costAmount)
+    for (const cell of cellsOf(row)) {
+      cell.cost = (cell.cost ?? 0) + Number(row.costAmount)
+    }
   }
 
-  return seriesKeys.map((seriesKey) => ({
-    key: seriesKey,
-    label: labelOf(grouping, seriesKey),
-    points: dates.map((date) => ({ date, ...(cells.get(cellKey(seriesKey, date)) ?? emptyCell()) })),
-  }))
+  return {
+    series: seriesKeys.map((seriesKey) => ({
+      key: seriesKey,
+      label: labelOf(grouping, seriesKey, spaceNames),
+      ...colorOf(seriesKey),
+      points: dates.map((date) => ({ date, ...(cells.get(cellKey(seriesKey, date)) ?? emptyCell()) })),
+    })),
+    // What the reader may choose from: every group the period has, whatever
+    // is chosen, by name.
+    options:
+      grouping === 'all'
+        ? []
+        : periodRanking
+            .map((key) => ({ key, label: labelOf(grouping, key, spaceNames) }))
+            .sort((a, b) => a.label.localeCompare(b.label)),
+    // The groups the series were made from, each with its cell. A folded
+    // group is drawn in the "Other" line, so it wears that line's neutral.
+    groups:
+      grouping === 'all'
+        ? []
+        : ranked.map((group) => ({
+            key: group,
+            label: labelOf(grouping, group, spaceNames),
+            ...colorOf(seriesKeyOf(group)),
+            ...(groupCells.get(group) ?? emptyCell()),
+          })),
+  }
 }
 
 // ── Reset ───────────────────────────────────────────────────────────────────

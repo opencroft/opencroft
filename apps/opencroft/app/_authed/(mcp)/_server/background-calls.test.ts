@@ -256,6 +256,7 @@ async function pendingApproval(tool: string) {
     if (request) {
       return request
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   throw new Error(`no approval was requested for ${tool}`)

@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { ReactFlowProvider } from '@xyflow/react'
 
 import { CanvasNodesProvider } from '@/app/_authed/(dashboard)/_canvas/canvas-nodes-context'
+import { SelectionSpace } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { SpaceCanvas } from '@/app/_authed/(space)/_components/space-canvas'
 import { missingAddress } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
@@ -35,8 +36,12 @@ function SpacePage() {
             chat overlay included — can resolve node names. Surfaces without a
             canvas simply do not have it, and degrade to bare node ids. */}
         <CanvasNodesProvider>
-          {/* No graph address: the space's page shows its DEFAULT graph. */}
-          <SpaceCanvas slug={slug} spaceName={space.name} />
+          {/* What is selected here reaches this space's chats in the
+              browser's other windows. */}
+          <SelectionSpace.Provider value={space.id}>
+            {/* No graph address: the space's page shows its DEFAULT graph. */}
+            <SpaceCanvas slug={slug} spaceName={space.name} />
+          </SelectionSpace.Provider>
         </CanvasNodesProvider>
       </ReactFlowProvider>
     </div>

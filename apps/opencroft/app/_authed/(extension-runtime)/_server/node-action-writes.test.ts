@@ -92,6 +92,7 @@ afterEach(() => unsubscribe())
 async function announcements(): Promise<string[]> {
   const deadline = Date.now() + 10_000
   while (events.length === 0 && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
   return events

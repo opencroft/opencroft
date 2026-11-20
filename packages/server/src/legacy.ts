@@ -141,6 +141,10 @@ export {
   urlBase,
 } from './extension'
 export {
+  /** @deprecated Import `DynamicHandleLister` from `@opencroft/server/graph`. */
+  type DynamicHandleLister,
+  /** @deprecated Import `DynamicHandles` from `@opencroft/server/graph`. */
+  type DynamicHandles,
   /** @deprecated Import `GraphEdgeRecord` from `@opencroft/server/graph`. */
   type GraphEdgeRecord,
   /** @deprecated Import `GraphNodePatch` from `@opencroft/server/graph`. */

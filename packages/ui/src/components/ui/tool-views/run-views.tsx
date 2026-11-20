@@ -167,7 +167,12 @@ function CallBlock({
       detail={detail}
       target={target}
       state={state}
-      overflowing={Object.keys(values ?? {}).length > 2 || exceedsClamp(shown?.text)}
+      // A picture alone is taller than the preview, so it says there is more.
+      overflowing={
+        Object.keys(values ?? {}).length > 2 ||
+        exceedsClamp(shown?.text) ||
+        Boolean(shown?.content?.some((part) => part.type === 'image' && part.src))
+      }
     >
       {hasValues && <OpFields values={values} />}
       {hasValues && <div className='border-t' />}

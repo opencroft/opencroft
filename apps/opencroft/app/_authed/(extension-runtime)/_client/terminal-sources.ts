@@ -19,47 +19,56 @@ import type {
 
 interface ListedTerminal {
   target: string
-  /** Which of its owner's terminals this is; '' when the owner has only the one. */
+  /** The terminal's one name, as the host names it (see `terminalTitle`). */
   name: string
   unavailable?: boolean
 }
 
-// One source as Terminal List draws it: the owner by the name its user gave
-// it, and each terminal by what tells it apart from the owner's others. A
-// terminal without one is its owner's only terminal and goes unnamed, so a row
-// that stands alone -- a router's one route to a node with several -- still
-// says which terminal it is whenever there is something to tell apart. Its
-// kind is told by the icon in the colour the canvas gives the node type; an
-// App has none, so it stays in the text colour.
+/**
+ * Where a described owner's terminals are grouped and shown to be: its space,
+ * and the App level of its path -- the graph a node is on, or the App itself.
+ */
+export function placeOf(owner: GraphRefDescription | null, id: string): Pick<TerminalListSource, 'space' | 'app'> {
+  if (!owner) {
+    return {}
+  }
+  const space = owner.spaceSlug ? { id: owner.spaceSlug, name: owner.spaceName } : undefined
+  const app =
+    owner.kind === 'app'
+      ? { id: owner.address ?? id, name: owner.name }
+      : owner.graph
+        ? { id: owner.graph.address, name: owner.graph.name }
+        : undefined
+  return { space, app }
+}
+
+// One source as Terminal List draws it: each of its terminals under its one
+// name, in its space and App. Its kind is told by the icon in the colour the
+// canvas gives the node type; an App has none, so it stays in the text colour.
 export function listSource(
   id: string,
   owner: GraphRefDescription | null,
   terminals: ListedTerminal[],
-  { loading, showSpace }: { loading?: boolean; showSpace?: boolean },
+  { loading }: { loading?: boolean } = {},
 ): TerminalListSource {
   return {
     id,
     name: owner?.name ?? 'Unknown node',
     icon: owner ? refIcon(owner) : undefined,
     accent: owner?.accent,
-    space: showSpace ? owner?.spaceSlug : undefined,
-    terminals: terminals.map((terminal) => ({ ...terminal, name: terminal.name || undefined })),
+    ...placeOf(owner, id),
+    terminals,
     loading,
   }
 }
 
-// A router's route is named by the terminal it reaches, with which of its
-// owner's terminals that is when the owner says; the router it is listed
-// under already says it is a route.
+// A router's route is named by the terminal it reaches; the router it is
+// listed under already says it is a route.
 export function routedName(routed: NonNullable<TerminalSourceTarget['routed']>): string {
-  if (!routed.ref) {
-    return routed.target
-  }
-  const { name, detail } = describeGraphRef(routed.ref, splitTarget(routed.target).handleId)
-  return detail ? `${name} · ${detail}` : name
+  return routed.ref ? describeGraphRef(routed.ref).title : routed.target
 }
 
-interface SourcesState {
+export interface SourcesState {
   /** Null until the first answer: the sources themselves are not known yet. */
   infos: TerminalSourceInfo[] | null
   expanded: Record<string, TerminalSourceTarget[]>
@@ -88,13 +97,27 @@ function shared<T>(key: string, ask: () => Promise<T>): Promise<T> {
   return asked
 }
 
+/** A node or App instance offering terminals, as a picker's `exclude` is asked about it. */
+export interface TerminalSourceOwner {
+  /** The node id, or the App instance id. */
+  id: string
+  /** The node's stored, qualified type; `app:<type>` for an App instance. */
+  type: string
+}
+
 /**
  * Every terminal source for a picker, as Terminal List sources. The sources
  * arrive in one fast call; those whose terminals have to be asked for (a docker
  * host, an App) are then asked all at once, each filling in as it answers, so
  * a slow or unreachable one only keeps its own group loading.
+ *
+ * `exclude` leaves sources out of what this picker shows. It is applied when
+ * drawing, not to the answers shared with every other picker.
  */
-export function useTerminalSources(spaceSlug?: string): { sources: TerminalListSource[]; loading: boolean } {
+export function useTerminalSources(
+  spaceSlug?: string,
+  exclude?: (source: TerminalSourceOwner) => boolean,
+): { sources: TerminalListSource[]; loading: boolean } {
   const key = spaceSlug ?? ''
   const [state, setState] = useState<SourcesState>(() => lastAnswer.get(key) ?? EMPTY)
 
@@ -133,21 +156,32 @@ export function useTerminalSources(spaceSlug?: string): { sources: TerminalListS
     }
   }, [key, spaceSlug])
 
-  const sources = (state.infos ?? []).map((info) => {
-    const targets = info.targets ?? state.expanded[info.ref.id] ?? []
+  return { sources: pickerSources(state, exclude), loading: state.infos === null }
+}
+
+/**
+ * What a picker draws from the sources' answers so far: each source not
+ * excluded, with its terminals as listed or as asked for on their own, and
+ * loading while still asked.
+ */
+export function pickerSources(
+  { infos, expanded, pending }: SourcesState,
+  exclude?: (source: TerminalSourceOwner) => boolean,
+): TerminalListSource[] {
+  const offered = (infos ?? []).filter((info) => !exclude?.({ id: info.ref.id, type: info.ref.type }))
+  return offered.map((info) => {
+    const targets = info.targets ?? expanded[info.ref.id] ?? []
+    const owner = describeGraphRef(info.ref)
     return listSource(
       info.ref.id,
-      describeGraphRef(info.ref),
+      owner,
       targets.map((target) => ({
         target: target.target,
-        name: target.routed
-          ? routedName(target.routed)
-          : target.label || describeGraphRef(info.ref, target.handleId).detail || '',
+        name: target.routed ? routedName(target.routed) : (target.title ?? owner.name),
       })),
-      { loading: state.pending.includes(info.ref.id), showSpace: !spaceSlug },
+      { loading: pending.includes(info.ref.id) },
     )
   })
-  return { sources, loading: state.infos === null }
 }
 
 /**
@@ -213,14 +247,13 @@ export function targetSources(
   described: Record<string, GraphRefDescription | null>,
   listed: Set<string> | null,
 ): TerminalListSource[] {
-  // Grouped from the routes, not from the owner's terminals: a group of one
-  // may be one of several, which is why each keeps its own name.
+  // Grouped from the routes, not from the owner's terminals.
   const owners: Array<{ id: string; terminals: ListedTerminal[] }> = []
   for (const entry of targets) {
     const { nodeId } = splitTarget(entry.target)
     const terminal = {
       target: entry.target,
-      name: described[entry.target]?.detail ?? '',
+      name: described[entry.target]?.title ?? entry.target,
       unavailable: entry.unavailable || (listed !== null && !listed.has(entry.target)),
     }
     const owner = owners.find((candidate) => candidate.id === nodeId)
@@ -230,5 +263,5 @@ export function targetSources(
       owners.push({ id: nodeId, terminals: [terminal] })
     }
   }
-  return owners.map((owner) => listSource(owner.id, described[owner.terminals[0].target] ?? null, owner.terminals, {}))
+  return owners.map((owner) => listSource(owner.id, described[owner.terminals[0].target] ?? null, owner.terminals))
 }

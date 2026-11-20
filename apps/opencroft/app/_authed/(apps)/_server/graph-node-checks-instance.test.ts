@@ -128,6 +128,7 @@ async function settles(app: string, nodeId: string, expected: string | null, ms 
   const until = Date.now() + ms
   let last = await storedFinding(app, nodeId)
   while (last !== expected && Date.now() < until) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 25))
     last = await storedFinding(app, nodeId)
   }
@@ -147,6 +148,7 @@ async function quiet(apps: readonly string[], ms = 10000): Promise<void> {
   const until = Date.now() + ms
   let before = stamps(apps)
   while (Date.now() < until) {
+    // biome-ignore lint/plugin/noTestFixedTime: samples the stamps every QUIET_MS until they stop moving, within a deadline
     await new Promise((resolve) => setTimeout(resolve, QUIET_MS))
     const now = stamps(apps)
     if (now.every((stamp, i) => stamp === before[i])) {

@@ -1,0 +1,21 @@
+language js
+
+// A test name says what holds, so it reads the same to someone who never saw
+// the tracker. A key in it (`PROJ-12`) is a pointer that stops resolving
+// outside this team. Covers test, it, describe and suite, their .only, .skip
+// and .todo forms, and subtests (`t.test`).
+`$runner($args)` where {
+  $runner <: or {
+    `test`,
+    `it`,
+    `describe`,
+    `suite`,
+    `$_.test`,
+    `$_.only`,
+    `$_.skip`,
+    `$_.todo`
+  },
+  $args <: [$name, ...],
+  $name <: r".*[A-Z]+-[0-9]+.*",
+  register_diagnostic(span=$name, message="A test name carries no tracker key: name the behaviour the assertion pins.", severity="error")
+}

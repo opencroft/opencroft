@@ -4,10 +4,12 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import type { CommandBarUsage } from 'agent-chat/agent-command-bar'
 import type { ChatUserMessagePart } from 'agent-chat/components/chat-turn'
 import type { UsageTokens } from 'agent-chat/components/usage-cost'
-import type { AgentChatEdit } from 'agent-chat/session'
+import type { AgentChatEdit, AgentChatNotice } from 'agent-chat/session'
 import { usePaginatedHistory } from 'agent-chat/use-paginated-history'
 import { toEditableParts } from 'agent-chat/user-parts'
-import { compactionView, isTerminalToolStatus, statusAtTurnEnd } from 'agent-client/fold'
+import { errorMessage } from 'agent-client/errors'
+import { compactionView, isTerminalToolStatus, nextToolContent, statusAtTurnEnd } from 'agent-client/fold'
+import { type PlainFailure, plainFailure } from 'agent-client/plain-failure'
 import { DEFAULT_PRESENCE, effectivePresence } from 'agent-client/presence'
 import type { TurnEdit } from 'agent-client/queue-tags'
 import type {
@@ -26,7 +28,7 @@ import type {
 } from 'agent-client/types'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 
-import type { AgentSession } from '@/app/_authed/(agent)/_components/agent-chat'
+import type { AgentSession, Quoted, SendOptions } from '@/app/_authed/(agent)/_components/agent-chat'
 import { useSubagentSections, withSections } from '@/app/_authed/(agent)/_components/use-subagent-sections'
 import {
   type AcpStreamEvent,
@@ -62,8 +64,18 @@ import {
   stopLocal,
 } from '@/app/_authed/(agent)/_server/acp'
 import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
-import { SendRefusedError, sendFailureMessage } from '@/app/_authed/(agent)/_shared/send-refused-error'
-import { openedOrThrow, SessionOpenRefusedError } from '@/app/_authed/(agent)/_shared/session-open-refusal'
+import {
+  outgoingFailureNotice,
+  SendRefusedError,
+  sendFailureNotice,
+} from '@/app/_authed/(agent)/_shared/send-refused-error'
+import {
+  OPEN_GAVE_UP_TITLE,
+  type OpenFailureKind,
+  openedOrThrow,
+  openFailureNotice,
+  SessionOpenRefusedError,
+} from '@/app/_authed/(agent)/_shared/session-open-refusal'
 
 export interface LocalSource {
   agentNodeId: string
@@ -92,6 +104,12 @@ export type SendTransport = (args: {
   origin: WirePromptOrigin
   /** Stored picture ids going with the message -- resolved and checked server-side. */
   attachments?: readonly string[]
+  /** Set when the message's sender fixed what it quotes as it was sent:
+   *  `selection` is the quoted selection's content, absent for none. Unset,
+   *  the transport decides when it runs. Not read by this hook; kept with the
+   *  outgoing message, so Send again carries it too. A message the hook gives
+   *  back to the composer goes back as text alone, without it. */
+  quoted?: Quoted
 }) => Promise<unknown>
 
 // The default transport: exactly the call this hook has always made, now
@@ -157,8 +175,40 @@ export interface OpenedSessionResult {
 const ensureLocalSessionTransport: OpenTransport = async (source, { wake }) =>
   wake ? openedOrThrow(await ensureLocalSession({ data: source })) : attachLocalSession({ data: source })
 
-/** Shown when a run of failed attempts ran out, rather than a refusal. */
-export const OPEN_GAVE_UP_MESSAGE = 'The connection to this agent could not be restored, so this chat stopped trying.'
+// An error reported into the session, as a notice in the reply. A cause the
+// plain reading knows for the text's producer (a refused key or an
+// unreachable model server in what the harness said) is an error told in plain
+// words with the original under Details; anything else is a report already
+// worded for the reader ("MCP server not connected: …") and stays a warning in
+// its own words.
+function errorNotice(event: Extract<ChatEvent, { kind: 'error' }>): Extract<ChatPart, { type: 'notice' }> {
+  const plain = plainFailure(event.message, 'turn', event.source ?? 'engine')
+  return {
+    type: 'notice',
+    severity: plain.details ? 'error' : 'warning',
+    title: plain.title,
+    ...(plain.hint ? { description: plain.hint } : {}),
+    ...(plain.details ? { details: plain.details } : {}),
+  }
+}
+
+// A message held for a session whose start failed. The conversation's own
+// notice, below it, says why the session did not start.
+const HELD_NOT_SENT = 'Not sent: the session did not start.'
+
+function tryAgain(onPress: () => void): NonNullable<AgentChatNotice['action']> {
+  return { label: 'Try again', onPress }
+}
+
+// A failure as the conversation's notice draws it: the hint is the line under
+// the title.
+function noticeOf(failure: PlainFailure): AgentChatNotice {
+  return {
+    title: failure.title,
+    ...(failure.hint ? { description: failure.hint } : {}),
+    ...(failure.details ? { details: failure.details } : {}),
+  }
+}
 
 export interface PendingPermission {
   requestId: string
@@ -203,6 +253,32 @@ export type QueuedMessage = QueuedPrompt
 //   the session was offline, never on a figure a live 'usage' event reported
 //   this connection. Mirrors ContextUsage's own `asOf` (session-context-usage.ts).
 export type AgentUsage = CommandBarUsage
+
+/**
+ * A message the reader sent that the server does not hold yet: shown at the
+ * end of the conversation from the moment Send is pressed until the stream
+ * carries it (see AgentChat's `outgoing`).
+ *
+ * - `sending`: the request is out, or held for a session still starting.
+ * - `accepted`: the server answered that it holds the message, and the stream
+ *   has not carried it yet. Shown without a spinner, and dropped in the same
+ *   render as the stream's next queue snapshot or delivered turn.
+ * - `failed`: it did not get there; `failure` says why. It stays until the
+ *   reader sends it again or discards it.
+ *
+ * `options` are the message's pictures and quote, fixed when it was sent, so
+ * sending it again sends the same message.
+ */
+export interface OutgoingMessage {
+  id: string
+  text: string
+  options: SendOptions
+  sentAt: string
+  status: 'sending' | 'accepted' | 'failed'
+  failure?: PlainFailure
+  // A replayed history already holds it, so it goes with the server's answer.
+  carried?: boolean
+}
 
 export interface AcpSession {
   session: AgentSession
@@ -251,6 +327,12 @@ export interface AcpSession {
   respondPermissionText: (requestId: string, text: string) => void
   // Drop a still-queued message before it's delivered.
   removeQueued: (id: string) => void
+  // What the reader sent that the server does not hold yet, oldest first.
+  outgoing: OutgoingMessage[]
+  // Send a failed one again, once: a second press while it is on its way does
+  // nothing. And drop one, failed or held for a start, by its id.
+  retryOutgoing: (id: string) => void
+  discardOutgoing: (id: string) => void
   // Deliver the whole waiting queue now, whatever the cadence would do.
   deliverQueue: () => void
   // Change one of the session's advertised config options. Applies to this
@@ -262,10 +344,12 @@ export interface AcpSession {
   // Stop one background task by id, without cancelling the running turn.
   stopBackgroundTask: (asyncTaskId: string) => void
   // Why this tab has no session and is no longer trying to open one: a refusal
-  // only the reader can remove (no key, not signed in), or a run of failed
+  // only the reader can remove (no key, not signed in, a harness that died at
+  // start), as it was answered, or OPEN_GAVE_UP_TITLE for a run of failed
   // attempts that ran out. Unset while the tab is connected or still trying --
   // a failure that is being retried is not shown, so nothing flashes per
-  // attempt.
+  // attempt. The reader is told through `session.notice`, which reads this in
+  // plain words and offers Try again.
   openError?: string
   // Try to open the session again now, starting the backoff over. What a
   // reader presses after acting on `openError`.
@@ -342,6 +426,7 @@ function foldConversationPart(
         status: event.status,
         ...(event.name ? { toolName: event.name } : {}),
         ...(event.diffs ? { diffs: event.diffs } : {}),
+        ...(event.content ? { content: event.content } : {}),
       }
       parts.push(part)
       tools.set(event.toolCallId, part)
@@ -363,6 +448,12 @@ function foldConversationPart(
         // not retract the change reported before it.
         if (event.diffs) {
           part.diffs = event.diffs
+        }
+        const content = nextToolContent(part.content, event)
+        if (content) {
+          part.content = content
+        } else {
+          delete part.content
         }
         part.status = event.status ?? part.status
         const settled = isTerminalToolStatus(part.status)
@@ -769,20 +860,27 @@ export function fold(events: HeldChatEvent[], baseIndex = 0): Folded {
         // turn's actual outcome: the harness settled the prompt as a normal
         // end_turn with no answer, so without this the turn reads as dead.
         // Rendered as its own assistant message, ahead of whatever the
-        // harness streamed — for a limit failure that is usually nothing.
+        // harness streamed — for a limit failure that is usually nothing. The
+        // harness's title is already plain; its details are the technical half.
         if (event.failure) {
-          const detail = event.failure.details ? ` — ${event.failure.details}` : ''
           messages.push({
             id,
             role: 'assistant',
-            parts: [{ type: 'text', text: `⛔ ${event.failure.title}${detail}` }],
+            parts: [
+              {
+                type: 'notice',
+                severity: 'error',
+                title: event.failure.title,
+                ...(event.failure.details ? { details: event.failure.details } : {}),
+              },
+            ],
             timestamp: 0,
           })
         }
         break
       }
       case 'error': {
-        ensureAssistant(id).parts.push({ type: 'text', text: `⚠️ ${event.message}` })
+        ensureAssistant(id).parts.push(errorNotice(event))
         waiting = false
         break
       }
@@ -891,7 +989,9 @@ export function useAcpSession(
   const [draft, setDraft] = useState<{ text: string; key: number } | undefined>(undefined)
   const [edit, setEdit] = useState<AgentChatEdit | undefined>(undefined)
   const draftKey = useRef(0)
-  const [sendError, setSendError] = useState<string | undefined>(undefined)
+  // Why the last send (or edit commit) did not go through, as the
+  // conversation's notice tells it. Cleared when the next one starts.
+  const [sendFailure, setSendFailure] = useState<PlainFailure | undefined>(undefined)
   const [sending, startSending] = useTransition()
   // Bumped by clearSession to force the resolve-session effect below to run
   // again for the SAME tab -- agentNodeId/tabKey don't change on a
@@ -905,7 +1005,85 @@ export function useAcpSession(
   // session that doesn't exist yet. Once the session is live, mid-turn messages
   // are queued server-side by agent-client (one prompt-turn at a time is an ACP
   // constraint it owns) and observed here via 'queue' snapshot events.
-  const pending = useRef<{ text: string; attachments?: readonly string[] }[]>([])
+  // Each held message is named by the id of its outgoing entry, which holds
+  // what it carries.
+  const pending = useRef<string[]>([])
+  // What the reader sent that the server does not hold yet (see
+  // OutgoingMessage). The ref is the current list, read and written together
+  // so that a second press of Send again reads the first one's change rather
+  // than the render before it; the state is what draws.
+  const [outgoing, setOutgoing] = useState<OutgoingMessage[]>([])
+  const outgoingRef = useRef<OutgoingMessage[]>([])
+  const changeOutgoing = useCallback((change: (list: OutgoingMessage[]) => OutgoingMessage[]) => {
+    outgoingRef.current = change(outgoingRef.current)
+    setOutgoing(outgoingRef.current)
+  }, [])
+  const outgoingIds = useRef(0)
+  // How many live delivered turns and non-empty queue snapshots the stream
+  // has carried: what a message the server takes shows up as. (A snapshot
+  // that empties the queue is a held message leaving it, never one arriving.)
+  // A send compares it before and after the server answers: if it moved,
+  // what the stream carried in between is taken to be the message, already on
+  // screen, and the outgoing row goes at once; if not, the row stays without
+  // its spinner and goes with the next one. Another member's message landing
+  // in the same moment can stand in for it, which costs the row a moment
+  // before its own copy arrives, never a duplicate.
+  const arrivals = useRef(0)
+  const noteArrival = useCallback(() => {
+    arrivals.current += 1
+    if (outgoingRef.current.some((message) => message.status === 'accepted')) {
+      changeOutgoing((list) => list.filter((message) => message.status !== 'accepted'))
+    }
+  }, [changeOutgoing])
+  // A replayed history is the server's state when the stream (re)connected,
+  // which may be before or after it took a message on its way -- a message
+  // held for a start is sent as that start's stream opens. So a replay
+  // counts for a message only if it holds it: a delivered turn or a queue
+  // entry with its words. One that does is marked `carried` (dropped now if
+  // already answered, at its answer if not); one that does not waits for its
+  // live copy. Read by its words, so a message of pictures alone is never
+  // found in a replay and waits for the next live arrival; an earlier message
+  // with the same words is found, and costs the row a moment early, never a
+  // duplicate.
+  const noteReplay = useCallback(
+    (replayed: readonly AuthoredChatEvent[]) => {
+      const texts = replayed.flatMap((event) =>
+        event.kind === 'user' ? [event.text] : event.kind === 'queue' ? event.items.map((item) => item.text) : [],
+      )
+      const held = (message: OutgoingMessage) => {
+        const words = message.text.trim()
+        return (
+          message.status !== 'failed' && !message.carried && words !== '' && texts.some((text) => text.includes(words))
+        )
+      }
+      if (!outgoingRef.current.some(held)) {
+        return
+      }
+      changeOutgoing((list) =>
+        list.flatMap((message) =>
+          !held(message) ? [message] : message.status === 'accepted' ? [] : [{ ...message, carried: true }],
+        ),
+      )
+    },
+    [changeOutgoing],
+  )
+  // The held messages, when the session they waited for is not coming: each
+  // stays where it is, marked failed, with Send again -- which asks for the
+  // session again -- so what the reader sent is never lost behind a start that
+  // failed, pictures and quote included.
+  const failHeld = useCallback(() => {
+    const held = new Set(pending.current)
+    pending.current = []
+    if (held.size === 0) {
+      return
+    }
+    setLocalWaiting(false)
+    changeOutgoing((list) =>
+      list.map((message) =>
+        held.has(message.id) ? { ...message, status: 'failed', failure: { title: HELD_NOT_SENT } } : message,
+      ),
+    )
+  }, [changeOutgoing])
   // Historical events accumulate here while a subscribe's synchronous replay is
   // in flight (see acp-stream.ts), committed to `events` in one `setEvents` call
   // when the history_end marker arrives — so a long reopened session paints once
@@ -930,7 +1108,18 @@ export function useAcpSession(
   const sessionAlive = useSessionActivity().alive.has(tabKey)
   // The refusal the last open answered with, if it was one. Not retried: the
   // same open gives the same answer until the reader acts on it.
-  const [openRefusal, setOpenRefusal] = useState<string | undefined>(undefined)
+  const [openRefusal, setOpenRefusal] = useState<
+    { message: string; kind: Exclude<OpenFailureKind, 'gave-up'> } | undefined
+  >(undefined)
+  // What the last failed open said, kept for when a run of retries gives up:
+  // the reason the run ran out is the last attempt's.
+  const [lastOpenFailure, setLastOpenFailure] = useState('')
+  // An open that may start the session is out, and the engine was not holding
+  // the session when it went: what the reader is waiting on is a start.
+  const [starting, setStarting] = useState(false)
+  // Read by the open effect through a ref: activity is not a reason to open.
+  const sessionAliveRef = useRef(sessionAlive)
+  sessionAliveRef.current = sessionAlive
   // Which conversation the open effect last opened. A run for the same one is
   // a reconnect, and what the reader is looking at stays on screen until the
   // fresh history replaces it, rather than going blank for the round trip.
@@ -1026,8 +1215,10 @@ export function useAcpSession(
       // Opening a conversation is the reader's act, so it may start it.
       wakeRef.current = true
       setOffline(false)
-      // Held for the conversation being left, so not for this one.
+      // Held for the conversation being left, so not for this one, and the
+      // same for what it shows as on its way.
       pending.current = []
+      changeOutgoing(() => [])
       setEvents([])
       setLoading(true)
       setLocalWaiting(false)
@@ -1037,11 +1228,14 @@ export function useAcpSession(
       setLiveTokens(undefined)
     }
     sendChainRef.current = Promise.resolve()
+    setStarting(wakeRef.current && !sessionAliveRef.current)
     open({ agentNodeId, tabKey }, { wake: wakeRef.current })
       .then((result) => {
         if (cancelled) {
           return
         }
+        setStarting(false)
+        setLastOpenFailure('')
         if (!result) {
           // A rejoin found nothing held. The attempt got its answer, so it is
           // not a failure to back off from.
@@ -1088,11 +1282,17 @@ export function useAcpSession(
           return
         }
         // A refusal is shown and left: asking again gives the same answer, and
-        // each ask is a whole open on the server.
+        // each ask is a whole open on the server. What the reader sent while
+        // it was out stays, marked as not sent, as a failed send does.
         if (error instanceof SessionOpenRefusedError) {
-          setOpenRefusal(error.message)
+          setStarting(false)
+          setOpenRefusal({ message: error.message, kind: error.kind })
+          failHeld()
           return
         }
+        // Still starting as far as the reader can tell: the run goes on, and
+        // only its end (the give-up effect below) changes what they see.
+        setLastOpenFailure(errorMessage(error))
         // Anything else is tried again rather than left as an empty chat: it
         // is usually a server restarting or a harness slow to start, and an
         // empty transcript here reads as a conversation with nothing in it.
@@ -1106,6 +1306,8 @@ export function useAcpSession(
     tabKey,
     generation,
     open,
+    failHeld,
+    changeOutgoing,
     reconnect.attempt,
     reconnect.schedule,
     reconnect.connected,
@@ -1121,6 +1323,15 @@ export function useAcpSession(
       reconnect.retry()
     }
   }, [offline, sessionAlive, reconnect.retry])
+
+  // A run of attempts that gave up ends the start the reader was watching,
+  // and marks what they sent while it ran as not sent.
+  useEffect(() => {
+    if (reconnect.exhausted) {
+      setStarting(false)
+      failHeld()
+    }
+  }, [reconnect.exhausted, failHeld])
 
   // Stream events once the session id is known.
   useEffect(() => {
@@ -1184,6 +1395,7 @@ export function useAcpSession(
         // Set unconditionally: a fresh connect re-sends a fresh tail, so a
         // header from a previous connection must not linger.
         setHistoryHeader(headerFromWindow(event.header, tabKeyRef.current))
+        noteReplay(historyBufferRef.current)
         return
       }
       // A subagent's step in a log of its own belongs to its section, which
@@ -1198,6 +1410,11 @@ export function useAcpSession(
         return
       }
       setEvents((prev) => [...prev, event])
+      // In the same render as the event, so an outgoing row this carries goes
+      // as the stream's own copy of it appears.
+      if (event.kind === 'user' || (event.kind === 'queue' && event.items.length > 0)) {
+        noteArrival()
+      }
       // A LIVE turn_end (this branch only -- replayed ones return above, and
       // the base already accounts for them) adds its spend onto the running
       // account. See AgentUsage's own doc and mergeTokenAccounts.
@@ -1237,6 +1454,8 @@ export function useAcpSession(
     subagentSections.reset,
     subagentSections.refetch,
     subagentSections.applyStep,
+    noteArrival,
+    noteReplay,
   ])
 
   const foldedLog = useMemo(() => fold(events), [events])
@@ -1254,23 +1473,44 @@ export function useAcpSession(
     [foldedLog, sections, expandSection, loadOlderInSection],
   )
 
+  // A message that is not drawn as an outgoing entry and was not sent. The
+  // composer has already cleared itself (the kit bar clears before calling
+  // onSend), so two things have to happen here or the message reads as
+  // delivered: the conversation says it was not sent, and the text goes back
+  // into the composer so it is not lost.
+  const giveBack = useCallback((value: string, error: unknown) => {
+    setSendFailure(sendFailureNotice(error))
+    draftKey.current += 1
+    setDraft({ text: value, key: draftKey.current })
+  }, [])
+
   // The single seam where a message leaves the client — it runs for every
   // message, including ones the server will queue rather than deliver right
   // away. The server owns the queue-vs-prompt decision, but NOT the order of
   // concurrent requests — it queues by arrival — so requests are chained here
   // to reach it in send order. `front` asks the server to queue ahead of
   // anything already held.
+  //
+  // `outgoingId` names the outgoing entry the message is drawn as, if it has
+  // one: its answer then moves that entry on (see OutgoingMessage), and a
+  // failure marks it rather than putting the words back in the composer. A
+  // message with no entry -- a permission's guidance -- fails into the
+  // notice, with its words back in the composer.
   const deliver = useCallback(
     (
       value: string,
-      opts: { front?: boolean; queue: QueueMode; origin: WirePromptOrigin; attachments?: readonly string[] },
+      opts: { front?: boolean; queue: QueueMode; origin: WirePromptOrigin } & SendOptions,
+      outgoingId?: string,
     ) => {
       if (!sessionId) {
         return
       }
       setLocalWaiting(true)
-      setSendError(undefined)
+      setSendFailure(undefined)
       const chained = sendChainRef.current.then(async () => {
+        // Read as the request goes, not as it was chained: what the stream
+        // carried for the sends ahead of this one is theirs.
+        const arrivalsBefore = arrivals.current
         try {
           const oversized = oversizedTextNotice(value)
           if (oversized) {
@@ -1283,21 +1523,37 @@ export function useAcpSession(
             queue: opts.queue,
             origin: opts.origin,
             ...(opts.attachments?.length ? { attachments: opts.attachments } : {}),
+            ...(opts.quoted ? { quoted: opts.quoted } : {}),
           })
+          if (outgoingId !== undefined) {
+            const carried =
+              arrivals.current > arrivalsBefore ||
+              outgoingRef.current.some((message) => message.id === outgoingId && message.carried === true)
+            changeOutgoing((list) =>
+              carried
+                ? list.filter((message) => message.id !== outgoingId)
+                : list.map((message) =>
+                    message.id === outgoingId && message.status === 'sending'
+                      ? { ...message, status: 'accepted' }
+                      : message,
+                  ),
+            )
+          }
         } catch (error) {
           console.error('promptLocal failed', error)
           setLocalWaiting(false)
-          // A failed send used to end here, in the console. The composer had
-          // already cleared itself (the kit bar clears before calling onSend),
-          // so from the screen it was indistinguishable from a delivered
-          // message — the message simply vanished.
-          //
-          // Two things have to happen instead. The failure gets copy the host
-          // can render, and the text goes back into the composer so it is not
-          // lost.
-          setSendError(sendFailureMessage(error))
-          draftKey.current += 1
-          setDraft({ text: value, key: draftKey.current })
+          if (outgoingId !== undefined) {
+            // It stays where it was drawn, saying it was not sent, with Send
+            // again. The composer is left alone: the message is still on
+            // screen, and its words in the composer too would be a way to
+            // send it twice.
+            const failure = outgoingFailureNotice(error)
+            changeOutgoing((list) =>
+              list.map((message) => (message.id === outgoingId ? { ...message, status: 'failed', failure } : message)),
+            )
+            return
+          }
+          giveBack(value, error)
         }
       })
       sendChainRef.current = chained
@@ -1307,18 +1563,24 @@ export function useAcpSession(
         await chained
       })
     },
-    [sessionId],
+    [sessionId, changeOutgoing, giveBack],
   )
 
-  const send = useCallback(
-    (value: string, options?: { attachments?: readonly string[] }) => {
+  // One outgoing message on its way: into the session if there is one, else
+  // held for it. Shared by a send and by Send again, so a retried message
+  // goes exactly the way a new one does.
+  const dispatch = useCallback(
+    (message: OutgoingMessage) => {
       if (!sessionId) {
-        // No session to send to yet -- hold the raw text and what goes with
-        // it, flush once there is one.
-        pending.current.push({ text: value, attachments: options?.attachments })
+        // No session to send to yet -- hold the message, flush once there is
+        // one.
+        pending.current.push(message.id)
         setLocalWaiting(true)
-        // Sending is the reader's act, so an offline session is started for it.
-        if (offline) {
+        // Sending is the reader's act, so a session that is not being opened
+        // -- offline, refused, or given up on -- is opened for it, as Try
+        // again would. Its answer decides where the message goes: into the
+        // session, or marked not sent above the notice saying why.
+        if (offline || openRefusal || reconnect.exhausted) {
           wakeRef.current = true
           reconnect.retry()
         }
@@ -1327,9 +1589,59 @@ export function useAcpSession(
       // Always hand the message to the server: it delivers immediately when the
       // session is idle and queues it when a turn is running. deliver() chains
       // the requests so rapid sends reach the server in send order.
-      deliver(value, { queue: 'wait', origin: READER_ORIGIN, attachments: options?.attachments })
+      deliver(message.text, { queue: 'wait', origin: READER_ORIGIN, ...message.options }, message.id)
     },
-    [sessionId, deliver, offline, reconnect.retry],
+    [sessionId, deliver, offline, openRefusal, reconnect.exhausted, reconnect.retry],
+  )
+
+  // Drawn at once, before anything is asked of the server (see OutgoingMessage).
+  // Text over the size limit is refused here instead, before it is drawn: no
+  // Send again could ever deliver it, so the reader is told and keeps the
+  // text to shorten (see message-size).
+  const send = useCallback(
+    (value: string, options?: SendOptions) => {
+      const oversized = oversizedTextNotice(value)
+      if (oversized) {
+        giveBack(value, new SendRefusedError(oversized))
+        return
+      }
+      outgoingIds.current += 1
+      const message: OutgoingMessage = {
+        id: `outgoing-${outgoingIds.current}`,
+        text: value,
+        options: options ?? {},
+        sentAt: new Date().toISOString(),
+        status: 'sending',
+      }
+      changeOutgoing((list) => [...list, message])
+      dispatch(message)
+    },
+    [changeOutgoing, dispatch, giveBack],
+  )
+
+  // Once per failure: the entry leaves `failed` here, before anything is sent,
+  // so a second press finds nothing to send.
+  const retryOutgoing = useCallback(
+    (id: string) => {
+      const failed = outgoingRef.current.find((message) => message.id === id && message.status === 'failed')
+      if (!failed) {
+        return
+      }
+      const message: OutgoingMessage = { ...failed, status: 'sending', failure: undefined, carried: undefined }
+      changeOutgoing((list) => list.map((entry) => (entry.id === id ? message : entry)))
+      dispatch(message)
+    },
+    [changeOutgoing, dispatch],
+  )
+
+  // A message already handed to the server is not called back by this: it
+  // goes from the screen, and the stream shows it if the server took it.
+  const discardOutgoing = useCallback(
+    (id: string) => {
+      pending.current = pending.current.filter((held) => held !== id)
+      changeOutgoing((list) => list.filter((message) => message.id !== id))
+    },
+    [changeOutgoing],
   )
 
   // Flush the messages held while there was no session, in the order typed.
@@ -1339,8 +1651,11 @@ export function useAcpSession(
     }
     const held = pending.current
     pending.current = []
-    for (const { text, attachments } of held) {
-      deliver(text, { queue: 'wait', origin: READER_ORIGIN, attachments })
+    for (const id of held) {
+      const message = outgoingRef.current.find((entry) => entry.id === id)
+      if (message) {
+        deliver(message.text, { queue: 'wait', origin: READER_ORIGIN, ...message.options }, message.id)
+      }
     }
   }, [sessionId, deliver])
 
@@ -1472,11 +1787,9 @@ export function useAcpSession(
   // sender.
   //
   // The mode stays OPEN until the server answers, and closes only on success.
-  // A refusal (the turn is no longer there) or a failure used to close the bar,
-  // empty the composer and report nothing, which lost the reader's words with
-  // nothing on screen to say so. Left open, the drafts are still in the
-  // composer where they were, and `sendError` says what happened -- the same
-  // pair a failed send uses.
+  // On a refusal (the turn is no longer there) or a failure the drafts are
+  // still in the composer where they were, and the conversation's notice says
+  // what happened -- the same pair a failed send uses.
   const commitEdit = useCallback(
     (edits: TurnEdit<string>[]) => {
       const open = edit
@@ -1491,7 +1804,7 @@ export function useAcpSession(
         setEdit(undefined)
         return
       }
-      setSendError(undefined)
+      setSendFailure(undefined)
       // Through the same transition an ordinary send uses, so `sending` covers
       // the round trip and the composer's own button is disabled for it -- a
       // second press cannot fork the conversation twice.
@@ -1501,7 +1814,7 @@ export function useAcpSession(
             data: { tabKey, sessionId, eventIndex: open.eventIndex, edits },
           })
           if (!result) {
-            setSendError('That message is no longer in this conversation, so the edit was not applied.')
+            setSendFailure({ title: 'That message is no longer in this conversation, so the edit was not applied.' })
             return
           }
           setEdit(undefined)
@@ -1509,7 +1822,7 @@ export function useAcpSession(
           setSessionId(result.sessionId)
         } catch (error) {
           console.error('editTurnLocal failed', error)
-          setSendError(sendFailureMessage(error))
+          setSendFailure(sendFailureNotice(error))
         }
       })
     },
@@ -1586,9 +1899,10 @@ export function useAcpSession(
     setHistoryHeader(headerFromWindow(page.header, tabKeyRef.current))
   }, [paginatedHistory.loadOlder])
 
-  const dismissSendError = useCallback(() => setSendError(undefined), [])
+  const dismissSendFailure = useCallback(() => setSendFailure(undefined), [])
+  const refuseSend = useCallback((reason: string) => setSendFailure({ title: reason }), [])
 
-  const openError = openRefusal ?? (reconnect.exhausted ? OPEN_GAVE_UP_MESSAGE : undefined)
+  const openError = openRefusal?.message ?? (reconnect.exhausted ? OPEN_GAVE_UP_TITLE : undefined)
   // The open effect clears the refusal as it starts, so the notice gives way to
   // the loading state for the attempt this starts. The reader pressed it, so it
   // may start the session.
@@ -1596,6 +1910,20 @@ export function useAcpSession(
     wakeRef.current = true
     reconnect.retry()
   }, [reconnect.retry])
+
+  // One notice at a time, and a session that is not open is the one that
+  // matters: no send can go through until it is, and its Try again is the way
+  // on. A failed send's notice is dismissable; the open's leaves when the
+  // session opens.
+  const notice = useMemo<AgentChatNotice | undefined>(() => {
+    if (openRefusal) {
+      return { ...noticeOf(openFailureNotice(openRefusal.message, openRefusal.kind)), action: tryAgain(retryOpen) }
+    }
+    if (reconnect.exhausted) {
+      return { ...noticeOf(openFailureNotice(lastOpenFailure, 'gave-up')), action: tryAgain(retryOpen) }
+    }
+    return sendFailure ? { ...noticeOf(sendFailure), onDismiss: dismissSendFailure } : undefined
+  }, [openRefusal, reconnect.exhausted, lastOpenFailure, retryOpen, sendFailure, dismissSendFailure])
 
   // Discards this tab's session entirely (transcript, durable pointer, live
   // process) and bumps `generation` so the resolve-session effect opens a
@@ -1646,8 +1974,9 @@ export function useAcpSession(
       cancelEdit,
       commitEdit,
       draft,
-      sendError,
-      dismissSendError,
+      notice,
+      refuseSend,
+      starting: starting && !openError,
       clearSession,
       commands: folded.commands,
       hasMoreHistory: paginatedHistory.hasMore,
@@ -1676,8 +2005,9 @@ export function useAcpSession(
       cancelEdit,
       commitEdit,
       draft,
-      sendError,
-      dismissSendError,
+      notice,
+      refuseSend,
+      starting,
       clearSession,
       paginatedHistory.hasMore,
       paginatedHistory.loadingMore,
@@ -1767,6 +2097,9 @@ export function useAcpSession(
       resolveAsk,
       respondPermissionText,
       removeQueued,
+      outgoing,
+      retryOutgoing,
+      discardOutgoing,
       deliverQueue,
       setConfigOption,
       setPresence,
@@ -1793,6 +2126,9 @@ export function useAcpSession(
       resolveAsk,
       respondPermissionText,
       removeQueued,
+      outgoing,
+      retryOutgoing,
+      discardOutgoing,
       deliverQueue,
       setConfigOption,
       setPresence,

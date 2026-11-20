@@ -81,6 +81,7 @@ async function until(condition: () => boolean, what: string): Promise<void> {
     if (Date.now() > deadline) {
       assert.fail(`timed out waiting for ${what}`)
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
@@ -210,6 +211,7 @@ test('an undo leaves what an untracked write set since', async () => {
 
   a.live.undo()
   assert.deepEqual(nodeIn(b.seen(), 'n1')?.position, { x: 10, y: 40 })
+  // biome-ignore lint/plugin/noTestFixedTime: fixed window in which the undone position must not come back
   await new Promise((resolve) => setTimeout(resolve, 100))
   assert.deepEqual(nodeIn(b.seen(), 'n1')?.position, { x: 10, y: 40 })
 })

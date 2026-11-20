@@ -98,6 +98,21 @@ export function renderToolCall(item: Extract<KitDetailItem, { kind: 'tool' }>) {
 // themselves (see `renderToolCall`'s siblings and the group-chat thread
 // route); consumers that need the raw log directly (the
 // voice input controls' `getMessages`) read `messages` off this type.
+/** What a message quotes, fixed by its sender when it is sent: `selection` is
+ *  the quoted selection's content, absent for none. See SendTransport in
+ *  use-acp-session.ts. */
+export interface Quoted {
+  selection?: string
+}
+
+/** What goes with a sent message besides its words. */
+export interface SendOptions {
+  /** Stored picture ids, carried beside the words (see attachments.ts in
+   *  agent-client); the server resolves them. */
+  attachments?: readonly string[]
+  quoted?: Quoted
+}
+
 export interface AgentSession {
   sessionKey: string
   messages: ChatMessage[]
@@ -110,9 +125,7 @@ export interface AgentSession {
   // Stop. See the package contract's note (agent-chat/src/session.ts).
   thinking?: boolean
   botName: string
-  // `attachments` are stored picture ids, carried beside the words (see
-  // attachments.ts in agent-client); the server resolves them.
-  send: (text: string, options?: { attachments?: readonly string[] }) => void
+  send: (text: string, options?: SendOptions) => void
   // Turn control and message editing, provided by the ACP (local) backend; the
   // dashboard placeholder session leaves these unset.
   stop?: () => void
@@ -146,12 +159,14 @@ export interface AgentSession {
   // Composer draft staged by the host (a send that failed puts its text back
   // through this); the input syncs to it when it changes.
   draft?: { text: string; key: number }
-  // Copy for a send that did not go through, shown by the composer. Set
-  // together with the message being put back in the composer, so the reader is
-  // told what happened and still has what they typed. Cleared when the next
-  // send starts, or by `dismissSendError`.
-  sendError?: string
-  dismissSendError?: () => void
+  // Why the conversation cannot go on as the reader expects (a session that
+  // did not start, a message that was not sent), told at the end of the
+  // conversation; `refuseSend` reports a send the composer refused itself;
+  // `starting` is a session start in progress. See the package contract
+  // (agent-chat/src/session.ts) for each.
+  notice?: AgentChatSession['notice']
+  refuseSend?: AgentChatSession['refuseSend']
+  starting?: boolean
   // Discards this session (transcript, durable pointer, live process) and
   // opens a fresh one in its place -- same tab, same chat-list entry. Pending
   // permission requests and the queue die with the old session; the composer

@@ -1,13 +1,16 @@
 import { createServerFn } from '@tanstack/react-start'
-import type { SpaceUsageSeries, UsageGrouping, UsagePeriod } from 'ui/admin/space-usage'
+import type { UsagePeriod } from 'ui/admin/space-usage'
 
-import { deleteChatUsage, queryChatUsage } from '@/app/_authed/(agent)/_server/chat-usage-store'
+import {
+  type ChatUsageAnswer,
+  type ChatUsageQuery,
+  deleteChatUsage,
+  queryChatUsage,
+} from '@/app/_authed/(agent)/_server/chat-usage-store'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 
-export interface SpaceUsageQuery {
+export interface SpaceUsageQuery extends ChatUsageQuery {
   slug: string
-  grouping: UsageGrouping
-  period: UsagePeriod
 }
 
 async function resolveSpaceId(slug: string): Promise<string> {
@@ -18,11 +21,13 @@ async function resolveSpaceId(slug: string): Promise<string> {
   return space.id
 }
 
-// The space settings page's Usage section: the spend recorded in this space.
+// The space settings page's Usage section: the spend recorded in this space,
+// the groups of the grouping shown that the reader may choose from, and each
+// group's figures.
 export const getSpaceUsage = createServerFn({ method: 'GET', strict: { output: false } })
   .inputValidator((query: SpaceUsageQuery) => query)
-  .handler(async ({ data }): Promise<SpaceUsageSeries[]> => {
-    return queryChatUsage(await resolveSpaceId(data.slug), data.grouping, data.period)
+  .handler(async ({ data }): Promise<ChatUsageAnswer> => {
+    return queryChatUsage(await resolveSpaceId(data.slug), data.grouping, data.period, data.chosen)
   })
 
 // The Usage section's reset: every turn this space recorded in the period goes.

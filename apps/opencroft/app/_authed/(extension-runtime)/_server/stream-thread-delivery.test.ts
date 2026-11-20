@@ -140,6 +140,7 @@ async function waitForPrompts(prompts: string[], count: number): Promise<void> {
     if (prompts.length >= count) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error(`expected ${count} prompt(s) to reach the agent, saw ${prompts.length}`)

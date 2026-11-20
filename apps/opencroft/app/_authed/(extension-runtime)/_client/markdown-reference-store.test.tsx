@@ -6,6 +6,7 @@ import { getMarkdownReferences, installMarkdownReferences } from 'agent-chat/com
 
 import { ReferenceStore } from './markdown-reference-store'
 
+// biome-ignore lint/plugin/noTestFixedTime: zero-delay turn that lets queued work run before asserting
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 const settled = async () => {
   await tick()

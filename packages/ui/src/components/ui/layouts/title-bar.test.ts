@@ -4,7 +4,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { TitleBar, type TitleBarProps } from './title-bar'
+import { TitleBar, TitleBarIconButton, TitleBarIconLink, type TitleBarProps } from './title-bar'
 
 const noop = () => {}
 
@@ -67,6 +67,55 @@ test('canGoForward={false} disables Forward and leaves Back enabled', () => {
   const markup = render({ onHistoryBack: noop, onHistoryForward: noop, canGoForward: false })
   assert.equal(isDisabled(markup, 'Go back'), false)
   assert.equal(isDisabled(markup, 'Go forward'), true)
+})
+
+// The opening tag of the element carrying this label.
+function tagOf(markup: string, label: string): string {
+  const match = markup.match(new RegExp(`<[a-z]+[^>]*aria-label="${label}"[^>]*>`))
+  assert.ok(match, `${label} is drawn`)
+  return match[0]
+}
+
+function classesOf(tag: string): string[] {
+  const match = tag.match(/class="([^"]*)"/)
+  assert.ok(match, 'the element has classes')
+  return match[1].split(/\s+/).sort()
+}
+
+test('TitleBarIconLink is a link to its address, not a button, in the icon button look', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      'div',
+      null,
+      createElement(TitleBarIconLink, { href: '/inbox', 'aria-label': 'Inbox' }),
+      createElement(TitleBarIconButton, { 'aria-label': 'Menu' }),
+    ),
+  )
+  const link = tagOf(markup, 'Inbox')
+  assert.ok(link.startsWith('<a '), 'an anchor')
+  assert.ok(link.includes('href="/inbox"'), 'with its address')
+  assert.ok(!link.includes('role='), 'with the role of a link')
+  assert.deepEqual(classesOf(link), classesOf(tagOf(markup, 'Menu')))
+})
+
+test('TitleBarIconLink draws the element passed as render, keeping its address and handler', () => {
+  let clicks = 0
+  const onClick = () => {
+    clicks++
+  }
+  let received: Record<string, unknown> = {}
+  function RouterLink(props: Record<string, unknown>) {
+    received = props
+    return createElement('a', { href: props.to as string, className: props.className as string })
+  }
+  const markup = renderToStaticMarkup(
+    createElement(TitleBarIconLink, { render: createElement(RouterLink, { to: '/inbox', onClick }) }),
+  )
+  assert.ok(markup.includes('href="/inbox"'), 'the router link drew the anchor')
+  assert.equal(typeof received.onClick, 'function', 'the router link gets a click handler')
+  ;(received.onClick as (event: unknown) => void)({ preventDefault() {}, stopPropagation() {} })
+  assert.equal(clicks, 1, 'which runs the handler given with it')
+  assert.ok(String(received.className).includes('size-8'), 'with the bar size')
 })
 
 test('without history callbacks the bar draws no Back or Forward', () => {

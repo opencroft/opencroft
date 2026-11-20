@@ -45,7 +45,8 @@ export async function attachmentResponse(request: Request, id: string): Promise<
   return new Response(new Uint8Array(Buffer.from(picture.data, 'base64')), {
     headers: {
       // Safe to hand over as stored: saveAttachment admits only the raster
-      // types in ATTACHABLE_MIME_TYPES, never SVG.
+      // types in ATTACHABLE_MIME_TYPES, and saveToolMedia only those and the
+      // sounds in TOOL_MEDIA_MIME_TYPES -- never SVG, never a document.
       'Content-Type': picture.mimeType,
       'X-Content-Type-Options': 'nosniff',
       // A row is never rewritten -- a new picture is a new id -- so the bytes

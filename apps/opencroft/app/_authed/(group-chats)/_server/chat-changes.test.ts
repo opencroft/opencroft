@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
 
+import { waitFor } from '@/test-support/wait'
+
 const workdir = await mkdtemp(join(tmpdir(), 'opencroft-chat-changes-test-'))
 process.env.OPENCROFT_DATA_DIR = join(workdir, 'data')
 process.env.OPENCROFT_DB_MIGRATIONS_DIR = join(
@@ -81,20 +83,9 @@ function listen(u: TestUser): { heard: string[]; decided: string[]; stop: () => 
   return { heard, decided, stop }
 }
 
-/**
- * Waits until `done` holds. The deadline only bounds a hang: the stream's
- * decisions wait on database reads, which a loaded host can slow down.
- */
-async function waitFor(what: string, done: () => boolean): Promise<void> {
-  const deadlineMs = 20_000
-  const deadline = Date.now() + deadlineMs
-  while (!done()) {
-    if (Date.now() > deadline) {
-      assert.fail(`no ${what} within ${deadlineMs} ms`)
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-}
+// The deadline only bounds a hang: the stream's decisions wait on database
+// reads, which a loaded host can slow down.
+const DECISION_TIMEOUT_MS = 20_000
 
 test('a member hears an agent added and a sender granted; a person outside the chat hears neither', async () => {
   const owner = await makeUser('changes-owner@example.test')
@@ -105,8 +96,14 @@ test('a member hears an agent added and a sender granted; a person outside the c
   try {
     await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
     await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.script' })
-    await waitFor('decision on both changes by the owner', () => ownerStream.decided.length >= 2)
-    await waitFor('decision on both changes by the outsider', () => outsiderStream.decided.length >= 2)
+    await waitFor(() => ownerStream.decided.length >= 2, {
+      what: 'the owner decides on both changes',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
+    await waitFor(() => outsiderStream.decided.length >= 2, {
+      what: 'the outsider decides on both changes',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
 
     assert.deepEqual(outsiderStream.decided, [chat.id, chat.id])
     assert.deepEqual(ownerStream.heard, [chat.id, chat.id])
@@ -126,11 +123,23 @@ test('a person removed from a chat hears that removal, and nothing the chat does
   const leaverStream = listen(leaver)
   try {
     await model.removeMember(reqAs(owner), chat.id, { kind: 'user', userId: leaver.id })
-    await waitFor('decision on the removal by the leaver', () => leaverStream.decided.length >= 1)
-    await waitFor('decision on the removal by the owner', () => ownerStream.decided.length >= 1)
+    await waitFor(() => leaverStream.decided.length >= 1, {
+      what: 'the leaver decides on the removal',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
+    await waitFor(() => ownerStream.decided.length >= 1, {
+      what: 'the owner decides on the removal',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
     await model.addMember(reqAs(owner), chat.id, { kind: 'agent', agentNodeId: 'agent-a' })
-    await waitFor('decision on the addition by the leaver', () => leaverStream.decided.length >= 2)
-    await waitFor('decision on the addition by the owner', () => ownerStream.decided.length >= 2)
+    await waitFor(() => leaverStream.decided.length >= 2, {
+      what: 'the leaver decides on the addition',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
+    await waitFor(() => ownerStream.decided.length >= 2, {
+      what: 'the owner decides on the addition',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
 
     assert.deepEqual(leaverStream.decided, [chat.id, chat.id])
     assert.deepEqual(leaverStream.heard, [chat.id])
@@ -153,7 +162,10 @@ test('a stream that stopped hears nothing more', async () => {
   stream.stop()
   try {
     await model.addMember(reqAs(owner), chat.id, { kind: 'system', systemId: 'system.script' })
-    await waitFor('decision on the change by the open stream', () => control.decided.length >= 1)
+    await waitFor(() => control.decided.length >= 1, {
+      what: 'the open stream decides on the change',
+      timeoutMs: DECISION_TIMEOUT_MS,
+    })
 
     assert.deepEqual(control.heard, [chat.id])
     assert.deepEqual(stream.decided, [])

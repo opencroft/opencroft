@@ -25,6 +25,7 @@ test('concurrent runs each see their own event across awaits', async () => {
   const seen = await Promise.all(
     Array.from({ length: 20 }, (_, i) =>
       withRunEvent('route', { n: i }, async () => {
+        // biome-ignore lint/plugin/noTestFixedTime: staggers the concurrent runs so their awaits interleave; the delay is an input, not a wait
         await new Promise((resolve) => setTimeout(resolve, (20 - i) % 7))
         return (currentRunEvents()?.get('route') as { n: number }).n
       }),

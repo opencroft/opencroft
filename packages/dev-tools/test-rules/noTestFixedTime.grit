@@ -1,0 +1,15 @@
+language js
+
+// A test waits on the thing it needs, never on a clock: a fixed sleep, settle
+// delay or timed poll passes on a fast host and fails on a loaded one. The
+// helpers that may arm real timers live in test-support, which this rule's
+// override leaves out. A child-process script held in a string is not code
+// here, so it is not matched.
+or {
+  `setTimeout($args)`,
+  `setInterval($args)`,
+  `$host.setTimeout($args)`,
+  `$host.setInterval($args)`
+} as $timer where {
+  register_diagnostic(span=$timer, message="A test does not wait on a fixed time. Await the event or promise itself, poll with waitFor(condition) from test-support, or fake the clock with t.mock.timers. A timer that only bounds a failure takes a suppression saying so.", severity="error")
+}

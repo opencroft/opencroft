@@ -108,6 +108,35 @@ export type NodeCheck<D = any> = (
 /** The `nodeChecks` export: each node type's check, by the node's bare type. */
 export type NodeChecks = Record<string, NodeCheck>
 
+/**
+ * How the host learns the live ids of a node type's `dynamic` source handles.
+ * A dynamic handle's declared id is a prefix; its live ids depend on the node
+ * (a route per entry in its data, a container per replica). Every handle
+ * listing goes through it: the terminal pickers, a node read's outputs
+ * (`getNodes`) and `graph.listHandles`. Declaring a dynamic terminal and
+ * answering its ids here is all it takes for a node to be listed.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: a map of listers each typed on its own data
+export interface DynamicHandleLister<D = any> {
+  /**
+   * The node's live ids under `handleId`, the declared prefix; the host keeps
+   * only the ids that start with it. Called once per declared dynamic source
+   * handle, uncached. An empty list, a throw or a rejection lists none: the
+   * node offers no terminal there and the rest of the listing goes on.
+   */
+  list(node: { id: string; data: D }, handleId: string): string[] | Promise<string[]>
+  /**
+   * `list` reads the node's data alone, with no I/O. The host then asks it in
+   * the listing's first answer, so a picker shows those handles at once.
+   * Without it the host asks it per node, after the first answer, so a slow
+   * answer keeps only that node's group loading.
+   */
+  fromData?: true
+}
+
+/** The `dynamicHandles` export: each node type's lister, by the node's bare type. */
+export type DynamicHandles = Record<string, DynamicHandleLister>
+
 export interface GraphNodeRecord {
   id: string
   type?: string
@@ -159,6 +188,8 @@ export interface HandleInfo {
   slug?: string
   /** For an App's handle: the instance's address, `<spaceSlug>.<slug>`. Absent for a node's. */
   address?: string
+  /** For a node's handle: the graph the node is on, by its address (`<spaceSlug>.<graph>`) and name. Absent for an App's. */
+  graph?: { address: string; name: string }
   /**
    * The live id, which `terminal.getContext` resolves. For a dynamic handle
    * this is the expanded runtime id, not the declared prefix.
@@ -173,6 +204,16 @@ export interface HandleInfo {
   /** For an App's dynamic handle: what the App calls this live id, when it says. */
   liveLabel?: string
   dynamic: boolean
+  /**
+   * For a source handle: the name the host gives the terminal it is, e.g. in
+   * the Terminal Selector. A node's is the node's name as the canvas shows it,
+   * with which of its handles it is when that is something else
+   * ("Docker · postgres"); an App's is what the App calls it ("my-repo · main"),
+   * else the App's name. A router's route handle is the router's name and the
+   * route's id ("Router · 3f9a1c2e"); where a route is chosen as a terminal, it
+   * is named by the terminal it reaches instead.
+   */
+  title?: string
 }
 
 /** A handle type an extension declares, as `HostGraphApi.getHandleType` reports it. */

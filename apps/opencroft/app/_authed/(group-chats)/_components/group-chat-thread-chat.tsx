@@ -18,9 +18,13 @@ import { Flex } from 'ui/layout/flex'
 import { ScrollArea } from 'ui/layout/scroll-area'
 import { StickySection } from 'ui/layouts/sticky-section'
 
-import { AgentChatStatusIndicators, CHAT_RENDERERS, renderToolCall } from '@/app/_authed/(agent)/_components/agent-chat'
+import {
+  AgentChatStatusIndicators,
+  type AgentSession,
+  CHAT_RENDERERS,
+  renderToolCall,
+} from '@/app/_authed/(agent)/_components/agent-chat'
 import { AgentCommandBarHost } from '@/app/_authed/(agent)/_components/command-bar-host'
-import { SessionOpenNotice } from '@/app/_authed/(agent)/_components/session-open-notice'
 import type {
   ForkTransport,
   LocalSource,
@@ -28,7 +32,8 @@ import type {
   SendTransport,
 } from '@/app/_authed/(agent)/_components/use-acp-session'
 import { useAcpSession } from '@/app/_authed/(agent)/_components/use-acp-session'
-import { buildBlocks, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
+import type { ResolvedAuthor } from '@/app/_authed/(agent)/_lib/acp-stream'
+import { buildBlocks, buildOutgoing, buildUnread } from '@/app/_authed/(agent)/_lib/build-blocks'
 import { useSessionActivity } from '@/app/_authed/(agent)/_lib/use-session-activity'
 import { locateRecordedTurnLocal } from '@/app/_authed/(agent)/_server/acp'
 import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
@@ -39,13 +44,20 @@ import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selec
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { mentionCandidates } from '@/app/_authed/(group-chats)/_lib/mention-candidates'
+import { takeOpeningMessage } from '@/app/_authed/(group-chats)/_lib/opening-messages'
 import { useRecordRecentThread } from '@/app/_authed/(group-chats)/_lib/recent-threads-store'
 import { threadSendRefusal } from '@/app/_authed/(group-chats)/_lib/send-failure'
+import {
+  type ThreadLookup,
+  type ThreadRemoval,
+  useThreadRemoval,
+} from '@/app/_authed/(group-chats)/_lib/use-thread-removal'
 import type { GroupChatThreadView, MemberRef } from '@/app/_authed/(group-chats)/_server/actions'
 import {
   attachGroupChatThreadSession,
   clearGroupChatThread,
   compactGroupChatThread,
+  findGroupChatThreadInChat,
   forkGroupChatThreadAt,
   getGroupChatThreadCompactStatus,
   openGroupChatThreadSession,
@@ -116,7 +128,18 @@ interface GroupChatThreadChatProps {
   /** The chat's members, offered by the composer when `@` is typed. Omitted,
    *  `@` opens nothing. */
   members?: readonly MemberRef[]
+  /** The thread stopped being reachable while it was open: it was deleted,
+   *  or the reader is no longer in its chat. Where the reader goes from here
+   *  is the host's: this component has nothing left to show. Omitted, the
+   *  conversation stays on screen as it was. */
+  onUnavailable?: (removal: ThreadRemoval) => void
+  /** Who is signed in here: the name and face a message sent from this screen
+   *  is drawn under until the server holds it and its own copy, resolved by
+   *  the server, takes its place. Omitted, that row shows its time alone. */
+  reader?: ResolvedAuthor
 }
+
+const lookUpThread: ThreadLookup = (ids) => findGroupChatThreadInChat({ data: ids })
 
 const TURN_GONE_MESSAGE = 'That message is no longer in this conversation.'
 // Search keeps a thread's whole history; the conversation keeps a bounded
@@ -126,9 +149,9 @@ const TURN_OLDER_MESSAGE = 'That message is older than the history kept for this
 // The two halves of the selection in the composer: the quotation that rides in
 // the attachments row above the input, and the toggle that stands beside the
 // context ring below it. Neither renders anything unless a SelectionProvider
-// with a live selection encloses this component, so the plain thread route (no
-// provider) is unchanged by both. Module-level for identity stability — they
-// feed the memoized command bar.
+// with a live selection encloses this component, so the thread route of a chat
+// that is no space's (no provider) is unchanged by both. Module-level for
+// identity stability — they feed the memoized command bar.
 //
 // Each is handed to its slot on the same condition its own component draws on,
 // which is a second test of that condition and has to be. A slot draws around
@@ -141,9 +164,13 @@ const TURN_OLDER_MESSAGE = 'That message is older than the history kept for this
 // AND THE TWO CONDITIONS ARE NOT THE SAME ONE. The quotation needs something to
 // quote. The toggle needs somewhere to keep the answer it sets, which is any
 // mounted scope — so it stands with nothing selected, and the reader can settle
-// it before selecting anything. The plain thread route has no provider and gets
-// neither.
-const SELECTION_BADGE = <SelectionBadge />
+// it before selecting anything. The thread route of a chat that is no space's
+// has no provider and gets neither.
+//
+// The quotation takes the attachments row's whole line (`basis-full`): the row
+// wraps its items, a flex item sizes itself to its content, and a quote sized
+// to its own full path would never find it has too little room to shorten.
+const SELECTION_BADGE = <SelectionBadge className='basis-full' />
 const SELECTION_TOGGLE = <SelectionToggle />
 
 export function GroupChatThreadChat({
@@ -155,10 +182,15 @@ export function GroupChatThreadChat({
   onHeaderChange,
   revealPosition,
   members,
+  onUnavailable,
+  reader,
 }: GroupChatThreadChatProps) {
   // Here rather than in each surface, so a thread opened anywhere -- the chats
   // page or a space's chat panel -- is one the Recent list knows.
   useRecordRecentThread(thread.id)
+  // Likewise for a thread that goes away while it is read: both surfaces
+  // learn it the same way, and each decides where the reader lands.
+  useThreadRemoval(thread.groupChatId, thread.id, lookUpThread, (removal) => onUnavailable?.(removal))
   const mentions = useMemo(() => (members ? mentionCandidates(members) : undefined), [members])
   // Memoised on the two values that identify the session, not rebuilt each
   // render: `useAcpSession` keys its effects on this object, so a fresh
@@ -205,10 +237,10 @@ export function GroupChatThreadChat({
     }
   }, [thread.id, refresh])
 
-  // The surrounding selection scope, if any (an extension surface mounts one;
-  // the thread route does not). Read through a ref inside the transport so the
-  // transport's identity — which the session hook keys on — never depends on
-  // selection state changing.
+  // The surrounding selection scope, if any (an extension surface mounts one,
+  // and so does the thread route of a space's chat). Read through a ref inside
+  // the transport so the transport's identity — which the session hook keys
+  // on — never depends on selection state changing.
   const selectionScope = useOptionalSelection()
   const selectionRef = useRef(selectionScope)
   selectionRef.current = selectionScope
@@ -225,11 +257,14 @@ export function GroupChatThreadChat({
   // message held while the session is still opening, the waiting state, and
   // `front` for the permission-correction flow.
   //
-  // The scoped selection is attached HERE, at the transport, for the same
-  // reason the membership check is: this is the one door a message leaves
-  // through, so passing cannot depend on which surface built the composer.
-  // The wrapped text is what the agent receives and what the transcript
-  // stores; the display side's tag stripper keeps it out of the user bubble.
+  // The scoped selection is wrapped into the text HERE, at the transport, for
+  // the same reason the membership check is: this is the one door a message
+  // leaves through, so passing cannot depend on which surface built the
+  // composer. A reader's send arrives with its quote already fixed (see
+  // `sendQuoting`); a message with none fixed, such as a permission's
+  // guidance, quotes what this chat quotes as it leaves. The wrapped text is
+  // what the agent receives and what the transcript stores; the display
+  // side's tag stripper keeps it out of the user bubble.
   //
   // A refusal here is an answer, not a fault: the agent was removed from the
   // group chat and this thread can be read but not written to. It comes back
@@ -241,9 +276,16 @@ export function GroupChatThreadChat({
   // fault still throws out of the call and is reported as a failure.
   const sendTransport = useMemo<SendTransport>(
     () =>
-      async ({ text, front, attachments }) => {
+      async ({ text, front, attachments, quoted }) => {
+        // A message whose sender fixed its quote carries that; any other,
+        // what this chat quotes as it leaves.
         const scope = selectionRef.current
-        const outgoing = scope?.selection && scope.passEnabled ? wrapUserSelection(text, scope.selection.content) : text
+        const selection = quoted
+          ? quoted.selection
+          : scope?.selection && scope.passEnabled
+            ? scope.selection.content
+            : undefined
+        const outgoing = selection ? wrapUserSelection(text, selection) : text
         const refusal = threadSendRefusal(
           await sendGroupChatThreadMessage({
             data: {
@@ -360,6 +402,60 @@ export function GroupChatThreadChat({
     [thread.id, onThreadForked],
   )
   const acp = useAcpSession(source, thread.agent.name, sendTransport, openTransport, forkTransport)
+
+  // The reader's sends fix their quote as Send is pressed: a message carries
+  // what was selected when it was sent, through a session start it waits out
+  // and through Send again, not whatever is selected when its request goes.
+  const acpSend = acp.session.send
+  const sendQuoting = useCallback<AgentSession['send']>(
+    (text, options) => {
+      const scope = selectionRef.current
+      const quoted =
+        options?.quoted ?? (scope?.selection && scope.passEnabled ? { selection: scope.selection.content } : {})
+      acpSend(text, { ...options, quoted })
+    },
+    [acpSend],
+  )
+  const session = useMemo(() => ({ ...acp.session, send: sendQuoting }), [acp.session, sendQuoting])
+
+  // What the reader sent that the server does not hold yet, drawn as the
+  // queue would draw it: the words with their quote, the pictures, the
+  // reader's name and the time Send was pressed.
+  const outgoing = useMemo(
+    () =>
+      buildOutgoing(
+        acp.outgoing.map((message) => ({
+          id: message.id,
+          text: message.options.quoted?.selection
+            ? wrapUserSelection(message.text, message.options.quoted.selection)
+            : message.text,
+          sentAt: message.sentAt,
+          pictures: message.options.attachments,
+          status: message.status,
+          failure: message.failure,
+        })),
+        reader,
+        thread.sessionKey,
+      ),
+    [acp.outgoing, reader, thread.sessionKey],
+  )
+
+  // A thread just started from the start composer opens with the message it
+  // was started with: sent here, through the ordinary send, which holds it
+  // while the session starts and, if the start fails, keeps it on screen as
+  // not sent, with Send again. Taken once, so a remount (StrictMode included)
+  // sends it once. It quotes the selection the start composer quoted, fixed
+  // with the message, so Send again quotes that too.
+  const sendRef = useRef(acp.session.send)
+  sendRef.current = acp.session.send
+  useEffect(() => {
+    const opening = takeOpeningMessage(thread.id)
+    if (opening) {
+      sendRef.current(opening.text, {
+        quoted: opening.selection === undefined ? {} : { selection: opening.selection },
+      })
+    }
+  }, [thread.id])
 
   // Computed over the FULL message list, not the visible window: turn indices
   // (for edit/fork) must stay correct regardless of how much is rendered, and
@@ -585,12 +681,9 @@ export function GroupChatThreadChat({
   // passed to useAcpSession: every message goes through
   // sendGroupChatThreadMessage and is membership-checked, while keeping the
   // hook's ordering, held-message and waiting behaviour.
-  // The refusal has to be visible, not just true. Sending into a removed
-  // agent's thread is refused server-side, and before this the only trace was a
-  // console error: the composer had already cleared itself, so the message
-  // simply appeared to vanish. The kit's error slot renders it directly above
-  // the composer, the same place and shape the members dialog reports its own
-  // refusals, and the text is back in the composer to be copied or retried.
+  // A refused or failed send (a removed agent's thread, a session gone) stays
+  // in the conversation, marked not sent with the reason, and can be sent
+  // again from there.
   //
   // `composerRef` is the one link from the transcript to the composer: a
   // message's Reply writes into the composer through it.
@@ -603,38 +696,39 @@ export function GroupChatThreadChat({
   // rather than a composer that renders nothing, so every frame drops its
   // wrapper too. `opened`, not `loading`: a Clear or a Try again opens the same
   // conversation again, and unmounting the composer for that would remount it
-  // from the draft the page loaded with, dropping what was typed since.
-  const composer = !acp.opened ? undefined : archived ? (
-    <ArchivedThreadNotice onUnarchive={() => void unarchive()} pending={unarchiving} error={unarchiveError} />
-  ) : (
-    <AgentCommandBarHost
-      startIcon={false}
-      session={acp.session}
-      agentNodeId={thread.agent.nodeId}
-      configOptions={acp.configOptions}
-      onSetConfigOption={acp.setConfigOption}
-      presence={presence}
-      usage={acp.usage}
-      compact={compact}
-      onClear={clear.onClear}
-      placeholder={`Message ${thread.agent.name}`}
-      sendError={acp.session.sendError}
-      onDismissSendError={acp.session.dismissSendError}
-      savedDraft={thread.draft ?? undefined}
-      onDraftChange={onDraftChange}
-      leadingBarContent={leadingBarContent}
-      attachments={selectionScope?.selection && selectionScope.passEnabled ? SELECTION_BADGE : undefined}
-      attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
-      canAttachImages={acp.canAttachImages}
-      composerRef={composerRef}
-      mentions={mentions}
-    />
-  )
+  // from the draft the page loaded with, dropping what was typed since. An
+  // open that failed shows it all the same, so the reader can write again;
+  // what they sent while it was out stays in the conversation as not sent,
+  // with Send again.
+  const composer =
+    !acp.opened && !acp.openError ? undefined : archived ? (
+      <ArchivedThreadNotice onUnarchive={() => void unarchive()} pending={unarchiving} error={unarchiveError} />
+    ) : (
+      <AgentCommandBarHost
+        startIcon={false}
+        session={session}
+        agentNodeId={thread.agent.nodeId}
+        configOptions={acp.configOptions}
+        onSetConfigOption={acp.setConfigOption}
+        presence={presence}
+        usage={acp.usage}
+        compact={compact}
+        onClear={clear.onClear}
+        savedDraft={thread.draft ?? undefined}
+        onDraftChange={onDraftChange}
+        leadingBarContent={leadingBarContent}
+        attachments={selectionScope?.selection && selectionScope.passEnabled ? SELECTION_BADGE : undefined}
+        attachmentControls={selectionScope ? SELECTION_TOGGLE : undefined}
+        canAttachImages={acp.canAttachImages}
+        composerRef={composerRef}
+        mentions={mentions}
+      />
+    )
 
   const conversation = (
     <>
       <AgentChat
-        session={acp.session}
+        session={session}
         blocks={blocks}
         hasMessages={acp.session.messages.length > 0}
         historyHeaderParts={acp.session.historyHeader?.parts}
@@ -646,16 +740,12 @@ export function GroupChatThreadChat({
         unread={unread}
         onRemoveUnread={previewingQueue ? undefined : acp.removeQueued}
         onDeliverUnread={previewingQueue ? undefined : acp.deliverQueue}
+        outgoing={outgoing}
+        onRetryOutgoing={acp.retryOutgoing}
+        onDiscardOutgoing={acp.discardOutgoing}
         composerRef={composerRef}
         reveal={reveal}
-        footerExtra={
-          <>
-            {/* In the footer so it stands under an empty chat and under a
-                transcript that lost its connection alike. */}
-            <SessionOpenNotice message={acp.openError} onRetry={acp.retryOpen} />
-            <AgentChatStatusIndicators />
-          </>
-        }
+        footerExtra={<AgentChatStatusIndicators />}
       />
       {/* A thread's agent asks for approval exactly as a 1:1 chat's does, and
           without this there is nowhere to answer: the request renders in the

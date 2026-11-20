@@ -2,8 +2,8 @@
 
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
-import { ChevronsUpDown, LoaderCircle, SquareTerminal, X } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { ChevronRight, ChevronsUpDown, LoaderCircle, SquareTerminal, X } from 'lucide-react'
 
 import { Button } from '../button'
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '../command'
@@ -15,12 +15,19 @@ export interface TerminalListEntry {
   /** The host's address for the terminal. Opaque here; reported back on select and remove. */
   target: string
   /**
-   * What tells it apart from the other terminals of the same node or app: a
-   * container, a worktree. Left out only for the owner's one and only terminal.
+   * The terminal's one name, as the host names it everywhere: the node's name,
+   * with which of its terminals it is when that is something else
+   * ("web · web-1"), or what an app calls it ("my-app · main").
    */
-  name?: string
+  name: string
   /** Known but not reachable right now. Still listed, so a saved choice is shown rather than dropped. */
   unavailable?: boolean
+}
+
+/** A space or an app a source sits in: `id` groups, `name` is shown. */
+export interface TerminalListPlace {
+  id: string
+  name: string
 }
 
 export interface TerminalListSource {
@@ -36,7 +43,9 @@ export interface TerminalListSource {
    */
   accent?: string
   /** The space it lives in. Sources are sectioned by it once they come from more than one. */
-  space?: string
+  space?: TerminalListPlace
+  /** The graph a node is on, or the app itself: its terminals are grouped under it within the space. */
+  app?: TerminalListPlace
   terminals: TerminalListEntry[]
   /** Its terminals are still being discovered. The rest of the list does not wait for it. */
   loading?: boolean
@@ -68,22 +77,37 @@ interface ShownSource {
   terminals: TerminalListEntry[]
 }
 
-interface SpaceSection {
-  space: string
+interface AppGroup {
+  key: string
+  app?: TerminalListPlace
   sources: ShownSource[]
 }
 
-// Insertion order, as the host sent it. An array rather than a Map: a generic
-// on `new` in an expression position breaks the preview's transform.
-function sectionBySpace(shown: ShownSource[]): SpaceSection[] {
+interface SpaceSection {
+  key: string
+  space?: TerminalListPlace
+  apps: AppGroup[]
+}
+
+// Insertion order, as the host sent it: spaces in the order their first source
+// came, apps likewise within each. Arrays rather than Maps: a generic on `new`
+// in an expression position breaks the preview's transform.
+function sectionBySpaceAndApp(shown: ShownSource[]): SpaceSection[] {
   const sections: SpaceSection[] = []
   for (const item of shown) {
-    const space = item.source.space ?? ''
-    const section = sections.find((candidate) => candidate.space === space)
-    if (section) {
-      section.sources.push(item)
+    const spaceKey = item.source.space?.id ?? ''
+    let section = sections.find((candidate) => candidate.key === spaceKey)
+    if (!section) {
+      section = { key: spaceKey, space: item.source.space, apps: [] }
+      sections.push(section)
+    }
+    // A source in no app is a group of its own, without a heading.
+    const appKey = item.source.app ? `app:${item.source.app.id}` : `source:${item.source.id}`
+    const group = section.apps.find((candidate) => candidate.key === appKey)
+    if (group) {
+      group.sources.push(item)
     } else {
-      sections.push({ space, sources: [item] })
+      section.apps.push({ key: appKey, app: item.source.app, sources: [item] })
     }
   }
   return sections
@@ -94,7 +118,7 @@ function includes(text: string | undefined, needle: string): boolean {
 }
 
 // A source with nothing to pick is left out: it would be a row that cannot be
-// chosen. A source whose own name or space matches keeps every terminal;
+// chosen. A source whose own name, app or space matches keeps every terminal;
 // otherwise only the terminals that match stay. One still loading stays while
 // searching, since what it has not reported yet may match.
 function filterSources(sources: TerminalListSource[], query: string): ShownSource[] {
@@ -103,7 +127,12 @@ function filterSources(sources: TerminalListSource[], query: string): ShownSourc
     if (source.terminals.length === 0 && !source.loading) {
       return []
     }
-    if (!needle || includes(source.name, needle) || includes(source.space, needle)) {
+    if (
+      !needle ||
+      includes(source.name, needle) ||
+      includes(source.app?.name, needle) ||
+      includes(source.space?.name, needle)
+    ) {
       return [{ source, terminals: source.terminals }]
     }
     const terminals = source.terminals.filter((terminal) => includes(terminal.name, needle))
@@ -111,23 +140,13 @@ function filterSources(sources: TerminalListSource[], query: string): ShownSourc
   })
 }
 
-// How a terminal is named on its own, outside its owner's heading: the owner,
-// preceded by which of the owner's terminals it is when it has a name. A list
-// of chosen terminals may hold one terminal of an owner that has several, and
-// that row still has to say which.
-function ownTitle(source: TerminalListSource, entry: TerminalListEntry): string {
-  return entry.name ? `${entry.name} · ${source.name}` : source.name
-}
-
 /**
- * The terminals a host can reach. Every row reads as the terminal of a named
- * node or of a named app, its kind told by the icon in its kind's colour.
- *
- * A source with one terminal is one row: which terminal it is when it is
- * named, then the owner. One with several is a heading in the same form over
- * its terminals' names, so the owner is written once rather than on every row.
- * Which form is decided by the source, not by what the search left of it, so
- * rows keep their shape while typing. Built on the kit's Command, so arrows and Enter move and choose.
+ * The terminals a host can reach, grouped by space (once there is more than
+ * one) and within it by app: the graph a node is on, or the app offering them.
+ * Every row is one terminal under its one name, with its kind's icon in its
+ * kind's colour, so a node's several terminals are told apart by name and
+ * nothing is said twice. Built on the kit's Command, so arrows and Enter move
+ * and choose.
  */
 export function TerminalList({
   sources,
@@ -142,26 +161,14 @@ export function TerminalList({
 }: TerminalListProps) {
   const [query, setQuery] = useState('')
   const shown = filterSources(sources, query)
-  const sections = sectionBySpace(shown)
+  const sections = sectionBySpaceAndApp(shown)
   const sectioned = sections.length > 1
   const nothingAtAll = filterSources(sources, '').length === 0
 
-  const row = (entry: TerminalListEntry, label: ReactNode, source?: TerminalListSource) => (
-    <TerminalRow
-      key={entry.target}
-      entry={entry}
-      label={label}
-      source={source}
-      value={value}
-      onSelect={onSelect}
-      onRemove={onRemove}
-      disabled={disabled}
-    />
-  )
-
   return (
     // Filtering is this component's own: it matches a source's terminals by the
-    // source's name too, which cmdk's per-item matching cannot express.
+    // source's, app's and space's names too, which cmdk's per-item matching
+    // cannot express.
     <Command shouldFilter={false} className={cn('bg-transparent p-0', className)}>
       {searchable ? <CommandInput value={query} onValueChange={setQuery} placeholder='Search terminals…' /> : null}
       {/* The list takes whatever height the root is given and scrolls inside it. */}
@@ -180,7 +187,7 @@ export function TerminalList({
           <ListNote>Nothing matches that.</ListNote>
         ) : (
           sections.map((section) => (
-            <div key={section.space}>
+            <div key={section.key}>
               {sectioned ? (
                 // 10px is off the type scale, so it is an inline size rather
                 // than an arbitrary class the preview would never generate.
@@ -188,30 +195,24 @@ export function TerminalList({
                   className='px-3 pt-2 pb-0.5 uppercase tracking-wider text-muted-foreground'
                   style={{ fontSize: 10 }}
                 >
-                  {section.space || 'Other'}
+                  {section.space?.name || 'Other'}
                 </div>
               ) : null}
-              {section.sources.map(({ source, terminals }) =>
-                source.terminals.length === 1 && !source.loading ? (
-                  <CommandGroup key={source.id}>
-                    {row(
-                      source.terminals[0],
-                      <span className='truncate'>{ownTitle(source, source.terminals[0])}</span>,
-                      source,
-                    )}
-                  </CommandGroup>
-                ) : (
-                  <CommandGroup key={source.id} heading={<SourceHeading source={source} />}>
-                    {terminals.map((entry) => row(entry, <span className='truncate'>{entry.name || 'Terminal'}</span>))}
-                    {source.loading ? (
-                      <div className='flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground'>
-                        <LoaderCircle className='size-3.5 animate-spin' />
-                        Loading…
-                      </div>
-                    ) : null}
-                  </CommandGroup>
-                ),
-              )}
+              {section.apps.map((group) => (
+                <CommandGroup key={group.key} heading={group.app ? group.app.name : undefined}>
+                  {group.sources.map(({ source, terminals }) => (
+                    <SourceRows
+                      key={source.id}
+                      source={source}
+                      terminals={terminals}
+                      value={value}
+                      onSelect={onSelect}
+                      onRemove={onRemove}
+                      disabled={disabled}
+                    />
+                  ))}
+                </CommandGroup>
+              ))}
             </div>
           ))
         )}
@@ -220,33 +221,49 @@ export function TerminalList({
   )
 }
 
+function SourceRows({
+  source,
+  terminals,
+  ...rowProps
+}: {
+  source: TerminalListSource
+  terminals: TerminalListEntry[]
+} & Omit<TerminalRowProps, 'entry' | 'source'>) {
+  return (
+    <>
+      {terminals.map((entry) => (
+        <TerminalRow key={entry.target} entry={entry} source={source} {...rowProps} />
+      ))}
+      {source.loading ? (
+        <div className='flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground'>
+          <LoaderCircle className='size-3.5 animate-spin' />
+          <span className='truncate'>{source.name}…</span>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 // A source's icon in its kind's colour, the way the canvas draws the node.
 // Muted, it drops the colour too: a terminal that is not running is not
 // pointed out by its kind.
 function SourceIcon({
-  source,
+  icon,
+  accent,
   muted,
   className,
 }: {
-  source?: TerminalListSource
+  icon?: LucideIcon
+  accent?: string
   muted?: boolean
   className?: string
 }) {
-  const Icon = source?.icon ?? SquareTerminal
+  const Icon = icon ?? SquareTerminal
   return (
     <Icon
       className={cn('shrink-0', muted && 'text-muted-foreground', className)}
-      style={source?.accent && !muted ? { color: source.accent } : undefined}
+      style={accent && !muted ? { color: accent } : undefined}
     />
-  )
-}
-
-function SourceHeading({ source }: { source: TerminalListSource }) {
-  return (
-    <span className='flex min-w-0 items-center gap-1.5 text-foreground'>
-      <SourceIcon source={source} className='size-3.5' />
-      <span className='truncate'>{source.name}</span>
-    </span>
   )
 }
 
@@ -258,16 +275,14 @@ function ListNote({ children }: { children: ReactNode }) {
 
 interface TerminalRowProps {
   entry: TerminalListEntry
-  label: ReactNode
-  /** Its icon is drawn for a source's only terminal; rows under a heading carry none, the heading has it. */
-  source?: TerminalListSource
+  source: TerminalListSource
   value?: string
   onSelect?: (target: string) => void
   onRemove?: (target: string) => void
   disabled?: boolean
 }
 
-function TerminalRow({ entry, label, source, value, onSelect, onRemove, disabled }: TerminalRowProps) {
+function TerminalRow({ entry, source, value, onSelect, onRemove, disabled }: TerminalRowProps) {
   const item = (
     <CommandItem
       value={entry.target}
@@ -281,10 +296,8 @@ function TerminalRow({ entry, label, source, value, onSelect, onRemove, disabled
       // menu's press is the only thing that gesture does.
       style={{ WebkitTouchCallout: 'none' }}
     >
-      <SourceIcon source={source} muted={entry.unavailable} className={cn('size-4', !source && 'opacity-0')} />
-      <span className={cn('flex min-w-0 flex-1 items-center gap-1.5', entry.unavailable && 'text-muted-foreground')}>
-        {label}
-      </span>
+      <SourceIcon icon={source.icon} accent={source.accent} muted={entry.unavailable} className='size-4' />
+      <span className={cn('min-w-0 flex-1 truncate', entry.unavailable && 'text-muted-foreground')}>{entry.name}</span>
       {entry.unavailable ? <span className='shrink-0 text-xs text-muted-foreground'>unavailable</span> : null}
       {onRemove ? (
         <Button
@@ -318,6 +331,151 @@ function TerminalRow({ entry, label, source, value, onSelect, onRemove, disabled
   )
 }
 
+/** How much of a terminal's path is shown: Space › App › Terminal, Space › … › Terminal, or Terminal. */
+export type TerminalPathForm = 'full' | 'short' | 'name'
+
+/**
+ * The longest form whose natural width fits `available` px. A path without a
+ * space has only its name to show.
+ */
+export function terminalPathForm(available: number, widths: { full: number; short: number }): TerminalPathForm {
+  if (widths.full <= available) {
+    return 'full'
+  }
+  if (widths.short <= available) {
+    return 'short'
+  }
+  return 'name'
+}
+
+/** One part of a shown path; `gap` stands for the app a short form leaves out. */
+export interface TerminalPathSegment {
+  part: 'space' | 'app' | 'gap' | 'name'
+  text: string
+}
+
+/** The segments of one form. An app named like its terminal adds nothing and is left out. */
+export function terminalPathSegments(
+  form: TerminalPathForm,
+  { space, app, name }: { space?: string; app?: string; name: string },
+): TerminalPathSegment[] {
+  const last: TerminalPathSegment = { part: 'name', text: name }
+  if (form === 'name') {
+    return [last]
+  }
+  const head: TerminalPathSegment[] = space ? [{ part: 'space', text: space }] : []
+  if (!app || app === name) {
+    return [...head, last]
+  }
+  if (form === 'short' && space) {
+    return [...head, { part: 'gap', text: '…' }, last]
+  }
+  return [...head, { part: 'app', text: app }, last]
+}
+
+function PathText({ segments }: { segments: TerminalPathSegment[] }) {
+  return (
+    <>
+      {segments.map((segment) =>
+        segment.part === 'name' ? (
+          <span key={segment.part} className='min-w-0 truncate'>
+            {segment.text}
+          </span>
+        ) : (
+          <span key={segment.part} className='flex shrink-0 items-center gap-1 text-muted-foreground'>
+            {segment.text}
+            <ChevronRight className='size-3 shrink-0' />
+          </span>
+        ),
+      )}
+    </>
+  )
+}
+
+export interface TerminalPathProps {
+  /** The terminal's one name. */
+  name: string
+  /** The space it is in. */
+  space?: string
+  /** The graph its node is on, or the app offering it. */
+  app?: string
+  /** Its kind's icon, in `accent`. */
+  icon?: LucideIcon
+  accent?: string
+  /** Not running: the icon loses its colour and the text is muted. */
+  muted?: boolean
+  className?: string
+}
+
+/**
+ * A terminal shown with where it is: Space › App › Terminal while that fits,
+ * Space › … › Terminal when it does not, then the terminal's name alone,
+ * truncated. What fits is measured against the width its container gives it,
+ * not the window's, and follows that width as it changes. The full path is on
+ * hover whenever a part of it is hidden.
+ *
+ * It fills the width its container gives it (a flex row, a block): in a
+ * container that sizes itself to its content it would size itself to the full
+ * path and never shorten.
+ */
+export function TerminalPath({ name, space, app, icon, accent, muted, className }: TerminalPathProps) {
+  const textRef = useRef<HTMLSpanElement>(null)
+  const fullRef = useRef<HTMLSpanElement>(null)
+  const shortRef = useRef<HTMLSpanElement>(null)
+  const [form, setForm] = useState<TerminalPathForm>('full')
+  const parts = { space, app, name }
+  const full = terminalPathSegments('full', parts)
+  const short = terminalPathSegments('short', parts)
+  const shown = terminalPathSegments(form, parts)
+
+  useLayoutEffect(() => {
+    const text = textRef.current
+    if (!text || typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const measure = () =>
+      setForm(
+        terminalPathForm(text.clientWidth, {
+          full: fullRef.current?.scrollWidth ?? 0,
+          short: shortRef.current?.scrollWidth ?? 0,
+        }),
+      )
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [space, app, name])
+
+  const hidden = shown.length < full.length || shown.some((segment) => segment.part === 'gap')
+  return (
+    <span
+      className={cn('flex min-w-0 flex-1 items-center gap-1.5', muted && 'text-muted-foreground', className)}
+      title={hidden ? full.map((segment) => segment.text).join(' › ') : undefined}
+    >
+      <SourceIcon icon={icon} accent={accent} muted={muted} className='size-4' />
+      {/* Its width is what the container leaves, whatever form it shows. */}
+      <span ref={textRef} className='relative flex min-w-0 flex-1 basis-0 items-center gap-1 overflow-hidden'>
+        <PathText segments={shown} />
+        {/* The two longer forms, laid out unseen at their natural widths. */}
+        <span
+          ref={fullRef}
+          aria-hidden
+          className='pointer-events-none invisible absolute top-0 left-0 flex items-center gap-1 whitespace-nowrap'
+        >
+          <PathText segments={full} />
+        </span>
+        <span
+          ref={shortRef}
+          aria-hidden
+          className='pointer-events-none invisible absolute top-0 left-0 flex items-center gap-1 whitespace-nowrap'
+        >
+          <PathText segments={short} />
+        </span>
+      </span>
+    </span>
+  )
+}
+
 export interface TerminalPickerProps {
   sources: TerminalListSource[]
   /** The chosen terminal's target, or '' for none. */
@@ -347,8 +505,9 @@ function findEntry(sources: TerminalListSource[], target: string | undefined) {
 }
 
 /**
- * Choosing one terminal: a trigger showing the choice the way the list names it,
- * opening Terminal List with its search in a popover as wide as the trigger.
+ * Choosing one terminal: a trigger showing the choice with where it is (see
+ * Terminal Path), opening Terminal List with its search in a popover as wide
+ * as the trigger.
  *
  * A chosen target no source lists yet is shown as chosen, and marked
  * unavailable only once every source has answered.
@@ -373,14 +532,24 @@ export function TerminalPicker({
   }
 
   const label = found ? (
-    <>
-      <SourceIcon source={found.source} muted={found.entry.unavailable} />
-      <span className='truncate'>{ownTitle(found.source, found.entry)}</span>
-    </>
+    <TerminalPath
+      name={found.entry.name}
+      space={found.source.space?.name}
+      app={found.source.app?.name}
+      icon={found.source.icon}
+      accent={found.source.accent}
+      muted={found.entry.unavailable}
+    />
   ) : value ? (
     <>
-      <SquareTerminal className='text-muted-foreground' />
-      <span className='truncate'>{renderMissing ? renderMissing(value) : value}</span>
+      {renderMissing ? (
+        renderMissing(value)
+      ) : (
+        <>
+          <SquareTerminal className='text-muted-foreground' />
+          <span className='min-w-0 flex-1 truncate text-left'>{value}</span>
+        </>
+      )}
       {answered ? <span className='shrink-0 text-xs text-muted-foreground'>unavailable</span> : null}
     </>
   ) : (

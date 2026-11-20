@@ -22,6 +22,7 @@ import { extensionIdOfType, parseType } from '@/app/_authed/(extension-runtime)/
 import type { AppActionCaller } from '@/app/_authed/(extension-runtime)/_server/host'
 import { getExtensionModule } from '@/app/_authed/(extension-runtime)/_server/loader'
 import type { Provided } from '@/app/_authed/(extension-runtime)/_server/provides'
+import { terminalDetail, terminalTitle } from '@/app/_authed/(extension-runtime)/_server/terminal-names'
 import { registry } from '@/app/_authed/(space)/_server/actions-impl'
 import { announceDirectoryChange } from '@/app/_authed/(space)/_server/directory-changes'
 import { instanceSlugFor } from '@/app/_authed/(space)/_server/slug'
@@ -766,8 +767,12 @@ export interface AppHandleInfo {
   slug: string
   /** The App's qualified type. */
   type: string
-  /** The App's title — what a picker shows in the node-name position. */
+  /** The App's title, the name of its kind. */
   title: string
+  /** The instance's name as its user gave it, else the App's title: what a picker shows in the node-name position. */
+  name: string
+  /** The handle's one name: see `terminalTitle`. */
+  handleTitle: string
   /** The live id; for a dynamic declaration, an expanded runtime id. */
   handleId: string
   /** The manifest id — the prefix form for a dynamic declaration. */
@@ -831,12 +836,16 @@ function labelOf(hooks: AppServerHooks | undefined, row: SpaceAppRow, handleId: 
 }
 
 /**
- * What an app's App calls some of its handles, for a caller that already holds
- * the ids -- a saved terminal target -- and only wants them named. Asks the
- * `handleLabel` hook alone, never `listHandles`, so naming a route costs no
- * listing. An id the App does not name is left out.
+ * Some of an app's handles named the way its live listing names them (see
+ * `terminalTitle`), for a caller that already holds the ids -- a saved
+ * terminal target -- and only wants them named. Asks the `handleLabel` hook
+ * alone, never `listHandles`, so naming a route costs no listing. An App whose
+ * hooks cannot be loaded names its handles without its labels.
  */
-export async function appHandleLabels(row: SpaceAppRow, handleIds: string[]): Promise<Record<string, string>> {
+export async function appHandleNames(
+  row: SpaceAppRow,
+  handleIds: string[],
+): Promise<Record<string, { detail: string; title: string }>> {
   if (handleIds.length === 0) {
     return {}
   }
@@ -845,16 +854,16 @@ export async function appHandleLabels(row: SpaceAppRow, handleIds: string[]): Pr
     hooks = await hooksFor(row.type)
   } catch (error) {
     console.error(`[apps] loading hooks failed for ${row.type} (${row.id})`, error)
-    return {}
   }
-  const labels: Record<string, string> = {}
-  for (const handleId of handleIds) {
-    const label = labelOf(hooks, row, handleId)
-    if (label) {
-      labels[handleId] = label
-    }
-  }
-  return labels
+  const entry = appEntryFor(await providedApps(), row)
+  const name = row.name || entry?.title || row.type
+  const declared = declaredHandles(entry)
+  return Object.fromEntries(
+    handleIds.map((handleId) => {
+      const detail = terminalDetail(declared, handleId, labelOf(hooks, row, handleId))
+      return [handleId, { detail, title: terminalTitle({ kind: 'app', name }, detail) }]
+    }),
+  )
 }
 
 function declaredHandles(entry: AppEntry | undefined, handleType?: string): AppHandle[] {
@@ -892,12 +901,14 @@ export async function listAppHandleOwners(handleType?: string): Promise<AppHandl
     if (declared.length === 0) {
       return []
     }
+    const title = entry?.title ?? row.type
     const base = {
       instanceId: row.id,
       spaceSlug: slugById.get(row.spaceId) ?? '',
       slug: row.slug,
       type: row.type,
-      title: entry?.title ?? row.type,
+      title,
+      name: row.name || title,
     }
     return [
       {
@@ -909,6 +920,10 @@ export async function listAppHandleOwners(handleType?: string): Promise<AppHandl
           (await liveHandles(row, entry, handleType)).map(({ handle, handleId, liveLabel }) => ({
             ...base,
             ...handleFields(handle, handleId, liveLabel),
+            handleTitle: terminalTitle(
+              { kind: 'app', name: base.name },
+              terminalDetail(declaredHandles(entry), handleId, liveLabel),
+            ),
           })),
       },
     ]

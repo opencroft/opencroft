@@ -30,6 +30,15 @@ export function routeHandleId(route: Pick<TerminalRoute, 'id'>): string {
   return `${ROUTE_HANDLE_PREFIX}${route.id}`
 }
 
+/**
+ * The router's live output ids: one per route whose target resolved. An
+ * unresolved route's output has no context for `terminal.getContext` to hand
+ * back, so it is not offered.
+ */
+export function liveRouteHandleIds(data: TerminalRouterData): string[] {
+  return (data.routes ?? []).filter((route) => route.context != null).map(routeHandleId)
+}
+
 /** The node a "node-id/handle-id" target names, or '' for a string that is not a target. */
 export function targetNodeId(target: string): string {
   const slash = target.indexOf('/')

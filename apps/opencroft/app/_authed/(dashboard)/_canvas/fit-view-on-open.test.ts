@@ -46,6 +46,7 @@ function sized(id: string, x: number, y: number): Node {
   return { id, position: { x, y }, data: {}, measured: { width: 200, height: 100 } }
 }
 
+// biome-ignore lint/plugin/noTestFixedTime: fixed 20 ms settle delay used between the steps of these tests
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
 
 type Step = { nodes: Node[]; fitOnOpen?: boolean }

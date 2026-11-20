@@ -465,6 +465,36 @@ export interface ToolDiff {
   newText: string
 }
 
+// What a tool call returned besides text, in the order it returned it: the
+// pictures, sounds, files and links an ACP tool result or an MCP one carries
+// (the two share their content blocks), with the text between them kept in
+// place. Built in tool-content.ts.
+//
+// Bytes never travel in it. A picture or a sound is its type and decoded size,
+// plus `mediaId` when the host stored it (AgentClientOptions.storeToolMedia):
+// the id names the bytes in the host's own store, which is where a reader
+// fetches them from. No `mediaId` means nothing was kept — the host has no
+// store, refused the type or the size, or has since released it — and a
+// reader is told what was there instead.
+//
+// A file change is not here: `diffs` carries it, and only once.
+// `resource` is an embedded resource, its text when it has one, or the size of
+// a blob that is neither a picture nor a sound. `terminal` names a terminal the
+// harness ran the call in.
+export type ToolContent =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image' | 'audio'
+      mimeType: string
+      byteSize: number
+      mediaId?: string
+      width?: number
+      height?: number
+    }
+  | { type: 'resource_link'; uri: string; name: string; title?: string; mimeType?: string; byteSize?: number }
+  | { type: 'resource'; uri: string; mimeType?: string; text?: string; byteSize?: number }
+  | { type: 'terminal'; terminalId: string }
+
 export type ChatEvent =
   // `messageId` on the chunk-born conversation events is the harness's own
   // message boundary (stamped per model message): two chunks with DIFFERENT
@@ -497,7 +527,12 @@ export type ChatEvent =
       // that only refines a call already announced.
       name?: string
       diffs?: ToolDiff[]
+      content?: ToolContent[]
     }
+  // `output` is the result as text, a picture or a file standing in it as a
+  // placeholder. `content` is the same result with those kept (see
+  // ToolContent), present only when it holds something besides text; like
+  // `diffs`, a report replaces the previous one as a whole.
   | {
       kind: 'tool_update'
       toolCallId: string
@@ -506,6 +541,7 @@ export type ChatEvent =
       input?: unknown
       output?: unknown
       diffs?: ToolDiff[]
+      content?: ToolContent[]
     }
   | { kind: 'plan'; entries: PlanItem[] }
   | {
@@ -614,7 +650,14 @@ export type ChatEvent =
       // booked already.
       cost?: SessionCost
     }
-  | { kind: 'error'; message: string }
+  | {
+      kind: 'error'
+      message: string
+      // `harness` when the harness or its model provider wrote the message (a
+      // refused ACP call); absent for the engine's own reports, which are
+      // worded for the reader already.
+      source?: 'harness'
+    }
 
 /**
  * A context-usage reading as the engine holds and reports it: the harness's

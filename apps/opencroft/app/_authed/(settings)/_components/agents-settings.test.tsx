@@ -34,6 +34,7 @@ async function render(tab: AgentsSettingsTab, onTabChange: (tab: AgentsSettingsT
         tab={tab}
         onTabChange={onTabChange}
         sessions={<p>sessions panel</p>}
+        usage={<p>usage panel</p>}
         audit={<p>audit panel</p>}
       />,
     )
@@ -50,33 +51,39 @@ async function render(tab: AgentsSettingsTab, onTabChange: (tab: AgentsSettingsT
   }
 }
 
-test('both tabs are offered, Sessions first', async () => {
+test('the three tabs are offered: Sessions, Usage, MCP Audit', async () => {
   const view = await render('sessions')
   const labels = Array.from(dom.container.querySelectorAll('[role="tab"]')).map((el) => el.textContent)
-  assert.deepEqual(labels, ['Sessions', 'MCP Audit'])
+  assert.deepEqual(labels, ['Sessions', 'Usage', 'MCP Audit'])
   await view.unmount()
 })
 
 test('only the open tab panel is mounted', async () => {
-  const sessions = await render('sessions')
-  assert.match(sessions.text(), /sessions panel/)
-  assert.doesNotMatch(sessions.text(), /audit panel/)
-  await sessions.unmount()
-
-  const audit = await render('audit')
-  assert.match(audit.text(), /audit panel/)
-  assert.doesNotMatch(audit.text(), /sessions panel/)
-  await audit.unmount()
+  const panels = ['sessions', 'usage', 'audit'] as const
+  for (const open of panels) {
+    const view = await render(open)
+    for (const panel of panels) {
+      const text = new RegExp(`${panel} panel`)
+      if (panel === open) {
+        assert.match(view.text(), text, `${open}: its own panel`)
+      } else {
+        assert.doesNotMatch(view.text(), text, `${open}: not the ${panel} panel`)
+      }
+    }
+    await view.unmount()
+  }
 })
 
 test('picking the other tab is reported to the host', async () => {
   const picked: AgentsSettingsTab[] = []
   const view = await render('sessions', (tab) => picked.push(tab))
-  const trigger = view.tab('MCP Audit')
-  assert.ok(trigger, 'the MCP Audit tab is drawn')
-  await act(async () => {
-    trigger.click()
-  })
-  assert.deepEqual(picked, ['audit'])
+  for (const label of ['Usage', 'MCP Audit']) {
+    const trigger = view.tab(label)
+    assert.ok(trigger, `the ${label} tab is drawn`)
+    await act(async () => {
+      trigger.click()
+    })
+  }
+  assert.deepEqual(picked, ['usage', 'audit'])
   await view.unmount()
 })

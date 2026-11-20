@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { AppPage } from '@/app/_authed/(apps)/_components/app-page'
 import { instanceBySlug } from '@/app/_authed/(apps)/_lib/instance-by-slug'
 import { appFullPageRoutes, listSpaceApps } from '@/app/_authed/(apps)/_server/actions'
+import { SelectionProvider, SelectionSpace } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import { missingAddress, settleSpaceRoute } from '@/app/_authed/(space)/_lib/space-route'
 import { listSpaces } from '@/app/_authed/(space)/_server/actions'
 import { pageTitle } from '@/app/_lib/page-title'
@@ -38,7 +39,16 @@ export const Route = createFileRoute('/_authed/(apps)/space_/$slug/app/$app')({
 })
 
 function Page() {
-  const { instance } = Route.useLoaderData()
+  const { space, instance } = Route.useLoaderData()
   const { slug } = Route.useParams()
-  return <AppPage spaceSlug={slug} instance={instance} />
+  // Every App page has a selection scope, mounted here so no App has to mount
+  // its own: what its surfaces publish is quoted as `Space › App › what`, and
+  // reaches this space's chats in the browser's other windows.
+  return (
+    <SelectionSpace.Provider value={space.id}>
+      <SelectionProvider spaceName={space.name} place={instance.name}>
+        <AppPage spaceSlug={slug} instance={instance} />
+      </SelectionProvider>
+    </SelectionSpace.Provider>
+  )
 }

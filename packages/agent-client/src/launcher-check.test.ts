@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net'
 import test from 'node:test'
 
 import { createAgentClient } from './agent-client'
-import { ActionRequiredError } from './errors'
+import { ActionRequiredError, HarnessStartError } from './errors'
 import type { ShellRunner } from './harness-process'
 import {
   endpointReach,
@@ -78,6 +78,39 @@ test('a session through a shell without Node.js is refused with the reason, and 
   )
   assert.equal(started.length, 1, 'only the probe ran')
   assert.match(started[0]?.[2] ?? '', /^for c in /)
+})
+
+test('a shell that refuses to start the harness is a harness that could not start, with the refusal in its words', async () => {
+  const started: string[][] = []
+  const shell: RemoteShell = {
+    id: 'box/terminal',
+    async spawn(argv, env) {
+      started.push(argv)
+      if (started.length > 1) {
+        throw new Error('container box is not running')
+      }
+      // The launcher probe: a shell that has Node.js.
+      const [, ...args] = argv
+      return spawn('/bin/sh', args, { env: { ...env, PATH: process.env.PATH ?? '' }, stdio: ['pipe', 'pipe', 'pipe'] })
+    },
+    mcpUrl: (url) => url,
+    describe: async () => 'terminal "Build server"',
+  }
+  const client = createAgentClient({ shells: (id) => (id === shell.id ? shell : undefined) })
+  await assert.rejects(
+    client.createSession({
+      providerId: 'anthropic',
+      adapterId: 'claude',
+      model: '',
+      apiKey: '',
+      cwd: '/work/agent',
+      shell: shell.id,
+    }),
+    (error: Error) =>
+      error instanceof HarnessStartError &&
+      /^Agent failed to start: .* could not start it \(container box is not running\)$/.test(error.message),
+  )
+  assert.equal(started.length, 2, 'the probe, then the one start that was refused')
 })
 
 test('an endpoint that answers, even with 401, is reachable; nothing secret is on the probe', async () => {

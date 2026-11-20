@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { backoffMs, containersEqual, dockerNodeIds, isDue, nextFailureState } from './docker-ps-poller'
+import {
+  backoffMs,
+  containersEqual,
+  dockerNodeIds,
+  findDockerExtensionId,
+  isDue,
+  nextFailureState,
+} from './docker-ps-poller'
 
 // ── nextFailureState ────────────────────────────────────────────────────
 
@@ -98,6 +105,21 @@ test("the polled nodes are the docker extension's own docker nodes, under whatev
 
 test('with no docker extension nothing is polled', () => {
   assert.deepEqual(dockerNodeIds([{ id: 'd-1', type: 'some-owner.containers.docker' }], null), [])
+})
+
+// ── findDockerExtensionId ────────────────────────────────────────────────
+
+test('the docker extension is whichever declares the bare type docker, under any owner', () => {
+  const manifests = [
+    { id: 'acme.widgets', nodes: [{ type: 'acme.widgets.gauge' }] },
+    { id: 'some-owner.containers', nodes: [{ type: 'some-owner.containers.docker' }] },
+  ]
+  assert.equal(findDockerExtensionId(manifests), 'some-owner.containers')
+})
+
+test('without an extension declaring the bare type docker there is no docker extension', () => {
+  const manifests = [{ id: 'acme.widgets', nodes: [{ type: 'acme.widgets.application' }] }]
+  assert.equal(findDockerExtensionId(manifests), null)
 })
 
 // ── containersEqual ──────────────────────────────────────────────────────

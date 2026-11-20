@@ -15,6 +15,7 @@ import test, { after } from 'node:test'
 import { promisify } from 'node:util'
 
 import { extensionsRoot } from '@/app/_authed/(extension-runtime)/_server/paths'
+import { isolatedGitEnv } from '@/test-support/git-fixture'
 import { getLocalExtensionImpl } from './local-extensions-actions-impl'
 
 const run = promisify(execFile)
@@ -32,13 +33,7 @@ after(async () => {
   await fs.rm(scratch, { recursive: true, force: true })
 })
 
-const GIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: 'test',
-  GIT_AUTHOR_EMAIL: 'test@example.test',
-  GIT_COMMITTER_NAME: 'test',
-  GIT_COMMITTER_EMAIL: 'test@example.test',
-}
+const GIT_ENV = isolatedGitEnv()
 
 let seq = 0
 

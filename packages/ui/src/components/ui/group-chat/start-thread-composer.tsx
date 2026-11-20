@@ -67,12 +67,10 @@ export interface StartThreadComposerProps {
   // means, so it names the press itself -- see the bar's `emptySendLabel`.
   allowEmptyStart?: boolean
   submitting?: boolean
-  // A failure shown above the composer. Displayed, not decided -- including a
-  // refused title (one already taken, or one that slugifies to nothing).
-  error?: string
-  // Clears `error`. Without it no dismiss control is offered -- the composer
-  // does not own the message, so it cannot clear what it did not set.
-  onDismissError?: () => void
+  // No error prop: a start refused before any thread exists (no agent chosen,
+  // a title already taken) is the host's to tell, as a toast, since there is
+  // no conversation yet to tell it in and the composer area carries no error
+  // text. Once the thread exists, its own conversation tells what went wrong.
   // Host content in the action row's readout cluster -- the run of controls
   // and readouts that follows the leading slot, and where a composer with a
   // session draws its context ring. Named for what a host puts there rather
@@ -135,8 +133,6 @@ export function StartThreadComposer({
   onTitleChange,
   allowEmptyStart = false,
   submitting,
-  error,
-  onDismissError,
   attachmentControls,
   emptyState,
   className,
@@ -175,7 +171,7 @@ export function StartThreadComposer({
     // nothing about threads, and it should not learn. Conditional in a fixed
     // position, so the bar below keeps its place among the children and its
     // text is never remounted -- the same structural rule the bar keeps for
-    // its own queued strip and error line.
+    // its own queued strip and edit bar.
     <div className={cn('flex min-w-0 flex-1 flex-col gap-1', className)}>
       {canName ? (
         <div className='flex min-w-0 items-center gap-1.5 px-2 pt-0.5'>
@@ -203,8 +199,6 @@ export function StartThreadComposer({
         emptySendLabel={allowEmptyStart ? 'Start the thread without a message' : undefined}
         leading={picker}
         configExtra={attachmentControls}
-        sendError={error}
-        onDismissSendError={onDismissError}
       />
     </div>
   )

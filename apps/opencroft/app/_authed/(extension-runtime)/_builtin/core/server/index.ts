@@ -1,6 +1,12 @@
 import { agentInstructions } from '@opencroft/server/agents'
 import { extensionId } from '@opencroft/server/extension'
-import { graph, type NodeCheckInstance, type NodeChecks, type NodeDataValidators } from '@opencroft/server/graph'
+import {
+  type DynamicHandles,
+  graph,
+  type NodeCheckInstance,
+  type NodeChecks,
+  type NodeDataValidators,
+} from '@opencroft/server/graph'
 import { mcpTokens } from '@opencroft/server/people'
 import { type SecretRecipe, type SecretScope, secrets } from '@opencroft/server/secrets'
 import { execFile, os, path } from '@opencroft/server/system'
@@ -51,6 +57,7 @@ import { scriptDataProblems } from '../src/nodes/script-language'
 import { storedType } from '../src/nodes/stored-type'
 import { portValueOf } from '../src/nodes/subgraph-shared'
 import {
+  liveRouteHandleIds,
   routeOutput,
   routeTarget,
   routeToRouteText,
@@ -123,6 +130,15 @@ export const nodeChecks = {
     ]),
   ),
 } satisfies NodeChecks
+
+// A router's routes are in its data, each with the context last resolved for
+// it, so its live outputs are read with no I/O.
+export const dynamicHandles = {
+  [TERMINAL_ROUTER_TYPE]: {
+    fromData: true,
+    list: (node: { data: TerminalRouterData }) => liveRouteHandleIds(node.data),
+  },
+} satisfies DynamicHandles
 
 // ═══════════════════════════════════════════════════════════════════
 // Agent profile catalog (agent-client harnesses + providers)

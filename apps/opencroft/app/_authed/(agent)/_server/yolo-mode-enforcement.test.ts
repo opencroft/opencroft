@@ -72,6 +72,7 @@ async function waitForMode(sessionId: string, expected: string): Promise<void> {
     if (agentClient.sessionModes(sessionId)?.current === expected) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.equal(agentClient.sessionModes(sessionId)?.current, expected)
@@ -183,6 +184,7 @@ async function waitForAllowAll(state: { allowAll: string }, expected: string): P
     if (state.allowAll === expected) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.equal(state.allowAll, expected)

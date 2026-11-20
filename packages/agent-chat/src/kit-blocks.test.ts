@@ -55,6 +55,37 @@ test('rules with nothing between them draw as one, the last', () => {
   )
 })
 
+test("a tool call's kept media reaches its result with the host's URL, and with none from a host that gives none", () => {
+  const messages: ChatMessage[] = [
+    { id: 'u', kind: 'user', text: 'go' },
+    {
+      id: 't',
+      kind: 'tool',
+      toolCallId: 'c1',
+      title: 'screenshot',
+      status: 'completed',
+      input: {},
+      output: 'shot\n[image]',
+      content: [
+        { type: 'text', text: 'shot' },
+        { type: 'image', mimeType: 'image/png', byteSize: 4, mediaId: 'm-1', width: 2, height: 1 },
+      ],
+    },
+  ]
+  const withUrls = buildKitBlocks(messages, { mediaSrc: (id) => `/media/${id}` }).flatMap((block) =>
+    'items' in block ? block.items : [],
+  )
+  const tool = withUrls.find((item) => item.kind === 'tool')
+  assert.ok(tool && tool.kind === 'tool')
+  assert.deepEqual(tool.result?.content, [
+    { type: 'text', text: 'shot' },
+    { type: 'image', mimeType: 'image/png', byteSize: 4, src: '/media/m-1', width: 2, height: 1 },
+  ])
+  const [bare] = toolItems(messages)
+  assert.ok(bare && bare.kind === 'tool')
+  assert.deepEqual(bare.result?.content?.[1], { type: 'image', mimeType: 'image/png', byteSize: 4, width: 2, height: 1 })
+})
+
 test('a tool call that reported no diffs gets no diffs key', () => {
   const [item] = toolItems([
     { id: 'u', kind: 'user', text: 'go' },

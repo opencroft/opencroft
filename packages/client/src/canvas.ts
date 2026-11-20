@@ -71,9 +71,17 @@ export interface ExtensionComponentProps<D = Record<string, unknown>> {
   selected?: boolean
 }
 
+/**
+ * What an inspector tab is given. The tab renders again when `data` or `updateData` changes
+ * identity, not when the node only moves or is resized. A tab that calls a hook reading the
+ * graph (`useGraphNodes`, `useGraphEdges`, `useNodeContext`, `useInputValue`,
+ * `useLiveNodeData`, `useContainingNodes`) renders on every move or resize of any node on the
+ * canvas, through that hook's subscription.
+ */
 export interface ExtensionInspectorProps<D = Record<string, unknown>> {
   nodeId: string
   data: D
+  /** Merges `patch` into the node's data. Keeps one identity while the inspector shows this node. */
   updateData: (patch: Partial<D>) => void
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { HarnessStartError } from './errors'
 import { harnessStartError } from './harness-failure'
 
 test('a process that exited substitutes its stderr into the message', () => {
@@ -11,6 +12,8 @@ test('a process that exited substitutes its stderr into the message', () => {
   assert.match(error.message, /container is not running/)
   assert.match(error.message, /exit code 1/)
   assert.equal(error.cause instanceof Error && error.cause.message, 'ACP connection closed')
+  // Its own class, so an opener can show it at once instead of retrying.
+  assert.ok(error instanceof HarnessStartError)
 })
 
 test('a spawn-level failure with no stderr falls back to the spawn error', () => {

@@ -85,6 +85,7 @@ async function mountEditor(doc: InstanceType<typeof Y.Doc>, name: string): Promi
   })
   // The editor is created after the first render, and its node views after that.
   await act(async () => {
+    // biome-ignore lint/plugin/noTestFixedTime: zero-delay turn after the first render, when the editor and its node views are created
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
   let mounted = true

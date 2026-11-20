@@ -25,7 +25,7 @@
 
 import { Pin, Search } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from 'ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from 'ui/empty'
@@ -44,8 +44,9 @@ import { GroupChatPinsPanel } from '@/app/_authed/(group-chats)/_components/grou
 import { GroupChatSettings } from '@/app/_authed/(group-chats)/_components/group-chat-settings'
 import { GroupChatStartThreadComposer } from '@/app/_authed/(group-chats)/_components/group-chat-start-thread-composer'
 import { GroupChatThreadTree } from '@/app/_authed/(group-chats)/_components/group-chat-thread-tree'
+import { useGroupChatChanges } from '@/app/_authed/(group-chats)/_lib/group-chat-changes'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
-import { useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
+import { GroupChatRefreshProvider, useGroupChatRefresh } from '@/app/_authed/(group-chats)/_lib/group-chat-refresh'
 import { useThreadRowStates } from '@/app/_authed/(group-chats)/_lib/thread-row-state'
 import { threadSessionKey } from '@/app/_authed/(group-chats)/_lib/thread-session-key'
 import { useArchivedThreads } from '@/app/_authed/(group-chats)/_lib/use-archived-threads'
@@ -153,6 +154,17 @@ export function GroupChatDetailScreen({
   // route-invalidate-or-host-reload fallback the pins panel and the members
   // dialog already use.
   const refresh = useGroupChatRefresh()
+
+  // A change to this chat made anywhere -- this page's own settings dialog,
+  // another tab, an agent, an App action -- reloads what the screen shows: the
+  // members the dialog and the composer read, and the active list the
+  // dialog's Archive section follows. The server pushes it to every member,
+  // the one who made the change included.
+  useGroupChatChanges(groupChatId, true, () => {
+    void refresh().catch(() => {
+      // The next change, or the next load of the screen, reads it again.
+    })
+  })
 
   // Which thread's Delete was chosen — the shared confirm dialog takes over.
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -342,6 +354,13 @@ export function GroupChatDetailScreen({
       onOpenThread(hit.threadId, { position: hit.turn })
     }
   }
+  // The refresh the header's controls carry, one identity for the screen's
+  // life. A host may pass a new refresh on each render; were the header to
+  // change with it, a host holding the header in state would re-render, pass
+  // another, and never settle. It calls whichever refresh is current.
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
+  const headerRefresh = useCallback(() => refreshRef.current(), [])
   // The header's two parts, memoized on exactly what they read so a host that
   // holds them in state is told once per real change. While a search is open
   // the field is the whole header: the other controls step aside, and the
@@ -361,8 +380,13 @@ export function GroupChatDetailScreen({
         onClose={closeSearch}
       />
     ) : null
+    // The controls carry this screen's refresh with them. A host that takes
+    // the header draws it outside the screen, beyond the reach of the refresh
+    // the host provides around the screen, and the settings dialog's writes
+    // would otherwise reload whatever the host's own surroundings hold (the
+    // page's route) instead of this chat.
     const actions = searching ? null : (
-      <>
+      <GroupChatRefreshProvider refresh={headerRefresh}>
         {threads.length > 0 || chat.archivedThreadCount > 0 ? (
           <Button
             type='button'
@@ -392,10 +416,11 @@ export function GroupChatDetailScreen({
           revision={threads}
           onOpenThread={onOpenThread}
         />
-      </>
+      </GroupChatRefreshProvider>
     )
     return { title, actions }
   }, [
+    headerRefresh,
     searching,
     query,
     includeArchived,

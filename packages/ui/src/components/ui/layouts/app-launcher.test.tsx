@@ -78,10 +78,18 @@ const apps = [
   { id: 'b1', spaceSlug: 'beta', label: 'Board', href: '/space/beta/app/board', type: 'Tasks' },
 ]
 
+// What a host gives a reader who may change the settings.
+const withSettings = {
+  apps: apps.map((app) => ({ ...app, settingsHref: `${app.href}/settings` })),
+  settingsHrefFor: (slug: string) => `/space/${slug}/settings`,
+}
+
 // Imported after the DOM exists: react-dom binds to the globals it finds when
 // first loaded. Mounts the launcher's page on Recent, under StrictMode as the
 // app runs in development, and hands back what a test drives it with.
-async function mountLauncher() {
+async function mountLauncher(
+  settings: { apps?: typeof withSettings.apps; settingsHrefFor?: (slug: string) => string } = {},
+) {
   const { StrictMode, act, createElement } = await import('react')
   const { createRoot } = await import('react-dom/client')
   const { AppLauncherScreen } = await import('./app-launcher')
@@ -96,10 +104,11 @@ async function mountLauncher() {
         null,
         createElement(AppLauncherScreen, {
           spaces,
-          apps,
-          recent: apps,
+          apps: settings.apps ?? apps,
+          recent: settings.apps ?? apps,
           pages: [],
           hrefFor: (slug: string) => `/space/${slug}`,
+          settingsHrefFor: settings.settingsHrefFor,
           onNavigate: (href: string) => opened.push(href),
         }),
       ),
@@ -124,7 +133,23 @@ async function mountLauncher() {
   const unmount = async () => {
     await act(async () => root.unmount())
   }
-  return { opened, highlighted, press, type, unmount }
+  const settingsLinks = () =>
+    [...container.querySelectorAll('a[aria-label$=" settings"]')].map((link) => link.getAttribute('aria-label'))
+  const link = (label: string) => container.querySelector(`a[aria-label="${label}"]`) as HTMLAnchorElement
+  const click = async (element: Element) => {
+    await act(async () => {
+      element.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+    })
+  }
+  const chooseSpace = async (name: string) => {
+    await click(container.querySelector(`nav button[aria-label="${name}"]`) as HTMLButtonElement)
+  }
+  const pressOn = async (element: Element, key: string) => {
+    await act(async () => {
+      element.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+  }
+  return { opened, highlighted, press, type, unmount, settingsLinks, link, click, chooseSpace, pressOn }
 }
 
 test('opens with no row highlighted, and Enter opens nothing', async () => {
@@ -157,6 +182,52 @@ test('typing highlights the first result', async () => {
     assert.deepEqual(launcher.highlighted(), ['Board'])
     await launcher.press('Enter')
     assert.deepEqual(launcher.opened, ['/space/beta/app/board'])
+  } finally {
+    await launcher.unmount()
+  }
+})
+
+test('without settings addresses no row or heading has a settings button', async () => {
+  const launcher = await mountLauncher()
+  try {
+    await launcher.chooseSpace('Alpha')
+    assert.deepEqual(launcher.settingsLinks(), [])
+  } finally {
+    await launcher.unmount()
+  }
+})
+
+test("each app row's settings button opens that app's settings, not the app", async () => {
+  const launcher = await mountLauncher(withSettings)
+  try {
+    assert.deepEqual(launcher.settingsLinks(), ['Notes settings', 'Board settings'])
+    await launcher.click(launcher.link('Board settings'))
+    assert.deepEqual(launcher.opened, ['/space/beta/app/board/settings'])
+  } finally {
+    await launcher.unmount()
+  }
+})
+
+test("the chosen space's heading has a settings button that opens the space's settings; Recent's has none", async () => {
+  const launcher = await mountLauncher(withSettings)
+  try {
+    assert.equal(launcher.link('Recent settings'), null)
+    await launcher.chooseSpace('Alpha')
+    assert.deepEqual(launcher.settingsLinks(), ['Alpha settings', 'Notes settings'])
+    await launcher.click(launcher.link('Alpha settings'))
+    assert.deepEqual(launcher.opened, ['/space/alpha/settings'])
+  } finally {
+    await launcher.unmount()
+  }
+})
+
+test('Enter on a settings button leaves the highlighted row closed', async () => {
+  const launcher = await mountLauncher(withSettings)
+  try {
+    await launcher.press('ArrowDown')
+    assert.deepEqual(launcher.highlighted(), ['Notes'])
+    await launcher.pressOn(launcher.link('Board settings'), 'Enter')
+    assert.deepEqual(launcher.opened, [])
   } finally {
     await launcher.unmount()
   }

@@ -110,6 +110,7 @@ async function mountChatsPage() {
         await router.latestLoadPromise
       })
       await act(async () => {
+        // biome-ignore lint/plugin/noTestFixedTime: zero-delay turn after the router's load, for the effects it sets off
         await new Promise((resolve) => setTimeout(resolve, 0))
       })
     }
@@ -120,6 +121,7 @@ async function mountChatsPage() {
   // with `popstate`.
   async function traverse(move: () => void) {
     const popped = new Promise<void>((resolve, reject) => {
+      // biome-ignore lint/plugin/noTestFixedTime: a deadline that only bounds failure, when no popstate arrives
       const timer = setTimeout(() => reject(new Error('no popstate after a traversal')), 1000)
       browser.addEventListener(
         'popstate',

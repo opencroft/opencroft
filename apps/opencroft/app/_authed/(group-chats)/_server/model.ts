@@ -1988,11 +1988,46 @@ export async function startThread(
   firstMessage: string,
   opts?: { title?: string },
 ): Promise<StartThreadResult> {
+  const { thread, creation } = await mintPersonThread(request, groupChatId, agentNodeId, firstMessage, opts)
+  return openAndDeliver(thread, thread.sessionKey, agentNodeId, groupChatId, firstMessage, creation)
+}
+
+/**
+ * A person's new thread, created and NOT yet opened: the gate and the row of
+ * `startThread`, answered as soon as the row exists. The thread's own chat
+ * then starts the session as it opens and sends the opening message through
+ * the ordinary send, so the person watches the start in the conversation (the
+ * working indicator, or a notice saying why it failed) rather than behind a
+ * disabled button, which is all a press that waited for the whole start could
+ * show. `firstMessage` is only checked for size here: a message too large to
+ * send must not leave an empty thread behind.
+ */
+export async function mintThreadForPerson(
+  request: Request,
+  groupChatId: string,
+  agentNodeId: string,
+  firstMessage: string,
+  opts?: { title?: string },
+): Promise<GroupChatThreadSummary> {
+  return (await mintPersonThread(request, groupChatId, agentNodeId, firstMessage, opts)).thread
+}
+
+// The gate in front of a person's thread, and the row it lets through. Both
+// the calling user and the named agent must be members; either failing
+// refuses the whole call rather than creating a thread that then cannot be
+// used.
+async function mintPersonThread(
+  request: Request,
+  groupChatId: string,
+  agentNodeId: string,
+  firstMessage: string,
+  opts?: { title?: string },
+): Promise<{ thread: GroupChatThreadSummary; creation: ThreadCreation }> {
   const { userId } = await requireGroupChatMember(request, groupChatId)
   if (!(await isAgentMember(groupChatId, agentNodeId))) {
     throw new GroupChatAccessError('agent-not-a-member', 'That agent is not a member of this group chat')
   }
-  return createThread(groupChatId, agentNodeId, firstMessage, {
+  const creation: ThreadCreation = {
     title: opts?.title,
     createdByUserId: userId,
     // A person, not an agent. The composer is the only way here.
@@ -2004,19 +2039,38 @@ export async function startThread(
     // thread whose opening message cannot be attributed is not one to create
     // half of.
     sender: await authorForPerson(userId),
-  })
+  }
+  return { thread: await insertThread(groupChatId, agentNodeId, firstMessage, creation), creation }
+}
+
+/** Who starts a thread, and what its opening message travels with. */
+interface ThreadCreation {
+  title?: string
+  // Who started it, recorded as EXACTLY ONE of the two. Both are required
+  // rather than optional so a new call site has to say which it is: the agent
+  // one is a permission input for thread deletion, and a caller that forgot to
+  // pass it would silently create a thread its own creator cannot delete.
+  createdByUserId: string | null
+  createdByAgentNodeId: string | null
+  // A system sender that started it — an extension's own identity. Optional:
+  // it grants no permission here, only the extension's read of the usage of
+  // threads it opened (see the column's note in schema.ts).
+  createdBySystemId?: string | null
+  sender: string
+  sessionOptions?: HostSessionOptions
 }
 
 /**
- * Mint a thread and deliver its first message, where it has one. THE ONLY
- * PLACE A THREAD IS CREATED — `startThread` and `startThreadAsAgent` are gates
- * in front of this, not two implementations of it.
+ * Mint a thread, open its session and deliver its first message, where it
+ * has one. `insertThread` below is THE ONLY PLACE A THREAD IS CREATED — a
+ * person's start (`mintPersonThread`) and an agent's are gates in front of
+ * it, not implementations of it.
  *
  * It has NO gate of its own, which is the point and the hazard: every caller
  * must have already established that whoever is asking may create a thread
- * here, and that `agentNodeId` is a member. Both existing callers do so
- * immediately above their call, and a third must too. Kept private for that
- * reason — an ungated creation path is not something to export.
+ * here, and that `agentNodeId` is a member. Every caller does so immediately
+ * above its call, and a new one must too. Kept private for that reason — an
+ * ungated creation path is not something to export.
  *
  * `createdByUserId` is provenance, not ownership (see the column's own note in
  * schema.ts), so null is a legitimate value and means "no user did this" —
@@ -2026,22 +2080,24 @@ async function createThread(
   groupChatId: string,
   agentNodeId: string,
   firstMessage: string,
-  // Who started it, recorded as EXACTLY ONE of the two. Both are required
-  // rather than optional so a new call site has to say which it is: the agent
-  // one is a permission input for thread deletion, and a caller that forgot to
-  // pass it would silently create a thread its own creator cannot delete.
-  opts: {
-    title?: string
-    createdByUserId: string | null
-    createdByAgentNodeId: string | null
-    // A system sender that started it — an extension's own identity. Optional:
-    // it grants no permission here, only the extension's read of the usage of
-    // threads it opened (see the column's note in schema.ts).
-    createdBySystemId?: string | null
-    sender: string
-    sessionOptions?: HostSessionOptions
-  },
+  opts: ThreadCreation,
 ): Promise<StartThreadResult> {
+  const thread = await insertThread(groupChatId, agentNodeId, firstMessage, opts)
+  const { sessionKey } = thread
+  return openAndDeliver(thread, sessionKey, agentNodeId, groupChatId, firstMessage, opts)
+}
+
+/**
+ * The thread row, minted and bound to its address, with no session yet. The
+ * one insert every way of starting a thread goes through; its gate is its
+ * callers' (see createThread).
+ */
+async function insertThread(
+  groupChatId: string,
+  agentNodeId: string,
+  firstMessage: string,
+  opts: ThreadCreation,
+): Promise<GroupChatThreadSummary> {
   // A GATE, not the copy that gets delivered. This refuses a thread for a chat
   // that is not there before anything is minted; what the first message
   // actually carries is read again at delivery, from the one place that reads
@@ -2103,7 +2159,17 @@ async function createThread(
   if (!thread) {
     throw new Error('The thread could not be created')
   }
+  return thread
+}
 
+async function openAndDeliver(
+  thread: GroupChatThreadSummary,
+  sessionKey: string,
+  agentNodeId: string,
+  groupChatId: string,
+  firstMessage: string,
+  opts: ThreadCreation,
+): Promise<StartThreadResult> {
   // A THREAD MINTED WITH NOTHING TO SAY YET.
   //
   // The session is opened and left waiting. That is the whole point of the

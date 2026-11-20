@@ -1,0 +1,1 @@
+ALTER TABLE "ChatAttachment" ADD COLUMN "origin" text DEFAULT 'message' NOT NULL;

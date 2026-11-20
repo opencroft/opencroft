@@ -90,6 +90,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
     if (Date.now() >= deadline) {
       throw new Error('waitFor: condition never became true')
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
 }

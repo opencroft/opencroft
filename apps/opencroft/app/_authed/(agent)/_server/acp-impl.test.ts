@@ -30,6 +30,7 @@ import test from 'node:test'
 import { RequestError } from '@agentclientprotocol/sdk'
 import { connectionKey, handleUpdate } from 'agent-client/agent-client'
 import type { AgentConnection } from 'agent-client/connection'
+import { ActionRequiredError, HarnessStartError } from 'agent-client/errors'
 import { SESSION_LOG } from 'agent-client/transcript-log'
 import type { AgentSelection, ChatEvent } from 'agent-client/types'
 
@@ -86,6 +87,7 @@ async function until(condition: () => boolean | Promise<boolean>): Promise<void>
     if (Date.now() > deadline) {
       throw new Error('condition never held')
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
@@ -132,9 +134,11 @@ function seedMockConnection(
               },
             })
           } else if (triesLeft > 0) {
+            // biome-ignore lint/plugin/noTestFixedTime: the fake agent retries its announcement on a 5 ms timer; the delay is an input, not a wait
             setTimeout(() => announce(triesLeft - 1), 5)
           }
         }
+        // biome-ignore lint/plugin/noTestFixedTime: the fake agent sends its first announcement on the next timer turn; an input, not a wait
         setTimeout(() => announce(1_000), 0)
       }
       return { sessionId }
@@ -493,6 +497,52 @@ test('a restore that fails keeps the recorded transcript and the pointer, and th
   assert.equal(reopened.sessionId, first.sessionId, 'the next open brings the same conversation back')
 })
 
+// An agent node whose terminal is `terminal` and Folder `folder`, in a space of its own.
+async function agentOnTerminal(terminal: string, folder: string): Promise<string> {
+  const registry = getSpacesRegistry()
+  await registry.ensureLoaded()
+  const spaceSlug = `acp-acp-impl-${crypto.randomUUID()}`
+  const nodeId = `agent-${crypto.randomUUID()}`
+  await registry.create(spaceSlug, spaceSlug, {
+    nodes: [
+      {
+        id: nodeId,
+        type: 'builtin.core.agent',
+        position: { x: 0, y: 0 },
+        data: {
+          name: `ACP Test Agent ${crypto.randomUUID()}`,
+          providerId: 'test-provider',
+          adapterId: 'openclaw',
+          model: 'test-model',
+          terminal,
+          terminalFolder: folder,
+        },
+      },
+    ],
+    edges: [],
+  })
+  return nodeId
+}
+
+test('a terminal that cannot run anything refuses the open as a harness that could not start, not one to retry', async () => {
+  const nodeId = await agentOnTerminal(`gone-${crypto.randomUUID()}/terminal`, '/srv/app')
+  await assert.rejects(
+    ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey: `acp-test-tab-${crypto.randomUUID()}` }),
+    (error: unknown) =>
+      error instanceof HarnessStartError &&
+      /^Agent failed to start: its terminal could not run it \(/.test(error.message),
+  )
+})
+
+test('a Folder missing on a terminal that answers is refused with the Folder named', async () => {
+  const localhost = (await freshAgentNode()).selection.shell ?? ''
+  const nodeId = await agentOnTerminal(localhost, join(process.cwd(), 'data', `missing-${crypto.randomUUID()}`))
+  await assert.rejects(
+    ensureLocalSessionImpl({ agentNodeId: nodeId, tabKey: `acp-test-tab-${crypto.randomUUID()}` }),
+    (error: unknown) => error instanceof ActionRequiredError && /^The folder .* does not exist on /.test(error.message),
+  )
+})
+
 test("a chat with a long-running subagent opens with the parent's history at the top of its window, reopened too", async () => {
   const { nodeId, selection } = await freshAgentNode()
   seedMockConnection(selection, { canLoad: true, resumable: true })
@@ -620,6 +670,7 @@ async function commandsAnnounced(sessionId: string): Promise<void> {
     if (agentClient.getSessionEvents(sessionId)?.some((event) => event.kind === 'available_commands')) {
       return
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   assert.fail(`the harness never announced its commands for ${sessionId}`)

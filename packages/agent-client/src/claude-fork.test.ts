@@ -66,6 +66,7 @@ test("an agent's refusal names its cause in the chat and in full in the server l
       (outcome as Extract<ChatEvent, { kind: 'error' }>).message,
       'Internal error (provider refused Authorization: Bearer [redacted])',
     )
+    assert.equal((outcome as Extract<ChatEvent, { kind: 'error' }>).source, 'harness', 'marked as the harness’s words')
     const logged = h.printed.find((line) => line.includes('session/prompt'))
     assert.ok(logged, `the refusal is logged: ${JSON.stringify(h.printed)}`)
     assert.match(logged, /code -32603/)

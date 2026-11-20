@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildNodeTypeHandles, dockerApplicationType, findDockerExtensionId } from './node-handles'
+import { buildNodeTypeHandles, dynamicSourcePrefixes, expandDynamicHandles } from './node-handles'
 
 const handle = (id: string, role: 'source' | 'target', extras: Record<string, unknown> = {}) =>
   ({ id, role, handleType: 'builtin.core.terminal-context', ...extras }) as never
@@ -44,17 +44,63 @@ test('an empty manifest list yields an empty map', () => {
   assert.equal(buildNodeTypeHandles([]).size, 0)
 })
 
-test('the docker extension is whichever declares the bare type docker, under any owner', () => {
-  const manifests = [
-    { id: 'acme.widgets', nodes: [{ type: 'acme.widgets.gauge' }] },
-    { id: 'some-owner.containers', nodes: [{ type: 'some-owner.containers.docker' }] },
+test('the prefixes expanded are those of the dynamic source handles only', () => {
+  const declared = [
+    handle('terminal', 'source'),
+    handle('shell-', 'source', { dynamic: true }),
+    handle('in-', 'target', { dynamic: true }),
+    handle('log-', 'source', { dynamic: true }),
   ]
-  assert.equal(findDockerExtensionId(manifests), 'some-owner.containers')
-  assert.equal(dockerApplicationType(findDockerExtensionId(manifests)), 'some-owner.containers.application')
+  assert.deepEqual(dynamicSourcePrefixes(declared), ['shell-', 'log-'])
 })
 
-test('without a docker extension there is no docker application type', () => {
-  const manifests = [{ id: 'acme.widgets', nodes: [{ type: 'acme.widgets.application' }] }]
-  assert.equal(findDockerExtensionId(manifests), null)
-  assert.equal(dockerApplicationType(null), null)
+test('the lister is asked once per prefix with the node, and only ids under the prefix asked are kept', async () => {
+  const asked: Array<[string, Record<string, unknown>, string]> = []
+  const lister = {
+    list: (node: { id: string; data: Record<string, unknown> }, prefix: string) => {
+      asked.push([node.id, node.data, prefix])
+      return prefix === 'shell-' ? ['shell-a', 'log-stray', 'shell-b', 'shell-a'] : ['log-1']
+    },
+  }
+  const data = { __resolvedContexts: { 'host-in': { sourceNodeId: 'host-1' } } }
+
+  const ids = await expandDynamicHandles({ id: 'n-1', data }, ['shell-', 'log-'], lister)
+
+  assert.deepEqual(ids, ['shell-a', 'shell-b', 'log-1'])
+  assert.deepEqual(asked, [
+    ['n-1', data, 'shell-'],
+    ['n-1', data, 'log-'],
+  ])
+})
+
+test('an async lister is awaited, and a non-string id is dropped', async () => {
+  const lister = { list: async () => ['shell-a', 7, null, 'shell-b'] as unknown as string[] }
+  assert.deepEqual(await expandDynamicHandles({ id: 'n-1' }, ['shell-'], lister), ['shell-a', 'shell-b'])
+})
+
+test('no lister, or no prefix, lists nothing and asks nothing', async () => {
+  let calls = 0
+  const lister = {
+    list: () => {
+      calls++
+      return ['shell-a']
+    },
+  }
+  assert.deepEqual(await expandDynamicHandles({ id: 'n-1' }, ['shell-'], undefined), [])
+  assert.deepEqual(await expandDynamicHandles({ id: 'n-1' }, [], lister), [])
+  assert.equal(calls, 0)
+})
+
+test('a lister that throws, rejects or answers no array lists nothing', async (t) => {
+  t.mock.method(console, 'error', () => {})
+  const throwing = {
+    list: () => {
+      throw new Error('lister bug')
+    },
+  }
+  const rejecting = { list: () => Promise.reject(new Error('host unreachable')) }
+  const notAList = { list: () => 'shell-a' as unknown as string[] }
+  for (const lister of [throwing, rejecting, notAList]) {
+    assert.deepEqual(await expandDynamicHandles({ id: 'n-1' }, ['shell-'], lister), [])
+  }
 })

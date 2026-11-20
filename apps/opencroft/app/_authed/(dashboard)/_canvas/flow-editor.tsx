@@ -133,7 +133,7 @@ import { CanvasGraphContext } from '@/app/_authed/(extension-runtime)/_client/ca
 import { loadAllExtensions } from '@/app/_authed/(extension-runtime)/_client/loader'
 import { CanvasWriters } from '@/app/_authed/(extension-runtime)/_client/node-data-writer'
 import { extensionRegistry } from '@/app/_authed/(extension-runtime)/_client/registry'
-import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
+import { usePublishSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
 import {
   absolutePositions,
   askedToDelete,
@@ -317,6 +317,10 @@ export function FlowEditor({
   // Set once the graph is fetched; the canvas writes through the graph's
   // document from then on.
   const [liveStart, setLiveStart] = useState<LiveGraphStart | null>(null)
+  // The graph `slug` resolved to, as the fetch named it: a bare space slug
+  // opens the space's default graph, and a selection names that graph by its
+  // full address and its name.
+  const [resolvedGraph, setResolvedGraph] = useState<{ address?: string; name?: string }>({})
   const { live, requestWrite, layoutWriter } = useLiveGraph({
     slug,
     start: liveStart,
@@ -479,30 +483,26 @@ export function FlowEditor({
   })
   const inspectorLayout = useRememberedLayout('graph-inspector', inspectorDocked ? ['canvas', 'inspector'] : ['canvas'])
 
-  // Hand the selected node to the surrounding selection scope, when there is
-  // one. A dashboard mounts none, and `useOptionalSelection` answering null
-  // there is the design rather than missing wiring -- the scope belongs to the
-  // surface, and only a space has a chat to read it.
+  // Hand every selected node to the surrounding selection scope, when there is
+  // one. A dashboard mounts none, and publishing doing nothing there is the
+  // design rather than missing wiring -- the scope belongs to the surface, and
+  // only a space has a chat to read it. The hook compares by value, so the
+  // fresh array built on most renders publishes only when what is selected
+  // changes.
   //
   // What is disclosed, and why it is narrow, lives in `nodeSelection` beside
-  // its own tests rather than here.
-  const selectionScope = useOptionalSelection()
-  const publishSelection = selectionScope?.setSelection
-  const selectedId = selected?.id ?? null
-  const selectedType = selected?.type ?? null
-  const selectedData = selected?.data
-
-  // Keyed on the parts rather than on `selected`, which is a fresh object on
-  // most renders: keying on it would republish an unchanged selection
-  // continuously.
-  useEffect(() => {
-    if (!publishSelection) {
-      return
-    }
-    publishSelection(
-      selectedId ? nodeSelection({ id: selectedId, type: selectedType ?? undefined, data: selectedData }) : null,
+  // its own tests rather than here. Keyed on `extensionsVersion` for the type
+  // names it reads from the registry, as the command bar's names below are.
+  const selection = useMemo(() => {
+    void extensionsVersion
+    return nodeSelection(
+      nodes,
+      resolvedGraph.address ?? slug,
+      resolvedGraph.name ?? graphName,
+      (type) => extensionRegistry.resolveNode(type)?.name,
     )
-  }, [publishSelection, selectedId, selectedType, selectedData])
+  }, [nodes, resolvedGraph, slug, graphName, extensionsVersion])
+  usePublishSelection(selection)
   // Every node of the graph, at every level; one off the open level carries where it is.
   const commandNodes = useMemo<CommandNodeEntry[]>(() => {
     void extensionsVersion
@@ -616,7 +616,8 @@ export function FlowEditor({
     const extensions = loadLocalExtensions()
     const graphResult = fetchSpaceGraph(slug)
     setLiveStart(null)
-    graphResult.then(({ graph, live: session }) => {
+    setResolvedGraph({})
+    graphResult.then(({ graph, live: session, address, name }) => {
       // Two results settling separately means two chances for a previous
       // space's response to arrive after the slug changed, where there used to
       // be one. Drop anything belonging to a space already navigated away from.
@@ -625,6 +626,7 @@ export function FlowEditor({
       }
       setNodes((current) => withCurrentSelection(graph.nodes as Node[], current))
       setEdges(graph.edges as Edge[])
+      setResolvedGraph({ address, name })
       setFitView(fitViewOnOpen(graph.nodes))
       if (session) {
         setLiveStart({ session, graph })

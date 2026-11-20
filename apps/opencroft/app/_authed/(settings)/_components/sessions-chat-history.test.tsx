@@ -59,11 +59,15 @@ async function type(input: HTMLInputElement, value: string) {
   })
 }
 
-test('with both settings off, the card says everything is kept, shows no limit and no cleanup, and has nothing to save', async () => {
+test('with both settings off, the card says what is removed for good, shows no limit and no cleanup, and has nothing to save', async () => {
   const view = await render({ maxEntries: null, cleanupAfterDays: null })
-  assert.match(view.card.textContent ?? '', /keeps its whole chat history/)
-  assert.match(view.card.textContent ?? '', /removes the older ones, a whole turn at a time/)
-  assert.match(view.card.textContent ?? '', /Removes the turns that started more than this many days ago/)
+  assert.match(view.card.textContent ?? '', /Older events are removed for good/)
+  assert.match(view.card.textContent ?? '', /Older turns are removed for good/)
+  // The rest of what each does is behind its hint.
+  assert.doesNotMatch(view.card.textContent ?? '', /a whole turn at a time/)
+  for (const about of ['Chat history', 'Limit per session', 'Clean up after']) {
+    assert.ok(view.card.querySelector(`[aria-label="About ${about}"]`), about)
+  }
   assert.equal(view.limit.value, '')
   assert.equal(view.days.disabled, true, 'the days wait for the switch')
   assert.equal(view.save.disabled, true)

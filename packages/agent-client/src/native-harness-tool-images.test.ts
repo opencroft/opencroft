@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import test from 'node:test'
 
+import type { SessionNotification } from '@agentclientprotocol/sdk'
+
 import { forgetEndpointModels } from './endpoint'
 import { createNativeHarness, type NativeSession } from './native-harness'
 import { BLUE, PICTURE_TOOLS, RED } from './test-fixtures/picture-tools'
+import { toolContent, toolMedia } from './tool-content'
 import type { AgentSelection } from './types'
 
 // What a Chat Completions request carries after a step whose tools returned
@@ -100,13 +103,18 @@ async function runTurn(
     baseUrl: endpoint.baseUrl,
     ...over,
   }
-  const client = { sessionUpdate: async () => {} } as unknown as Parameters<typeof createNativeHarness>[0]
+  const updates: SessionNotification['update'][] = []
+  const client = {
+    sessionUpdate: async (notification: SessionNotification) => {
+      updates.push(notification.update)
+    },
+  } as unknown as Parameters<typeof createNativeHarness>[0]
   const harness = createNativeHarness(client, selection, { tools: PICTURE_TOOLS, skills: [] }, sessions)
   try {
     const { sessionId } = await harness.newSession({ cwd: process.cwd(), mcpServers: [] })
     await harness.setSessionMode?.({ sessionId, modeId: 'bypass' })
     const result = await harness.prompt({ sessionId, prompt: [{ type: 'text', text: 'look' }] })
-    return { result, bodies: endpoint.bodies, session: sessions.get(sessionId) as NativeSession }
+    return { result, bodies: endpoint.bodies, session: sessions.get(sessionId) as NativeSession, updates }
   } finally {
     await endpoint.close()
   }
@@ -128,6 +136,19 @@ test('a vision model gets the step’s pictures in one user message after the to
     { type: 'text', text: 'The images returned by the tool calls above, in the order they were called.' },
     { type: 'image_url', image_url: { url: `data:image/png;base64,${RED}` } },
     { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${BLUE}` } },
+  ])
+})
+
+test('the result the harness reports for a picture tool carries the picture for the transcript to keep', async () => {
+  const { updates } = await runTurn(['view_red'], ['text'])
+  const result = updates.find(
+    (update) => update.sessionUpdate === 'tool_call_update' && update.toolCallId === 'call_1' && update.status === 'completed',
+  )
+  assert.ok(result && result.sessionUpdate === 'tool_call_update', 'the call reported its result')
+  assert.deepEqual(toolMedia(result.content, result.rawOutput), [{ mimeType: 'image/png', data: RED }])
+  assert.deepEqual(toolContent(result.content, result.rawOutput, [{ id: 'media-1' }]), [
+    { type: 'text', text: 'red.png, 1×1' },
+    { type: 'image', mimeType: 'image/png', byteSize: 70, mediaId: 'media-1' },
   ])
 })
 

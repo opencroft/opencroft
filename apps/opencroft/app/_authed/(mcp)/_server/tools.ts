@@ -23,6 +23,7 @@ import {
   definitions as agentInstructionDefinitions,
   handlers as agentInstructionHandlers,
 } from '@/app/_authed/(mcp)/_server/agent-instruction-tools'
+import { contentListResult } from '@/app/_authed/(mcp)/_server/agent-tool-result'
 import { definitions as appDefinitions, handlers as appHandlers } from '@/app/_authed/(mcp)/_server/app-tools'
 import { recordAudit } from '@/app/_authed/(mcp)/_server/audit'
 import { definitions as chatDefinitions, handlers as chatHandlers } from '@/app/_authed/(mcp)/_server/chat-tools'
@@ -417,7 +418,9 @@ async function findAgentTool(toolName: string): Promise<FoundAgentTool> {
  * Run an agent-tool node's connected handler through the shared
  * execution-context dispatcher (extension `handle` actions and built-in
  * script-node handlers alike — see exec-dispatch.ts), and answer with what it
- * returned.
+ * returned: a content list (agent-tool-result.ts) with its pictures fitted for
+ * a model, any other object
+ * as its JSON, anything else as its string.
  *
  * A failure throws, as any other tool's does: the surfaces turn a throw into an
  * error result, and a background task fails with its message. Returned as
@@ -441,6 +444,15 @@ export async function executeAgentTool(
   })
   if (primary.error) {
     throw new Error(`Agent tool "${toolName}" error: ${primary.error}`)
+  }
+  let contentList: Record<string, unknown> | undefined
+  try {
+    contentList = await contentListResult(primary.body)
+  } catch (err) {
+    throw new Error(`Agent tool "${toolName}" error: ${(err as Error).message}`)
+  }
+  if (contentList) {
+    return contentList
   }
   if (typeof primary.body === 'object' && primary.body !== null) {
     return jsonResult(primary.body)

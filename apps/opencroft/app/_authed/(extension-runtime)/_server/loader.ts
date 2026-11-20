@@ -10,7 +10,7 @@ import type {
   NodeActionAccessMap,
   NodeActions,
 } from '@opencroft/server/actions'
-import type { NodeChecks, NodeDataValidators } from '@opencroft/server/graph'
+import type { DynamicHandles, NodeChecks, NodeDataValidators } from '@opencroft/server/graph'
 import type { NodeCredentialProperties } from '@opencroft/server/secrets'
 
 import {
@@ -41,6 +41,8 @@ interface ServerModuleExports {
   nodeDataValidators?: NodeDataValidators
   /** Keyed by the extension's own bare node type. */
   nodeChecks?: NodeChecks
+  /** Keyed by the extension's own bare node type. */
+  dynamicHandles?: DynamicHandles
   /** Keyed by the extension's own bare node type. */
   nodeCredentialProperties?: NodeCredentialProperties
   routes?: opencroft.ExtensionRoutes
@@ -250,6 +252,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
     const nodeActionAccess = exported.nodeActionAccess ?? exported.default?.nodeActionAccess ?? {}
     const nodeDataValidators = exported.nodeDataValidators ?? exported.default?.nodeDataValidators
     const nodeChecks = exported.nodeChecks ?? exported.default?.nodeChecks
+    const dynamicHandles = exported.dynamicHandles ?? exported.default?.dynamicHandles
     const nodeCredentialProperties = exported.nodeCredentialProperties ?? exported.default?.nodeCredentialProperties
     const routes = exported.routes ?? exported.default?.routes
     const tools = exported.tools ?? exported.default?.tools
@@ -266,6 +269,7 @@ async function evalServerBundle(extensionId: string, manifest: ExtensionManifest
       nodeActionAccess,
       nodeDataValidators,
       nodeChecks,
+      dynamicHandles,
       nodeCredentialProperties,
       routes,
       tools,

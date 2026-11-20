@@ -61,31 +61,13 @@ export function GroupChatErrorState({ error }: { error: unknown }) {
   return <Shell message={groupChatAccessMessage(error) ?? GENERIC} />
 }
 
-// A thread's own two outcomes, beside the refusal above. Both surfaces that
-// open a thread by id -- the thread route and the embedded chat -- render
-// these, so a reader is told the same thing wherever they were reading. Each
-// takes the same optional `action` as the refusal: the thread route passes its
-// link back to the thread list, the dock passes none because its header's
-// Back already leads there.
-
-/**
- * The chat holds no such thread: it was deleted. Only ever said to a member
- * of that chat -- the lookup behind it checks membership first -- which is
- * what makes it safe to say at all.
- */
-export function GroupChatThreadGone({ action, className }: { action?: ReactNode; className?: string }) {
-  return (
-    <Empty className={className}>
-      <EmptyHeader>
-        <EmptyTitle>This thread was deleted</EmptyTitle>
-        <EmptyDescription>
-          It is no longer in this chat. Go back to the thread list to open another one.
-        </EmptyDescription>
-      </EmptyHeader>
-      {action ? <EmptyContent>{action}</EmptyContent> : null}
-    </Empty>
-  )
-}
+// A thread that could not be loaded, beside the refusal above. Both surfaces
+// that open a thread by id -- the thread route and the embedded chat -- render
+// it, so a reader is told the same thing wherever they were reading. It takes
+// the same optional `action` as the refusal: the thread route passes its link
+// back to the thread list, the dock passes none because its header's Back
+// already leads there. A thread the chat no longer holds has no screen: both
+// surfaces open the chat's thread list instead.
 
 /** Loading the thread failed for a reason that is not an answer about it. */
 export function GroupChatThreadLoadFailed({

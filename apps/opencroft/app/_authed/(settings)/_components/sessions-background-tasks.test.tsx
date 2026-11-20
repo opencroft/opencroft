@@ -153,8 +153,9 @@ test('every row says where its task runs, and an empty target reads as a dash', 
   assert.match(onNode ?? '', /remote_script · on its node/)
   assert.match(inServer ?? '', /web_fetch · in the server/)
   assert.match(inServer ?? '', / — /, 'the empty target is drawn as a dash')
-  assert.match(card.text, /runs in the server, and a restart fails it/)
-  assert.doesNotMatch(card.text, /A tool's command runs on its node/)
+  // Which of the two a restart fails is said in the card's hint, not under its title.
+  assert.doesNotMatch(card.text, /a restart fails it/)
+  assert.ok(dom.container.querySelector('[aria-label="About Background tasks"]'), 'the card has a hint')
   await card.unmount()
 })
 

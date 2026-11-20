@@ -38,6 +38,7 @@ import {
   listMembers,
   listPins,
   listThreadsInGroupChat,
+  mintThreadForPerson,
   openThreadSession,
   removeMember,
   removePin,
@@ -48,7 +49,6 @@ import {
   setGroupChatTopic,
   setThreadArchived,
   setThreadDraft,
-  startThread,
   threadCompactStatus,
 } from '@/app/_authed/(group-chats)/_server/model'
 import type {
@@ -273,16 +273,20 @@ export const getGroupChatThread = createServerFn({ method: 'GET', strict: { outp
   .handler(async ({ data: threadId }): Promise<GroupChatThreadSummary> => getThread(getRequest(), threadId))
 
 /** Started, or refused with a code — a taken thread title is actionable too. */
-export type StartThreadOutcome = { ok: true; started: StartThreadResult } | { ok: false; code: GroupChatAccessFailure }
+// The thread is created and answered at once; its session starts, and the
+// first message goes, from the thread's own chat (see mintThreadForPerson).
+export type StartThreadOutcome =
+  | { ok: true; thread: GroupChatThreadSummary }
+  | { ok: false; code: GroupChatAccessFailure }
 
 export const startGroupChatThread = createServerFn({ method: 'POST', strict: { output: false } })
   .inputValidator((data: { groupChatId: string; agentNodeId: string; firstMessage: string; title?: string }) => data)
   .handler(async ({ data }): Promise<StartThreadOutcome> => {
     try {
-      const started = await startThread(getRequest(), data.groupChatId, data.agentNodeId, data.firstMessage, {
+      const thread = await mintThreadForPerson(getRequest(), data.groupChatId, data.agentNodeId, data.firstMessage, {
         title: data.title,
       })
-      return { ok: true, started }
+      return { ok: true, thread }
     } catch (error) {
       if (error instanceof GroupChatAccessError) {
         return { ok: false, code: error.code }

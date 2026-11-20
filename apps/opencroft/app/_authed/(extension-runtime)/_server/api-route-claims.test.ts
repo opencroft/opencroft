@@ -92,6 +92,7 @@ async function settles(check: () => boolean, ms = 5000): Promise<boolean> {
     if (Date.now() > deadline) {
       return false
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   return true
@@ -231,6 +232,7 @@ test('graph changes coming faster than the check delay do not put the check off'
   const deadline = Date.now() + 5000
   while (!marked() && Date.now() < deadline) {
     registry.graphChanged(ref)
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop that re-sends the graph change until it is marked, within a deadline
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   assert.ok(marked(), 'the routes got their path errors while the changes went on')

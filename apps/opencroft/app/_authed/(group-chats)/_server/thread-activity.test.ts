@@ -76,6 +76,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
     if (Date.now() >= deadline) {
       throw new Error('waitFor: condition never became true')
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
 }
@@ -290,6 +291,7 @@ test('a granted subscriber hears its thread go working then idle as a turn runs;
   })
   try {
     // Let the watcher take its baseline before anything moves.
+    // biome-ignore lint/plugin/noTestFixedTime: fixed delay for the watcher to take its baseline
     await new Promise((resolve) => setTimeout(resolve, 50))
     const session = await openSession(thread.sessionKey)
     await waitFor(() => heard.some((row) => row.status === 'idle'))
@@ -344,9 +346,11 @@ test("a subscription ends with what holds it: the module's holder, or the action
     holder.end()
     call.end()
     assert.throws(() => call.api.subscribeActivity(() => {}), /action call that has ended/)
+    // biome-ignore lint/plugin/noTestFixedTime: fixed settle delay after the call ends, before the session opens
     await new Promise((resolve) => setTimeout(resolve, 50))
     await openSession(thread.sessionKey)
     await waitFor(() => control.length >= 1)
+    // biome-ignore lint/plugin/noTestFixedTime: fixed window in which nothing may reach the module
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.deepEqual(throughModule, [])
     assert.deepEqual(throughCall, [])
@@ -366,6 +370,7 @@ test('archiving a thread is heard as a change to archived', async () => {
     }
   })
   try {
+    // biome-ignore lint/plugin/noTestFixedTime: fixed delay for the watcher to take its baseline before the thread moves
     await new Promise((resolve) => setTimeout(resolve, 50))
     await moveThreadBetweenLists({ id: thread.id, groupChatId: chat.id, sessionKey: thread.sessionKey }, true)
     await waitFor(() => heard.length >= 1)

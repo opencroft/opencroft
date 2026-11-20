@@ -55,6 +55,7 @@ test('the background set is the engine’s keys and the registry’s running key
 
   const deadline = Date.now() + 5_000
   while (!backgroundWorkSessionKeys().has('agent:c:unloaded-session') && Date.now() < deadline) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   assert.deepEqual([...backgroundWorkSessionKeys()].sort(), [

@@ -172,6 +172,7 @@ test('a graph read and a graph write through app_call are refused without a toke
   for (let i = 0; i < 400 && !request; i++) {
     request = approvalStore.list().find((r) => r.tool === 'app_call' && r.spaceId === slug)
     if (!request) {
+      // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
   }

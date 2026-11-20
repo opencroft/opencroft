@@ -221,6 +221,7 @@ async function sendTouches(scene: Scene, fingers: Finger[]) {
       })
     })
     // xyflow reports the end of a pan or zoom from a zero-delay timer.
+    // biome-ignore lint/plugin/noTestFixedTime: zero-delay turn, the one xyflow ends a pan or zoom on
     await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
     return {
       panned: { x: Math.round(viewport.x), y: Math.round(viewport.y) },

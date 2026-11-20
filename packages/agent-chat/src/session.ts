@@ -1,6 +1,7 @@
 import type { TurnEdit } from 'agent-client/queue-tags'
 import type { AvailableCommand, ElicitationContentValue, ElicitationSchema, PermissionOpt } from 'agent-client/types'
 
+import type { DetailItem } from './components/chat-turn'
 import type { EditablePart } from './user-parts'
 
 /**
@@ -24,6 +25,14 @@ export interface AgentChatEdit {
   eventIndex: number
   parts: readonly EditablePart[]
 }
+
+/**
+ * Something that did not happen, told in the conversation: what happened and
+ * what to do in plain words, the technical text behind Details, and the way to
+ * try again where there is one. Drawn as the conversation's error notice (see
+ * ChatNotice), which is where its field semantics are written.
+ */
+export type AgentChatNotice = Omit<Extract<DetailItem, { kind: 'notice' }>, 'kind' | 'severity'>
 
 export interface PendingPermission {
   requestId: string
@@ -145,12 +154,27 @@ export interface AgentChatSession {
   // (loaded once when the session opens) — this one stages an in-progress
   // edit, not the session's resting unsent text.
   draft?: { text: string; key: number }
-  // Copy for a send that did not go through, shown by the composer. Set
-  // together with the message being put back in the composer, so the reader
-  // is told what happened and still has what they typed. Cleared when the
-  // next send starts, or by `dismissSendError`.
-  sendError?: string
-  dismissSendError?: () => void
+  // Why the conversation cannot go on as the reader expects: the session did
+  // not start, or a message was not sent. Shown at the end of the
+  // conversation as a notice (see AgentChatNotice), never by the composer, so
+  // it reads as part of what happened rather than as a field error. A host
+  // that draws the reader's sent messages as AgentChat's `outgoing` marks a
+  // failed send on that message instead; one that does not sets this together
+  // with putting the message back in the composer, so the reader is told what
+  // happened and still has what they typed. The host clears it when the next
+  // send or open starts, or through its `onDismiss`.
+  notice?: AgentChatNotice
+  // A send the composer refused before it left (a picture that did not
+  // attach): the host shows `reason` as its notice. Absent leaves the refusal
+  // to what the composer itself shows.
+  refuseSend?: (reason: string) => void
+  // A session is being started for this conversation: the harness is
+  // spawning, installing what it needs, connecting. The conversation shows
+  // the logo loader for it, so the start never reads as nothing happening --
+  // except under a transcript while one of the reader's `outgoing` messages
+  // waits on it, whose own spinner says it. Unset once the session is up or
+  // the start failed (then `notice` says why).
+  starting?: boolean
   // When set, the composer's send is disabled (e.g. no agent selected yet).
   disabled?: boolean
   // Whether the host has earlier history than what it has currently loaded

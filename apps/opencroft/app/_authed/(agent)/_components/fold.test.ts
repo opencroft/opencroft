@@ -218,9 +218,9 @@ test('a typed session failure renders as its own message, not a dead turn', () =
   const failureMessage = messages.at(-1)
   assert.ok(failureMessage)
   assert.equal(failureMessage.role, 'assistant')
-  const [part] = failureMessage.parts
-  assert.equal(part.type, 'text')
-  assert.equal(part.type === 'text' ? part.text : '', '⛔ The Claude account has no available quota.')
+  assert.deepEqual(failureMessage.parts, [
+    { type: 'notice', severity: 'error', title: 'The Claude account has no available quota.' },
+  ])
 })
 
 test('a typed session failure with details carries them', () => {
@@ -241,8 +241,52 @@ test('a typed session failure with details carries them', () => {
     },
   ]
   const { messages } = fold(events, 0)
-  const [part] = messages.at(-1)?.parts ?? []
-  assert.equal(part.type === 'text' ? part.text : '', '⛔ Sign in to continue using Claude. — Please run /login')
+  // The harness's title is the plain line; its details are the technical half.
+  assert.deepEqual(messages.at(-1)?.parts, [
+    { type: 'notice', severity: 'error', title: 'Sign in to continue using Claude.', details: 'Please run /login' },
+  ])
+})
+
+test("a harness's error the plain reading knows is an error notice, its own text under details", () => {
+  const events: ChatEvent[] = [
+    { kind: 'user', text: 'q' },
+    { kind: 'error', message: 'connect ECONNREFUSED 10.0.0.5:8080', source: 'harness' },
+  ]
+  const { messages } = fold(events, 0)
+  assert.deepEqual(messages.at(-1)?.parts, [
+    {
+      type: 'notice',
+      severity: 'error',
+      title: "The agent's model server can't be reached.",
+      description: 'Check that the server is running and reachable from where the agent runs, then try again.',
+      details: 'connect ECONNREFUSED 10.0.0.5:8080',
+    },
+  ])
+})
+
+test('an engine report no rule knows stays a warning in its own words', () => {
+  const message = 'MCP server not connected: files (sse). Use stdio or http for it.'
+  const { messages } = fold(
+    [
+      { kind: 'user', text: 'q' },
+      { kind: 'error', message },
+    ],
+    0,
+  )
+  assert.deepEqual(messages.at(-1)?.parts, [{ type: 'notice', severity: 'warning', title: message }])
+})
+
+test("the engine's own report keeps its words even when they share a provider rule's", () => {
+  const message =
+    'The instruction texts could not be read: connect ECONNREFUSED 10.0.0.7:8080. The session started without them.'
+  const { messages } = fold(
+    [
+      { kind: 'user', text: 'q' },
+      { kind: 'error', message },
+    ],
+    0,
+  )
+  assert.deepEqual(messages.at(-1)?.parts, [{ type: 'notice', severity: 'warning', title: message }])
 })
 
 test('a plain turn end adds no failure message', () => {

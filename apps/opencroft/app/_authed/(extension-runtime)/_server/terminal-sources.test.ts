@@ -13,8 +13,8 @@ import { listTerminalSourcesImpl, listTerminalSourceTargetsImpl } from './termin
 const TERMINALS = { role: 'source', handleType: 'builtin.core.terminal-context' } as const
 
 // One space holding a plain localhost (terminals known from its manifest) and a
-// Terminal Router (terminals known only by expanding it, like a docker host,
-// but without a network behind it).
+// Terminal Router (terminals known from its data, through core's
+// `dynamicHandles` entry, which is `fromData`).
 async function seedSpace() {
   const slug = `terminal-sources-${crypto.randomUUID()}`
   const localId = `local-${crypto.randomUUID()}`
@@ -45,8 +45,9 @@ test('handle owners are listed before any is expanded, each saying whether expan
     owners.map((owner) => [owner.id, owner.dynamic]),
     [
       [localId, false],
-      [routerId, true],
+      [routerId, false],
     ],
+    'a router answers its routes from its data, so expanding it asks nothing',
   )
   const router = owners.find((owner) => owner.id === routerId)
   assert.deepEqual(
@@ -80,15 +81,75 @@ test('listHandles still returns every owner’s handles, expanded', async () => 
   assert.ok(handles.some((handle) => handle.nodeId === routerId && handle.handleId === 'route-r1'))
 })
 
-test('the picker of every space lists a source with declared terminals in full, and leaves routers out', async () => {
+test('a node’s handle names the graph the node is on', async () => {
+  const { slug, localId } = await seedSpace()
+  const registry = getSpacesRegistry()
+  const ref = registry.resolveGraph(slug)
+  assert.ok(ref, 'the seeded space has a default graph')
+  const { createHost } = await import('./host')
+
+  const handles = await createHost('acme.sources-ext').graph.listHandles(TERMINALS)
+
+  const local = handles.find((handle) => handle.nodeId === localId)
+  assert.deepEqual(local?.graph, { address: registry.addressOf(ref), name: ref.graph.name })
+  assert.ok(local?.graph?.address.startsWith(`${slug}.`))
+})
+
+test('the picker of every space lists a source with declared terminals in full', async () => {
+  const { localId } = await seedSpace()
+
+  const sources = await listTerminalSourcesImpl()
+
+  const local = sources.find((source) => source.ref.id === localId)
+  assert.equal(local?.ref.name, 'my-machine')
+  assert.deepEqual(local?.targets, [{ target: `${localId}/terminal`, handleId: 'terminal', title: 'my-machine' }])
+})
+
+test('the picker of every space lists each router in its first answer, each route naming the terminal it reaches', async () => {
   const { localId, routerId } = await seedSpace()
 
   const sources = await listTerminalSourcesImpl()
 
-  assert.ok(!sources.some((source) => source.ref.id === routerId))
-  const local = sources.find((source) => source.ref.id === localId)
-  assert.equal(local?.ref.name, 'my-machine')
-  assert.deepEqual(local?.targets, [{ target: `${localId}/terminal`, handleId: 'terminal', label: undefined }])
+  const router = sources.find((source) => source.ref.id === routerId)
+  assert.equal(
+    router?.ref.type,
+    'builtin.core.terminal-router',
+    'the source carries its type, which a consumer excludes by',
+  )
+  assert.deepEqual(
+    router?.targets?.map((target) => [target.target, target.routed?.target, target.routed?.ref?.name]),
+    [[`${routerId}/route-r1`, `${localId}/terminal`, 'my-machine']],
+  )
+})
+
+test('a router with no resolved route is not listed, and is still asked on its own', async () => {
+  const { localId } = await seedSpace()
+  const slug = `terminal-sources-${crypto.randomUUID()}`
+  const routerId = `router-${crypto.randomUUID()}`
+  await getSpacesRegistry().create(slug, slug, {
+    nodes: [
+      {
+        id: routerId,
+        type: 'builtin.core.terminal-router',
+        position: { x: 0, y: 0 },
+        // A route whose target did not resolve: no context, so no output.
+        data: { routes: [{ id: 'r1', target: `${localId}/terminal` }] },
+      },
+    ],
+    edges: [],
+  })
+
+  assert.deepEqual(await listTerminalSourcesImpl(slug), [])
+  assert.deepEqual(await listTerminalSourceTargetsImpl(routerId), [])
+})
+
+test("a node's terminal handle carries the terminal's one name, the node's own for its only terminal", async () => {
+  const { localId } = await seedSpace()
+  const { createHost } = await import('./host')
+
+  const handles = await createHost('acme.sources-ext').graph.listHandles(TERMINALS)
+
+  assert.equal(handles.find((handle) => handle.nodeId === localId)?.title, 'my-machine')
 })
 
 test('the picker of one space offers its routers, each route naming the terminal it reaches', async () => {
@@ -111,14 +172,16 @@ test('the picker of one space offers its routers, each route naming the terminal
   const sources = await listTerminalSourcesImpl(slug)
 
   assert.deepEqual(
-    sources.map((source) => [source.ref.id, source.targets]),
-    [[routerId, null]],
-    'the space offers its router and not the terminal of the other space; the routes are asked on their own',
+    sources.map((source) => [source.ref.id, source.targets?.map((target) => target.target)]),
+    [[routerId, [`${routerId}/route-r1`]]],
+    'the space offers its router, with its routes, and not the terminal of the other space',
   )
+  assert.deepEqual(await listTerminalSourceTargetsImpl(routerId), sources[0].targets, 'asked on its own, the same')
   const [route] = await listTerminalSourceTargetsImpl(routerId)
   assert.equal(route.target, `${routerId}/route-r1`)
   assert.equal(route.routed?.target, `${localId}/terminal`)
   assert.equal(route.routed?.ref?.name, 'my-machine')
+  assert.equal(route.routed?.ref?.title, 'my-machine')
   // What an App given this route as its Terminal gets from terminal.getContext.
   assert.deepEqual(await resolveTerminalTarget(route.target), { type: 'local' })
 })
@@ -127,7 +190,7 @@ test('one source is expanded on its own, and an unknown id has no terminals', as
   const { localId } = await seedSpace()
 
   assert.deepEqual(await listTerminalSourceTargetsImpl(localId), [
-    { target: `${localId}/terminal`, handleId: 'terminal', label: undefined },
+    { target: `${localId}/terminal`, handleId: 'terminal', title: 'my-machine' },
   ])
   assert.deepEqual(await listTerminalSourceTargetsImpl(`missing-${crypto.randomUUID()}`), [])
 })

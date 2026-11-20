@@ -69,6 +69,7 @@ async function mount(layoutWriter: boolean): Promise<Harness> {
 }
 
 async function settle(): Promise<void> {
+  // biome-ignore lint/plugin/noTestFixedTime: waits out the autolayout's own settle delay plus a margin
   await act(() => new Promise((resolve) => setTimeout(resolve, AUTOLAYOUT_SETTLE_MS + 100)))
 }
 

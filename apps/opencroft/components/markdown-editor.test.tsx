@@ -49,6 +49,7 @@ async function mount(markdown: string, dialect?: 'document' | 'agent') {
   // The editor module arrives through a dynamic import, then the editor is created after a render.
   for (let attempt = 0; attempt < 200 && !element?.editor; attempt++) {
     await act(async () => {
+      // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
       await new Promise((resolve) => setTimeout(resolve, 10))
     })
     element = dom.container.querySelector('.ProseMirror') as EditorElement | null

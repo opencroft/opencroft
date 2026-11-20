@@ -4,15 +4,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { deferred } from '@/test-support/wait'
 import { coalesceReload, type ReloadCoalesceState } from './reload-coalesce'
-
-function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
-  let resolve!: (v: T) => void
-  const promise = new Promise<T>((r) => {
-    resolve = r
-  })
-  return { promise, resolve }
-}
 
 test('a second call while one is in flight does not run concurrently', async () => {
   const state: ReloadCoalesceState = { inFlight: false, pending: false, nextRun: null }

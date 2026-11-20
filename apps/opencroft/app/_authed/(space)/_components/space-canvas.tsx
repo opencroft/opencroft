@@ -39,8 +39,10 @@ export function SpaceCanvas({ slug, spaceName, graph, graphName }: Props) {
     // because it is a property of this surface and not of the editor: the same
     // editor draws dashboards, where nothing is listening and no scope should
     // exist. What reads the selection is whatever chat this space shows -- the
-    // scope has to enclose both, and this is the nearest place that does.
-    <SelectionProvider>
+    // scope has to enclose both, and this is the nearest place that does. On a
+    // Graph App's page the App page's scope is already around it, and this one
+    // publishes into that.
+    <SelectionProvider spaceName={spaceName} place={graphName}>
       <OverlayProvider>
         {/* The chat ENCLOSES the editor rather than sitting after it, because
             its docked arrangements split the pair between them, and only

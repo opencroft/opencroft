@@ -1,4 +1,4 @@
-import type { ToolCallState, ToolViewProps } from 'agent-chat/tool-views'
+import type { ToolCallState, ToolOutputPart, ToolViewProps } from 'agent-chat/tool-views'
 import { Loader2 } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useState } from 'react'
 
@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../dialog'
 import { Flex } from 'ui/components/ui/layout/flex'
 import { cn } from 'cn'
 import { type DiffLine, DiffStat, DiffView, diffRowCount } from './diff-view'
+import { ToolOutputFullSize, ToolOutputParts } from './tool-output-parts'
 import { useToolViewHost } from './tool-view-host'
 
 // Lines of body text that fit the preview's height — the threshold callers use
@@ -144,7 +145,9 @@ export function OpBlock({
                 {detail && <> {detail}</>}
               </DialogTitle>
             </DialogHeader>
-            <div className='min-h-0 flex-1 overflow-auto text-xs'>{children}</div>
+            <div className='min-h-0 flex-1 overflow-auto text-xs'>
+              <ToolOutputFullSize value>{children}</ToolOutputFullSize>
+            </div>
           </DialogContent>
         </Dialog>
       )}
@@ -265,10 +268,22 @@ function Elided({ children }: { children: ReactNode }) {
 
 // What a call returned, and where it stands: the output so far with a spinner
 // under it while the call runs, or a word for a call that has none (STATE_WORDS).
-export function OpOutput({ result, state, tail }: { result?: { text: string }; state: ToolCallState; tail?: number }) {
+// A result that kept its pictures, sounds, files or links (`content`) is drawn
+// part by part, its text in the same blocks; `tail` applies to plain text only.
+export function OpOutput({
+  result,
+  state,
+  tail,
+}: {
+  result?: { text: string; content?: readonly ToolOutputPart[] }
+  state: ToolCallState
+  tail?: number
+}) {
   return (
     <>
-      {result?.text ? (
+      {result?.content ? (
+        <ToolOutputParts parts={result.content} renderText={(text) => <OpText text={text} />} />
+      ) : result?.text ? (
         <OpText text={result.text} tail={tail} />
       ) : state !== 'running' ? (
         <span className='text-muted-foreground'>{STATE_WORDS[state].noOutput}</span>

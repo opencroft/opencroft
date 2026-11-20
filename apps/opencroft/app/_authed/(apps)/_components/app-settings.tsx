@@ -19,6 +19,7 @@ import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'ui/select'
 
+import { AppParameterFields } from '@/app/_authed/(apps)/_components/app-parameter-fields'
 import {
   listAppRemovalSecretReferences,
   removeSpaceApp,
@@ -230,26 +231,14 @@ export function AppSettings({ spaceSlug, instance, meta, spaces }: Props) {
               }}
             />
           ) : (
-            <Flex withGaps className='w-full max-w-md'>
-              {(meta.parameters ?? []).map((spec) => (
-                <Flex key={spec.id} withGaps className='w-full'>
-                  <Label htmlFor={`app-param-${spec.id}`}>
-                    {spec.label}
-                    {spec.required ? ' *' : ''}
-                  </Label>
-                  <Input
-                    id={`app-param-${spec.id}`}
-                    value={values[spec.id] ?? ''}
-                    placeholder={spec.placeholder}
-                    onChange={(e) => {
-                      setValues((prev) => ({ ...prev, [spec.id]: e.target.value }))
-                      setParamsError(undefined)
-                    }}
-                  />
-                  {spec.description && <p className='text-xs text-muted-foreground'>{spec.description}</p>}
-                </Flex>
-              ))}
-            </Flex>
+            <AppParameterFields
+              parameters={meta.parameters ?? []}
+              values={values}
+              onChange={(id, value) => {
+                setValues((prev) => ({ ...prev, [id]: value }))
+                setParamsError(undefined)
+              }}
+            />
           )}
           <div>
             <Button onClick={handleSaveParams} disabled={savingParams || !paramsChanged(values, instance)}>

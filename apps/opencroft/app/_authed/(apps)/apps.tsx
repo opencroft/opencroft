@@ -33,10 +33,13 @@ function AppsPage() {
     refresh()
   }, [refresh])
 
+  // The space a link here belongs to: an app's, or a space's, each for the
+  // page itself and for its settings.
   function spaceOf(href: string) {
     return (
-      search.apps.find((app) => app.href === href)?.spaceSlug ??
-      search.spaces.find((each) => search.hrefFor(each.slug) === href)?.slug
+      search.apps.find((app) => app.href === href || app.settingsHref === href)?.spaceSlug ??
+      search.spaces.find((each) => search.hrefFor(each.slug) === href || search.settingsHrefFor?.(each.slug) === href)
+        ?.slug
     )
   }
 

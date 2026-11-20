@@ -169,3 +169,24 @@ test('the composer offers no way to discard the selection', async () => {
   )
   await view.unmount()
 })
+
+test("a path label is handed to the kit's badge as its place and its what", async () => {
+  const view = await mount()
+  /** The parts the quote draws: the measured span's own children, not its unseen copies. */
+  const drawnParts = () => {
+    const path = view.quote()?.querySelector(':scope > span')
+    return path
+      ? [...path.children].filter((part) => !part.hasAttribute('aria-hidden')).map((part) => part.textContent)
+      : null
+  }
+
+  await act(async () => view.scope().setSelection({ label: 'Acme › Default › 2 nodes selected', content: 'the block' }))
+  assert.deepEqual(drawnParts(), ['Acme', 'Default', '2 nodes selected'], 'the place is drawn as the path')
+  assert.doesNotMatch(view.quote()?.className ?? '', /line-clamp-3/, 'one line, as a path is')
+
+  // A label with fewer than two separators has no place, and is quoted whole.
+  await act(async () => view.scope().setSelection({ label: 'guide.md › 3 lines', content: 'the block' }))
+  assert.equal(drawnParts(), null, 'no path')
+  assert.equal(view.quote()?.textContent, 'guide.md › 3 lines')
+  await view.unmount()
+})

@@ -85,6 +85,7 @@ async function settledIndex(address: string, nodeId: string, expected: string[])
     if (Array.isArray(index) && index.length === expected.length && index.every((name, n) => name === expected[n])) {
       return index
     }
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   return heldIndex(address, nodeId)
@@ -164,6 +165,7 @@ test('a re-derivation that read the store before a later write cannot leave the 
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
+  // biome-ignore lint/plugin/noTestFixedTime: a deadline that only bounds failure, releasing the held read if the test never does
   const bound = setTimeout(release, 500)
   let firstRead = () => {}
   const firstReadDone = new Promise<void>((resolve) => {
@@ -272,6 +274,7 @@ test('a graph change leaves a store already in step unwritten', async () => {
     note.data = { text: 'b' }
   })
   // Past the check that change schedules.
+  // biome-ignore lint/plugin/noTestFixedTime: waits past the real-timer check the change schedules in the code under test
   await new Promise((resolve) => setTimeout(resolve, 600))
 
   assert.equal(changes, 1, 'only the edit itself changed the graph')
@@ -444,6 +447,7 @@ test('deleting a space deletes the rows of the stores on its graph and of no oth
   assert.equal(await registry.remove(gone.slug), true)
   // The purge runs behind the removal; wait on it rather than on a clock.
   for (let i = 0; i < 400 && (await secrets.listKeys(goneId)).length > 0; i++) {
+    // biome-ignore lint/plugin/noTestFixedTime: poll interval of a loop capped at a fixed number of tries
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
 

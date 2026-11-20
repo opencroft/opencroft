@@ -1,6 +1,5 @@
-import { qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
+import { parseType, qualifyType } from '@/app/_authed/(extension-runtime)/_extension-id'
 import { getExtensionModule, loadAllManifests } from '@/app/_authed/(extension-runtime)/_server/loader'
-import { findDockerExtensionId } from '@/app/_authed/(extension-runtime)/_server/node-handles'
 import { getSpacesRegistry } from '@/app/_authed/(space)/_server/store'
 import type { DockerContainerSnapshot } from '@/lib/sse-events'
 import { toastStore } from '@/lib/toast-store'
@@ -69,6 +68,16 @@ export function nextFailureState(
 // A host currently inside its backoff window is not due for another attempt yet.
 export function isDue(current: HostFailureState | undefined, now: number): boolean {
   return (current?.nextAttemptAt ?? 0) <= now
+}
+
+// The extension declaring a node type under the bare name `docker`, or null.
+// Looked up by that name rather than by a fixed owner: the host does not know
+// where the docker extension was installed from, and a local development copy
+// runs under whatever id its manifest claims.
+export function findDockerExtensionId(
+  manifests: Array<{ id: string; nodes?: Array<{ type: string }> }>,
+): string | null {
+  return manifests.find((m) => m.nodes?.some((n) => parseType(n.type)?.bare === 'docker'))?.id ?? null
 }
 
 // The docker extension's `docker` nodes among `nodes`, by their stored type:

@@ -156,6 +156,7 @@ test('makeLoginPassword without Basic stores admin / pw as exactly "admin:pw", k
   assert.deepEqual(made.recipe, { kind: 'login', login: 'admin' })
 })
 
+// biome-ignore lint/plugin/noTrackerKeyInTestName: UTF-8 names an encoding, not a tracker key
 test('makeLoginPassword with Basic encodes UTF-8 and keeps colons in the password', () => {
   // base64("bob:ä:x") with ä as UTF-8 (c3 a4)
   assert.equal(

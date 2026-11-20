@@ -8,6 +8,7 @@ import { Input } from 'ui/input'
 import { Label } from 'ui/label'
 import { Flex } from 'ui/layout/flex'
 
+import { AppParameterFields } from '@/app/_authed/(apps)/_components/app-parameter-fields'
 import { addSpaceApp } from '@/app/_authed/(apps)/_server/actions'
 import type { AppMeta } from '@/app/_authed/(apps)/_server/types'
 import { loadExtensionsProviding } from '@/app/_authed/(extension-runtime)/_client/loader'
@@ -101,26 +102,14 @@ export function AddApp({ spaceSlug, app }: Props) {
         />
       ) : (
         (app.parameters ?? []).length > 0 && (
-          <Flex withGaps className='w-full max-w-md'>
-            {(app.parameters ?? []).map((spec) => (
-              <Flex key={spec.id} withGaps className='w-full'>
-                <Label htmlFor={`app-param-${spec.id}`}>
-                  {spec.label}
-                  {spec.required ? ' *' : ''}
-                </Label>
-                <Input
-                  id={`app-param-${spec.id}`}
-                  value={values[spec.id] ?? ''}
-                  placeholder={spec.placeholder}
-                  onChange={(e) => {
-                    setValues((prev) => ({ ...prev, [spec.id]: e.target.value }))
-                    setError(undefined)
-                  }}
-                />
-                {spec.description && <p className='text-xs text-muted-foreground'>{spec.description}</p>}
-              </Flex>
-            ))}
-          </Flex>
+          <AppParameterFields
+            parameters={app.parameters ?? []}
+            values={values}
+            onChange={(id, value) => {
+              setValues((prev) => ({ ...prev, [id]: value }))
+              setError(undefined)
+            }}
+          />
         )
       )}
 

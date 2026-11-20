@@ -1,7 +1,7 @@
 'use client'
 
 // The new-thread composer: the kit's StartThreadComposer, unreshaped; this
-// owns the request, the pending and error state, and the member-agent
+// owns the request, the pending state, the refusal toasts and the member-agent
 // derivation (app-side because it is a fact about the group chat).
 //
 // ONE COMPOSER FOR BOTH START SURFACES. The group-chat screen's footer and
@@ -11,12 +11,12 @@
 // title field disappears) and shares its agent selection with the live
 // thread's own picker through the controlled props.
 
-import { useChatComposer } from 'agent-chat/chat-composer'
+import { COMPOSER_PLACEHOLDER, useChatComposer } from 'agent-chat/chat-composer'
 import { cn } from 'cn'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { StartThreadComposer } from 'ui/group-chat/start-thread-composer'
 
-import { wrapUserSelection } from '@/app/_authed/(agent)/_shared/message-envelope'
 import { oversizedTextNotice } from '@/app/_authed/(agent)/_shared/message-size'
 import { SelectionBadge } from '@/app/_authed/(extension-runtime)/_client/selection-badge'
 import { useOptionalSelection } from '@/app/_authed/(extension-runtime)/_client/selection-context'
@@ -24,6 +24,7 @@ import { SelectionToggle } from '@/app/_authed/(extension-runtime)/_client/selec
 import { failureMessage } from '@/app/_authed/(group-chats)/_lib/failure-message'
 import { groupChatAccessMessageForCode } from '@/app/_authed/(group-chats)/_lib/group-chat-error'
 import { mentionCandidates } from '@/app/_authed/(group-chats)/_lib/mention-candidates'
+import { holdOpeningMessage } from '@/app/_authed/(group-chats)/_lib/opening-messages'
 import { type MemberRef, startGroupChatThread } from '@/app/_authed/(group-chats)/_server/actions'
 import { useLocalStorage } from '@/hooks/utils/use-local-storage'
 
@@ -100,11 +101,20 @@ export function GroupChatStartThreadComposer({
   }
   const [title, setTitle] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | undefined>(loadError)
+  // A start refused before any thread exists has no conversation to be told
+  // in, and the composer carries no error text: it is a toast. Once the
+  // thread exists, its own conversation tells whatever goes wrong next.
+  useEffect(() => {
+    if (loadError) {
+      toast.error(loadError)
+    }
+  }, [loadError])
 
-  // The selection rides on the FIRST message too — it is a send like any
-  // other, only routed through startThread. Null outside a selection scope
-  // (the group-chat screen has none), which makes this a no-op there.
+  // The selection rides on the FIRST message too. It is handed to the thread's
+  // chat beside the text (opening-messages.ts) and attached there by the
+  // thread's own send, the one place a message gets its selection block. Null
+  // outside a selection scope (the screen of a chat that is no space's has
+  // none), which makes this a no-op there.
   const selectionScope = useOptionalSelection()
 
   // The text comes from the composer's send, trimmed, and EMPTY when the
@@ -113,7 +123,7 @@ export function GroupChatStartThreadComposer({
   const submit = async (text: string) => {
     if (!selectedAgent) {
       putBack(text)
-      setError('Choose an agent to start a thread with.')
+      toast.error('Choose an agent to start a thread with.')
       return
     }
     // Checked here as the thread's own composer checks it, so the refusal
@@ -121,25 +131,20 @@ export function GroupChatStartThreadComposer({
     const oversized = oversizedTextNotice(text)
     if (oversized) {
       putBack(text)
-      setError(oversized)
+      toast.error(oversized)
       return
     }
-    setError(undefined)
     setSubmitting(true)
     try {
-      // A selection rides the opening message when there is one. An empty
-      // start carries none: there is no message for the quotation to be
-      // attached to, and attaching it to whatever is typed next is the
-      // thread's own composer's job rather than this one's.
-      const firstMessage =
-        text && selectionScope?.selection && selectionScope.passEnabled
-          ? wrapUserSelection(text, selectionScope.selection.content)
-          : text
+      // The selection quoted at this press, when passing is on. An empty start
+      // carries none: there is no message for it to ride on.
+      const selection =
+        text && selectionScope?.selection && selectionScope.passEnabled ? selectionScope.selection.content : undefined
       const result = await startGroupChatThread({
         data: {
           groupChatId,
           agentNodeId: selectedAgent,
-          firstMessage,
+          firstMessage: text,
           title: fixedTitle ?? (title.trim() || undefined),
         },
       })
@@ -151,14 +156,17 @@ export function GroupChatStartThreadComposer({
         // is untouched by clear-on-send, so it's already still there to
         // retitle; this just leaves it alone rather than clearing it.
         putBack(text)
-        setError(groupChatAccessMessageForCode(result.code))
+        toast.error(groupChatAccessMessageForCode(result.code))
         return
       }
       setTitle('')
-      onThreadStarted(result.started.thread.id)
+      // The thread's own chat sends it once its session is up, and shows the
+      // start while it happens.
+      holdOpeningMessage(result.thread.id, { text, ...(selection ? { selection } : {}) })
+      onThreadStarted(result.thread.id)
     } catch (e) {
       putBack(text)
-      setError(failureMessage(e, 'The thread could not be started.'))
+      toast.error(failureMessage(e, 'The thread could not be created.'))
     } finally {
       setSubmitting(false)
     }
@@ -167,13 +175,11 @@ export function GroupChatStartThreadComposer({
   const composer = useChatComposer({
     value,
     valueRevision,
-    onValueChange: () => {
-      if (error) {
-        setError(undefined)
-      }
-    },
+    // The words live in the composer between put-backs; nothing here reads
+    // them as they are typed.
+    onValueChange: () => {},
     onSend: (text) => void submit(text),
-    placeholder: placeholder ?? 'Message…',
+    placeholder: placeholder ?? COMPOSER_PLACEHOLDER,
     sending: submitting,
     mentions,
   })
@@ -207,8 +213,6 @@ export function GroupChatStartThreadComposer({
         // turn off is a choice nobody makes.
         allowEmptyStart
         submitting={submitting}
-        error={error}
-        onDismissError={() => setError(undefined)}
         // Offered wherever there is a scope to keep the answer in, selected or
         // not: it is the only way back from held-back, and the reader may
         // settle it before selecting anything. Tying it to the quotation's own

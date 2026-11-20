@@ -57,6 +57,7 @@ function service(now: () => Date, transport?: RunnerTransport) {
   })
 }
 
+// biome-ignore lint/plugin/noTestFixedTime: fixed 50 ms settle delay used between the steps of these tests
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50))
 
 test('the running keys read as none, and the failure is logged once however often they are asked', async () => {

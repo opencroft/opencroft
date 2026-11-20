@@ -509,6 +509,22 @@ test("a space's own chat carries its space on the list, and a chat that is no sp
   assert.equal(plain.space, undefined)
 })
 
+test("a space's own chat carries its space id on the detail view, and a chat that is no space's carries none", async () => {
+  const owner = await makeUser('view-detail-spaces@example.test', 'Detail Space Owner')
+  await db.insert(space).values({ slug: 'detail-space', name: 'Detail Space', data: JSON.stringify({ nodes: [] }) })
+  const spaceChat = await model.createGroupChat(reqAs(owner), 'Detail space chat', undefined, {
+    slug: 'detail-space',
+  })
+  const plainChat = await model.createGroupChat(reqAs(owner), 'Detail plain chat')
+  const [detailSpace] = await db.select({ id: space.id }).from(space).where(eq(space.slug, 'detail-space'))
+  assert.ok(detailSpace)
+
+  assert.equal((await view.getGroupChatDetailView(reqAs(owner), spaceChat.id)).spaceId, detailSpace.id)
+  const plain = await view.getGroupChatDetailView(reqAs(owner), plainChat.id)
+  assert.equal(plain.spaceId, undefined)
+  assert.equal(Object.hasOwn(plain, 'spaceId'), false)
+})
+
 test('Recent reads the threads the caller can open, in the order asked, and leaves out deleted, unknown and foreign ones', async () => {
   const owner = await makeUser('view-recent@example.test', 'Recent Owner')
   const stranger = await makeUser('view-recent-stranger@example.test', 'Recent Stranger')

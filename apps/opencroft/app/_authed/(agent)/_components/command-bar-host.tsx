@@ -24,7 +24,6 @@ interface AgentCommandBarHostProps {
   /** Active agent's node id. When set, extension-provided input controls (e.g.
    *  voice) declared for the `agent-chat-input-controls` point are rendered. */
   agentNodeId?: string
-  placeholder?: string
   autoFocus?: boolean
   onFocus?: () => void
   onBlur?: () => void
@@ -58,11 +57,6 @@ interface AgentCommandBarHostProps {
   /** Show the sparkles start icon. Default true; false hides it where the agent
    *  is fixed (a group-chat thread) and there is no session picker. */
   startIcon?: boolean
-  /** Copy for a send that did not go through, and how to dismiss it. Both come
-   *  from the session (see AgentSession.sendError) — this host only forwards
-   *  them to the kit's error slot. */
-  sendError?: string
-  onDismissSendError?: () => void
   /** Rendered in the composer's attachments row, directly above the composer —
    *  forwarded to the package hook's slot of the same name. Left out when there
    *  is nothing attached, and that is the caller's call to make: an element
@@ -114,7 +108,6 @@ const APPROVAL_TITLES = {
 export function AgentCommandBarHost({
   session,
   agentNodeId,
-  placeholder,
   autoFocus,
   onFocus,
   onBlur,
@@ -127,8 +120,6 @@ export function AgentCommandBarHost({
   savedDraft,
   onDraftChange,
   startIcon = true,
-  sendError,
-  onDismissSendError,
   attachments,
   attachmentControls,
   presence,
@@ -215,7 +206,6 @@ export function AgentCommandBarHost({
 
   const barNode = useAgentCommandBar({
     session,
-    placeholder,
     autoFocus,
     onFocus,
     onBlur,
@@ -228,8 +218,6 @@ export function AgentCommandBarHost({
     onClear,
     savedDraft,
     onDraftChange,
-    sendError,
-    onDismissSendError,
     controls,
     autoApprove,
     onToggleAutoApprove: toggleAutoApprove,

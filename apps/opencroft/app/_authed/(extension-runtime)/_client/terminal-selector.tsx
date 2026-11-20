@@ -3,7 +3,10 @@
 import { TerminalPicker } from 'ui/nodes/terminal-list'
 
 import { TerminalRef } from '@/app/_authed/(extension-runtime)/_client/terminal-ref'
-import { useTerminalSources } from '@/app/_authed/(extension-runtime)/_client/terminal-sources'
+import {
+  type TerminalSourceOwner,
+  useTerminalSources,
+} from '@/app/_authed/(extension-runtime)/_client/terminal-sources'
 
 export interface TerminalSelectorProps {
   /** "node-id/handle-id" of the selected terminal source, or '' for none. */
@@ -12,9 +15,15 @@ export interface TerminalSelectorProps {
   /**
    * Limit the choices to one space's terminals and the routes of its Terminal
    * Routers, the way that space reaches a terminal of another; omit to offer
-   * every space's terminals, without routers.
+   * every space's terminals and every router's routes.
    */
   spaceSlug?: string
+  /**
+   * Leave out the terminals of each source (a node or App instance) it answers
+   * true for: the consumer's own rule, such as a Terminal Router leaving out
+   * routes, which a route cannot point at.
+   */
+  exclude?: (source: TerminalSourceOwner) => boolean
   /** Offer an explicit "None" choice (reported as ''). */
   allowNone?: boolean
   placeholder?: string
@@ -30,11 +39,12 @@ export function TerminalSelector({
   value,
   onChange,
   spaceSlug,
+  exclude,
   allowNone,
   placeholder,
   disabled,
 }: TerminalSelectorProps) {
-  const { sources, loading } = useTerminalSources(spaceSlug)
+  const { sources, loading } = useTerminalSources(spaceSlug, exclude)
   return (
     <TerminalPicker
       sources={sources}
@@ -45,8 +55,8 @@ export function TerminalSelector({
       placeholder={placeholder}
       disabled={disabled}
       // A saved target no source lists -- a stopped container, a removed
-      // worktree -- is still shown by its owner's name rather than its id.
-      renderMissing={(target) => <TerminalRef target={target} />}
+      // worktree -- is still shown by its name and place rather than its id.
+      renderMissing={(target) => <TerminalRef target={target} path />}
     />
   )
 }

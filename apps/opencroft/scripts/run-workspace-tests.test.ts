@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
+// biome-ignore lint/style/noRestrictedImports: polls the child processes the runner starts, within a deadline; a child's clock can't be faked
 import { setTimeout as sleep } from 'node:timers/promises'
 
 const SCRIPT = join(import.meta.dirname, '..', '..', '..', 'scripts', 'run-workspace-tests.mjs')
@@ -235,6 +236,29 @@ test("every workspace's test files take turns in one cap for the whole run", { t
   const seen = readFileSync(join(meet, 'seen'), 'utf8').trim().split('\n').map(Number)
   assert.equal(seen.length, 12, 'every file ran')
   assert.equal(Math.max(...seen), 2, `files running at once, as each counted: ${seen.join(' ')}`)
+})
+
+test("the run ends with the slowest tests, gathered from every workspace's files", { timeout: 120_000 }, () => {
+  // Which of the two is slower is not up to the case; the order of the list
+  // is pinned in test-timings.test.ts. The suite around `two` is left out.
+  const { root, meet } = monorepo({})
+  runnerWorkspace(root, 'a', { 'one.test.ts': "import test from 'node:test'\ntest('one', () => {})\n" })
+  runnerWorkspace(root, 'b', {
+    'two.test.ts': "import test, { describe } from 'node:test'\ndescribe('group', () => { test('two', () => {}) })\n",
+  })
+
+  const run = runIn(root, meet, runnerEnv(meet, '2'))
+
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  const tail = run.stdout.trimEnd().split('\n').slice(-3)
+  assert.equal(tail[0], 'Slowest 2 tests:', run.stdout)
+  assert.deepEqual(
+    tail
+      .slice(1)
+      .map((line) => line.replace(/^ +\d+\.\d s {2}/, ''))
+      .sort(),
+    ['packages/a/src/one.test.ts > one', 'packages/b/src/two.test.ts > two'],
+  )
 })
 
 test('a test file that is killed hands its slot back', { timeout: 120_000 }, () => {

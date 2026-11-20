@@ -437,6 +437,22 @@ test('an attached selection survives the strip as an attachment, and stays out o
   ])
 })
 
+test('a composed selection shows its quote as the composer did: the place apart from the what', () => {
+  const block = 'Acme › Default › 2 nodes selected\nNode "api" (script-node), id n-1\nNode "db" (script-node), id n-2'
+  const raw = `<opencroft-user-selection>${block}</opencroft-user-selection>\nwhy is api down?`
+  const [part] = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
+  assert.deepEqual(part?.attachments, [{ label: '2 nodes selected', place: ['Acme', 'Default'], detail: block }])
+})
+
+test('the 80-character bound applies to the what, after the place is split off', () => {
+  const what = 'y'.repeat(120)
+  const raw = `<opencroft-user-selection>A long space name › A long App name › ${what}</opencroft-user-selection>\nq`
+  const [part] = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
+  const attachment = part?.attachments?.[0]
+  assert.deepEqual(attachment?.place, ['A long space name', 'A long App name'])
+  assert.equal(attachment?.label, `${'y'.repeat(79)}…`)
+})
+
 test('a message waiting to be read reports the same attachment as it will once delivered', () => {
   // One message, two surfaces. The queue row and the transcript row read the
   // same text through the same function, so they cannot disagree about what is
@@ -551,11 +567,11 @@ test('a quoted selection is never drawn as a picture, key or not', () => {
   assert.equal(part?.attachments?.[0]?.src, undefined)
 })
 
-// The five publishers in this app all open their content with a line naming the
-// source, so none of them reaches either guard below. The host exposes the
-// selection API to extensions, though, so what an attachment's content looks
-// like is not this app's to bound — and a chip that reports something travelled
-// while saying nothing about it is worse than no chip at all.
+// A selection the host composes opens with its quote, so it reaches neither
+// guard below. A publisher may hand over a block of its own, though, so
+// what an attachment's content looks like is not this app's to bound — and a
+// chip that reports something travelled while saying nothing about it is worse
+// than no chip at all.
 
 test('an attachment whose first line is blank still names itself', () => {
   // Only reachable from a publisher outside this app: the content is trimmed
@@ -589,4 +605,40 @@ test('each message of a batch keeps its own attachment', () => {
   const parts = partsOf(buildBlocks([userMessage(1, raw)])[0]) ?? []
   assert.equal(parts[0]?.attachments?.length, 1)
   assert.equal(parts[1]?.attachments, undefined)
+})
+
+test("a tool's kept picture loads from the attachment route under the conversation's key", () => {
+  const reply: ChatMessage = {
+    id: 2,
+    role: 'assistant',
+    timestamp: 0,
+    parts: [
+      {
+        type: 'tool-call',
+        id: 'c1',
+        name: 'screenshot',
+        args: {},
+        status: 'completed',
+        result: { text: 'shot\n[image]' },
+        content: [
+          { type: 'text', text: 'shot' },
+          { type: 'image', mimeType: 'image/png', byteSize: 4, mediaId: 'm 1' },
+        ],
+      },
+    ],
+  }
+  const toolOf = (blocks: Block[]) =>
+    blocks.flatMap((block) => (block.kind === 'details' ? block.items : [])).find((item) => item.kind === 'tool')
+  const tool = toolOf(buildBlocks([userMessage(1, 'go'), reply], undefined, undefined, 'chat:key'))
+  assert.ok(tool && tool.kind === 'tool')
+  assert.deepEqual(tool.result, {
+    text: 'shot\n[image]',
+    content: [
+      { type: 'text', text: 'shot' },
+      { type: 'image', mimeType: 'image/png', byteSize: 4, src: '/api/acp/attachments/m%201?key=chat%3Akey' },
+    ],
+  })
+  const keyless = toolOf(buildBlocks([userMessage(1, 'go'), reply]))
+  assert.ok(keyless && keyless.kind === 'tool')
+  assert.equal(keyless.result?.content?.[1]?.type === 'image' && keyless.result.content[1].src, undefined)
 })

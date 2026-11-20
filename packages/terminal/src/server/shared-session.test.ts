@@ -56,6 +56,7 @@ function harness(opts: SessionManagerOptions = {}) {
         if (Date.now() > deadline) {
           throw new Error('no sweep ran within 5 s')
         }
+        // biome-ignore lint/plugin/noTestFixedTime: poll interval of a wait-until-deadline loop; the deadline only bounds failure
         await new Promise((resolve) => setTimeout(resolve, 1))
       }
     },

@@ -22,12 +22,14 @@ import {
   space,
 } from '@opencroft/db'
 import { eq } from 'drizzle-orm'
+import type { SpaceUsageGroup, SpaceUsageSeries } from 'ui/admin/space-usage'
 
 import {
   deleteChatUsage,
   queryChatUsage,
   queryChatUsageTokensBySession,
   queryChatUsageTurnsBySessionKey,
+  queryInstanceChatUsage,
   recordChatUsageTurn,
   usageDay,
 } from './chat-usage-store'
@@ -213,7 +215,7 @@ test('model grouping sums the breakdown, so a subagent model the turn row never 
       ],
     },
   })
-  const series = await queryChatUsage(spaceId, 'model', { kind: 'custom', from: '2026-09-18', to: '2026-09-18' })
+  const { series } = await queryChatUsage(spaceId, 'model', { kind: 'custom', from: '2026-09-18', to: '2026-09-18' })
   const haiku = series.find((s) => s.key === 'claude-haiku-5')
   assert.ok(haiku, 'the subagent-only model gets its own series, even though no turn ever resolved to it')
   // A one-day window reads by the hour, so the turn sits in its 10:00 bucket.
@@ -236,7 +238,9 @@ test('a short window is bucketed by the hour, a long one by the day', async () =
     at: new Date('2026-08-10T21:05:00.000Z'),
   })
 
-  const [hourly] = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-08-10', to: '2026-08-10' })
+  const {
+    series: [hourly],
+  } = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-08-10', to: '2026-08-10' })
   assert.deepEqual(
     hourly.points.map((p) => p.date),
     Array.from({ length: 24 }, (_, h) => `2026-08-10T${String(h).padStart(2, '0')}`),
@@ -251,7 +255,9 @@ test('a short window is bucketed by the hour, a long one by the day', async () =
     'each turn lands in the hour it ended, cut from its own timestamp',
   )
 
-  const [daily] = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-08-08', to: '2026-08-14' })
+  const {
+    series: [daily],
+  } = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-08-08', to: '2026-08-14' })
   assert.deepEqual(
     daily.points.map((p) => p.date),
     ['2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'],
@@ -357,7 +363,9 @@ test('the space is fixed when the turn is recorded: deleting its thread later le
   await db.delete(groupChatThread).where(eq(groupChatThread.sessionKey, sessionKey))
 
   assert.equal(await spaceIdOfTurn('sess-space-fixed'), spaceId)
-  const [all] = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-07-20', to: '2026-07-20' })
+  const {
+    series: [all],
+  } = await queryChatUsage(spaceId, 'all', { kind: 'custom', from: '2026-07-20', to: '2026-07-20' })
   assert.equal(all.points.find((p) => p.date === '2026-07-20T10')?.totalTokens, 70)
 })
 
@@ -387,22 +395,284 @@ test("a space's usage reads only its own turns, whatever the grouping", async ()
   const totalOf = (series: { points: { totalTokens: number }[] }[]) =>
     series.flatMap((s) => s.points).reduce((sum, p) => sum + p.totalTokens, 0)
 
-  assert.equal(totalOf(await queryChatUsage(first.spaceId, 'all', period)), 100)
-  assert.equal(totalOf(await queryChatUsage(second.spaceId, 'all', period)), 7)
-  const byAgent = await queryChatUsage(second.spaceId, 'agent', period)
+  assert.equal(totalOf((await queryChatUsage(first.spaceId, 'all', period)).series), 100)
+  assert.equal(totalOf((await queryChatUsage(second.spaceId, 'all', period)).series), 7)
+  const byAgent = (await queryChatUsage(second.spaceId, 'agent', period)).series
   assert.deepEqual(
     byAgent.map((s) => s.key),
     ['agent-a'],
   )
-  const byModel = await queryChatUsage(second.spaceId, 'model', period)
+  const byModel = (await queryChatUsage(second.spaceId, 'model', period)).series
   assert.deepEqual(
     byModel.map((s) => [s.key, totalOf([s]), s.points.find((p) => p.cost !== undefined)?.cost]),
     [['model-b', 7, 0.5]],
   )
   assert.equal(
-    (await queryChatUsage(first.spaceId, 'model', period)).flatMap((s) => s.points).some((p) => p.cost !== undefined),
+    (await queryChatUsage(first.spaceId, 'model', period)).series
+      .flatMap((s) => s.points)
+      .some((p) => p.cost !== undefined),
     false,
     "the other space's cost is not in this one",
+  )
+})
+
+// ── Choosing the groups drawn ───────────────────────────────────────────────
+
+/**
+ * A space with three agents' threads and, on one day no other test records
+ * on: agent-a on model-x and model-y, agent-b on model-x and on no named model
+ * (a harness that did not say), agent-c on model-y. Each turn is one hour
+ * apart so nothing shares a cell by accident, and every cost is a sum of
+ * halves, so figures compare exactly.
+ */
+async function seedChoiceSpace(slug: string, day: string) {
+  const { spaceId, sessionKey: keyA } = await seedSpaceThread(slug)
+  const [thread] = await db.select().from(groupChatThread).where(eq(groupChatThread.sessionKey, keyA))
+  const keyOf = (agent: string) => `group-chat.${slug}.${agent}.thread-1`
+  for (const agent of ['agent-b', 'agent-c']) {
+    await db
+      .insert(groupChatThread)
+      .values({ groupChatId: thread.groupChatId, agentNodeId: agent, sessionKey: keyOf(agent) })
+  }
+  const turns = [
+    { key: keyA, model: 'model-x', total: 100, cost: 1 },
+    { key: keyA, model: 'model-y', total: 20, cost: 0.25 },
+    { key: keyOf('agent-b'), model: 'model-x', total: 40, cost: 0.5 },
+    { key: keyOf('agent-b'), model: undefined, total: 3, cost: undefined },
+    { key: keyOf('agent-c'), model: 'model-y', total: 7, cost: 0.125 },
+  ]
+  for (const [i, turn] of turns.entries()) {
+    await recordChatUsageTurn({
+      sessionId: `sess-${slug}-${i}`,
+      sessionKey: turn.key,
+      model: turn.model,
+      usage: { totalTokens: turn.total },
+      cost: turn.cost === undefined ? undefined : { amount: turn.cost, currency: 'USD' },
+      at: new Date(`${day}T1${i}:00:00.000Z`),
+    })
+  }
+  return spaceId
+}
+
+/** Each series as [key, total tokens, total cost or undefined when unpriced]. */
+function figuresOf(series: SpaceUsageSeries[]) {
+  return series.map((s) => {
+    const priced = s.points.filter((p) => p.cost !== undefined)
+    return [
+      s.key,
+      s.points.reduce((sum, p) => sum + p.totalTokens, 0),
+      priced.length === 0 ? undefined : priced.reduce((sum, p) => sum + (p.cost ?? 0), 0),
+    ]
+  })
+}
+
+/**
+ * How a series or a group is coloured: its palette slot, `'neutral'` when it
+ * is marked folded and carries no slot, or `'folded with a slot'`, which no
+ * answer should give.
+ */
+function colourOf(item: SpaceUsageSeries | SpaceUsageGroup) {
+  if (!item.folded) {
+    return item.colorIndex
+  }
+  return item.colorIndex === undefined ? 'neutral' : 'folded with a slot'
+}
+
+/** The page's totals: what the cards sum, over every series drawn. */
+function totalsOf(series: SpaceUsageSeries[]) {
+  const points = series.flatMap((s) => s.points)
+  return [points.reduce((sum, p) => sum + p.totalTokens, 0), points.reduce((sum, p) => sum + (p.cost ?? 0), 0)]
+}
+
+test('the answer offers the groups of the grouping shown that the period has, whatever is chosen', async () => {
+  const spaceId = await seedChoiceSpace('space-choice-options', '2026-06-01')
+  const period = { kind: 'custom', from: '2026-06-01', to: '2026-06-01' } as const
+
+  const byModel = await queryChatUsage(spaceId, 'model', period)
+  assert.deepEqual(byModel.options, [
+    { key: 'model-x', label: 'model-x' },
+    { key: 'model-y', label: 'model-y' },
+    { key: '__unknown__', label: 'Unknown model' },
+  ])
+  assert.deepEqual(
+    byModel.options.map((o) => o.key).sort(),
+    byModel.series.map((s) => s.key).sort(),
+    'one option per series of the grouping, keyed as the series are',
+  )
+  const byAgent = await queryChatUsage(spaceId, 'agent', period)
+  assert.deepEqual(
+    byAgent.options.map((o) => o.key),
+    ['agent-a', 'agent-b', 'agent-c'],
+  )
+  assert.deepEqual(
+    (await queryChatUsage(spaceId, 'agent', period, ['agent-b'])).options,
+    byAgent.options,
+    'the options do not narrow to what is chosen',
+  )
+  assert.deepEqual((await queryChatUsage(spaceId, 'all', period)).options, [], 'under All there is nothing to choose')
+  assert.deepEqual(
+    (await queryChatUsage(spaceId, 'agent', { kind: 'custom', from: '2026-06-02', to: '2026-06-02' })).options,
+    [],
+    'a period with no turns offers nothing',
+  )
+})
+
+test('per agent, two chosen agents are drawn alone, each as it is with nothing chosen, and the totals are their sum', async () => {
+  const spaceId = await seedChoiceSpace('space-choice-agent', '2026-06-03')
+  const period = { kind: 'custom', from: '2026-06-03', to: '2026-06-03' } as const
+
+  const all = await queryChatUsage(spaceId, 'agent', period)
+  assert.deepEqual(figuresOf(all.series), [
+    ['agent-a', 120, 1.25],
+    ['agent-b', 43, 0.5],
+    ['agent-c', 7, 0.125],
+  ])
+  const chosen = await queryChatUsage(spaceId, 'agent', period, ['agent-c', 'agent-a'])
+  assert.deepEqual(
+    figuresOf(chosen.series),
+    figuresOf(all.series).filter(([key]) => key === 'agent-a' || key === 'agent-c'),
+    "exactly the chosen two, each with its own figures, in the period's order",
+  )
+  assert.deepEqual(totalsOf(chosen.series), [127, 1.375])
+  assert.deepEqual(
+    chosen.groups.map((g) => g.key),
+    ['agent-a', 'agent-c'],
+  )
+})
+
+test('per model, two chosen models are drawn alone, each as it is with nothing chosen, and the totals are their sum', async () => {
+  const spaceId = await seedChoiceSpace('space-choice-model', '2026-06-05')
+  const period = { kind: 'custom', from: '2026-06-05', to: '2026-06-05' } as const
+
+  const all = figuresOf((await queryChatUsage(spaceId, 'model', period)).series)
+  assert.deepEqual(all, [
+    ['model-x', 140, 1.5],
+    ['model-y', 27, 0.375],
+    ['__unknown__', 3, undefined],
+  ])
+  const chosen = (await queryChatUsage(spaceId, 'model', period, ['model-y', '__unknown__'])).series
+  assert.deepEqual(
+    figuresOf(chosen),
+    all.filter(([key]) => key !== 'model-x'),
+    'the unknown-model key among them',
+  )
+  assert.deepEqual(totalsOf(chosen), [30, 0.375])
+})
+
+test('a chosen series keeps the colour slot it has with nothing chosen', async () => {
+  const spaceId = await seedChoiceSpace('space-choice-colour', '2026-06-13')
+  const period = { kind: 'custom', from: '2026-06-13', to: '2026-06-13' } as const
+  const slotsOf = (series: SpaceUsageSeries[]) => series.map((s) => [s.key, s.colorIndex])
+
+  // With nothing chosen the slot is the position: model-x 140, model-y 27, unknown 3.
+  assert.deepEqual(slotsOf((await queryChatUsage(spaceId, 'model', period)).series), [
+    ['model-x', 0],
+    ['model-y', 1],
+    ['__unknown__', 2],
+  ])
+  assert.deepEqual(slotsOf((await queryChatUsage(spaceId, 'model', period, ['model-y', '__unknown__'])).series), [
+    ['model-y', 1],
+    ['__unknown__', 2],
+  ])
+  assert.deepEqual(slotsOf((await queryChatUsage(spaceId, 'agent', period, ['agent-c'])).series), [['agent-c', 2]])
+})
+
+test('chosen groups are never folded, and a group folded with nothing chosen takes the lowest free slot', async () => {
+  const { spaceId, sessionKey } = await seedSpaceThread('space-filter-fold')
+  // Seven models, so the two smallest fold into Other with nothing chosen.
+  for (const [i, total] of [70, 60, 50, 40, 30, 20, 10].entries()) {
+    await recordChatUsageTurn({
+      sessionId: `sess-filter-fold-${i}`,
+      sessionKey,
+      model: `model-${i + 1}`,
+      usage: { totalTokens: total },
+      at: new Date(`2026-06-15T1${i}:00:00.000Z`),
+    })
+  }
+  const period = { kind: 'custom', from: '2026-06-15', to: '2026-06-15' } as const
+  const slotsOf = async (chosen: string[]) =>
+    (await queryChatUsage(spaceId, 'model', period, chosen)).series.map((s) => [s.key, colourOf(s)])
+
+  assert.deepEqual(await slotsOf([]), [
+    ['model-1', 0],
+    ['model-2', 1],
+    ['model-3', 2],
+    ['model-4', 3],
+    ['model-5', 4],
+    ['__other__', 'neutral'],
+  ])
+  assert.deepEqual(
+    await slotsOf(['model-6', 'model-7']),
+    [
+      ['model-6', 0],
+      ['model-7', 1],
+    ],
+    'two folded groups take two distinct slots',
+  )
+  assert.deepEqual(
+    await slotsOf(['model-5', 'model-7']),
+    [
+      ['model-5', 4],
+      ['model-7', 0],
+    ],
+    'beside the fifth, a folded group takes a free slot, not the fifth colour',
+  )
+  assert.deepEqual(
+    await slotsOf(['model-2', 'model-3', 'model-4', 'model-5', 'model-6']),
+    [
+      ['model-2', 1],
+      ['model-3', 2],
+      ['model-4', 3],
+      ['model-5', 4],
+      ['model-6', 0],
+    ],
+    'five chosen: each its own series, none folded, the folded one in the gap',
+  )
+  assert.deepEqual(
+    await slotsOf(['model-1', 'model-2', 'model-3', 'model-4', 'model-5', 'model-6', 'model-7']),
+    [
+      ['model-1', 0],
+      ['model-2', 1],
+      ['model-3', 2],
+      ['model-4', 3],
+      ['model-5', 4],
+      ['model-6', 5],
+      ['model-7', 6],
+    ],
+    'seven chosen: seven series with seven slots, and no Other',
+  )
+})
+
+test('under All a choice changes nothing', async () => {
+  const spaceId = await seedChoiceSpace('space-choice-all', '2026-06-07')
+  const period = { kind: 'custom', from: '2026-06-07', to: '2026-06-07' } as const
+
+  assert.deepEqual(figuresOf((await queryChatUsage(spaceId, 'all', period)).series), [['all', 170, 1.875]])
+  assert.deepEqual(
+    await queryChatUsage(spaceId, 'all', period, ['agent-a']),
+    await queryChatUsage(spaceId, 'all', period),
+  )
+})
+
+test('nothing chosen reads exactly as no choice, and a chosen group the period lacks has no series', async () => {
+  const spaceId = await seedChoiceSpace('space-choice-none', '2026-06-09')
+  const period = { kind: 'custom', from: '2026-06-09', to: '2026-06-09' } as const
+
+  for (const grouping of ['all', 'agent', 'model'] as const) {
+    assert.deepEqual(
+      await queryChatUsage(spaceId, grouping, period, []),
+      await queryChatUsage(spaceId, grouping, period),
+      `${grouping}: an empty choice is no choice`,
+    )
+  }
+  const absent = await queryChatUsage(spaceId, 'agent', period, ['agent-z'])
+  assert.deepEqual(absent.series, [])
+  assert.deepEqual(absent.groups, [])
+  assert.equal(absent.options.length, 3, 'the period still offers its own agents')
+  assert.deepEqual(
+    figuresOf((await queryChatUsage(spaceId, 'agent', period, ['agent-z', 'agent-b'])).series),
+    [['agent-b', 43, 0.5]],
+    'beside an absent one, the present choice is drawn',
   )
 })
 
@@ -446,4 +716,163 @@ test("a turn's tokens and a session's account include what its subagents spent",
     cacheWrite: 0,
   })
   assert.equal(await queryChatUsageTokensBySession('sess-subagents-none'), undefined, 'no turn, no account')
+})
+
+// ── The instance's usage ────────────────────────────────────────────────────
+
+/** Each group as [key, label, total tokens, cost or undefined when unpriced]. */
+function groupFiguresOf(groups: SpaceUsageGroup[]) {
+  return groups.map((g) => [g.key, g.label, g.totalTokens, g.cost])
+}
+
+/**
+ * On one day no other test records on: a turn in each of two spaces, one in
+ * no space, and one in a space deleted after it ran.
+ */
+async function seedInstanceDay(prefix: string, day: string) {
+  const first = await seedSpaceThread(`${prefix}-first`)
+  const second = await seedSpaceThread(`${prefix}-second`)
+  const gone = await seedSpaceThread(`${prefix}-gone`)
+  const turns = [
+    { key: first.sessionKey, model: 'model-x', total: 100, cost: 1 },
+    { key: second.sessionKey, model: 'model-y', total: 7, cost: 0.5 },
+    { key: undefined, model: 'model-x', total: 1_000, cost: undefined },
+    { key: gone.sessionKey, model: 'model-y', total: 20, cost: 0.25 },
+  ]
+  for (const [i, turn] of turns.entries()) {
+    await recordChatUsageTurn({
+      sessionId: `sess-${prefix}-${i}`,
+      sessionKey: turn.key,
+      model: turn.model,
+      usage: { totalTokens: turn.total },
+      cost: turn.cost === undefined ? undefined : { amount: turn.cost, currency: 'USD' },
+      at: new Date(`${day}T1${i}:00:00.000Z`),
+    })
+  }
+  await db.delete(space).where(eq(space.id, gone.spaceId))
+  return { first, second, period: { kind: 'custom', from: day, to: day } as const }
+}
+
+test("the instance's usage is every space's plus the turns in none, a deleted space's among them", async () => {
+  const { first, second, period } = await seedInstanceDay('instance-sum', '2026-04-02')
+
+  assert.deepEqual(figuresOf((await queryInstanceChatUsage('all', period)).series), [['all', 1_127, 1.75]])
+  const perSpace = await queryInstanceChatUsage('space', period)
+  assert.deepEqual(groupFiguresOf(perSpace.groups), [
+    ['__unknown__', 'No space', 1_020, 0.25],
+    [first.spaceId, 'instance-sum-first', 100, 1],
+    [second.spaceId, 'instance-sum-second', 7, 0.5],
+  ])
+  assert.deepEqual(figuresOf(perSpace.series), [
+    ['__unknown__', 1_020, 0.25],
+    [first.spaceId, 100, 1],
+    [second.spaceId, 7, 0.5],
+  ])
+  assert.deepEqual(
+    perSpace.series.map((s) => s.label),
+    ['No space', 'instance-sum-first', 'instance-sum-second'],
+  )
+})
+
+test("per space, a chosen space is drawn alone with its own Usage page's figures", async () => {
+  const { first, second, period } = await seedInstanceDay('instance-match', '2026-04-03')
+  const own = async (spaceId: string) =>
+    figuresOf((await queryChatUsage(spaceId, 'all', period)).series).map(([, ...rest]) => [spaceId, ...rest])
+
+  assert.deepEqual(
+    figuresOf((await queryInstanceChatUsage('space', period, [second.spaceId])).series),
+    await own(second.spaceId),
+  )
+  assert.deepEqual(figuresOf((await queryInstanceChatUsage('space', period, [second.spaceId, first.spaceId])).series), [
+    ...(await own(first.spaceId)),
+    ...(await own(second.spaceId)),
+  ])
+  assert.deepEqual(
+    figuresOf((await queryInstanceChatUsage('space', period, ['__unknown__'])).series),
+    [['__unknown__', 1_020, 0.25]],
+    "the turns in no space, a deleted space's among them, may be chosen too",
+  )
+})
+
+test('per space, the turns in no space keep a series of their own when the spaces fold into Other', async () => {
+  // Seven spaces, ranked by their totals, and the smallest turn in no space.
+  const spaceIds: string[] = []
+  for (const [i, total] of [70, 60, 50, 40, 30, 20, 10].entries()) {
+    const { spaceId, sessionKey } = await seedSpaceThread(`instance-fold-${i + 1}`)
+    spaceIds.push(spaceId)
+    await recordChatUsageTurn({
+      sessionId: `sess-instance-fold-${i}`,
+      sessionKey,
+      usage: { totalTokens: total },
+      at: new Date(`2026-04-04T1${i}:00:00.000Z`),
+    })
+  }
+  await recordChatUsageTurn({
+    sessionId: 'sess-instance-fold-none',
+    usage: { totalTokens: 5 },
+    at: new Date('2026-04-04T18:00:00.000Z'),
+  })
+  const period = { kind: 'custom', from: '2026-04-04', to: '2026-04-04' } as const
+  const { series, groups } = await queryInstanceChatUsage('space', period)
+
+  assert.deepEqual(
+    series.map((s) => [s.key, colourOf(s)]),
+    [
+      [spaceIds[0], 0],
+      [spaceIds[1], 1],
+      [spaceIds[2], 2],
+      [spaceIds[3], 3],
+      ['__unknown__', 4],
+      ['__other__', 'neutral'],
+    ],
+  )
+  assert.deepEqual(figuresOf(series.slice(4)), [
+    ['__unknown__', 5, undefined],
+    ['__other__', 60, undefined],
+  ])
+  assert.deepEqual(
+    groups.map((g) => [g.label, g.totalTokens, colourOf(g)]),
+    [
+      ['instance-fold-1', 70, 0],
+      ['instance-fold-2', 60, 1],
+      ['instance-fold-3', 50, 2],
+      ['instance-fold-4', 40, 3],
+      ['instance-fold-5', 30, 'neutral'],
+      ['instance-fold-6', 20, 'neutral'],
+      ['instance-fold-7', 10, 'neutral'],
+      ['No space', 5, 4],
+    ],
+    "every space is listed with its own figures, the folded ones in Other's neutral",
+  )
+  assert.deepEqual(
+    (await queryInstanceChatUsage('space', period, ['__unknown__', spaceIds[6]])).series.map((s) => [
+      s.key,
+      s.colorIndex,
+    ]),
+    [
+      [spaceIds[6], 0],
+      ['__unknown__', 4],
+    ],
+    'chosen, a folded space takes a free slot and No space keeps its own',
+  )
+})
+
+test('each group is listed with its period figures beside the series, and under All there is no list', async () => {
+  const spaceId = await seedChoiceSpace('space-groups-list', '2026-04-05')
+  const period = { kind: 'custom', from: '2026-04-05', to: '2026-04-05' } as const
+
+  assert.deepEqual((await queryChatUsage(spaceId, 'all', period)).groups, [])
+  const byAgent = await queryChatUsage(spaceId, 'agent', period)
+  assert.deepEqual(groupFiguresOf(byAgent.groups), [
+    ['agent-a', 'agent-a', 120, 1.25],
+    ['agent-b', 'agent-b', 43, 0.5],
+    ['agent-c', 'agent-c', 7, 0.125],
+  ])
+  assert.deepEqual(
+    byAgent.groups.map((g) => [g.key, g.colorIndex]),
+    byAgent.series.map((s) => [s.key, s.colorIndex]),
+  )
+  assert.deepEqual(groupFiguresOf((await queryChatUsage(spaceId, 'model', period, ['model-x'])).groups), [
+    ['model-x', 'model-x', 140, 1.5],
+  ])
 })
